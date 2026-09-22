@@ -11,6 +11,7 @@
 //! ([`crate::engine::Applier`], [`crate::engine::Transport`]) have web
 //! implementations that find the facade this installs.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -58,11 +59,15 @@ impl EngineRef {
 /// `media` is where the takes' audio streams from: a Task share link to the
 /// session's folder, whose `rendition/audio/<path>` answers each take's
 /// source with its proxy ([`crate::web_audio`]). `None` opens it silent.
+/// `guide` is a share link to the guide sample library (as Ogg) the click,
+/// count and cue tracks play from; without it they play synthesized ticks
+/// and beeps.
 pub async fn open(
     name: &str,
     rpp_text: &str,
     chart_text: Option<&str>,
     media: Option<&str>,
+    guide: Option<&str>,
 ) -> eyre::Result<(EngineRef, StudioSession)> {
     let standalone = daw_standalone::sync::Standalone::new();
     let summary = daw_standalone::project_loader::load_rpp_text(
@@ -72,6 +77,18 @@ pub async fn open(
         rpp_text,
     )
     .map_err(|e| eyre::eyre!("{name} did not parse: {e}"))?;
+    // The guide instrument, before the guide tracks it plays on are made.
+    let library = match guide {
+        Some(base) => guide_library(base).await,
+        None => HashMap::new(),
+    };
+    crate::guide_instrument::install(
+        &standalone,
+        crate::guide_instrument::Library::Files {
+            files: Arc::new(library),
+            ext: "ogg",
+        },
+    );
     // Prepared the way the desktop app prepares it: organized into
     // folders, the song built from its chart, the click and guide made.
     crate::prepare::steps(&standalone, &summary.project_guid, true, chart_text, true)
@@ -198,4 +215,33 @@ async fn fetch_bytes(url: &str) -> Result<Arc<[u8]>, String> {
         .await
         .map_err(|e| format!("{e:?}"))?;
     Ok(js_sys::Uint8Array::new(&body).to_vec().into())
+}
+
+/// The guide library's files MIDI-mode playback needs, fetched together
+/// from the library's share link. A file that does not arrive is left out
+/// (the instrument synthesizes its slot).
+async fn guide_library(base: &str) -> HashMap<String, Vec<u8>> {
+    let wanted = session_guide::samples::library::files(
+        crate::guide_instrument::CLICK,
+        crate::guide_instrument::VOICE,
+        "ogg",
+    );
+    let base = base.trim_end_matches('/');
+    let fetches = wanted.into_iter().map(|path| async move {
+        let url = format!("{base}/download/{}", url_path(&path));
+        match fetch_bytes(&url).await {
+            Ok(bytes) => Some((path, bytes.to_vec())),
+            Err(e) => {
+                tracing::warn!(path, error = %e, "guide: a sample did not arrive");
+                None
+            }
+        }
+    });
+    let files: HashMap<String, Vec<u8>> = futures_util::future::join_all(fetches)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+    tracing::info!(samples = files.len(), "guide: the sample library arrived");
+    files
 }

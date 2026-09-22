@@ -17,15 +17,18 @@
 //! Guide track and the "1" is back. Mute is a slow fact, so reading the
 //! last block's report is enough — which makes it hold in any track order.
 //!
-//! Samples come from the FTS-GUIDE library at
-//! `~/.config/fts/guide-samples/{Click,Counts,Guide}`; anything missing is
-//! synthesized (clicks and count beeps), except spoken cues, which need
-//! the real samples.
+//! Samples come from the FTS-GUIDE library ([`Library`]): natively the
+//! folder at `~/.config/fts/guide-samples/{Click,Counts,Guide}`, in a
+//! browser the files it needs, fetched as Ogg
+//! (`session_guide::samples::library`). Anything missing is synthesized
+//! (clicks and count beeps), except spoken cues, which need the real
+//! samples.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use daw::plugin::{
+use daw_standalone::plugin::{
     FxFactory, PluginDescriptor, PluginError, PluginEvents, PluginFormat, PluginInstance,
     PluginParamInfo,
 };
@@ -34,6 +37,40 @@ use session_guide::{BlockClock, ClickSound, GuideConfig, GuideEngine, TriggerSou
 
 /// The FX ident the guide generator puts on its tracks.
 pub const IDENT: &str = "fts.guide";
+
+/// The click kit and voice the guide plays.
+pub const CLICK: ClickSound = ClickSound::Cowbell;
+pub const VOICE: &str = "English Female";
+
+/// Where the instrument's samples come from.
+#[derive(Clone)]
+pub enum Library {
+    /// The FTS-GUIDE folder on this machine.
+    Folder(PathBuf),
+    /// The files MIDI-mode playback needs (library-relative path → bytes,
+    /// all in format `ext`) — what a browser fetched.
+    Files {
+        files: Arc<HashMap<String, Vec<u8>>>,
+        ext: &'static str,
+    },
+}
+
+impl Library {
+    fn load_into(&self, bank: &mut session_guide::SampleBank, rate: u32) {
+        match self {
+            Self::Folder(dir) => {
+                bank.load_click(&dir.join("Click"), CLICK, rate);
+                bank.load_counts(&dir.join("Counts"), VOICE, rate);
+                bank.load_guide_dir(&dir.join("Guide"), rate);
+            }
+            Self::Files { files, ext } => bank.load_bytes(files, ext, CLICK, VOICE, rate),
+        }
+        // On-beats high, off-beat eighths low, the bar's one the same as
+        // any other beat — see `SampleBank::beats_high_offbeats_low`.
+        bank.beats_high_offbeats_low();
+        bank.synthesize_defaults(rate);
+    }
+}
 
 /// Where the FTS-GUIDE sample library lives.
 #[must_use]
@@ -99,22 +136,28 @@ pub struct GuideInstrument {
     sample_rate: f64,
     gate: Arc<CueGate>,
     role: Role,
+    library: Library,
 }
 
 impl GuideInstrument {
     #[must_use]
     pub fn new() -> Self {
-        Self::for_role(Role::Any, Arc::new(CueGate::default()))
+        Self::for_role(
+            Role::Any,
+            Arc::new(CueGate::default()),
+            Library::Folder(samples_dir()),
+        )
     }
 
     /// An instrument for one guide track, sharing `gate` with the others.
     #[must_use]
-    pub fn for_role(role: Role, gate: Arc<CueGate>) -> Self {
+    pub fn for_role(role: Role, gate: Arc<CueGate>, library: Library) -> Self {
         Self {
             engine: None,
             sample_rate: 48_000.0,
             gate,
             role,
+            library,
         }
     }
 }
@@ -169,7 +212,6 @@ impl PluginInstance for GuideInstrument {
             ..GuideConfig::default()
         };
         let mut engine = GuideEngine::new(config);
-        let dir = samples_dir();
         // The bank loads at an integer device rate.
         #[expect(
             clippy::cast_possible_truncation,
@@ -177,14 +219,7 @@ impl PluginInstance for GuideInstrument {
             reason = "a sample rate: a small positive integer carried as f64"
         )]
         let rate = sample_rate.round() as u32;
-        let bank = engine.bank_mut();
-        bank.load_click(&dir.join("Click"), ClickSound::Cowbell, rate);
-        // On-beats high, off-beat eighths low, the bar's one the same as
-        // any other beat — see `SampleBank::beats_high_offbeats_low`.
-        bank.beats_high_offbeats_low();
-        bank.load_counts(&dir.join("Counts"), "English Female", rate);
-        bank.load_guide_dir(&dir.join("Guide"), rate);
-        bank.synthesize_defaults(rate);
+        self.library.load_into(engine.bank_mut(), rate);
         self.engine = Some(engine);
         self.sample_rate = sample_rate;
         Ok(())
@@ -207,10 +242,10 @@ impl PluginInstance for GuideInstrument {
         let Some(engine) = self.engine.as_mut() else {
             return Ok(());
         };
-        let cycle = daw::plugin::render_cycle();
+        let cycle = daw_standalone::plugin::render_cycle();
         // The Guide track's instrument says it is being heard.
         if self.role == Role::Guide
-            && !daw::plugin::track_muted()
+            && !daw_standalone::plugin::track_muted()
             && let Some(cycle) = cycle
         {
             self.gate.guide_playing_in(cycle);
@@ -253,10 +288,10 @@ impl PluginInstance for GuideInstrument {
 }
 
 /// Makes guide instruments for `Effects::add(.., "fts.guide")`, all sharing
-/// one [`CueGate`].
-#[derive(Default)]
+/// one [`CueGate`] and one [`Library`].
 pub struct GuideFxFactory {
     gate: Arc<CueGate>,
+    library: Library,
 }
 
 impl FxFactory for GuideFxFactory {
@@ -270,13 +305,95 @@ impl FxFactory for GuideFxFactory {
         // samples. The renderer only prepares a plugin that is not
         // prepared yet, and it does that on the AUDIO thread: left to it,
         // the first block after pressing play took 40-60 ms, a dropout.
-        let mut guide = GuideInstrument::for_role(role, self.gate.clone());
+        let mut guide = GuideInstrument::for_role(role, self.gate.clone(), self.library.clone());
         guide.prepare(sample_rate, 512).ok()?;
         Some(Box::new(guide))
     }
 }
 
-/// Install the guide instrument's factory on `daw`.
-pub fn install(daw: &daw::standalone::Standalone) {
-    daw.set_fx_factory(Arc::new(GuideFxFactory::default()));
+/// Install the guide instrument's factory on `daw`, playing from `library`.
+/// Before the guide tracks are made: the factory prepares each instrument
+/// as its FX is added.
+pub fn install(daw: &daw_standalone::Standalone, library: Library) {
+    daw.set_fx_factory(Arc::new(GuideFxFactory {
+        gate: Arc::default(),
+        library,
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RATE: u32 = 48_000;
+
+    /// 0.2 s of a stereo tone, as Ogg — longer than any synthesized
+    /// fallback, so sound late in a block is the fetched sample's.
+    fn ogg_tone(hz: f32) -> Vec<u8> {
+        let frames = RATE as usize / 5;
+        let mut pcm = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let v = (i as f32 / RATE as f32 * hz * std::f32::consts::TAU).sin() * 0.5;
+            pcm.push(v);
+            pcm.push(v);
+        }
+        fts_sample::cache::encode_ogg_vorbis(&pcm, 2, RATE, 0.6).expect("encode")
+    }
+
+    /// Energy 100–200 ms after a note on `key` — after the synthesized
+    /// defaults (at most ~110 ms) have died away.
+    fn late_energy(guide: &mut GuideInstrument, key: u8) -> f32 {
+        let (event, _) = daw_proto::MidiEvent::decode(&[0x90, key, 100]).expect("note on");
+        let midi = [daw_standalone::plugin::PluginMidiEvent {
+            offset: 0,
+            message: event,
+        }];
+        let block = RATE as usize / 5;
+        let (mut l, mut r) = (vec![0.0; block], vec![0.0; block]);
+        guide
+            .process_block(
+                &[],
+                &[],
+                &mut l,
+                &mut r,
+                &PluginEvents {
+                    params: &[],
+                    midi: &midi,
+                    note_expressions: &[],
+                },
+            )
+            .expect("process");
+        l[block / 2..].iter().map(|s| s * s).sum()
+    }
+
+    /// The browser's library — the Ogg files `library::files` names, as
+    /// fetched — plays the click, the count and the cues from MIDI.
+    #[test]
+    fn a_fetched_ogg_library_plays_click_count_and_cue() {
+        let files: HashMap<String, Vec<u8>> =
+            session_guide::samples::library::files(CLICK, VOICE, "ogg")
+                .into_iter()
+                .map(|path| (path, ogg_tone(440.0)))
+                .collect();
+        let library = Library::Files {
+            files: Arc::new(files),
+            ext: "ogg",
+        };
+        for (key, what) in [(61, "a click"), (72, "count 1"), (85, "the chorus cue")] {
+            let mut guide = GuideInstrument::for_role(Role::Any, Arc::default(), library.clone());
+            guide.prepare(f64::from(RATE), 512).expect("prepare");
+            let energy = late_energy(&mut guide, key);
+            assert!(energy > 1.0, "{what} plays its fetched sample: {energy}");
+        }
+
+        // With nothing fetched, the same notes fall back to the short
+        // synthesized sounds — silent by the second half of the block.
+        let empty = Library::Files {
+            files: Arc::default(),
+            ext: "ogg",
+        };
+        let mut guide = GuideInstrument::for_role(Role::Any, Arc::default(), empty);
+        guide.prepare(f64::from(RATE), 512).expect("prepare");
+        assert!(late_energy(&mut guide, 61) < 1e-3, "a synthesized tick is short");
+    }
 }

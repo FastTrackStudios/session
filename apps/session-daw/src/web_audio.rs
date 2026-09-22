@@ -350,6 +350,14 @@ impl Player {
         if !self.shared.play_state().is_advancing() {
             if self.next.take().is_some() {
                 self.flush();
+                // Nothing renders while stopped, so nothing would write the
+                // meters down: silence them, as a stopped engine's are.
+                let meters = self.daw.meters();
+                for i in 0..meters.len() {
+                    if let Some(cell) = meters.cell(i) {
+                        cell.write(0.0, 0.0, 0.0);
+                    }
+                }
             }
             return;
         }

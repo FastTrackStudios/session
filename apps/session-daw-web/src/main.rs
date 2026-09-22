@@ -4,8 +4,9 @@
 //! files: `index.html` and the module. The session comes from a Task share
 //! link to its folder — `?share=<link>&project=<Song.RPP>&chart=<Song.kf>`
 //! — whose documents open it and whose audio renditions stream its stems
-//! from their proxies. Without a link it opens the copy bundled under
-//! `session/`, silent. See `session_daw::web_host`.
+//! from their proxies; `&guide=<link>` is the guide sample library's, for
+//! the click, the count and the cues. Without a link it opens the copy
+//! bundled under `session/`, silent. See `session_daw::web_host`.
 
 use dioxus::prelude::*;
 
@@ -34,6 +35,7 @@ struct Source {
     rpp: String,
     chart: Option<String>,
     media: Option<String>,
+    guide: Option<String>,
 }
 
 /// The page's query, or the bundled copy.
@@ -53,6 +55,7 @@ fn source() -> Source {
             rpp: doc(&project),
             chart: param("chart").map(|c| doc(&c)),
             media: Some(share),
+            guide: param("guide"),
         };
     }
     Source {
@@ -60,6 +63,7 @@ fn source() -> Source {
         rpp: "session/demo.RPP".to_owned(),
         chart: Some("session/demo.kf".to_owned()),
         media: None,
+        guide: None,
     }
 }
 
@@ -73,6 +77,7 @@ fn App() -> Element {
             rpp_url: source.rpp.clone(),
             chart_url: source.chart.clone(),
             media: source.media.clone(),
+            guide: source.guide.clone(),
         }
     }
 }

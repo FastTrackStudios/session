@@ -81,6 +81,19 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Write an Ogg Vorbis copy of the FTS-GUIDE sample library — the
+    /// same layout, each `.wav` a `.ogg` — for a browser to stream the
+    /// click, the count and the cues from.
+    GuideLibrary {
+        /// The WAV library (`~/.config/fts/guide-samples`).
+        library: PathBuf,
+        /// Where the Ogg copy goes.
+        out: PathBuf,
+        /// libvorbis quality, -0.2..=1.0. Higher than a stem's: a click is
+        /// all transient.
+        #[arg(long, default_value_t = 0.6)]
+        quality: f32,
+    },
 }
 
 fn main() -> eyre::Result<()> {
@@ -103,6 +116,11 @@ async fn run(command: Command) -> eyre::Result<()> {
             quality,
             force,
         } => proxies::write(&session, quality, force),
+        Command::GuideLibrary {
+            library,
+            out,
+            quality,
+        } => proxies::guide_library(&library, &out, quality),
     }
 }
 

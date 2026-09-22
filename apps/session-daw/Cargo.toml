@@ -161,6 +161,8 @@ web-sys = { workspace = true, optional = true, features = [
 ] }
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
+# The web demo fetches the guide library's files together (`web_engine`).
+futures-util = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }
 anyrender_vello_hybrid = { workspace = true, optional = true, features = ["webgl"] }
 vello_hybrid = { workspace = true, optional = true }
@@ -207,7 +209,7 @@ web = [
     "dep:vello_hybrid",
     "dep:vello_common",
     "dep:rustc-hash",
-    "dep:gloo-timers", "daw-standalone/stream-ogg", "dep:fts-sample",
+    "dep:gloo-timers", "daw-standalone/stream-ogg", "dep:fts-sample", "dep:futures-util",
 ]
 # The `#[reaper_test]` suites, which need a REAPER to talk to. Behind a
 # feature so an ordinary `cargo nextest run --workspace` does not try to
@@ -289,6 +291,8 @@ tempfile = { workspace = true }
 # The file backend of the organize pass, to hold the live one to it
 # (`tests/organize_live.rs`).
 dawfile-reaper = { workspace = true }
+# The guide instrument's test encodes the Ogg library a browser streams.
+fts-sample = { workspace = true, features = ["engine-native"] }
 
 [lints]
 workspace = true

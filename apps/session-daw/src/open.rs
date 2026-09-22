@@ -97,7 +97,10 @@ fn parse(path: &Path) -> eyre::Result<Opened> {
         .map_err(|e| eyre::eyre!("could not read {}: {e}", path.display()))?;
     let daw = Standalone::new();
     // The instrument the Click / Count / Guide MIDI tracks play through.
-    crate::guide_instrument::install(&daw);
+    crate::guide_instrument::install(
+        &daw,
+        crate::guide_instrument::Library::Folder(crate::guide_instrument::samples_dir()),
+    );
     let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
     daw.media_bay().set_file_resolver(Box::new(
         daw::standalone::media_bay::ProjectRelativeResolver::new(dir),

@@ -51,7 +51,7 @@
 //! `can_create_surfaces` is the one that would tie us to native, and
 //! this does not use it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use anyrender::{RenderContext, Scene};
@@ -225,6 +225,10 @@ pub struct ArrangementWidget {
     dirty: std::cell::Cell<bool>,
     /// Where the play cursor has been, for its trail.
     trail: crate::cursor::Trail,
+    /// The engine's levels, for the meters in the name fields — and
+    /// whether any was lit last frame, so a falling meter keeps redrawing.
+    meters: Option<crate::engine::Meters>,
+    meters_lit: Cell<bool>,
     /// Whether the editor took the last press and has not been let go
     /// of yet.
     ///
@@ -381,6 +385,8 @@ impl ArrangementWidget {
             holding: false,
             dirty: std::cell::Cell::new(false),
             trail: crate::cursor::Trail::default(),
+            meters: crate::engine::Meters::start(),
+            meters_lit: Cell::new(false),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
             project,
@@ -1100,6 +1106,7 @@ impl Widget for ArrangementWidget {
             // A trail drawing in behind a stopped cursor changes the
             // picture every frame with nothing else moving.
             || self.trail.alive(web_time::Instant::now())
+            || self.meters_lit.get()
     }
 
     fn handle_event(&mut self, event: &UiEvent) {
@@ -1578,6 +1585,21 @@ impl ArrangementWidget {
                 at,
             ),
         };
+        // The levels, in the name fields.
+        if let Some(meters) = &self.meters {
+            let lit = crate::overlay::row_meters(
+                &mut out,
+                &self.palette,
+                &self.scene,
+                &self.rows,
+                &self.tracks,
+                &self.map,
+                view,
+                &meters.levels(),
+                at,
+            );
+            self.meters_lit.set(lit);
+        }
         // The edit cursor and the time selection, over the lanes and
         // up through the ruler. Drawn from the editor's own state,
         // which is what a click on the ruler moves.

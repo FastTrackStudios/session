@@ -22,7 +22,6 @@ pub mod folder_item;
 pub mod fps;
 #[cfg(feature = "native")]
 pub mod frame;
-#[cfg(feature = "native")]
 pub mod guide_instrument;
 /// Lifts WebKitGTK's 60 fps rAF cap. Linux-only: it binds `webkit2gtk`.
 /// (WKWebView on macOS has its own cap — 72 fps on a 144 Hz panel — and

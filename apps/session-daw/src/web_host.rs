@@ -231,8 +231,14 @@ pub fn WidgetCanvas(
     focus: Option<FocusSlot>,
     /// Where the canvas element goes, for the pointer shape.
     element: Option<ElementSlot>,
+    /// Out of sight: painted once, so it is ready, and not again until
+    /// shown.
+    #[props(default)]
+    hidden: bool,
 ) -> Element {
     let alive = use_hook(|| Rc::new(Cell::new(true)));
+    let hiding = use_hook(|| Rc::new(Cell::new(hidden)));
+    hiding.set(hidden);
     {
         let alive = Rc::clone(&alive);
         use_drop(move || alive.set(false));
@@ -274,7 +280,7 @@ pub fn WidgetCanvas(
                 if takes_focus {
                     let _ = canvas.focus();
                 }
-                start_painting(canvas, widget.clone(), frame, Rc::clone(&alive));
+                start_painting(canvas, widget.clone(), frame, Rc::clone(&alive), Rc::clone(&hiding));
             },
             onpointermove: move |e| {
                 to_panel(PanelEvent::Pointer { x: e.client_coordinates().x, y: e.client_coordinates().y });
@@ -339,7 +345,9 @@ fn start_painting(
     widget: HostedRef,
     frame: Option<EventHandler<()>>,
     alive: Rc<Cell<bool>>,
+    hidden: Rc<Cell<bool>>,
 ) {
+    let painted = Cell::new(false);
     let runtime = dioxus::dioxus_core::Runtime::current();
     let scope = dioxus::dioxus_core::current_scope_id();
     let gpu = Rc::new(RefCell::new(None::<Gpu>));
@@ -363,6 +371,13 @@ fn start_painting(
         }
         if let Some(frame) = frame {
             runtime.in_scope(scope, || frame.call(()));
+        }
+        // Hidden: painted once to be ready, then left until shown.
+        if hidden.get() && painted.replace(true) {
+            if let Some(next) = again.borrow().as_ref() {
+                let _ = window.request_animation_frame(next.as_ref().unchecked_ref());
+            }
+            return;
         }
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a canvas size")]
         let scene = widget.0.borrow_mut().paint(css_w as u32, css_h as u32, 1.0);
@@ -452,17 +467,30 @@ pub fn WebDemo(
     /// Where the takes' audio streams from — a Task share link to the
     /// session's folder. `None` opens it silent.
     media: Option<String>,
+    /// The guide sample library's share link: the click, count and cues.
+    guide: Option<String>,
 ) -> Element {
     let opened = use_resource(move || {
-        let (name, rpp_url, chart_url, media) =
-            (name.clone(), rpp_url.clone(), chart_url.clone(), media.clone());
+        let (name, rpp_url, chart_url, media, guide) = (
+            name.clone(),
+            rpp_url.clone(),
+            chart_url.clone(),
+            media.clone(),
+            guide.clone(),
+        );
         async move {
             let rpp = fetch_text(&rpp_url).await?;
             let chart = match &chart_url {
                 Some(url) => Some(fetch_text(url).await?),
                 None => None,
             };
-            crate::web_engine::open(&name, &rpp, chart.as_deref(), media.as_deref())
+            crate::web_engine::open(
+                &name,
+                &rpp,
+                chart.as_deref(),
+                media.as_deref(),
+                guide.as_deref(),
+            )
                 .await
                 .map_err(|e| e.to_string())
         }

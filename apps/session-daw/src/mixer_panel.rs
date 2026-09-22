@@ -232,16 +232,23 @@ pub fn WebDawPanels(engine: crate::web_engine::EngineRef) -> Element {
     let links = use_context_provider(|| Links::new(session.rows.as_slice().to_vec()));
     let open = (links.open)();
     let arrange_bottom = if open { HEIGHT } else { 0.0 };
-    let mixer_display = if open { "block" } else { "none" };
+    // Hidden rather than removed: kept at its size, the mixer builds its
+    // strips and its GPU context at load, so `x` opens it at once instead
+    // of after the second a first build takes.
+    let (visibility, events) = if open {
+        ("visible", "auto")
+    } else {
+        ("hidden", "none")
+    };
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
             crate::web_host::WebArrangement { engine }
         }
         div {
-            style: "display:{mixer_display}; position:absolute; left:0; right:0; bottom:0; \
-                    height:{HEIGHT}px; border-top:1px solid #000;",
-            WebMixer {}
+            style: "visibility:{visibility}; pointer-events:{events}; position:absolute; \
+                    left:0; right:0; bottom:0; height:{HEIGHT}px; border-top:1px solid #000;",
+            WebMixer { hidden: !open }
         }
     }
 }
@@ -250,7 +257,7 @@ pub fn WebDawPanels(engine: crate::web_engine::EngineRef) -> Element {
 /// hands the keyboard back to the arrangement, as [`Mixer`] does.
 #[cfg(feature = "web")]
 #[component]
-pub fn WebMixer() -> Element {
+pub fn WebMixer(hidden: bool) -> Element {
     use crate::panel::PanelEvent;
     let links: Links = use_context();
     let mode: Option<Signal<session::modes::Mode>> = try_use_context();
@@ -293,7 +300,7 @@ pub fn WebMixer() -> Element {
         div {
             style: "position:absolute; top:0; left:0; right:0; bottom:0; overflow:hidden; \
                     background:{colors.surface};",
-            crate::web_host::WidgetCanvas { widget, panel: on_input, element: Some(slot) }
+            crate::web_host::WidgetCanvas { widget, panel: on_input, element: Some(slot), hidden }
         }
     }
 }

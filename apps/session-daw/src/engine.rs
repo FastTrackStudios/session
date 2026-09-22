@@ -2057,7 +2057,40 @@ pub struct Meters {
 
 impl Meters {
     /// Subscribe. `None` if the facade is not up, in which case the
+    /// meters stay at rest rather than the page failing to open.
+    ///
+    /// The browser: no thread to subscribe on, so a task on the page's
+    /// event loop, fed by the engine's meter pump (which the web audio
+    /// loop's renders fill).
+    #[cfg(not(feature = "native"))]
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        let daw = daw::rpc::Daw::try_get()?;
+        let latest = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into_task = std::sync::Arc::clone(&latest);
+        let alive = Alive::new();
+        let mine = alive.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _end = scopeguard(move || mine.ended());
+            let Ok(project) = daw.current_project().await else {
+                return;
+            };
+            let mut stream = project.meter_events();
+            while let Ok(Some(frame)) = stream.recv().await {
+                let frame = frame.get();
+                let Ok(mut slot) = into_task.lock() else {
+                    break;
+                };
+                slot.clear();
+                slot.extend_from_slice(&frame.tracks);
+            }
+        });
+        Some(Self { latest, alive })
+    }
+
+    /// Subscribe. `None` if the facade is not up, in which case the
     /// meters stay at rest rather than the window failing to open.
+    #[cfg(feature = "native")]
     #[must_use]
     pub fn start() -> Option<Self> {
         let runtime = crate::open::runtime()?;

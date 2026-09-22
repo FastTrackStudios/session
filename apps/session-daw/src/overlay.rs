@@ -1445,6 +1445,97 @@ pub fn panel_controls(
     counts
 }
 
+/// How thick a name field's meter strip is, at most.
+const STRIP: f64 = 2.5;
+
+/// Each visible track's level, drawn IN its name field: the left channel
+/// along the field's top edge, the right along its bottom, so the name
+/// between them stays clear. Colour and length only — the mixer's zones
+/// (safe, warm, hot, over, at `METER_ZONES`) in flat segments, no scale
+/// and no well: at a glance across forty rows, which are playing and
+/// which are hot is what an arrangement meter is for.
+///
+/// Returns whether any strip is lit, so a caller knows to keep redrawing
+/// while levels fall.
+#[must_use]
+pub fn row_meters(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &crate::arrangement::Arrangement,
+    rows: &[(Track, u32)],
+    tracks: &[Track],
+    map: &crate::plan::Rows,
+    view: crate::arrangement::Viewport,
+    levels: &[daw_proto::TrackLevels],
+    transform: Affine,
+) -> bool {
+    use crate::row::{Control, Row};
+    use daw_theme_art::paint::tcp::METER_ZONES;
+
+    let mut lit = false;
+    // The zone boundaries along a strip, as fractions of its length.
+    let edges = METER_ZONES.map(|db| daw_theme_art::paint::tcp::meter_norm(db));
+    let colors = [
+        palette.meter_safe,
+        palette.meter_warn,
+        palette.meter_danger,
+        palette.meter_danger,
+    ];
+    for index in scene.visible_rows(view) {
+        let (Some((track, depth)), Some(live)) = (rows.get(index), map.live(tracks, index)) else {
+            continue;
+        };
+        let Some(level) = usize::try_from(live.index)
+            .ok()
+            .and_then(|i| levels.get(i))
+        else {
+            continue;
+        };
+        let Some((top, height)) = scene.row_band(index, view) else {
+            continue;
+        };
+        let row = Row::new(top, height, i32::try_from(*depth).unwrap_or(0), track.is_folder);
+        let Some(field) = row.rect(Control::Name) else {
+            continue;
+        };
+        let thick = STRIP.min(field.height() / 6.0);
+        for (peak, y0) in [
+            (level.peak_left, field.y0),
+            (level.peak_right, field.y1 - thick),
+        ] {
+            let fraction = crate::engine::meter_fraction(peak).clamp(0.0, 1.0);
+            if fraction <= 0.0 || peak <= 1e-5 {
+                continue;
+            }
+            lit = true;
+            let length = field.width() * fraction;
+            let mut from = 0.0;
+            for (zone, color) in colors.iter().enumerate() {
+                let to = edges.get(zone).map_or(length, |edge| (field.width() * edge).min(length));
+                if to > from {
+                    painter.fill(
+                        vello::peniko::Fill::NonZero,
+                        transform,
+                        *color,
+                        None,
+                        &vello::kurbo::Rect::new(
+                            field.x0 + from,
+                            y0,
+                            field.x0 + to,
+                            y0 + thick,
+                        ),
+                    );
+                    from = to;
+                }
+                if from >= length {
+                    break;
+                }
+            }
+        }
+    }
+    lit
+}
+
 /// Every row's live controls, recorded once with a command range per
 /// row.
 ///
@@ -1853,6 +1944,59 @@ mod panel_tests {
             Affine::IDENTITY,
         );
         out
+    }
+
+    /// A playing track lights the strips in its name field; a silent
+    /// session draws none and says so, so the widget stops redrawing.
+    #[test]
+    fn a_level_lights_the_name_field_meter() {
+        let (scene, palette, _font, mut tracks, _) = panel();
+        for (i, track) in tracks.iter_mut().enumerate() {
+            track.index = u32::try_from(i).expect("small");
+        }
+        let rows = RowsRef(std::sync::Arc::new(
+            tracks.iter().cloned().map(|t| (t, 0)).collect(),
+        ));
+        let view = crate::arrangement::Viewport {
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            pps: 1.0,
+            zoom_y: 1.0,
+            width: 1600.0,
+            height: 900.0,
+        };
+        let map = crate::plan::Rows::of(rows.as_slice(), &tracks);
+        let draw = |levels: &[daw_proto::TrackLevels]| {
+            let mut out = anyrender::Scene::new();
+            let lit = row_meters(
+                &mut out,
+                &palette,
+                &scene,
+                rows.as_slice(),
+                &tracks,
+                &map,
+                view,
+                levels,
+                Affine::IDENTITY,
+            );
+            (lit, out)
+        };
+        let silent = vec![daw_proto::TrackLevels::default(); tracks.len()];
+        let (lit, quiet) = draw(&silent);
+        assert!(!lit && quiet.commands.is_empty(), "silence draws nothing");
+
+        let mut playing = silent.clone();
+        playing[1] = daw_proto::TrackLevels {
+            peak_left: 0.9,
+            peak_right: 0.05,
+            hold_left: 0.9,
+            hold_right: 0.05,
+        };
+        let (lit, loud) = draw(&playing);
+        assert!(lit, "a level lights the meter");
+        // A hot left channel crosses every zone; a quiet right one lights
+        // the first alone.
+        assert!(loud.commands.len() >= 4, "{} fills", loud.commands.len());
     }
 
     /// The point of the whole pass: hovering a panel control has to

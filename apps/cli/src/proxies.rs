@@ -127,6 +127,49 @@ pub fn write(session: &Path, quality: f32, force: bool) -> eyre::Result<()> {
     }
 }
 
+/// Every `.wav` under `dir`, relative to it.
+fn wavs(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> eyre::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            wavs(&path, base, out)?;
+        } else if path
+            .extension()
+            .is_some_and(|x| x.eq_ignore_ascii_case("wav"))
+        {
+            out.push(path.strip_prefix(base)?.to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+/// An Ogg copy of the guide library at `out`: the same layout, each
+/// `.wav` a `.ogg`.
+pub fn guide_library(library: &Path, out: &Path, quality: f32) -> eyre::Result<()> {
+    let mut files = Vec::new();
+    wavs(library, library, &mut files)?;
+    files.sort();
+    let (mut wav_bytes, mut ogg_bytes) = (0u64, 0u64);
+    for rel in &files {
+        let dst = out.join(rel).with_extension("ogg");
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        fts_sample::cache::write_ogg_proxy(&library.join(rel), &dst, quality)
+            .map_err(|e| eyre::eyre!("{}: {e}", rel.display()))?;
+        wav_bytes += std::fs::metadata(library.join(rel))?.len();
+        ogg_bytes += std::fs::metadata(&dst)?.len();
+    }
+    println!(
+        "{} samples: {} KB of WAV as {} KB of Ogg, in {}",
+        files.len(),
+        wav_bytes / 1024,
+        ogg_bytes / 1024,
+        out.display()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
