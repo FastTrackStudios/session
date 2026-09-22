@@ -174,7 +174,7 @@ fn main() {
     // `Shapes` and the widget's recording draws them directly. Building
     // the widget from an empty set is how its trigger rows came out
     // blank while every waveform beside them was right.
-    let previews = previews_of(&project);
+    let previews = session_daw::studio::previews_of(&project);
     let shapes = if std::env::var("FTS_BLITZ_SHAPES").as_deref() == Ok("0") {
         Shapes::default()
     } else {
@@ -855,27 +855,6 @@ fn read_back(scene: Option<&str>, project_path: &std::path::Path) -> Option<(Pro
     }
     let rows = RowsRef(Arc::new(planned));
     Some((project, rows))
-}
-
-/// Every item's shape: its notes if it holds MIDI, its peaks otherwise.
-///
-/// The notes are read BEFORE anything is drawn, not after: a renderer
-/// draws one frame and exits, so there is no later for them to arrive
-/// in — and an item drawn from a waveform it does not have is why a
-/// chord track once looked like a shaker.
-fn previews_of(project: &ProjectRef) -> session_daw::midi::Previews {
-    let previews = session_daw::midi::Previews::default();
-    previews.fill_blocking(
-        project
-            .0
-            .items
-            .values()
-            .flatten()
-            .filter(|item| project.0.is_midi(&item.guid))
-            .map(|item| (item.guid.clone(), item.length.as_seconds()))
-            .collect(),
-    );
-    previews
 }
 
 fn shapes_of(project: &ProjectRef, previews: &session_daw::midi::Previews) -> Shapes {

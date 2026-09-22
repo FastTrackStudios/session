@@ -626,7 +626,6 @@ impl Arrangement {
             // row shrinks, so a collapsed session still shows its items
             // as bands rather than as empty lanes.
             let inset = (body * 0.05).clamp(0.0, 2.0);
-            let track_index = usize::try_from(track.index).unwrap_or(0);
             for item in project.lane(&track.guid) {
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
@@ -660,6 +659,7 @@ impl Arrangement {
                 // block is drawn plain rather than filled with a fake
                 // shape, because a wrong picture that later corrects
                 // itself is worse than an honest empty one.
+                let wave = previews.wave(&item.guid);
                 match previews.get(&item.guid) {
                     Some(notes) => {
                         if let Some(roll) = midi_preview(&notes, x0, x1, top, bottom) {
@@ -667,13 +667,17 @@ impl Arrangement {
                             index.x.push((x0, x1));
                         }
                     }
-                    None if !project.is_midi(&item.guid) => {
-                        if let Some(wave) = waveform(track_index, x0, x1, top, bottom, slip) {
-                            lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &wave);
+                    // Audio: the take's own peaks, once they have been
+                    // read — plain until then, for the same reason.
+                    None => {
+                        if let Some(path) = wave
+                            .as_deref()
+                            .and_then(|wave| waveform(wave, x0, x1, top, bottom, 0.0))
+                        {
+                            lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &path);
                             index.x.push((x0, x1));
                         }
                     }
-                    None => {}
                 }
                 // The fades, as the part of the item they take away:
                 // the region over the gain curve, darkened, from each
@@ -687,7 +691,7 @@ impl Arrangement {
                 boxes.push(ItemBox {
                     row,
                     guid: item.guid.clone(),
-                    track: track_index,
+                    wave,
                     color,
                     slip,
                     x0,
@@ -972,10 +976,10 @@ pub enum ItemZone {
 pub struct ItemBox {
     pub row: usize,
     pub guid: String,
-    /// The simulation's index for the lane this sits on, which is what
-    /// its waveform is generated from. Carried so a live pass can draw
-    /// the same waveform the recorded one drew — see `slip_overlay`.
-    pub track: usize,
+    /// The waveform it was recorded with, if its peaks had been read.
+    /// Carried so a live pass can draw the same waveform the recorded one
+    /// drew — see `slip_overlay`.
+    pub wave: Option<std::sync::Arc<crate::midi::Wave>>,
     /// The colour the item was recorded in, for the same reason.
     pub color: Color,
     /// How far into its source the item starts, in seconds — the active
@@ -1195,8 +1199,15 @@ pub fn slip_overlay(
         None,
         &Rect::new(item.x0, y0, item.x1, y1),
     );
-    if let Some(wave) = waveform(item.track, item.x0, item.x1, y0, y1, slip) {
-        painter.fill(Fill::NonZero, at, item.color, None, &wave);
+    // The recorded peaks, moved by how far the drag has slipped the
+    // source under the item: past the audio's end they run out, and the
+    // item shows empty there until the release re-reads them.
+    if let Some(path) = item
+        .wave
+        .as_deref()
+        .and_then(|wave| waveform(wave, item.x0, item.x1, y0, y1, slip - item.slip))
+    {
+        painter.fill(Fill::NonZero, at, item.color, None, &path);
     }
     // And the fades back over it. The cover took them with the rest of
     // the recorded item, and an item that lost its fade shading for the
@@ -1610,62 +1621,57 @@ fn midi_preview(
     Some(path)
 }
 
-/// How many points a second a recorded waveform has.
+/// An item's waveform as one closed path: the maxima forward along the
+/// top, the minima back along the bottom, about the lane's middle.
 ///
-/// Recorded once in seconds, so the zoom stretches it: at a hundred
-/// pixels a second twelve points is a facet every eight pixels, which
-/// is the coarsest a waveform can be before it reads as a polygon —
-/// and at the opening zoom it is finer than the pixels.
-const WAVE_POINTS_PER_SECOND: f64 = 12.0;
-
-/// How many readings each point holds the peak of.
-///
-/// A waveform display is a peak display: each column is the loudest
-/// the audio got across it, not a sample from it. Sampled, a hit that
-/// fell between two points was a bead where a transient should be.
-const WAVE_HOLD: usize = 4;
-
-/// An item's waveform as one closed path: the envelope forward along
-/// the top, back along the bottom, mirrored about the lane's middle.
-///
-/// `slip` is how far into the source the item starts, and it shifts
-/// which part of the source each column shows — the item stays where it
-/// is and the audio inside it moves, which is what a slip edit is.
-/// Added to the timeline position rather than replacing it, so an
-/// unslipped item draws exactly what it drew before this existed.
-///
-/// From the simulation until the engine streams peaks — see
-/// `simulate::waveform` — and `None` for a lane too short to show one.
-fn waveform(track: usize, x0: f64, x1: f64, top: f64, bottom: f64, slip: f64) -> Option<BezPath> {
+/// Drawn from the take's own peaks ([`crate::midi::Wave`]), so point `i`
+/// sits at item time `i * step`. `shift` moves the audio under the item —
+/// a slip in flight, in seconds into the source — without moving the item.
+/// A hair of height at silence, so a quiet stretch still reads as audio
+/// rather than as a gap. `None` for a lane too short to show one, or for
+/// no audio inside the item.
+fn waveform(
+    wave: &crate::midi::Wave,
+    x0: f64,
+    x1: f64,
+    top: f64,
+    bottom: f64,
+    shift: f64,
+) -> Option<BezPath> {
     let half = (bottom - top) / 2.0;
-    if half < 1.5 {
+    if half < 1.5 || wave.step <= 0.0 || x1 <= x0 {
         return None;
     }
     let mid = (top + bottom) / 2.0;
-    let span = (x1 - x0).max(0.0);
-    let count = crate::num::index((span * WAVE_POINTS_PER_SECOND).ceil()).max(2);
-    let at = |i: usize| x0 + span * crate::num::coord(i) / crate::num::coord(count);
-    // A hair of amplitude at silence, so a quiet item still has a
-    // line down its middle and reads as audio rather than as a gap.
-    // Each point holds the peak over the stretch it stands for.
-    let step = 1.0 / WAVE_POINTS_PER_SECOND / crate::num::coord(WAVE_HOLD);
-    let amp = |t: f64| {
-        (0..WAVE_HOLD)
-            .map(|k| {
-                crate::simulate::waveform(track, crate::num::coord(k).mul_add(-step, t + slip))
-            })
-            .fold(0.0_f64, f64::max)
-            .mul_add(half - 1.0, 0.6)
-    };
-    let mut path = BezPath::new();
-    path.move_to((x0, mid - amp(x0)));
-    for i in 1..=count {
-        let x = at(i).min(x1);
-        path.line_to((x, mid - amp(x)));
+    // The points that land inside the item once shifted.
+    let first = crate::num::index((shift / wave.step).floor().max(0.0));
+    let last = crate::num::index(((x1 - x0 + shift) / wave.step).ceil().max(0.0))
+        .min(wave.points.len());
+    if first >= last {
+        return None;
     }
-    for i in (0..=count).rev() {
-        let x = at(i).min(x1);
-        path.line_to((x, mid + amp(x)));
+    let span = &wave.points[first..last];
+    // Each point at the middle of the stretch it stands for.
+    let x_of = |i: usize| {
+        (crate::num::coord(first + i) + 0.5)
+            .mul_add(wave.step, x0 - shift)
+            .clamp(x0, x1)
+    };
+    // A pixel short of the lane at full scale, and never thinner than a
+    // hair either side of the middle.
+    const HAIR: f64 = 0.6;
+    let reach = half - 1.0;
+    let mut path = BezPath::new();
+    for (i, &(max, _)) in span.iter().enumerate() {
+        let y = mid - (f64::from(max.max(0.0)) * reach).max(HAIR);
+        if i == 0 {
+            path.move_to((x_of(i), y));
+        } else {
+            path.line_to((x_of(i), y));
+        }
+    }
+    for (i, &(_, min)) in span.iter().enumerate().rev() {
+        path.line_to((x_of(i), mid + (-f64::from(min.min(0.0)) * reach).max(HAIR)));
     }
     path.close_path();
     Some(path)
@@ -2158,5 +2164,40 @@ mod lettering_tests {
             spell("KEY", "F major", 0.0, &keys).map(|s| s.numbers),
             Some("F major".into())
         );
+    }
+}
+
+#[cfg(test)]
+mod waveform_tests {
+    use super::waveform;
+    use crate::midi::Wave;
+
+    fn wave() -> Wave {
+        Wave {
+            step: 0.5,
+            points: vec![(1.0, -1.0), (0.0, 0.0), (0.5, -0.25), (1.0, -1.0)],
+        }
+    }
+
+    /// Full scale reaches the lane's edges less a pixel; silence keeps a
+    /// hair of height; and nothing is drawn outside the item.
+    #[test]
+    fn the_envelope_fills_the_lane_and_stays_in_the_item() {
+        use vello::kurbo::Shape as _;
+        let path = waveform(&wave(), 10.0, 12.0, 0.0, 20.0, 0.0).expect("a path");
+        let b = path.bounding_box();
+        assert!((b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9, "{b:?}");
+        assert!(b.x0 >= 10.0 && b.x1 <= 12.0, "{b:?}");
+    }
+
+    /// A slip moves the audio, not the item: shifted a whole second, the
+    /// first two points have gone out of the item's left edge.
+    #[test]
+    fn a_slip_moves_the_audio_under_the_item() {
+        let still = waveform(&wave(), 0.0, 2.0, 0.0, 20.0, 0.0).expect("a path");
+        let slipped = waveform(&wave(), 0.0, 2.0, 0.0, 20.0, 1.0).expect("a path");
+        assert!(slipped.elements().len() < still.elements().len());
+        // Past the end of the audio there is nothing left to draw.
+        assert!(waveform(&wave(), 0.0, 2.0, 0.0, 20.0, 5.0).is_none());
     }
 }

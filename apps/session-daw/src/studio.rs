@@ -229,6 +229,16 @@ pub fn previews_of(project: &ProjectRef) -> crate::midi::Previews {
             .map(|item| (item.guid.clone(), item.length.as_seconds()))
             .collect(),
     );
+    previews.fill_waves_blocking(
+        project
+            .0
+            .items
+            .values()
+            .flatten()
+            .filter(|item| !project.0.is_midi(&item.guid))
+            .map(|item| item.guid.clone())
+            .collect(),
+    );
     previews
 }
 

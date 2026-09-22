@@ -45,9 +45,62 @@ pub struct Note {
 /// means "read, and it has none". The two have to be distinguishable:
 /// an item with no notes should stop being asked about, and an item
 /// still loading should not be drawn as empty.
+/// An audio item's waveform, reduced to what a lane draws: the loudest
+/// and the lowest the take reaches across each stretch, every channel
+/// folded into one, from the item's own start.
+///
+/// The take's peaks, not the source's — the engine has already applied
+/// the item's slip, play rate and stretch, so point `i` is item time
+/// `i * step` and nothing here has to know how it got there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wave {
+    /// Seconds each point stands for.
+    pub step: f64,
+    /// `(max, min)` per point, in −1..1.
+    pub points: Vec<(f32, f32)>,
+}
+
+impl Wave {
+    /// Fold the engine's per-channel `[min, max, …]` blocks into one
+    /// envelope. `None` for a take with no audio to show.
+    #[must_use]
+    pub fn from_peaks(data: &daw_proto::TakePeakData) -> Option<Self> {
+        let channels = usize::try_from(data.num_channels.max(1)).ok()?;
+        let stride = channels * 2;
+        if data.peaks.len() < stride || data.sample_rate <= 0.0 {
+            return None;
+        }
+        let points = data
+            .peaks
+            .chunks_exact(stride)
+            .map(|block| {
+                let (mut max, mut min) = (0.0_f64, 0.0_f64);
+                for pair in block.chunks_exact(2) {
+                    min = min.min(pair[0]);
+                    max = max.max(pair[1]);
+                }
+                #[expect(clippy::cast_possible_truncation, reason = "a level in −1..1")]
+                (max as f32, min as f32)
+            })
+            .collect();
+        Some(Self {
+            step: f64::from(data.samples_per_peak.max(1)) / data.sample_rate,
+            points,
+        })
+    }
+}
+
+/// Samples per point a lane asks the engine for: about forty points a
+/// second at 44.1 kHz, finer than the pixels at the zoom a session opens
+/// at and coarse enough to fold from the peaks cache's mipmap rather
+/// than read the audio.
+pub const WAVE_BLOCK: u32 = 1024;
+
 #[derive(Clone, Default)]
 pub struct Previews {
     known: Arc<Mutex<HashMap<String, Vec<Note>>>>,
+    /// The audio items' waveforms, by item GUID.
+    waves: Arc<Mutex<HashMap<String, Arc<Wave>>>>,
     /// Set when something new has landed, so the window knows to
     /// re-record rather than polling a map every frame.
     fresh: Arc<std::sync::atomic::AtomicBool>,
@@ -58,6 +111,40 @@ impl Previews {
     #[must_use]
     pub fn get(&self, guid: &str) -> Option<Vec<Note>> {
         self.known.lock().ok()?.get(guid).cloned()
+    }
+
+    /// The waveform for an audio item, if its peaks have been read.
+    #[must_use]
+    pub fn wave(&self, guid: &str) -> Option<Arc<Wave>> {
+        self.waves.lock().ok()?.get(guid).cloned()
+    }
+
+    /// Read the peaks of every audio item named, now, on this thread —
+    /// [`Self::fill_blocking`]'s twin, for the same reason: a window that
+    /// opens on blank lanes and fills them in reads as a broken session.
+    pub fn fill_waves_blocking(&self, guids: Vec<String>) {
+        let Some(runtime) = crate::open::runtime() else {
+            return;
+        };
+        runtime.block_on(self.fill_waves(guids));
+    }
+
+    /// Read the peaks, awaited — the web build's way in.
+    pub async fn fill_waves(&self, guids: Vec<String>) {
+        let Some(daw) = daw::rpc::Daw::try_get() else {
+            return;
+        };
+        let Ok(project) = daw.current_project().await else {
+            return;
+        };
+        for guid in guids {
+            let Some(wave) = read_wave(&project, &guid).await else {
+                continue;
+            };
+            if let Ok(mut waves) = self.waves.lock() {
+                waves.insert(guid, Arc::new(wave));
+            }
+        }
     }
 
     /// Has anything arrived since this was last asked?
@@ -142,6 +229,14 @@ impl Previews {
     }
 }
 
+/// Read one audio item's waveform from its active take's peaks. `None`
+/// for an item the engine has no audio for — drawn plain, not faked.
+async fn read_wave(project: &daw_control::Project, guid: &str) -> Option<Wave> {
+    let item = project.items().by_guid(guid).await.ok()??;
+    let data = item.active_take().peaks(WAVE_BLOCK).await.ok()?;
+    Wave::from_peaks(&data)
+}
+
 /// Read one item's notes, as fractions of its length.
 ///
 /// An empty answer is a real answer — an empty MIDI item is a thing
@@ -219,5 +314,36 @@ mod tests {
             velocity: 100,
         };
         assert!(note.at + note.len <= 1.0, "a note ran past its item");
+    }
+}
+
+#[cfg(test)]
+mod wave_tests {
+    use super::Wave;
+
+    /// Channels fold into one envelope — the loudest of either, the lowest
+    /// of either — and a point stands for its block's worth of seconds.
+    #[test]
+    fn channels_fold_and_the_step_is_the_block() {
+        let data = daw_proto::TakePeakData {
+            sample_rate: 48_000.0,
+            num_channels: 2,
+            // [ch0 min, ch0 max, ch1 min, ch1 max] per block
+            peaks: vec![-0.2, 0.5, -0.7, 0.1, -0.1, 0.0, -0.3, 0.9],
+            samples_per_peak: 480,
+        };
+        let wave = Wave::from_peaks(&data).expect("a wave");
+        assert!((wave.step - 0.01).abs() < 1e-12);
+        assert_eq!(wave.points, vec![(0.5, -0.7), (0.9, -0.3)]);
+    }
+
+    /// A take with no audio has no wave, not a flat one.
+    #[test]
+    fn no_peaks_is_no_wave() {
+        let data = daw_proto::TakePeakData {
+            peaks: Vec::new(),
+            ..daw_proto::TakePeakData::default()
+        };
+        assert_eq!(Wave::from_peaks(&data), None);
     }
 }

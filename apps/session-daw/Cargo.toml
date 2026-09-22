@@ -192,6 +192,9 @@ native = [
     "eq-ui/native",
     "daw/standalone-rpp",
     "daw/standalone-bootstrap",
+    # Take peaks folded from the `.sessionpeaks` (or REAPER's `.reapeaks`)
+    # cache beside the media, rather than a PCM scan on every open.
+    "daw-standalone/reapeaks",
     "daw/cli",
     "dynamic-template/reaper",
     "dep:patch-list",
