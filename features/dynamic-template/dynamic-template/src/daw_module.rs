@@ -12,9 +12,8 @@ use daw_reaper::track::{
 
 use crate::golden_session::kind::{Kind, TrackExt};
 use crate::scenes;
-use crate::{
-    default_config, monarchy_sort, track_schema, ItemMetadata, OrganizeIntoTracks, Structure,
-};
+use crate::visibility::normalize_key;
+use crate::{default_config, track_schema, OrganizeIntoTracks};
 /// Every action this module declares, in one list.
 ///
 /// The four `#[architect::actions]` traits below are the single source of
@@ -637,48 +636,7 @@ fn rebuild_group_cache() -> eyre::Result<HashMap<String, Vec<String>>> {
         .into_iter()
         .map(|t| t.name)
         .collect();
-    let structure = monarchy_sort(names, &default_config())?;
-    let mut cache = HashMap::new();
-    collect_group_cache(&structure, &mut Vec::new(), &mut cache);
-    for names in cache.values_mut() {
-        names.sort();
-        names.dedup();
-    }
-    Ok(cache)
-}
-
-fn collect_group_cache(
-    structure: &Structure<ItemMetadata>,
-    path: &mut Vec<String>,
-    cache: &mut HashMap<String, Vec<String>>,
-) {
-    let pushed = !structure.name.is_empty() && structure.name != "root";
-    if pushed {
-        path.push(structure.name.clone());
-    }
-
-    for item in &structure.items {
-        for group in path.iter() {
-            cache
-                .entry(normalize_key(group))
-                .or_default()
-                .push(item.original.clone());
-        }
-        if !path.is_empty() {
-            cache
-                .entry(normalize_key(&path.join("_")))
-                .or_default()
-                .push(item.original.clone());
-        }
-    }
-
-    for child in &structure.children {
-        collect_group_cache(child, path, cache);
-    }
-
-    if pushed {
-        path.pop();
-    }
+    crate::visibility::groups(names)
 }
 
 fn log_status_action(state: &Arc<Mutex<State>>) {
@@ -1208,23 +1166,6 @@ fn with_suffix(name: &str, suffix: &str) -> String {
     format!("{name}{suffix}")
 }
 
-fn normalize_key(value: &str) -> String {
-    let mut key = String::new();
-    let mut last_was_sep = false;
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            key.push(ch.to_ascii_lowercase());
-            last_was_sep = false;
-        } else if !last_was_sep && !key.is_empty() {
-            key.push('_');
-            last_was_sep = true;
-        }
-    }
-    while key.ends_with('_') {
-        key.pop();
-    }
-    key
-}
 
 // One static table entry per template group; splitting it up would only
 // obscure the 1:1 mapping to REAPER command suffixes.
