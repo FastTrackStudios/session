@@ -89,7 +89,7 @@ fn fixture() -> PathBuf {
 /// silently comparing two different parts of the session.
 fn lane_rect() -> (u32, u32, u32, u32) {
     let x = session_daw::rails::SIDE + session_daw::arrangement::TCP_WIDTH;
-    let y = session_daw::rails::TOP + session_daw::ruler::RULER_H;
+    let y = session_daw::rails::TOP + session_daw::ruler::ruler_h();
     let w = 2560.0 - x - session_daw::rails::SIDE;
     let h = 1440.0 - y;
     #[expect(

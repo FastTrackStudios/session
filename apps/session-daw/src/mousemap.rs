@@ -109,7 +109,8 @@ pub fn resolve(context: Context, gesture: Gesture, mods: Mods) -> Bound {
         // Shift is the fine gesture everywhere something can be
         // dragged. On a click there is nothing to snap, so the answer
         // is the harmless one.
-        snap: !mods.shift,
+        // And never while the toolbar has snapping off.
+        snap: !mods.shift && crate::options::SNAP.get(),
     }
 }
 

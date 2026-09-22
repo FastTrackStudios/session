@@ -12305,6 +12305,9 @@ dependencies = [
  "raw-window-handle 0.6.2",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "web-sys",
  "windows-sys 0.61.2",
 ]
@@ -13083,6 +13086,7 @@ dependencies = [
  "input",
  "input-config-proto",
  "input-keybinds",
+ "keyflow",
  "patch-list",
  "pollster",
  "pprof",
@@ -13092,6 +13096,7 @@ dependencies = [
  "saturate-profiles",
  "session",
  "session-guide",
+ "session-ui",
  "skrifa 0.42.1",
  "tempfile",
  "tokio",
@@ -13119,6 +13124,8 @@ dependencies = [
  "daw-ui",
  "dawfile-reaper",
  "dioxus",
+ "dioxus-native",
+ "dirs",
  "eyre",
  "fts-chrome",
  "getrandom 0.3.4",
@@ -13126,7 +13133,9 @@ dependencies = [
  "keyflow",
  "keyflow-sync",
  "libc",
+ "rfd",
  "session",
+ "session-daw",
  "session-guide",
  "session-proto",
  "session-ui",
@@ -13143,6 +13152,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "winit",
 ]
 
 [[package]]
@@ -18064,19 +18074,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "phon"
-version = "0.2.0-rc.5"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
-
-[[patch.unused]]
-name = "baseview"
-version = "0.3.3"
-
-[[patch.unused]]
-name = "dsp-golden"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -18179,3 +18176,16 @@ version = "0.1.0"
 [[patch.unused]]
 name = "reaper-kbd"
 version = "0.1.0"
+
+[[patch.unused]]
+name = "baseview"
+version = "0.3.3"
+
+[[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "phon"
+version = "0.2.0-rc.5"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"

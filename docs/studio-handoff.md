@@ -9,6 +9,13 @@ and playing it through CoreAudio. Everything here was done on the Mac mini
 **Nothing is pushed.** All of this is local commits on three repos, held until
 there is more to push together (§6).
 
+**2026-09-22 follow-on:** this studio is now also embedded as a panel in the
+Session app's own Blitz shell (`session-desktop`, `apps/desktop/src/native/`)
+— a top bar, a DAW view and a Performance view with a live paginated chart
+panel, on the same prepared session this doc describes. See
+`docs/app-on-blitz.md` for that work (currently uncommitted, further along
+than this file).
+
 ## 1. Try it
 
 ```bash

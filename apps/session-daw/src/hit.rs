@@ -128,7 +128,7 @@ pub fn arrangement(
     // over it, so it is hit before it too.
     let corner_w = crate::arrangement::TCP_WIDTH;
     if y >= rail_y
-        && y < rail_y + crate::ruler::RULER_H
+        && y < rail_y + crate::ruler::ruler_h()
         && x >= rail_x
         && x < rail_x + corner_w
         && modes > 0
@@ -141,7 +141,7 @@ pub fn arrangement(
     // The ruler: the rest of that band. Asked what is under the
     // pointer with the same lists the ruler DRAWS from, so a press
     // lands on what it looks like it landed on.
-    if y >= rail_y && y < rail_y + crate::ruler::RULER_H {
+    if y >= rail_y && y < rail_y + crate::ruler::ruler_h() {
         return Hit::new(
             Target::Ruler {
                 seconds: seconds_at(x - rail_x, view),
@@ -163,7 +163,7 @@ pub fn arrangement(
     // In screen pixels from the top of the lanes. `row_at_screen`
     // divides by the vertical zoom; `item_at` below wants the same
     // number in session units, which is that divided again.
-    let screen_y = y - rail_y - crate::ruler::RULER_H + view.scroll_y;
+    let screen_y = y - rail_y - crate::ruler::ruler_h() + view.scroll_y;
     let Some(row) = scene.row_at_screen(screen_y, view) else {
         return Hit::empty();
     };

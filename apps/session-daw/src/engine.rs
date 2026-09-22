@@ -531,15 +531,30 @@ pub fn drag(
 /// backlog after a stall, which is the one thing a playhead must not
 /// replay.
 pub struct Transport {
-    state: std::sync::Arc<std::sync::Mutex<(f64, bool)>>,
+    state: std::sync::Arc<std::sync::Mutex<Reading>>,
 }
+
+/// One read of the transport.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Reading {
+    /// The play position, in seconds.
+    pub at: f64,
+    pub playing: bool,
+    pub looping: bool,
+    pub recording: bool,
+    /// The tempo at the play position.
+    pub bpm: f64,
+}
+
+/// The one poller every panel reads — see [`Transport::shared`].
+static SHARED: std::sync::OnceLock<Option<Transport>> = std::sync::OnceLock::new();
 
 impl Transport {
     /// Start polling. `None` if the facade is not up.
     #[must_use]
     pub fn start() -> Option<Self> {
         let runtime = crate::open::runtime()?;
-        let state = std::sync::Arc::new(std::sync::Mutex::new((0.0, false)));
+        let state = std::sync::Arc::new(std::sync::Mutex::new(Reading::default()));
         let writer = std::sync::Arc::clone(&state);
         std::thread::Builder::new()
             .name("session-daw-transport".into())
@@ -551,7 +566,13 @@ impl Transport {
                         let transport = project.transport();
                         let at = transport.get_position().await.ok()?;
                         let playing = transport.is_playing().await.ok()?;
-                        Some((at, playing))
+                        Some(Reading {
+                            at,
+                            playing,
+                            looping: transport.is_looping().await.unwrap_or(false),
+                            recording: transport.is_recording().await.unwrap_or(false),
+                            bpm: transport.get_tempo().await.unwrap_or(0.0),
+                        })
                     });
                     if let Some(read) = read {
                         if let Ok(mut slot) = writer.lock() {
@@ -570,10 +591,26 @@ impl Transport {
         Some(Self { state })
     }
 
+    /// The process's poller, started on first use. Every panel reads this
+    /// one rather than starting its own: a transport is one thing, and a
+    /// poll thread per panel asks the engine the same question N times.
+    /// `None` if the facade is not up.
+    #[must_use]
+    pub fn shared() -> Option<&'static Self> {
+        SHARED.get_or_init(Self::start).as_ref()
+    }
+
     /// The last position read, and whether it is moving.
     #[must_use]
     pub fn read(&self) -> (f64, bool) {
-        self.state.lock().map_or((0.0, false), |slot| *slot)
+        let reading = self.reading();
+        (reading.at, reading.playing)
+    }
+
+    /// Everything the last poll read.
+    #[must_use]
+    pub fn reading(&self) -> Reading {
+        self.state.lock().map_or_else(|_| Reading::default(), |slot| *slot)
     }
 }
 
@@ -592,6 +629,14 @@ pub enum Move {
     /// Move the play position to a time — what a click on the ruler
     /// means once the transport is following it.
     Seek,
+    /// Stop, wherever it is.
+    Stop,
+    /// To the end of the project.
+    End,
+    /// Loop on or off.
+    ToggleLoop,
+    /// Record on or off.
+    ToggleRecord,
 }
 
 /// Send a transport command, off the event loop.
@@ -618,6 +663,10 @@ pub fn transport(command: Move, seconds: f64) {
                     Move::PlayStop => transport.play_stop().await,
                     Move::Home => transport.goto_start().await,
                     Move::Seek => transport.set_position(seconds.max(0.0)).await,
+                    Move::Stop => transport.stop().await,
+                    Move::End => transport.goto_end().await,
+                    Move::ToggleLoop => transport.toggle_loop().await,
+                    Move::ToggleRecord => transport.toggle_recording().await,
                 };
                 if let Err(error) = outcome {
                     tracing::warn!(error = %error, command = ?command, "the transport refused");

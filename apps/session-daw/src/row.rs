@@ -71,14 +71,8 @@ impl Row {
     pub fn new(y: f64, height: f64, depth: i32, is_folder: bool) -> Self {
         let indent = (f64::from(depth.max(0)) * INDENT).min(MAX_INDENT);
         let density = Density::at(height);
-        // The control band, as `draw_row` lays it out: row one at its
-        // authored height when there is room for two, the whole row
-        // otherwise.
-        let (field_top, field_h) = if density == Density::Full {
-            (y + f64::from(g::ROW_ONE), 24.0)
-        } else {
-            (y + 1.0, (height - 2.0).max(1.0))
-        };
+        // The control band, as `draw_row` lays it out (`tcp::band`).
+        let (field_top, field_h) = crate::tcp::band(y, height, density);
         let _ = is_folder;
         Self {
             y,
@@ -89,6 +83,16 @@ impl Row {
             field_h,
             band: field_h,
         }
+    }
+
+    /// Whether the band is tall enough for the routing and FX buttons.
+    ///
+    /// On every row that has the room, not only the full ones: the panel
+    /// is the same width at every height, so a compact row has the same
+    /// space along it that a full row does. The same line the knobs use,
+    /// since the buttons are the same height as a knob.
+    fn fits_buttons(&self) -> bool {
+        self.band >= KNOB_LEGIBLE
     }
 
     /// Whether a value indicator is a knob or a flattened bar.
@@ -138,15 +142,10 @@ impl Row {
                     } else {
                         BUTTON.0 + BUTTON_GAP
                     };
-                let (top, h) = if self.density == Density::Full {
-                    (
-                        self.y + f64::from(g::ROW_ONE) + (24.0 - BUTTON.1) / 2.0,
-                        BUTTON.1,
-                    )
-                } else {
-                    let h = self.field_h.min(BUTTON.1);
-                    (self.field_top + (self.field_h - h) / 2.0, h)
-                };
+                // Centred on the band, the line the name is on, at
+                // every height (`tcp::band`).
+                let h = self.field_h.min(BUTTON.1);
+                let top = self.field_top + (self.field_h - h) / 2.0;
                 Some(Rect::new(x, top, x + BUTTON.0, top + h))
             }
             Control::RecArm => (self.indicator() == Indicator::Knob).then(|| {
@@ -181,7 +180,7 @@ impl Row {
                     self.field_top + self.field_h,
                 ))
             }
-            Control::Routing => (self.density == Density::Full).then(|| {
+            Control::Routing => self.fits_buttons().then(|| {
                 let x = f64::from(g::ROUTING_X);
                 Some(Rect::new(
                     x,
@@ -205,7 +204,7 @@ impl Row {
                     y + f64::from(daw_theme_art::geometry::mcp::PHASE_W),
                 ))
             })?,
-            Control::Fx => (self.density == Density::Full).then(|| {
+            Control::Fx => self.fits_buttons().then(|| {
                 let x = f64::from(g::FX_IN_X);
                 Some(Rect::new(
                     x,
@@ -286,6 +285,30 @@ mod tests {
     /// A row too short to turn a knob shows bars instead, and the arm
     /// goes entirely — a five-pixel ring is neither readable nor
     /// hittable, and claiming it is there would make a dead zone.
+    /// Zooming rows taller never stretches the name or moves it off the
+    /// line the mute and solo sit on: every row has the same band, at the
+    /// same place from its top.
+    #[test]
+    fn the_name_and_its_buttons_keep_their_size_at_every_height() {
+        let name_at = |h: f64| Row::new(100.0, h, 1, false).rect(Control::Name).unwrap();
+        let reference = name_at(70.0);
+        for h in [40.0, 57.0, 58.0, 70.0, 120.0, 300.0] {
+            let name = name_at(h);
+            assert!((name.height() - reference.height()).abs() < 1e-9, "{h}: {name:?}");
+            assert!((name.y0 - reference.y0).abs() < 1e-9, "{h}: {name:?}");
+            let row = Row::new(100.0, h, 1, false);
+            let mute = row.rect(Control::Mute).unwrap();
+            let solo = row.rect(Control::Solo).unwrap();
+            let middle = |r: Rect| (r.y0 + r.y1) / 2.0;
+            assert!((middle(mute) - middle(name)).abs() < 1e-9, "{h}: mute off the name's line");
+            assert!((middle(solo) - middle(name)).abs() < 1e-9, "{h}: solo off the name's line");
+        }
+        // A row too short for the whole band shrinks it, and keeps it
+        // inside the row.
+        let short = Row::new(100.0, 20.0, 0, false).rect(Control::Name).unwrap();
+        assert!(short.y0 >= 101.0 && short.y1 <= 119.0, "{short:?}");
+    }
+
     #[test]
     fn a_short_row_swaps_knobs_for_bars_and_drops_the_arm() {
         let short = Row::new(0.0, 16.0, 0, false);
@@ -295,6 +318,20 @@ mod tests {
         // collapsed row is READ for.
         assert!(short.rect(Control::Volume).is_some());
         assert!(short.rect(Control::Pan).is_some());
+    }
+
+    /// Routing and FX are on every row with room for them: the panel is
+    /// the same width at every height, so a compact row has the space.
+    #[test]
+    fn a_compact_row_keeps_routing_and_fx() {
+        let compact = Row::new(0.0, 40.0, 0, false);
+        assert_eq!(compact.density, Density::Compact);
+        assert!(compact.rect(Control::Routing).is_some());
+        assert!(compact.rect(Control::Fx).is_some());
+        // Too short for a button that size: they go, as the arm does.
+        let short = Row::new(0.0, 16.0, 0, false);
+        assert!(short.rect(Control::Routing).is_none());
+        assert!(short.rect(Control::Fx).is_none());
     }
 
     /// A row drawn as a band has nothing to hit at all.

@@ -107,6 +107,12 @@ impl<S: Copy + PartialEq> Pointer<S> {
             .or_else(|| self.hovered.map(|spot| (spot, Interaction::Hover)))
     }
 
+    /// The control a press is holding down, if one is.
+    #[must_use]
+    pub fn pressed(&self) -> Option<S> {
+        self.pressed
+    }
+
     #[must_use]
     pub fn hovered(&self) -> Option<S> {
         self.hovered

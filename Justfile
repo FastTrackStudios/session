@@ -272,6 +272,17 @@ uninstall:
     gtk-update-icon-cache ~/.local/share/icons/hicolor 2>/dev/null || true
     echo "uninstalled (user data in ~/.config/fts and ~/.config/signal kept)"
 
+# Session.app + its macOS .pkg installer (signed with the Developer ID
+# identities in the login keychain), built with the host toolchain — see the
+# script's header for the knobs (NOTARIZE=1, ADHOC_SIGN=1, MAC_TARGETS=...).
+macos-pkg:
+    bash apps/desktop/ios/package-session-macos.sh
+
+# Build the installer and install it for this user (~/Applications, no
+# password), replacing any earlier install.
+macos-install: macos-pkg
+    installer -pkg "target/Session-$(cargo pkgid -p session-desktop | sed 's/.*[#@]//')-macos.pkg" -target CurrentUserHomeDirectory
+
 # ── Release packaging ────────────────────────────────────────────────────
 # Assemble the distributable release artifacts into dist/ (what a
 # codeberg release carries, and what fts-installer downloads):

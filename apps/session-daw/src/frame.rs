@@ -22,7 +22,7 @@ use crate::arrangement::{Arrangement, Fades, Palette, TCP_WIDTH, Viewport};
 use crate::expression::Expression;
 use crate::profile::Counts;
 use crate::rails::{self, Frame};
-use crate::ruler::{self, Bars, RULER_H};
+use crate::ruler::{self, Bars, ruler_h};
 use crate::text::Font;
 
 /// The finest the grid ever gets — sixteenths, as a fraction of a
@@ -135,7 +135,7 @@ impl Arrange<'_> {
         // The lanes: scrolled both ways, and scaled horizontally by the
         // zoom. Recorded at one pixel per second, so the scale IS the
         // zoom — no rebuild, no re-record.
-        let lanes_at = (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy);
+        let lanes_at = (rail.0 + TCP_WIDTH - sx, rail.1 + ruler_h() - sy);
         let a = scene.replay_lanes(
             painter,
             view,
@@ -159,7 +159,7 @@ impl Arrange<'_> {
         // The panel: the SAME vertical offset, which is the entire
         // point. It cannot drift from the lanes because there is
         // nothing to drift — one number moves both.
-        let panel_at = Affine::translate((rail.0, rail.1 + RULER_H - sy));
+        let panel_at = Affine::translate((rail.0, rail.1 + ruler_h() - sy));
         let b = scene.replay_panel(painter, view, panel_at);
         // After the lanes — their backgrounds are opaque — and the
         // ruler last of all, over everything scrolled under it.
@@ -332,6 +332,27 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
         scene.sections(),
         scene.markers(),
     );
+    ruler::chord_lane(
+        painter,
+        palette,
+        font,
+        view,
+        rail,
+        scene.chart(),
+        scene.lettering,
+    );
+    // The lines the bands and flags drop, over the ruler below them and
+    // on down through the lanes.
+    let bottom = rail.1 + view.height;
+    ruler::lane_lines(
+        painter,
+        palette,
+        view,
+        rail,
+        scene.sections(),
+        scene.markers(),
+        bottom,
+    );
     // A mark's name being typed, over the lane it is in. After the
     // lanes so it is not painted under the band it renames, and before
     // the cursors, which belong over everything.
@@ -351,18 +372,7 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
             crate::rename::paint(painter, palette, font, open, field, Affine::IDENTITY);
         }
     }
-    let top = rail.1 + RULER_H;
-    let bottom = rail.1 + view.height;
-    ruler::lane_lines(
-        painter,
-        palette,
-        view,
-        rail,
-        scene.sections(),
-        scene.markers(),
-        top,
-        bottom,
-    );
+    let top = rail.1 + ruler_h();
     // The cursors last, over the lanes and under nothing: a
     // playhead behind an item is a playhead you cannot follow.
     crate::cursor::paint_edit(painter, palette, &edit, view, rail, top, bottom);

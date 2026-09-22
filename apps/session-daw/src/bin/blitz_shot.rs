@@ -136,7 +136,7 @@ fn main() {
     } else if rails || all {
         height
     } else if ruler {
-        session_daw::ruler::RULER_H
+        session_daw::ruler::ruler_h()
     } else {
         frame_height(height)
     };
@@ -784,7 +784,7 @@ pub fn lane_x() -> f64 {
 
 /// And down: past the top rail and the ruler.
 pub fn lane_y() -> f64 {
-    session_daw::rails::TOP + session_daw::ruler::RULER_H
+    session_daw::rails::TOP + session_daw::ruler::ruler_h()
 }
 
 /// How wide it is — to the right rail.
@@ -1179,7 +1179,7 @@ fn Shot(props: ShotProps) -> Element {
             }
             ModeBar {
                 width: session_daw::arrangement::TCP_WIDTH,
-                height: session_daw::ruler::RULER_H,
+                height: session_daw::ruler::ruler_h(),
                 colors: props.colors,
                 modes: props.modes.into(),
             }
@@ -1916,7 +1916,7 @@ fn Window(props: ShotProps) -> Element {
             }
             ModeBar {
                 width: session_daw::arrangement::TCP_WIDTH,
-                height: session_daw::ruler::RULER_H,
+                height: session_daw::ruler::ruler_h(),
                 colors: props.colors.clone(),
                 modes: props.modes.clone().into(),
             }

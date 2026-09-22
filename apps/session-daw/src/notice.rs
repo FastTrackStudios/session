@@ -162,7 +162,7 @@ pub fn area(
     // is not politeness: `clamp` panics when its bounds cross, and a
     // window shorter than the notice it is showing would cross them.
     let first = view.scroll_y + INSET;
-    let last = (view.scroll_y + view.height - crate::ruler::RULER_H - tall - INSET).max(first);
+    let last = (view.scroll_y + view.height - crate::ruler::ruler_h() - tall - INSET).max(first);
     let top = (top + 2.0).clamp(first, last);
     let x0 = crate::arrangement::TCP_WIDTH + INSET;
     Rect::new(x0, top, x0 + room, top + tall)

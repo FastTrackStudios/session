@@ -11,15 +11,23 @@
 //! with its id, so it is logged rather than silently dropped.
 //!
 //! Where the profile is found: `FTS_INPUT_PROFILE` (a profile
-//! directory), else the daw checkout beside this repo, else a built-in
-//! copy of the bindings this window needs — the same ids, so the two
-//! never disagree about what a key does.
+//! directory), else the copy `input-keybinds` compiles in (so an
+//! installed app, started from anywhere, has the same keys), else a
+//! built-in copy of the bindings this window needs.
+//!
+//! A sequence's first key (`z`, "Zoom") leaves a pending prefix, and
+//! [`Keys::which_key`] lists what can follow it, with the profile's own
+//! labels, for the which-key popup ([`crate::which_key`]).
 
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 use input::{
-    ActionContext, InputCommand, InputEvent, InputProcessor, KeyCode, KeymapConfig, Modifiers,
+    ActionContext, InputCommand, InputEvent, InputProcessor, KeyChord, KeyCode, KeyTrie,
+    KeymapConfig, ModeId, Modifiers,
 };
+
+use crate::which_key::{Entry, WhichKey};
 
 /// What a key asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,8 +53,24 @@ pub enum Action {
     /// The edit cursor to the previous or next marker.
     Marker(i32),
     ToggleRecord,
+    /// Something about the view rather than the session: a zoom.
+    View(crate::zoom::Command),
+    /// The visibility manager: show or hide a group of tracks.
+    Visibility(Visibility),
+    /// Show or hide the docked mixer.
+    ToggleMixer,
     /// A binding the window does not do yet, by its REAPER id.
     Unbound(String),
+}
+
+/// The visibility manager's actions (`v` and its tree).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    /// Show the group if all of it is hidden, else hide it. The group's
+    /// name as the action spells it (`DRUMS`), matched loosely.
+    Toggle(String),
+    ShowAll,
+    HideAll,
 }
 
 /// REAPER's action ids, as the profile binds them, to what this window
@@ -84,7 +108,16 @@ pub fn action_of(id: &str) -> Action {
         "40172" => Action::Marker(-1),
         "40173" => Action::Marker(1),
         "1013" => Action::ToggleRecord,
-        other => Action::Unbound(other.to_owned()),
+        "40078" => Action::ToggleMixer,
+        "FTS_VISIBILITY_MANAGER_SHOW_ALL" => Action::Visibility(Visibility::ShowAll),
+        "FTS_VISIBILITY_MANAGER_HIDE_ALL" => Action::Visibility(Visibility::HideAll),
+        other => {
+            if let Some(group) = other.strip_prefix("FTS_VISIBILITY_MANAGER_TOGGLE_") {
+                return Action::Visibility(Visibility::Toggle(group.to_owned()));
+            }
+            crate::zoom::Command::of(other)
+                .map_or_else(|| Action::Unbound(other.to_owned()), Action::View)
+        }
     }
 }
 
@@ -93,36 +126,54 @@ pub struct Keys {
     processor: InputProcessor,
     context: ActionContext,
     pub source: String,
+    /// The which-key labels the keymap does not keep.
+    labels: HashMap<Vec<KeyChord>, String>,
+    /// The chords of the sequence typed so far, mirrored because the
+    /// processor reports its pending sequence only as a display string,
+    /// and the popup has to walk the trie to it.
+    pending: Vec<KeyChord>,
 }
 
 impl Keys {
     /// Load the FTS profile, or fall back to the built-in bindings.
     #[must_use]
     pub fn load() -> Self {
-        let (config, source) = profile_dir()
+        let (profile, source) = profile_dir()
             .and_then(|dir| {
-                input_keybinds::load_profile_keymap(&dir).map(|c| (c, dir.display().to_string()))
+                input_keybinds::load_profile_dir(&dir).map(|p| (p, dir.display().to_string()))
             })
             .or_else(|| {
-                KeymapConfig::from_json_str(BUILTIN)
-                    .ok()
-                    .map(|c| (c, "built-in".to_owned()))
+                input_keybinds::embedded::fasttrackstudio()
+                    .map(|p| (p, "fasttrackstudio (embedded)".to_owned()))
             })
-            .unwrap_or_else(|| (KeymapConfig::default(), "none".to_owned()));
+            .or_else(|| {
+                KeymapConfig::from_json_str(BUILTIN).ok().map(|keymap| {
+                    let profile = input_keybinds::Profile {
+                        keymap,
+                        labels: HashMap::new(),
+                    };
+                    (profile, "built-in".to_owned())
+                })
+            })
+            .unwrap_or_else(|| (input_keybinds::Profile::default(), "none".to_owned()));
         let processor =
-            InputProcessor::from_config(config).unwrap_or_else(|_| InputProcessor::new());
+            InputProcessor::from_config(profile.keymap).unwrap_or_else(|_| InputProcessor::new());
         Self {
             processor,
             context: ActionContext::new(),
             source,
+            labels: profile.labels,
+            pending: Vec::new(),
         }
     }
 
     /// A key went down. The actions it asked for, in order — empty
     /// when the key is not bound, so the window can keep its own.
     pub fn press(&mut self, key: KeyCode, modifiers: Modifiers) -> Vec<Action> {
+        let chord = KeyChord::new(key.clone(), modifiers);
         let event = InputEvent::Key(input::KeyEvent { key, modifiers });
-        self.processor
+        let actions = self
+            .processor
             .process(event, &self.context)
             .into_iter()
             .filter_map(|command| match command {
@@ -130,34 +181,141 @@ impl Keys {
                 InputCommand::ActionWithArgs { action, .. } => Some(action_of(action.as_str())),
                 _ => None,
             })
-            .collect()
+            .collect();
+        self.follow(Some(chord));
+        actions
     }
 
-    /// What is buffered, waiting for the rest of a sequence — for a
-    /// which-key hint.
+    /// A key came back up. Only from a real key-up: the processor keeps
+    /// held keys so auto-repeat cannot walk a tree over and over, and a
+    /// held prefix is sticky (hold `z`, tap `t` then `v`: both fire).
+    /// `true` when the popup should go.
+    pub fn release(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
+        let hide = self
+            .processor
+            .notify_key_release(KeyChord::new(key, modifiers));
+        self.follow(None);
+        hide
+    }
+
+    /// Drop a half-typed sequence: Escape, or a held `z` used as the zoom
+    /// tool rather than as a prefix.
+    pub fn cancel(&mut self) {
+        // The public way to drop one. It hands back the abandoned first
+        // key as unhandled, which nothing here wants.
+        let _ = self.processor.timeout_expired();
+        self.pending.clear();
+    }
+
+    /// Whether a sequence is half-typed.
     #[must_use]
-    pub fn pending(&self) -> Option<String> {
-        self.processor.pending_display()
+    pub fn is_pending(&self) -> bool {
+        self.processor.pending_display().is_some()
+    }
+
+    /// Keep the mirror in step with the processor: extended by the chord
+    /// just pressed while a prefix is live, rewound to what is still
+    /// pending after a sticky match, cleared when nothing is.
+    fn follow(&mut self, pressed: Option<KeyChord>) {
+        let Some(display) = self.processor.pending_display() else {
+            self.pending.clear();
+            return;
+        };
+        let depth = display.split_whitespace().count();
+        if let Some(chord) = pressed
+            && self.pending.len() < depth
+        {
+            self.pending.push(chord);
+        }
+        self.pending.truncate(depth);
+    }
+
+    /// What can follow the keys typed so far, for the which-key popup.
+    /// `None` when nothing is pending.
+    #[must_use]
+    pub fn which_key(&self) -> Option<WhichKey> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let KeyTrie::Node(root) = self.processor.keymaps().get(&ModeId::new("normal"))? else {
+            return None;
+        };
+        let mut node = root;
+        for chord in &self.pending {
+            match node.get(chord) {
+                Some(KeyTrie::Node(next)) => node = next,
+                _ => return None,
+            }
+        }
+        let mut entries: Vec<Entry> = node
+            .children
+            .iter()
+            .map(|(chord, child)| {
+                let mut path = self.pending.clone();
+                path.push(chord.clone());
+                let (label, available) = match child {
+                    KeyTrie::Leaf(input::trie::LeafAction::Action(id)) => {
+                        let done = !matches!(action_of(id.as_str()), Action::Unbound(_));
+                        let label = self.labels.get(&path).cloned();
+                        (label.unwrap_or_else(|| id.as_str().to_owned()), done)
+                    }
+                    KeyTrie::Leaf(_) => (self.labels.get(&path).cloned().unwrap_or_default(), false),
+                    KeyTrie::Node(n) => (
+                        self.labels.get(&path).cloned().unwrap_or_else(|| n.name.clone()),
+                        true,
+                    ),
+                };
+                Entry {
+                    key: chord_label(chord),
+                    label,
+                    group: matches!(child, KeyTrie::Node(_)),
+                    available,
+                }
+            })
+            .collect();
+        entries.sort_by(|a, b| a.key.cmp(&b.key));
+        Some(WhichKey {
+            title: self
+                .labels
+                .get(&self.pending)
+                .cloned()
+                .unwrap_or_default(),
+            typed: self.pending.iter().map(chord_label).collect::<Vec<_>>().join(" "),
+            entries,
+        })
     }
 }
 
-/// The profile directory: from the environment, else the daw checkout
-/// beside this repo (the layout every FTS clone has).
-fn profile_dir() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("FTS_INPUT_PROFILE") {
-        let dir = PathBuf::from(dir);
-        return dir.join("profile.styx").exists().then_some(dir);
+/// How a chord reads in the popup: `t`, `Shift+t`, `Ctrl+Up`.
+fn chord_label(chord: &KeyChord) -> String {
+    let mut s = String::new();
+    for (held, name) in [
+        (chord.modifiers.ctrl, "Ctrl+"),
+        (chord.modifiers.alt, "Alt+"),
+        (chord.modifiers.shift, "Shift+"),
+        (chord.modifiers.meta, "Cmd+"),
+    ] {
+        if held {
+            s.push_str(name);
+        }
     }
-    let candidates = [
-        "../daw/features/reaper/reaper-input/config/config/fasttrackstudio",
-        "../../daw/features/reaper/reaper-input/config/config/fasttrackstudio",
-        "../../../daw/features/reaper/reaper-input/config/config/fasttrackstudio",
-    ];
-    candidates
-        .iter()
-        .map(Path::new)
-        .find(|dir| dir.join("profile.styx").exists())
-        .map(Path::to_path_buf)
+    s.push_str(&match &chord.key {
+        KeyCode::Character(c) => c.clone(),
+        KeyCode::ArrowUp => "Up".into(),
+        KeyCode::ArrowDown => "Down".into(),
+        KeyCode::ArrowLeft => "Left".into(),
+        KeyCode::ArrowRight => "Right".into(),
+        KeyCode::F(n) => format!("F{n}"),
+        other => format!("{other:?}"),
+    });
+    s
+}
+
+/// A profile directory named by the environment, for trying out a
+/// profile being edited without rebuilding.
+fn profile_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(std::env::var_os("FTS_INPUT_PROFILE")?);
+    dir.join("profile.styx").exists().then_some(dir)
 }
 
 /// A winit key as the processor's, with the shift folded out of the
@@ -232,6 +390,69 @@ const BUILTIN: &str = r#"{
 mod tests {
     use super::*;
 
+    /// `z` opens the zoom tree with the profile's own labels, and the
+    /// next key completes it into a zoom.
+    #[test]
+    fn z_opens_the_zoom_tree_and_t_zooms_to_the_tracks() {
+        let mut keys = Keys::load();
+        let z = KeyCode::Character("z".into());
+        assert!(keys.press(z, Modifiers::NONE).is_empty(), "z alone is a prefix");
+        let which = keys.which_key().expect("the popup shows");
+        assert_eq!(which.title, "Zoom");
+        assert_eq!(which.typed, "z");
+        let t = which
+            .entries
+            .iter()
+            .find(|e| e.key == "t")
+            .expect("z t is in the tree");
+        assert!(t.available, "and this window does it");
+        assert!(!t.label.is_empty() && !t.label.starts_with('_'), "{:?}", t.label);
+        assert!(
+            which.entries.iter().any(|e| !e.available),
+            "the bindings this window does not do are listed too"
+        );
+        // A tap: `z` comes up before the `t` goes down.
+        keys.release(KeyCode::Character("z".into()), Modifiers::NONE);
+        assert!(keys.which_key().is_some(), "a tapped prefix stays open");
+        assert_eq!(
+            keys.press(KeyCode::Character("t".into()), Modifiers::NONE),
+            vec![Action::View(crate::zoom::Command::ToggleTracks)]
+        );
+        assert!(keys.which_key().is_none(), "the popup goes");
+    }
+
+    /// Held, the prefix is sticky: each key under it fires and the tree
+    /// stays open for the next, until `z` comes up.
+    #[test]
+    fn a_held_prefix_fires_each_key_under_it() {
+        let mut keys = Keys::load();
+        let z = KeyCode::Character("z".into());
+        keys.press(z.clone(), Modifiers::NONE);
+        assert_eq!(
+            keys.press(KeyCode::Character("t".into()), Modifiers::NONE),
+            vec![Action::View(crate::zoom::Command::ToggleTracks)]
+        );
+        assert!(keys.which_key().is_some(), "still open while z is held");
+        assert_eq!(
+            keys.press(KeyCode::Character("v".into()), Modifiers::NONE),
+            vec![Action::View(crate::zoom::Command::FitTracks)]
+        );
+        keys.release(KeyCode::Character("t".into()), Modifiers::NONE);
+        keys.release(KeyCode::Character("v".into()), Modifiers::NONE);
+        keys.release(z, Modifiers::NONE);
+        assert!(keys.which_key().is_none(), "and closed when it comes up");
+    }
+
+    #[test]
+    fn cancel_drops_the_prefix() {
+        let mut keys = Keys::load();
+        keys.press(KeyCode::Character("z".into()), Modifiers::NONE);
+        assert!(keys.is_pending());
+        keys.cancel();
+        assert!(!keys.is_pending());
+        assert!(keys.which_key().is_none());
+    }
+
     /// The built-in map is the profile's ids: space plays, s splits,
     /// d deletes, and the two agree because they are one table.
     #[test]
@@ -241,6 +462,8 @@ mod tests {
             processor: InputProcessor::from_config(config).expect("a processor"),
             context: ActionContext::new(),
             source: "test".into(),
+            labels: HashMap::new(),
+            pending: Vec::new(),
         };
         assert_eq!(
             keys.press(KeyCode::Character(" ".into()), Modifiers::NONE),

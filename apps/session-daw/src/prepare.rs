@@ -85,6 +85,10 @@ impl Prepare {
                 sections = built.sections,
                 "prepare: song built from chart"
             );
+            // The key and the chords read from the ruler's CHORDS lane,
+            // so the folder that holds them is out of the track panel
+            // until someone opens it to edit — which the lane follows.
+            target.hide_in_tcp("Keyflow")?;
         }
         if self.guide {
             session::guide::Guide::new(opened.daw.clone())
@@ -92,6 +96,10 @@ impl Prepare {
                 .generate(session::guide::GuideScope::All)
                 .map_err(|e| eyre::eyre!("guide: {e}"))?;
             tracing::info!("prepare: click and guide generated");
+            // The multitrack's own click and guide stems, renamed and
+            // muted by the guide: kept for reference, out of the panel.
+            target.hide_in_tcp("Click Audio")?;
+            target.hide_in_tcp("Guide Audio")?;
         }
         if self.organize {
             // The template's top-level order — what is played to first,

@@ -293,6 +293,17 @@ struct RulerPress {
 }
 
 impl Editor {
+    /// The mouse-map context a press on `hit` would be asked about: the
+    /// hit's own, unless a razor area already drawn is under it, which
+    /// answers for itself (the same rule [`Self::press`] follows).
+    #[must_use]
+    pub fn context_at(&self, hit: Hit) -> input_config_proto::MouseModifierContext {
+        match Self::where_in_lanes(hit.target) {
+            Some((at, row)) if self.razor.at(at, row).is_some() => mousemap::RAZOR_AREA,
+            _ => hit.context,
+        }
+    }
+
     /// The pointer went down on `hit`, with `keys` held. `true` if the
     /// press was taken here.
     pub fn press(
@@ -1326,6 +1337,9 @@ impl Editor {
                 }
             }
             Action::ToggleRecord => tracing::info!("record is not wired to the transport yet"),
+            // The view's, not the session's: the widget sends these to
+            // the panel before the editor is asked.
+            Action::View(_) | Action::Visibility(_) | Action::ToggleMixer => return false,
             Action::Unbound(id) => {
                 tracing::info!(ui.action = %id, "bound in the profile, not built here yet");
                 return false;
@@ -1856,7 +1870,7 @@ mod zoom_tests {
 mod tests {
     use super::*;
     use crate::arrangement::{Palette, TCP_WIDTH, Viewport};
-    use crate::ruler::RULER_H;
+    use crate::ruler::ruler_h;
     use daw_proto::primitives::{Duration, PositionInSeconds};
     use daw_ui::studio::{ProjectRef, RowsRef};
 
@@ -1981,7 +1995,7 @@ mod tests {
             let (top, _) = self.scene.row_box(row).expect("a row");
             (
                 crate::rails::SIDE + TCP_WIDTH + seconds * PPS,
-                crate::rails::TOP + RULER_H + top + dy,
+                crate::rails::TOP + ruler_h() + top + dy,
             )
         }
 

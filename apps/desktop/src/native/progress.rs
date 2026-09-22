@@ -1,0 +1,169 @@
+//! The performance panels: the ProgressBar and the transport buttons under
+//! the view.
+//!
+//! Read off the open session rather than the setlist engine for now: the
+//! SONG region (lane 0) is the song's span, the SECTIONS regions (lane 1)
+//! are its parts — the regions `build_from_chart` stamps. The bar and the
+//! buttons are `session-ui`'s, unchanged; what is here is the data and the
+//! transport they drive.
+
+use dioxus::prelude::*;
+
+use session_daw::engine::{Move, Reading, Transport, transport};
+use session_daw::studio::StudioSession;
+use session_ui::components::progress::{ProgressSection, SongProgressBar};
+use session_ui::components::transport_controls::TransportControlBar;
+
+/// The song as the performance panels see it.
+#[derive(Clone, PartialEq)]
+struct Song {
+    start: f64,
+    end: f64,
+    /// Each section's span, in order.
+    sections: Vec<(f64, f64)>,
+    bar: Vec<ProgressSection>,
+}
+
+impl Song {
+    fn of(session: &StudioSession) -> Option<Self> {
+        let regions = &session.project.sections;
+        let (start, end) = regions
+            .iter()
+            .find(|r| r.lane == 0)
+            .map(|r| (r.start, r.end))
+            .or_else(|| {
+                let start = regions.iter().map(|r| r.start).fold(f64::INFINITY, f64::min);
+                let end = regions.iter().map(|r| r.end).fold(0.0, f64::max);
+                (end > start).then_some((start, end))
+            })?;
+        let span = (end - start).max(f64::EPSILON);
+        let percent = |t: f64| ((t - start) / span * 100.0).clamp(0.0, 100.0);
+        let mut parts: Vec<_> = regions
+            .iter()
+            .filter(|r| r.lane == session_daw::ruler::SECTIONS_ROW as u32)
+            .collect();
+        parts.sort_by(|a, b| a.start.total_cmp(&b.start));
+        Some(Self {
+            start,
+            end,
+            sections: parts.iter().map(|r| (r.start, r.end)).collect(),
+            bar: parts
+                .iter()
+                .map(|r| ProgressSection {
+                    start_percent: percent(r.start),
+                    end_percent: percent(r.end),
+                    color: r.color.clone().unwrap_or_else(|| "#4b5563".to_owned()),
+                    name: r.name.clone(),
+                    short_name: r.name.clone(),
+                    comment: None,
+                })
+                .collect(),
+        })
+    }
+
+    /// The section the play position is in, if any.
+    fn current(&self, at: f64) -> Option<usize> {
+        self.sections.iter().rposition(|(from, _)| *from <= at + 1e-6)
+    }
+
+    fn progress(&self, at: f64) -> f64 {
+        ((at - self.start) / (self.end - self.start).max(f64::EPSILON) * 100.0).clamp(0.0, 100.0)
+    }
+}
+
+/// The transport's reading, republished when the position moves a
+/// twentieth of a second or a flag changes — enough for a song-wide bar,
+/// where a frame's travel is under a pixel.
+fn use_reading() -> Signal<Reading> {
+    let mut reading = use_signal(Reading::default);
+    dioxus_native::use_window_event(move |event, _| {
+        if !matches!(event, winit::event::WindowEvent::RedrawRequested) {
+            return;
+        }
+        let Some(now) = Transport::shared().map(Transport::reading) else {
+            return;
+        };
+        let was = *reading.peek();
+        if (now.at - was.at).abs() > 0.05
+            || now.playing != was.playing
+            || now.looping != was.looping
+            || now.recording != was.recording
+        {
+            reading.set(now);
+        }
+    });
+    reading
+}
+
+/// The ProgressBar panel. A click on a section plays from it.
+#[component]
+pub fn ProgressBar() -> Element {
+    let session: StudioSession = use_context();
+    let song = use_hook(|| Song::of(&session));
+    let reading = use_reading();
+    let Some(song) = song else {
+        return rsx! {
+            div { style: "color:#8b9099; font-size:12px;", "No song regions in this session." }
+        };
+    };
+    let starts: Vec<f64> = song.sections.iter().map(|(from, _)| *from).collect();
+    rsx! {
+        SongProgressBar {
+            progress: song.progress(reading().at),
+            sections: song.bar.clone(),
+            on_section_click: move |index: usize| {
+                if let Some(at) = starts.get(index) {
+                    transport(Move::Seek, *at);
+                }
+            },
+        }
+    }
+}
+
+/// The performance transport: back a section, play/stop, loop, on a section.
+#[component]
+pub fn TransportButtons() -> Element {
+    let session: StudioSession = use_context();
+    let song = use_hook(|| Song::of(&session));
+    let reading = use_reading();
+    let r = reading();
+    let back = song.clone();
+    let on = song;
+    rsx! {
+        div {
+            style: "height:64px; flex:none; overflow:hidden; border-radius:10px;",
+            TransportControlBar {
+                is_playing: r.playing,
+                is_looping: r.looping,
+                is_recording: false,
+                is_armed: false,
+                show_recording: false,
+                on_play_pause: move |()| transport(Move::PlayStop, 0.0),
+                on_loop_toggle: move |()| transport(Move::ToggleLoop, 0.0),
+                on_record_toggle: move |()| {},
+                on_arm_toggle: move |()| {},
+                // Back: to the start of this section, or — within a second
+                // of it — to the one before, which is what a second press
+                // of a back button means.
+                on_back: move |()| {
+                    let Some(song) = back.as_ref() else { return };
+                    let at = Transport::shared().map_or(0.0, |t| t.read().0);
+                    let to = match song.current(at) {
+                        Some(i) if at - song.sections[i].0 < 1.0 && i > 0 => song.sections[i - 1].0,
+                        Some(i) => song.sections[i].0,
+                        None => song.start,
+                    };
+                    transport(Move::Seek, to);
+                },
+                on_forward: move |()| {
+                    let Some(song) = on.as_ref() else { return };
+                    let at = Transport::shared().map_or(0.0, |t| t.read().0);
+                    let next = song.sections.iter().map(|(from, _)| *from).find(|from| *from > at + 1e-3);
+                    if let Some(to) = next {
+                        transport(Move::Seek, to);
+                    }
+                },
+            }
+        }
+    }
+}

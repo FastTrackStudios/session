@@ -148,6 +148,40 @@ fn a_multitrack_is_organized_built_and_guided() {
             "the generated {role} is played by the guide instrument"
         );
     }
+    // Every generated note a sixteenth — a quarter of a quarter note —
+    // so the MIDI shows the space between clicks rather than a bar.
+    for role in ["Click", "Count"] {
+        let generated = tracks
+            .iter()
+            .find(|t| t.name == role && t.folder_depth <= 0 && !has_audio(&t.guid))
+            .expect("generated");
+        let notes: Vec<_> = Items::get_items(&daw, project.clone(), TrackRef::Guid(generated.guid.clone()))
+            .iter()
+            .flat_map(|item| {
+                daw::service::Midi::notes(
+                    &daw,
+                    daw::service::MidiTakeLocation::new(
+                        project.clone(),
+                        ItemRef::Guid(item.guid.clone()),
+                        daw::service::TakeRef::Active,
+                    ),
+                )
+            })
+            .collect();
+        assert!(!notes.is_empty());
+        for n in &notes {
+            assert!(
+                n.length_ppq <= 0.25 + 1e-6 && n.length_ppq > 0.0,
+                "a {role} note {} quarter notes long",
+                n.length_ppq
+            );
+        }
+        for pair in notes.windows(2) {
+            if let [a, b] = pair {
+                assert!(a.start_ppq + a.length_ppq < b.start_ppq, "{role} notes touch: {a:?} {b:?}");
+            }
+        }
+    }
     assert_eq!(
         inside_click_guide,
         ["Click", "Shaker", "Count", "Guide", "Click Audio", "Guide Audio"],

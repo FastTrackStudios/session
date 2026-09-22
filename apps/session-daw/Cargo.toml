@@ -50,6 +50,11 @@ daw-proto = { workspace = true }
 daw-theme-art = { workspace = true }
 # The mix phases the mixer's left rail lists.
 session = { workspace = true }
+# The performance panels (the progress bar), drawn under Blitz — see
+# `src/bin/blitz_panels.rs`.
+session-ui = { workspace = true, features = ["web"] }
+# The chord items' numbers and names — `arrangement::Lettering`.
+keyflow = { workspace = true }
 # The guide engine the Click / Count / Guide MIDI tracks play through —
 # see `src/guide_instrument.rs`.
 session-guide = { workspace = true }

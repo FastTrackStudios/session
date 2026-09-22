@@ -85,6 +85,34 @@ pub const COLUMN_W: f64 = 86.0;
 
 const _: () = assert!(g::STRIP_W == 86.0);
 
+/// The FX section's height: REAPER's `fx_sec`, on every strip, live
+/// ones included. A strip without its FX row reads as cut off at the top.
+#[must_use]
+pub fn fx_section(live: bool) -> f64 {
+    let _ = live;
+    f64::from(daw_theme_art::collapse::FX_SECTION)
+}
+
+/// A strip's sections at `height` (less its rack): REAPER's collapse
+/// layout, or on a live strip the same with the input section gone and
+/// the pan band exactly the pan knob's (which the record arm sits beside),
+/// every pixel they gave up handed to the fader. The FX row stays.
+#[must_use]
+pub fn shape(height: f64, live: bool) -> Collapse {
+    let mut c = Collapse::at(crate::mcp::f64_to_f32(height.max(1.0)));
+    if live {
+        let band = daw_theme_art::collapse::PAN_SECTION_UNLABELLED;
+        let freed = c.input_band + c.pan_band - band;
+        c.stretch = (c.stretch + freed).max(0.0);
+        c.pan_band = band;
+        c.input_band = 0.0;
+        c.show_input_fx = false;
+        c.show_record_input = false;
+        c.show_pan_labels = false;
+    }
+    c
+}
+
 /// The strip's inset from the mixer's top and its rack's edges.
 const EDGE: f64 = 2.0;
 
@@ -111,13 +139,15 @@ pub struct Strip {
     pub rack_h: f64,
     pub buttons_top: f64,
     layout: Layout,
+    /// A live-mode strip — see [`shape`].
+    live: bool,
 }
 
 impl Strip {
     /// Resolve a strip.
     #[must_use]
     pub fn new(width: f64, height: f64, mixer_h: f64, rack_h: f64, buttons_top: f64) -> Self {
-        Self::laid_out(width, height, mixer_h, rack_h, buttons_top, false)
+        Self::laid_out(width, height, mixer_h, rack_h, buttons_top, false, false)
     }
 
     /// Resolve a strip, saying whether its track WANTS the column
@@ -137,6 +167,7 @@ impl Strip {
         rack_h: f64,
         buttons_top: f64,
         column: bool,
+        live: bool,
     ) -> Self {
         let layout = if column && rack_h > 0.0 && width >= crate::tone::FOCUSED + COLUMN_W {
             Layout::Column
@@ -152,13 +183,20 @@ impl Strip {
             width,
             height,
             squeeze: Squeeze::at(own_w),
-            shared: Collapse::at(crate::mcp::f64_to_f32((mixer_h - rack_h).max(1.0))),
-            own: Collapse::at(crate::mcp::f64_to_f32((height - rack_h).max(1.0))),
+            shared: shape(mixer_h - rack_h, live),
+            own: shape(height - rack_h, live),
             columns: Columns::at(0.0, own_w),
             rack_h,
             buttons_top,
             layout,
+            live,
         }
+    }
+
+    /// Whether this is a live-mode strip (see [`shape`]).
+    #[must_use]
+    pub const fn is_live(&self) -> bool {
+        self.live
     }
 
     /// Which layout this strip is in.
@@ -202,7 +240,7 @@ impl Strip {
     /// The top of the coloured band.
     #[must_use]
     pub fn band_top(&self) -> f64 {
-        f64::from(daw_theme_art::collapse::FX_SECTION) + self.rack_h
+        fx_section(self.live) + self.rack_h
     }
 
     /// Its bottom — what the record arm hangs from.
@@ -557,6 +595,27 @@ impl Strip {
 
 #[cfg(test)]
 mod tests {
+
+    /// A live strip keeps its FX row, then a band only as tall as the pan
+    /// knob (the arm beside it), and the height that saves on the fader.
+    #[test]
+    fn a_live_strip_is_its_band_and_its_fader() {
+        let full = Strip::laid_out(86.0, 371.0, 371.0, 0.0, 0.0, false, false);
+        let live = Strip::laid_out(86.0, 371.0, 371.0, 0.0, 0.0, false, true);
+        assert!(full.rect(Control::Fx).is_some());
+        assert!(live.rect(Control::Fx).is_some(), "the FX row stays");
+        assert!((live.band_top() - full.band_top()).abs() < 1e-9, "under it, as ever");
+        let band = live.band_bottom() - live.band_top();
+        assert!(
+            (band - f64::from(daw_theme_art::collapse::PAN_SECTION_UNLABELLED)).abs() < 1e-9,
+            "{band}"
+        );
+        assert!(band < full.band_bottom() - full.band_top(), "shorter than the full band");
+        assert!(live.stretch() > full.stretch(), "and the fader has it");
+        let pan = live.rect(Control::Pan).expect("the pan knob");
+        assert!(pan.y1 <= live.band_bottom() + 1e-9, "{pan:?}");
+    }
+
     use super::*;
 
     fn strip() -> Strip {

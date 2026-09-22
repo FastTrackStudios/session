@@ -60,7 +60,7 @@ impl HasDisplayHandle for Surface {
 }
 
 use session_daw::arrangement::{Arrangement, Palette, TCP_WIDTH, Viewport};
-use session_daw::ruler::{Bars, RULER_H};
+use session_daw::ruler::{Bars, ruler_h};
 use session_daw::{open, theme};
 
 /// Pixels per second at rest.
@@ -1313,7 +1313,7 @@ impl App {
             (scene.length_secs * self.pps - (width - TCP_WIDTH)).max(1.0),
             // The ruler takes a strip off the top, so there is that much
             // more to scroll before the last row reaches the bottom.
-            (scene.content_height() * self.zoom_y - (height - RULER_H)).max(1.0),
+            (scene.content_height() * self.zoom_y - (height - ruler_h())).max(1.0),
         )
     }
 
@@ -1332,7 +1332,7 @@ impl App {
     fn lanes_origin(&self) -> session_daw::arrange_edit::LanesOrigin {
         (
             session_daw::rails::SIDE + TCP_WIDTH,
-            session_daw::rails::TOP + RULER_H,
+            session_daw::rails::TOP + ruler_h(),
         )
     }
 
@@ -1387,7 +1387,7 @@ impl App {
         if panel_x < 0.0 || panel_x >= TCP_WIDTH {
             return None;
         }
-        let content_y = y - session_daw::rails::TOP - RULER_H + self.scroll_y;
+        let content_y = y - session_daw::rails::TOP - ruler_h() + self.scroll_y;
         let index = scene.row_at(content_y)?;
         let (top, height) = scene.row_box(index)?;
         let (track, depth) = self.rows_at(index)?;
@@ -1709,7 +1709,7 @@ impl App {
         let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
         Rect::new(
             rail.0 + TCP_WIDTH,
-            rail.1 + RULER_H,
+            rail.1 + ruler_h(),
             rail.0 + frame.content_width(),
             rail.1 + frame.content_height(),
         )

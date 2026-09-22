@@ -68,6 +68,9 @@ mod collection_browser;
 mod session_chart_pane;
 #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
 mod updates;
+/// The app on Blitz — see `docs/app-on-blitz.md`.
+#[cfg(all(feature = "native", not(any(target_arch = "wasm32", target_os = "ios"))))]
+mod native;
 
 fn main() {
     // NVIDIA + Wayland: force the WebKitGTK webview through XWayland before
@@ -160,6 +163,15 @@ fn main() {
             tracing::error!("--engine: server failed: {e:?}");
             std::process::exit(1);
         }
+        return;
+    }
+
+    // The Blitz app opens its session on the studio's engine itself (see
+    // `native::launch`); bringing the WRY app's engine up as well would put
+    // two daw-standalone facades in one process.
+    #[cfg(all(feature = "native", not(any(target_arch = "wasm32", target_os = "ios"))))]
+    {
+        native::launch();
         return;
     }
 

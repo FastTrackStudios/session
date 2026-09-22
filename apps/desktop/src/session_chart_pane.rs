@@ -42,7 +42,7 @@ use keyflow::engraver::export::{SvgExportConfig, SvgSerializer};
 use keyflow::engraver::fonts::ChartFontBundle;
 use keyflow::engraver::layout::ChartLayoutMode;
 use keyflow::engraver::layout::chart::cursor::{
-    ChartCursor, CursorConfig, CursorState, CursorStyle, HighlightCommand,
+    ChartCursor, CursorConfig, CursorState, HighlightCommand,
 };
 use keyflow::engraver::layout::chart::{
     Breakpoint, ChartLayoutConfig, ChartLayoutEngine, ChartLayoutResult,
@@ -152,14 +152,8 @@ impl Pane {
         if *cached_key != key {
             return None;
         }
-        let cursor = ChartCursor::new(CursorConfig {
-            style: CursorStyle::MeasureHighlight,
-            accent_color: [59, 130, 246, 255], // blue-500
-            fill_alpha: 0.18,
-            highlight_notehead: false,
-            show_when_stopped: true,
-            ..CursorConfig::default()
-        });
+        // The shared playback look — the native chart panel draws the same.
+        let cursor = ChartCursor::new(CursorConfig::playback());
         cursor.compute_at_time(layout, chart_seconds)
     }
 }
@@ -322,15 +316,6 @@ fn ChartCursorOverlay(layout_key: u64, view_w: f64, view_h: f64) -> Element {
             }
             for (i, cmd) in state.commands.iter().enumerate() {
                 {render_command(i, cmd)}
-            }
-            // Thin playhead line inside the highlighted measure.
-            line {
-                x1: "{state.cursor_x}",
-                y1: "{state.cursor_y - 4.0}",
-                x2: "{state.cursor_x}",
-                y2: "{state.cursor_y + state.cursor_height + 4.0}",
-                stroke: "rgba(59,130,246,0.9)",
-                stroke_width: "1.5",
             }
         }
     }

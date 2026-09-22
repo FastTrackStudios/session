@@ -146,6 +146,28 @@ pub const INDENT: f64 = 10.0;
 /// own controls.
 pub const MAX_INDENT: f64 = 60.0;
 
+/// The height of a row's control band: the name, knobs and buttons.
+pub const BAND_H: f64 = 24.0;
+
+/// Where a row's control band sits: `(top, height)`.
+///
+/// The same size on every row, whatever its height, 6px down from the
+/// top the way a full row has always had it. Only a row too short for
+/// that shrinks the band, centred with a pixel clear of each divider.
+/// Zooming the rows taller makes the lanes taller; it never stretches the
+/// name or moves it off the line the mute and solo sit on. The painting
+/// ([`draw_row`]) and the hit test ([`crate::row::Row`]) both ask here,
+/// so they cannot disagree.
+#[must_use]
+pub fn band(y: f64, h: f64, density: Density) -> (f64, f64) {
+    if density == Density::Full {
+        return (y + f64::from(g::ROW_ONE), BAND_H);
+    }
+    let band_h = BAND_H.min((h - 2.0).max(1.0));
+    let top = ((h - band_h) / 2.0).clamp(1.0, f64::from(g::ROW_ONE).max(1.0));
+    (y + top, band_h)
+}
+
 /// Draw one row at `y`, in panel content space.
 ///
 /// Everything is positioned relative to `y`, so a caller only has to
@@ -318,15 +340,15 @@ pub fn draw_row(
 
     match density {
         Density::Full => {
-            let band_top = y + f64::from(g::ROW_ONE);
-            row_one(scene, palette, font, track, indent, band_top, 24.0);
+            let (band_top, band_h) = band(y, h, density);
+            row_one(scene, palette, font, track, indent, band_top, band_h);
             row_two(scene, palette, font, track, y);
         }
-        // The controls get the row, less a pixel top and bottom so they
-        // are not flush against the dividers.
+        // The same band as a full row, never taller: a taller row is a
+        // taller lane beside the same controls, not a stretched name.
         Density::Compact => {
-            let band_h = (h - 2.0).max(1.0);
-            row_one(scene, palette, font, track, indent, y + 1.0, band_h);
+            let (band_top, band_h) = band(y, h, density);
+            row_one(scene, palette, font, track, indent, band_top, band_h);
         }
         Density::Bar => {}
     }

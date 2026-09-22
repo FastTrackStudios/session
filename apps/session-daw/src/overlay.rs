@@ -710,6 +710,7 @@ pub fn controls(
             mixer.rack_h,
             mixer.buttons_top,
             mixer.height,
+            mixer.live,
         );
         // The racks of the strips that are not selected, darkened —
         // over the recording and everything live on it, so the
@@ -765,6 +766,7 @@ fn draw_strip_controls(
     rack_h: f64,
     buttons_top: f64,
     mixer_h: f64,
+    live: bool,
 ) {
     let strip = crate::strip::Strip::laid_out(
         width,
@@ -773,6 +775,7 @@ fn draw_strip_controls(
         rack_h,
         buttons_top,
         settings.is_some_and(crate::tone::Tone::wants_column),
+        live,
     );
     // Every position comes from the layout, translated by the strip's
     // left edge. Nothing here works out where a control goes.
@@ -797,18 +800,21 @@ fn draw_strip_controls(
     // The FX button, whose state is the track's chain count — a live
     // value like any other, and one that used to be recorded as Empty
     // and stay Empty for the life of the window.
-    if let Some((x, y)) = at(Control::Fx) {
+    // Across the strip: a wide pill, the label centred, not the track
+    // panel's small one pinned to the left.
+    if let Some(r) = strip.rect(Control::Fx) {
         crate::art::place(
             scene,
-            &art::fx_pill(
+            &art::fx_pill_wide(
                 &palette.chrome,
                 crate::tcp::lit(palette),
                 chain(track),
                 state(Control::Fx),
+                r.width(),
             ),
             font,
-            x,
-            y,
+            left + r.x0,
+            r.y0,
         );
     }
 

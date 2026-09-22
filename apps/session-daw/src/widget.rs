@@ -56,13 +56,26 @@ use std::rc::Rc;
 
 use anyrender::{RenderContext, Scene};
 use blitz_dom::node::{ComputedStyles, Widget};
-use blitz_traits::events::{Modifiers, UiEvent};
+use blitz_traits::events::{Modifiers, MouseEventButton, UiEvent};
 
 use vello::kurbo::Affine;
 
 use crate::arrangement::{Arrangement, Palette, TCP_WIDTH, Viewport};
+use crate::mousemap::Gesture;
 use crate::profile::Counts;
 use crate::ruler::{self, Bars};
+
+/// What the arrangement shares with a docked mixer — see
+/// `crate::mixer_panel::Links`.
+#[derive(Clone)]
+pub struct MixerLinks {
+    pub toggle: Rc<std::cell::Cell<bool>>,
+    pub rows: Rc<RefCell<(u64, Vec<(daw_proto::Track, u32)>)>>,
+    /// The mixer's edits, to apply here as well.
+    pub echo: Rc<RefCell<Vec<crate::engine::Edit>>>,
+    /// Keys pressed while the mixer had the focus, to handle here.
+    pub keys: Rc<RefCell<Vec<crate::mixer_panel::Key>>>,
+}
 
 /// The finest grid division the ruler will draw.
 const FINEST: f64 = 1.0 / 16.0;
@@ -125,6 +138,26 @@ pub struct Drawn {
 
 /// The arrangement, as a widget.
 pub struct ArrangementWidget {
+    /// The tool the panel holds and the pointer's shape — see
+    /// [`crate::tool`].
+    pointing: crate::tool::Shared,
+    /// What the which-key popup shows, for the panel to render.
+    which: crate::which_key::Shared,
+    /// Zooms the keys asked for, for the panel (which owns the view) to
+    /// carry out.
+    zooms: crate::zoom::Requests,
+    /// How to plan the rows again, and the project as the engine has it
+    /// (with the visibility this window has changed since): what a track
+    /// shown or hidden re-plans from. `None` in a widget built without
+    /// one, which then cannot show or hide anything.
+    replan: Option<(crate::studio::Planner, daw_ui::studio::project::Project)>,
+    /// The rows' height at zoom 1, for the panel's scroll range, which
+    /// changes when rows are shown or hidden.
+    content_h: Rc<std::cell::Cell<f64>>,
+    /// The docked mixer's links (`crate::mixer_panel::Links`): asking for
+    /// it to toggle, the rows it shows, and the edits it made, to apply
+    /// here too. `None` with no mixer beside this arrangement.
+    mixer: Option<MixerLinks>,
     scene: Arrangement,
     palette: Palette,
     font: crate::text::Font,
@@ -190,6 +223,8 @@ pub struct ArrangementWidget {
     /// `Widget::needs_redraw`. A `Cell` because that question is asked
     /// through `&self`.
     dirty: std::cell::Cell<bool>,
+    /// Where the play cursor has been, for its trail.
+    trail: crate::cursor::Trail,
     /// Whether the editor took the last press and has not been let go
     /// of yet.
     ///
@@ -319,6 +354,14 @@ impl ArrangementWidget {
         let at_rest = view.borrow().zoom_y;
         let map = crate::plan::Rows::of(&rows, &tracks);
         Self {
+            pointing: crate::tool::Pointing::shared(None),
+            which: crate::which_key::Shared::default(),
+            zooms: crate::zoom::Requests::default(),
+            replan: None,
+            mixer: None,
+            content_h: Rc::new(std::cell::Cell::new(
+                rows.iter().map(|(track, _)| layout.height_of(track.height)).sum(),
+            )),
             scene,
             palette,
             font,
@@ -337,6 +380,7 @@ impl ArrangementWidget {
             hovered_item: None,
             holding: false,
             dirty: std::cell::Cell::new(false),
+            trail: crate::cursor::Trail::default(),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
             project,
@@ -351,6 +395,219 @@ impl ArrangementWidget {
             was: at_rest,
             stats: readout.then(crate::fps::Stats::new),
             spent: Passes::default(),
+        }
+    }
+
+    /// Share the panel's tool state and window, so a tool can take the
+    /// mouse and the pointer can show what a press would do.
+    #[must_use]
+    pub fn with_pointing(mut self, pointing: crate::tool::Shared) -> Self {
+        self.pointing = pointing;
+        self
+    }
+
+    /// Share the which-key popup's state and the zoom queue with the panel.
+    #[must_use]
+    pub fn with_view_links(
+        mut self,
+        which: crate::which_key::Shared,
+        zooms: crate::zoom::Requests,
+    ) -> Self {
+        self.which = which;
+        self.zooms = zooms;
+        self
+    }
+
+    /// Let the widget plan its rows again (the visibility manager), from
+    /// the session's planner, and share its content height with the panel.
+    #[must_use]
+    pub fn with_planner(
+        mut self,
+        planner: crate::studio::Planner,
+        content_h: Rc<std::cell::Cell<f64>>,
+    ) -> Self {
+        let raw = (*planner.raw).clone();
+        self.replan = Some((planner, raw));
+        content_h.set(self.content_h.get());
+        self.content_h = content_h;
+        self
+    }
+
+    /// The visibility manager: show or hide a group of tracks, then plan
+    /// the rows again and tell the engine. `false` when nothing changed
+    /// (no planner, or a group no track is in).
+    fn visibility(&mut self, change: &crate::keys::Visibility) -> bool {
+        use crate::keys::Visibility;
+        let Some((planner, raw)) = self.replan.as_mut() else {
+            return false;
+        };
+        let names: Vec<String> = raw.tracks.iter().map(|t| t.name.clone()).collect();
+        let groups = match dynamic_template::visibility::groups(names) {
+            Ok(groups) => groups,
+            Err(e) => {
+                tracing::warn!(error = %e, "visibility: the tracks could not be grouped");
+                return false;
+            }
+        };
+        let in_group = |key: &str| -> std::collections::HashSet<String> {
+            groups.get(key).map(|n| n.iter().cloned().collect()).unwrap_or_default()
+        };
+        let (targets, show): (std::collections::HashSet<String>, bool) = match change {
+            Visibility::ShowAll => (raw.tracks.iter().map(|t| t.name.clone()).collect(), true),
+            Visibility::HideAll => (groups.values().flatten().cloned().collect(), false),
+            Visibility::Toggle(group) => {
+                let targets = in_group(&dynamic_template::visibility::normalize_key(group));
+                // Shown again only when all of it is hidden; any of it on
+                // screen, and the toggle hides it — REAPER's rule.
+                let any_shown = raw
+                    .tracks
+                    .iter()
+                    .any(|t| targets.contains(&t.name) && t.visible_in_tcp);
+                (targets, !any_shown)
+            }
+        };
+        if targets.is_empty() {
+            self.notice = Some(crate::notice::Notice::new("no tracks in that group", None));
+            return true;
+        }
+        let mut changed = Vec::new();
+        for track in &mut raw.tracks {
+            if targets.contains(&track.name) && track.visible_in_tcp != show {
+                track.visible_in_tcp = show;
+                track.visible_in_mixer = show;
+                changed.push(track.guid.clone());
+            }
+        }
+        if changed.is_empty() {
+            return false;
+        }
+        let (project, rows) = planner.plan(raw);
+        for guid in changed {
+            self.edits
+                .borrow_mut()
+                .push(crate::engine::Edit::SetVisibility(guid, show, show));
+        }
+        self.restructure((*project.0).clone(), rows.as_slice().to_vec());
+        true
+    }
+
+    /// Take a new set of rows (tracks shown or hidden): everything the
+    /// rows are drawn and hit-tested from, then the recording.
+    fn restructure(
+        &mut self,
+        project: daw_ui::studio::project::Project,
+        rows: Vec<(daw_proto::Track, u32)>,
+    ) {
+        self.tracks = rows.iter().map(|(t, _)| t.clone()).collect();
+        self.map = crate::plan::Rows::of(&rows, &self.tracks);
+        self.content_h.set(
+            rows.iter()
+                .map(|(track, _)| self.layout.height_of(track.height))
+                .sum(),
+        );
+        self.rows = rows;
+        self.project = project;
+        self.hovered_item = None;
+        self.turning = None;
+        self.pointer = crate::pointer::Pointer::default();
+        self.recut();
+        self.publish_rows();
+    }
+
+    /// Link to a docked mixer: the rows go to it (now, and on every
+    /// change), its edits come back here.
+    #[must_use]
+    pub fn with_mixer(mut self, links: MixerLinks) -> Self {
+        self.mixer = Some(links);
+        self.publish_rows();
+        self
+    }
+
+    /// The rows, for the mixer, with the generation bumped.
+    fn publish_rows(&self) {
+        if let Some(links) = &self.mixer {
+            let mut shared = links.rows.borrow_mut();
+            shared.0 = shared.0.wrapping_add(1);
+            shared.1.clone_from(&self.rows);
+        }
+    }
+
+    /// The mixer's edits since the last frame, applied here too, and the
+    /// keys it passed on, handled as if they had been pressed here.
+    fn echoes(&mut self) {
+        let Some(links) = &self.mixer else { return };
+        let echoed: Vec<crate::engine::Edit> = links.echo.borrow_mut().drain(..).collect();
+        let keys: Vec<crate::mixer_panel::Key> = links.keys.borrow_mut().drain(..).collect();
+        for edit in &echoed {
+            self.assume(edit);
+        }
+        for key in &keys {
+            match key {
+                crate::mixer_panel::Key::Down(e) => {
+                    self.typed(e);
+                }
+                crate::mixer_panel::Key::Up(e) => {
+                    self.released(e);
+                }
+            }
+        }
+    }
+
+    /// Tell the popup what the keyboard has pending.
+    fn publish_which_key(&self) {
+        *self.which.borrow_mut() = self.keys.which_key();
+    }
+
+    /// A zoom the keys asked for, in session units, for the panel.
+    /// `None` when there is nothing to frame (no track selected for
+    /// `z t`, say).
+    fn zoom_request(&self, command: crate::zoom::Command) -> Option<crate::zoom::Request> {
+        use crate::zoom::{Command, Request};
+        let span = |boxes: &mut dyn Iterator<Item = (f64, f64)>| {
+            boxes.fold(None, |acc: Option<(f64, f64)>, (a, b)| {
+                Some(acc.map_or((a, b), |(lo, hi)| (lo.min(a), hi.max(b))))
+            })
+        };
+        let rows_of = |rows: &mut dyn Iterator<Item = usize>| {
+            span(&mut rows.filter_map(|row| {
+                self.scene.row_box(row).map(|(top, h)| (top, top + h))
+            }))
+        };
+        let selected_rows =
+            || rows_of(&mut (0..self.rows.len()).filter(|&row| self.rows[row].0.selected));
+        let selected_items = || {
+            (0..self.scene.items())
+                .filter_map(|i| self.scene.item(i))
+                .filter(|item| self.editor.selected.contains(&item.guid))
+                .collect::<Vec<_>>()
+        };
+        let time_selection = self
+            .editor
+            .cursor
+            .selection
+            .filter(|s| s.is_meaningful())
+            .map(|s| (s.start, s.end));
+        let items_time = || span(&mut selected_items().into_iter().map(|item| (item.x0, item.x1)));
+        let frame = |time: Option<(f64, f64)>, rows: Option<(f64, f64)>, toggle| {
+            (time.is_some() || rows.is_some()).then_some(Request::Frame { time, rows, toggle })
+        };
+        match command {
+            Command::ToggleTracks => frame(time_selection, selected_rows(), true),
+            Command::FitTracks => frame(None, rows_of(&mut (0..self.rows.len())), false),
+            Command::Project => frame(Some((0.0, self.project.length_secs.max(1.0))), None, false),
+            Command::Selection => frame(time_selection.or_else(items_time), None, false),
+            Command::ToggleSelection => frame(time_selection.or_else(items_time), None, true),
+            Command::Items => {
+                let items = selected_items();
+                let rows = rows_of(&mut items.iter().map(|item| item.row));
+                frame(items_time(), rows, false)
+            }
+            Command::Back => Some(Request::Back),
+            Command::Forward => Some(Request::Forward),
+            Command::Step { vertical, inward } => Some(Request::Scale {
+                vertical,
+                by: if inward { 1.25 } else { 0.8 },
+            }),
         }
     }
 
@@ -402,7 +659,7 @@ impl ArrangementWidget {
     /// same offset `paint` puts in its transforms.
     fn spot_at(&self, x: f64, y: f64) -> Option<crate::pointer::RowSpot> {
         let view = self.viewport(self.size.0, self.size.1);
-        let below = y - ruler::RULER_H;
+        let below = y - ruler::ruler_h();
         if below < 0.0 {
             return None;
         }
@@ -519,10 +776,34 @@ impl ArrangementWidget {
                 (Some(named.as_str()), None)
             }
         };
+        let held = mods(event.modifiers);
+        // The window's own: which words the items wear. Not in the
+        // keybind profile because REAPER has no such view to bind — and
+        // ctrl+shift+K is free there, so it shadows nothing.
+        if held.ctrl && held.shift && text.is_some_and(|t| t.eq_ignore_ascii_case("k")) {
+            self.scene.lettering = self.scene.lettering.next();
+            return true;
+        }
+        // And whether the ruler carries the CHORDS lane. Ctrl+shift+J is
+        // as free in the profile as K.
+        if held.ctrl && held.shift && text.is_some_and(|t| t.eq_ignore_ascii_case("j")) {
+            ruler::show_chords(!ruler::chords_shown());
+            return true;
+        }
         let Some(code) = crate::keys::key_code(named, text) else {
             return false;
         };
-        let held = mods(event.modifiers);
+        // Escape abandons a half-typed sequence, and does only that.
+        if code == input::KeyCode::Escape && self.keys.is_pending() {
+            self.keys.cancel();
+            self.publish_which_key();
+            return true;
+        }
+        // A held key repeats. Inside a sequence a repeat is not a second
+        // press: holding `z` is the prefix (and the zoom tool), not `z z`.
+        if event.is_auto_repeating && self.keys.is_pending() {
+            return true;
+        }
         let actions = self.keys.press(
             code,
             input::Modifiers {
@@ -532,14 +813,35 @@ impl ArrangementWidget {
                 meta: false,
             },
         );
+        self.publish_which_key();
         if actions.is_empty() {
-            return false;
+            // Consumed, when it opened or extended a sequence: the popup
+            // changed, and the key must not also do anything else.
+            return self.keys.is_pending();
         }
         let mut effects = Vec::new();
         let mut handled = false;
         let mut tracks = self.tracks.clone();
         let bpm = self.scene.bpm;
         for action in actions {
+            if let crate::keys::Action::View(command) = action {
+                if let Some(request) = self.zoom_request(command) {
+                    self.zooms.borrow_mut().push(request);
+                }
+                handled = true;
+                continue;
+            }
+            if let crate::keys::Action::Visibility(change) = &action {
+                handled |= self.visibility(change);
+                continue;
+            }
+            if action == crate::keys::Action::ToggleMixer {
+                if let Some(links) = &self.mixer {
+                    links.toggle.set(true);
+                    handled = true;
+                }
+                continue;
+            }
             handled |= self.editor.key(
                 action,
                 &mut self.project,
@@ -593,6 +895,8 @@ impl ArrangementWidget {
     fn recut(&mut self) {
         let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(self.rows.clone()));
         let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(self.project.clone()));
+        // A view setting, not the session's: an edit must not reset it.
+        let lettering = self.scene.lettering;
         self.scene = Arrangement::build(
             &self.palette,
             &self.font,
@@ -601,9 +905,47 @@ impl ArrangementWidget {
             self.layout,
             &self.previews,
         );
+        self.scene.lettering = lettering;
         self.sections = self.project.sections.clone();
         self.markers = self.project.markers.clone();
         self.controls = None;
+    }
+
+    /// A key came back up: the processor's held-key state (auto-repeat,
+    /// the sticky prefix), and the one decision a held `z` leaves open.
+    /// Held and used as the zoom tool, it was the tool, not a prefix:
+    /// the popup goes and nothing is left pending. Tapped, it stays open
+    /// for the next key.
+    fn released(&mut self, event: &blitz_traits::events::BlitzKeyEvent) -> bool {
+        use blitz_traits::events::Key;
+        let named;
+        let (named, text) = match &event.key {
+            Key::Character(text) => (None, Some(text.as_str())),
+            other => {
+                named = other.to_string();
+                (Some(named.as_str()), None)
+            }
+        };
+        let Some(code) = crate::keys::key_code(named, text) else {
+            return false;
+        };
+        let held = mods(event.modifiers);
+        let was = self.keys.which_key();
+        let hide = self.keys.release(
+            code.clone(),
+            input::Modifiers {
+                ctrl: held.ctrl,
+                alt: held.alt,
+                shift: held.shift,
+                meta: false,
+            },
+        );
+        let tool = std::mem::take(&mut self.pointing.borrow_mut().tool_used);
+        if hide || (tool && code == input::KeyCode::Character("z".into())) {
+            self.keys.cancel();
+        }
+        self.publish_which_key();
+        was != self.keys.which_key()
     }
 
     /// One key, into an open rename.
@@ -755,10 +1097,27 @@ impl Widget for ArrangementWidget {
                 .as_ref()
                 .is_some_and(crate::notice::Notice::alive)
             || self.editor.settling()
+            // A trail drawing in behind a stopped cursor changes the
+            // picture every frame with nothing else moving.
+            || self.trail.alive(std::time::Instant::now())
     }
 
     fn handle_event(&mut self, event: &UiEvent) {
-        let changed = self.took(event);
+        // What a press here would do, asked BEFORE the press is taken: a
+        // razor starts as an area under the pointer, which would then
+        // answer as the area rather than as the razor being drawn.
+        let pressed = match event {
+            UiEvent::PointerDown(e) if !self.stands_down(event) => {
+                let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+                self.hit(x, y).map(|hit| {
+                    let context = self.editor.context_at(hit);
+                    crate::mousemap::resolve(context, Gesture::Drag, mods(e.mods)).action
+                })
+            }
+            _ => None,
+        };
+        let changed = !self.stands_down(event) && self.took(event);
+        self.point(event, pressed);
         self.dirty.set(changed);
     }
 
@@ -776,6 +1135,66 @@ impl Widget for ArrangementWidget {
 }
 
 impl ArrangementWidget {
+    /// Whether this event is not the arrangement's to act on.
+    ///
+    /// A press with any button but the main one: the middle button is the
+    /// panel's hand, and nothing here is bound to the others. And anything
+    /// while a tool is up, which owns the mouse. A gesture already under
+    /// way still finishes, though: the main button's release always comes
+    /// through, or a drag begun before `z` went down would never end.
+    fn stands_down(&self, event: &UiEvent) -> bool {
+        let busy = self.holding || self.turning.is_some() || self.pointer.pressed().is_some();
+        match event {
+            UiEvent::PointerDown(e) => {
+                e.button != MouseEventButton::Main || self.pointing.borrow().tool_active()
+            }
+            UiEvent::PointerUp(e) => e.button != MouseEventButton::Main,
+            UiEvent::PointerMove(_) => !busy && self.pointing.borrow().tool_active(),
+            _ => false,
+        }
+    }
+
+    /// Tell [`crate::tool::Pointing`] what the pointer is over and what it
+    /// is doing, and put the matching shape on the window.
+    fn point(&self, event: &UiEvent, pressed: Option<crate::mousemap::Action>) {
+        let e = match event {
+            UiEvent::PointerMove(e) | UiEvent::PointerDown(e) | UiEvent::PointerUp(e) => e,
+            UiEvent::PointerCancel(_) => {
+                let mut pointing = self.pointing.borrow_mut();
+                pointing.gesture = None;
+                pointing.apply();
+                return;
+            }
+            _ => return,
+        };
+        let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        let over = if self.turning.is_some() {
+            // A knob mid-turn keeps its shape off the knob, as it keeps
+            // the pointer.
+            crate::tool::Over::Knob
+        } else if let Some(spot) = self.spot_at(x, y) {
+            if spot.control.is_continuous() {
+                crate::tool::Over::Knob
+            } else {
+                crate::tool::Over::Button
+            }
+        } else {
+            self.hit(x, y).map_or(crate::tool::Over::Nothing, |hit| {
+                crate::tool::Over::Map(self.editor.context_at(hit))
+            })
+        };
+        let mut pointing = self.pointing.borrow_mut();
+        pointing.mods = mods(e.mods);
+        pointing.inside = true;
+        pointing.over = over;
+        if !self.holding {
+            pointing.gesture = None;
+        } else if pressed.is_some() {
+            pointing.gesture = pressed;
+        }
+        pointing.apply();
+    }
+
     /// Pointer events, already in the widget's own coordinates.
     ///
     /// Blitz makes them relative to the node before handing them over,
@@ -806,7 +1225,7 @@ impl ArrangementWidget {
                     if self.editor.razor_in_flight().is_some() {
                         let row = self
                             .scene
-                            .row_at_screen(y - ruler::RULER_H + view.scroll_y, view)
+                            .row_at_screen(y - ruler::ruler_h() + view.scroll_y, view)
                             .unwrap_or(0);
                         return self.editor.razor_moved(seconds, row, bpm);
                     }
@@ -901,6 +1320,7 @@ impl ArrangementWidget {
                 true
             }
             UiEvent::KeyDown(e) => self.typed(e),
+            UiEvent::KeyUp(e) => self.released(e),
             UiEvent::PointerCancel(_) => {
                 self.holding = false;
                 self.turning = None;
@@ -919,6 +1339,7 @@ impl ArrangementWidget {
         height: u32,
         _scale: f64,
     ) -> Scene {
+        self.echoes();
         let began = std::time::Instant::now();
         let at_now = *self.view.borrow();
         let view = self.viewport(f64::from(width), f64::from(height));
@@ -947,7 +1368,7 @@ impl ArrangementWidget {
         // places recorded content — which is what the painted window has
         // always done, and leaving it out of one of them is how the
         // controls ended up half a row above their own names.
-        let below = ruler::RULER_H - view.scroll_y;
+        let below = ruler::ruler_h() - view.scroll_y;
         // Timed pass by pass, by a mark between each. Inline rather
         // than wrapped in a closure because every pass wants `&mut out`
         // and a closure that also holds it is a borrow fight for no
@@ -1065,6 +1486,15 @@ impl ArrangementWidget {
             self.scene.sections(),
             self.scene.markers(),
         );
+        ruler::chord_lane(
+            &mut out,
+            &self.palette,
+            &self.font,
+            view,
+            (0.0, 0.0),
+            self.scene.chart(),
+            self.scene.lettering,
+        );
         ruler::lane_lines(
             &mut out,
             &self.palette,
@@ -1072,7 +1502,6 @@ impl ArrangementWidget {
             (0.0, 0.0),
             self.scene.sections(),
             self.scene.markers(),
-            ruler::RULER_H,
             view.height,
         );
         spent.ruler = since(&mut mark);
@@ -1159,9 +1588,14 @@ impl ArrangementWidget {
         // And the play cursor over it, which is the transport's and not
         // the editor's — the window polls it and writes it into the
         // view like the scroll.
+        let now = std::time::Instant::now();
+        self.trail.record(now, at_now.play_at);
         crate::cursor::paint(
             &mut out,
-            crate::cursor::Look::default(),
+            {
+                let look = crate::cursor::Look::default();
+                look.trailing(self.trail.length(now, view.pps, look.trail))
+            },
             at_now.play_at.mul_add(view.pps, TCP_WIDTH - view.scroll_x),
             0.0,
             view.height,
@@ -1282,7 +1716,7 @@ fn ms(micros: u128) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementWidget, Shared, View};
+    use super::{ArrangementWidget, Shared, TCP_WIDTH, View};
     use crate::engine::Edit;
     use crate::row::Control as C;
     use blitz_dom::node::Widget as _;
@@ -1354,7 +1788,7 @@ mod tests {
         let r = shape.rect(control).expect("a control with somewhere to be");
         (
             r.x0 + r.width() / 2.0,
-            r.y0 + r.height() / 2.0 + crate::ruler::RULER_H,
+            r.y0 + r.height() / 2.0 + crate::ruler::ruler_h(),
         )
     }
 
@@ -1412,6 +1846,172 @@ mod tests {
             !widget.took(&UiEvent::PointerMove(pointer(x + 1.0, y))),
             "staying on one control changes nothing"
         );
+    }
+
+    fn button(
+        mut event: blitz_traits::events::BlitzPointerEvent,
+        which: blitz_traits::events::MouseEventButton,
+    ) -> blitz_traits::events::BlitzPointerEvent {
+        event.button = which;
+        event
+    }
+
+    /// The middle button is the panel's hand; nothing here acts on it.
+    #[test]
+    fn a_middle_click_does_nothing_here() {
+        use blitz_traits::events::MouseEventButton::Auxiliary;
+        let mut widget = widget();
+        let (x, y) = at(&widget, 1, C::Mute);
+        widget.handle_event(&UiEvent::PointerDown(button(pointer(x, y), Auxiliary)));
+        widget.handle_event(&UiEvent::PointerUp(button(pointer(x, y), Auxiliary)));
+        assert!(widget.edits.borrow().is_empty(), "{:?}", widget.edits.borrow());
+        assert!(!widget.rows[1].0.muted);
+    }
+
+    /// A tool owns the mouse: a click under the zoom spring is not a click.
+    #[test]
+    fn a_click_under_a_tool_is_the_tools() {
+        let mut widget = widget();
+        widget.pointing.borrow_mut().tool = crate::tool::Tool::Zoom;
+        let (x, y) = at(&widget, 1, C::Mute);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
+        assert!(widget.edits.borrow().is_empty(), "{:?}", widget.edits.borrow());
+        assert_eq!(widget.pointing.borrow().icon(), winit::cursor::CursorIcon::ZoomIn);
+    }
+
+    /// A press made before the tool went up still ends: its release comes
+    /// through, or the gesture would never finish.
+    #[test]
+    fn a_gesture_begun_before_a_tool_still_finishes() {
+        let mut widget = widget();
+        let (x, y) = at(&widget, 1, C::Mute);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        widget.pointing.borrow_mut().tool = crate::tool::Tool::Zoom;
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
+        let queued = widget.edits.borrow().clone();
+        assert!(matches!(queued.as_slice(), [Edit::ToggleMute(_)]), "{queued:?}");
+    }
+
+    /// The pointer's shape follows what is under it.
+    #[test]
+    fn the_pointer_says_what_is_under_it() {
+        use crate::tool::Over;
+        use winit::cursor::CursorIcon;
+        let mut widget = widget();
+        let (x, y) = at(&widget, 1, C::Volume);
+        widget.handle_event(&UiEvent::PointerMove(pointer(x, y)));
+        assert_eq!(widget.pointing.borrow().over, Over::Knob);
+        assert_eq!(widget.pointing.borrow().icon(), CursorIcon::NsResize);
+
+        let (x, y) = at(&widget, 1, C::Mute);
+        widget.handle_event(&UiEvent::PointerMove(pointer(x, y)));
+        assert_eq!(widget.pointing.borrow().over, Over::Button);
+
+        // The empty lanes, with Ctrl held: a drag there is a razor.
+        let mut lane = pointer(TCP_WIDTH + 400.0, y);
+        lane.mods = blitz_traits::events::Modifiers::CONTROL;
+        widget.handle_event(&UiEvent::PointerMove(lane));
+        assert!(
+            matches!(widget.pointing.borrow().over, Over::Map(_)),
+            "{:?}",
+            widget.pointing.borrow().over
+        );
+        assert_eq!(widget.pointing.borrow().icon(), CursorIcon::Crosshair);
+    }
+
+    /// `z` then `t`, with a track selected: the popup shows, then goes,
+    /// and the panel is asked to frame that track's row.
+    #[test]
+    fn z_t_asks_the_panel_to_frame_the_selected_track() {
+        let mut widget = widget();
+        widget.rows[2].0.selected = true;
+        widget.handle_event(&UiEvent::KeyDown(key(blitz_traits::events::Key::Character("z".into()))));
+        assert!(widget.which.borrow().is_some(), "the popup is up");
+        let mut up = key(blitz_traits::events::Key::Character("z".into()));
+        up.state = blitz_traits::events::KeyState::Released;
+        widget.handle_event(&UiEvent::KeyUp(up));
+        widget.handle_event(&UiEvent::KeyDown(key(blitz_traits::events::Key::Character("t".into()))));
+        assert!(widget.which.borrow().is_none(), "and down again");
+        let (top, h) = widget.scene.row_box(2).unwrap();
+        let asked = widget.zooms.borrow().clone();
+        assert_eq!(
+            asked,
+            vec![crate::zoom::Request::Frame {
+                time: None,
+                rows: Some((top, top + h)),
+                toggle: true,
+            }]
+        );
+    }
+
+    /// A held `z` used as the zoom tool closes the tree on release.
+    #[test]
+    fn z_used_as_the_tool_closes_the_tree_on_release() {
+        let mut widget = widget();
+        widget.handle_event(&UiEvent::KeyDown(key(blitz_traits::events::Key::Character("z".into()))));
+        widget.pointing.borrow_mut().tool_used = true;
+        let mut up = key(blitz_traits::events::Key::Character("z".into()));
+        up.state = blitz_traits::events::KeyState::Released;
+        widget.handle_event(&UiEvent::KeyUp(up));
+        assert!(widget.which.borrow().is_none());
+        assert!(!widget.keys.is_pending());
+    }
+
+    /// The visibility manager: toggling a group hides its tracks' rows
+    /// and tells the engine; toggling again brings them back.
+    #[test]
+    fn a_visibility_toggle_hides_the_group_and_shows_it_again() {
+        use crate::keys::Visibility;
+        let names = ["Kick", "Snare", "Bass", "Piano"];
+        let tracks: Vec<daw_proto::Track> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| daw_proto::Track {
+                guid: format!("g{i}"),
+                name: (*name).to_owned(),
+                index: u32::try_from(i).unwrap(),
+                ..daw_proto::Track::default()
+            })
+            .collect();
+        let raw = daw_ui::studio::project::Project {
+            tracks: tracks.clone(),
+            ..daw_ui::studio::project::Project::default()
+        };
+        let planner = crate::studio::Planner {
+            raw: std::sync::Arc::new(raw),
+            scene: None,
+            path: std::sync::Arc::new(std::path::PathBuf::from("/nonexistent.RPP")),
+        };
+        let content_h = std::rc::Rc::new(std::cell::Cell::new(0.0));
+        let mut widget = widget().with_planner(planner.clone(), std::rc::Rc::clone(&content_h));
+        let (project, rows) = planner.plan(&planner.raw);
+        widget.restructure((*project.0).clone(), rows.as_slice().to_vec());
+        let before = content_h.get();
+        let names_shown = |w: &ArrangementWidget| {
+            w.rows.iter().map(|(t, _)| t.name.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(names_shown(&widget), names);
+
+        assert!(widget.visibility(&Visibility::Toggle("DRUMS".into())));
+        let shown = names_shown(&widget);
+        assert!(!shown.contains(&"Kick".to_owned()) && !shown.contains(&"Snare".to_owned()), "{shown:?}");
+        assert!(shown.contains(&"Bass".to_owned()), "{shown:?}");
+        assert!(content_h.get() < before, "the scroll range shrinks");
+        let hidden = widget
+            .edits
+            .borrow()
+            .iter()
+            .filter(|e| matches!(e, Edit::SetVisibility(_, false, false)))
+            .count();
+        assert_eq!(hidden, 2, "kick and snare, told to the engine");
+
+        assert!(widget.visibility(&Visibility::Toggle("DRUMS".into())));
+        assert_eq!(names_shown(&widget), names, "and back");
+
+        assert!(widget.visibility(&Visibility::HideAll));
+        assert!(widget.visibility(&Visibility::ShowAll));
+        assert_eq!(names_shown(&widget), names);
     }
 
     #[test]

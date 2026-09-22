@@ -208,6 +208,12 @@ pub struct Arrangement {
     /// pixel space over the lanes, because recorded text would stretch
     /// with the zoom.
     titles: Vec<Title>,
+    /// What the items say on their faces — see [`Lettering`]. A view
+    /// setting rather than part of the recording: the titles are drawn
+    /// per frame, so switching it costs no rebuild.
+    pub lettering: Lettering,
+    /// The song's chords and key changes, for the ruler's CHORDS lane.
+    chart: ChartMarks,
     /// Every item, by row, in seconds, with its fades — what a hit
     /// test asks and what the fade handles are drawn from.
     items: Vec<ItemBox>,
@@ -552,6 +558,7 @@ impl Arrangement {
         let mut boxes = Vec::with_capacity(project.item_count);
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         let mut y = 0.0_f64;
+        let keys = keys_of(project);
         for (row, (track, depth)) in rows.iter().enumerate() {
             // A folder closes simply by the next row being shallower,
             // so the truncate IS the close.
@@ -680,6 +687,7 @@ impl Arrangement {
                         x0,
                         x1,
                         name: name.to_owned(),
+                        spelled: spell(&track.name, name, x0, &keys),
                     });
                 }
             }
@@ -718,6 +726,8 @@ impl Arrangement {
             items: boxes,
             sections: project.sections.clone(),
             markers: project.markers.clone(),
+            lettering: Lettering::from_env(),
+            chart: chart_marks(project, &keys),
         }
     }
 
@@ -1321,7 +1331,214 @@ pub struct Title {
     pub x0: f64,
     pub x1: f64,
     pub name: String,
+    /// A Keyflow chord or key item's words both ways, for the lettered
+    /// views. `None` for every other item.
+    pub spelled: Option<Spelled>,
 }
+
+/// What the items say on their faces.
+///
+/// `Titles` is every item's name, small, in its corner. The other two
+/// are for reading the song off the Keyflow folder from across a room:
+/// its chord items (and its key) lettered as large as the item holds —
+/// the chords as NUMBERS in the song's key, or as chord NAMES. Items
+/// that are not chords keep their titles either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lettering {
+    #[default]
+    Titles,
+    Numbers,
+    Chords,
+}
+
+impl Lettering {
+    /// `FTS_LETTERING=numbers|chords` — how a window opens. Anything
+    /// else is the titles.
+    #[must_use]
+    pub fn from_env() -> Self {
+        match std::env::var("FTS_LETTERING")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "numbers" | "nashville" => Self::Numbers,
+            "chords" | "names" => Self::Chords,
+            _ => Self::Titles,
+        }
+    }
+
+    /// The next view round: titles, numbers, chords, titles.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Titles => Self::Numbers,
+            Self::Numbers => Self::Chords,
+            Self::Chords => Self::Titles,
+        }
+    }
+}
+
+/// A chord item's symbol as a number and as a chord name, in the key
+/// that holds where it starts. A key item says its key both ways.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Spelled {
+    pub numbers: String,
+    pub chords: String,
+}
+
+/// A chord on the ruler's CHORDS lane: its span, and its symbol both ways.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChordMark {
+    pub x0: f64,
+    pub x1: f64,
+    pub spelled: Spelled,
+}
+
+/// A key change on the CHORDS lane: where, and the key as its item names
+/// it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyMark {
+    pub at: f64,
+    pub name: String,
+}
+
+/// Everything the CHORDS lane draws.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChartMarks {
+    pub chords: Vec<ChordMark>,
+    pub keys: Vec<KeyMark>,
+}
+
+/// The Keyflow folder's KEY and CHORD items as the ruler shows them.
+///
+/// From every track, not the visible rows: the folder is hidden from the
+/// panel once a session is prepared, and the lane is where it is read.
+/// Built with the recording, so an edit to the folder — made with it
+/// opened — is in the lane on the next cut.
+fn chart_marks(
+    project: &daw_ui::studio::project::Project,
+    keys: &[(f64, keyflow::key::Key)],
+) -> ChartMarks {
+    let mut marks = ChartMarks::default();
+    for track in &project.tracks {
+        let name = track.name.trim();
+        let is_key = name.eq_ignore_ascii_case(session::key::KEY_TRACK);
+        if !is_key && !name.eq_ignore_ascii_case(CHORD_TRACK) {
+            continue;
+        }
+        for item in project.lane(&track.guid) {
+            let Some(written) = project.title(item) else {
+                continue;
+            };
+            let x0 = item.position.as_seconds();
+            if is_key {
+                if session::key::parse_key(written).is_some() {
+                    marks.keys.push(KeyMark {
+                        at: x0,
+                        name: written.to_owned(),
+                    });
+                }
+            } else if let Some(spelled) = spell(name, written, x0, keys) {
+                marks.chords.push(ChordMark {
+                    x0,
+                    x1: x0 + item.length.as_seconds().max(0.001),
+                    spelled,
+                });
+            }
+        }
+    }
+    marks.chords.sort_by(|a, b| a.x0.total_cmp(&b.x0));
+    marks.keys.sort_by(|a, b| a.at.total_cmp(&b.at));
+    marks
+}
+
+/// The track the chart's chords are stamped on, one item a chord,
+/// named as written (`session::keyflow::from_chart`).
+const CHORD_TRACK: &str = "CHORD";
+
+/// Every key change on the KEY track, by where it starts, in order.
+///
+/// Read from every track rather than the visible rows, so a collapsed
+/// Keyflow folder still spells its chords in the right key.
+fn keys_of(project: &daw_ui::studio::project::Project) -> Vec<(f64, keyflow::key::Key)> {
+    let mut keys: Vec<(f64, keyflow::key::Key)> = project
+        .tracks
+        .iter()
+        .filter(|t| t.name.trim().eq_ignore_ascii_case(session::key::KEY_TRACK))
+        .flat_map(|t| project.lane(&t.guid))
+        .filter_map(|item| {
+            let key = session::key::parse_key(project.title(item)?)?;
+            Some((item.position.as_seconds(), key))
+        })
+        .collect();
+    keys.sort_by(|a, b| a.0.total_cmp(&b.0));
+    keys
+}
+
+/// The key in force at `at`, as the KEY track's item names it ("F major"):
+/// the last change at or before it, or the first if `at` comes before them
+/// all. `None` for a session with no key items.
+#[must_use]
+pub fn key_at(project: &daw_ui::studio::project::Project, at: f64) -> Option<String> {
+    let mut keys: Vec<(f64, &str)> = project
+        .tracks
+        .iter()
+        .filter(|t| t.name.trim().eq_ignore_ascii_case(session::key::KEY_TRACK))
+        .flat_map(|t| project.lane(&t.guid))
+        .filter_map(|item| {
+            let name = project.title(item)?;
+            session::key::parse_key(name).map(|_| (item.position.as_seconds(), name))
+        })
+        .collect();
+    keys.sort_by(|a, b| a.0.total_cmp(&b.0));
+    keys.iter()
+        .rev()
+        .find(|(from, _)| *from <= at + 1e-6)
+        .or_else(|| keys.first())
+        .map(|(_, name)| (*name).to_owned())
+}
+
+/// A title's two spellings, if its track is the chord or the key track.
+///
+/// A chord takes the key in force where it starts — the last change at
+/// or before it, or the first one if it comes before them all. A symbol
+/// that is not a chord, or a song with no key, reads as written.
+fn spell(
+    track: &str,
+    written: &str,
+    at: f64,
+    keys: &[(f64, keyflow::key::Key)],
+) -> Option<Spelled> {
+    let track = track.trim();
+    if track.eq_ignore_ascii_case(session::key::KEY_TRACK) {
+        return Some(Spelled {
+            numbers: written.to_owned(),
+            chords: written.to_owned(),
+        });
+    }
+    if !track.eq_ignore_ascii_case(CHORD_TRACK) {
+        return None;
+    }
+    // A hair of slack: a chord stamped on the key change's own beat
+    // must not read in the key before it for a rounding error.
+    let key = keys
+        .iter()
+        .rev()
+        .find(|(from, _)| *from <= at + 1e-6)
+        .or_else(|| keys.first())
+        .map(|(_, key)| key);
+    let as_ = |notation| {
+        key.and_then(|key| keyflow::renotate_symbol(written, key, notation))
+            .unwrap_or_else(|| written.to_owned())
+    };
+    Some(Spelled {
+        numbers: as_(keyflow::NotationSystem::Nashville),
+        chords: as_(keyflow::NotationSystem::Letters),
+    })
+}
+
+/// The least a note is drawn as, in seconds — the recording's unit.
+const MIN_NOTE_SECS: f64 = 0.02;
 
 /// An item's notes as one path: a block per note, stacked by pitch.
 ///
@@ -1361,7 +1578,9 @@ fn midi_preview(
         let at = x0 + width * f64::from(note.at);
         // Every note gets a width, however short: a preview of a
         // sixteenth-note part at this zoom is otherwise nothing at all.
-        let len = (width * f64::from(note.len)).max(width * 0.004);
+        // A fixed time, not a share of the item: a share of a whole-song
+        // click item was a second, and every click drew a beat long.
+        let len = (width * f64::from(note.len)).max(MIN_NOTE_SECS);
         let from_top = f64::from(high.saturating_sub(note.pitch)) / span;
         let y = (height - note_h).mul_add(from_top, top);
         // Written out rather than built from a Rect: one path holding
@@ -1462,6 +1681,26 @@ pub fn titles(
         }
         let left = title.x0.mul_add(view.pps, origin.0);
         let right = title.x1.mul_add(view.pps, origin.0);
+        let lettered = match (scene.lettering, &title.spelled) {
+            (Lettering::Numbers, Some(spelled)) => Some(spelled.numbers.as_str()),
+            (Lettering::Chords, Some(spelled)) => Some(spelled.chords.as_str()),
+            _ => None,
+        };
+        if let Some(text) = lettered {
+            let row_top = top.mul_add(view.zoom_y, origin.1);
+            // The lanes' own left edge, so an item that began off
+            // screen still says what it is where it can be seen.
+            let seen = origin.0 + view.scroll_x;
+            letter(
+                painter,
+                palette,
+                font,
+                text,
+                (left.max(seen), right),
+                (row_top, row_h),
+            );
+            continue;
+        }
         let room = right - left - PAD * 2.0;
         if room < 12.0 {
             continue;
@@ -1484,7 +1723,58 @@ pub fn titles(
     }
 }
 
+/// One word as large as its item: as tall as the row allows, shrunk
+/// only if it would run past the item's end, over a shade that keeps
+/// the notes under it from reading as part of the letters.
+fn letter(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &crate::text::Font,
+    text: &str,
+    (left, right): (f64, f64),
+    (top, row_h): (f64, f64),
+) {
+    const PAD: f64 = 4.0;
+    // How much of the size the capitals stand, near enough for the
+    // embedded face — what centres the word in its row.
+    const CAP: f64 = 0.72;
+    // Measured at one size and scaled: a face's advance is linear in
+    // its size.
+    const PROBE: f32 = 100.0;
+    // Below this the word is not the thing to read any more; the
+    // title's own size, from the same face.
+    const FLOOR: f64 = 8.0;
+    let inset = 2.0;
+    let room = right - left - PAD * 2.0;
+    let tall = (row_h - inset * 2.0 - PAD) / CAP;
+    let wide = font.width(text, PROBE);
+    if room <= 0.0 || wide <= 0.0 {
+        return;
+    }
+    let size = tall.min(room * f64::from(PROBE) / wide);
+    if size < FLOOR {
+        return;
+    }
+    painter.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgba8(0x00, 0x00, 0x00, 0x73),
+        None,
+        &Rect::new(left, top + inset, right, top + row_h - inset),
+    );
+    #[expect(clippy::cast_possible_truncation, reason = "a font size, well inside f32")]
+    let size_f32 = size as f32;
+    let baseline = top + (row_h + size * CAP) / 2.0;
+    crate::tcp::glyphs(painter, font, palette.text, text, left + PAD, baseline, size_f32);
+}
+
 impl Arrangement {
+    /// The song's chords and key changes, for the ruler.
+    #[must_use]
+    pub const fn chart(&self) -> &ChartMarks {
+        &self.chart
+    }
+
     /// How many items this scene draws.
     #[must_use]
     pub const fn items(&self) -> usize {
@@ -1823,5 +2113,36 @@ mod chrome_tests {
         // look see-through was the level being painted over the whole
         // cap instead of only the pane cut in it. See `CAP_PANE_Y0`.
         assert_eq!(chrome.hardware, chrome.surface_raised);
+    }
+}
+
+#[cfg(test)]
+mod lettering_tests {
+    use super::{Spelled, spell};
+
+    fn key(label: &str) -> keyflow::key::Key {
+        session::key::parse_key(label).expect("a key")
+    }
+
+    /// A chord is spelled in the key that holds where it starts — the
+    /// change at its own beat included — and reads as written before
+    /// any key or when it is not a chord.
+    #[test]
+    fn chords_take_the_key_in_force() {
+        let keys = [(0.0, key("F major")), (10.0, key("G major"))];
+        let at = |written, t| spell("CHORD", written, t, &keys);
+        assert_eq!(
+            at("5/7", 2.0),
+            Some(Spelled { numbers: "5/7".into(), chords: "C/E".into() })
+        );
+        assert_eq!(at("4", 10.0).map(|s| s.chords), Some("C".into()));
+        assert_eq!(at("Bb", 2.0).map(|s| s.numbers), Some("4".into()));
+        assert_eq!(at("N.C.", 2.0).map(|s| s.chords), Some("N.C.".into()));
+        assert_eq!(spell("CHORD", "1", 0.0, &[]).map(|s| s.chords), Some("1".into()));
+        assert_eq!(spell("Bass", "1", 0.0, &keys), None);
+        assert_eq!(
+            spell("KEY", "F major", 0.0, &keys).map(|s| s.numbers),
+            Some("F major".into())
+        );
     }
 }

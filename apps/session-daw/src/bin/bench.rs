@@ -35,7 +35,7 @@ use session_daw::mcp::Mixer;
 /// built for, and the one every reference image was shot in.
 const TONE: session::mix_phases::MixPhase = session::mix_phases::MixPhase::Tone;
 use session_daw::profile::{Counts, Stages, Summary};
-use session_daw::ruler::{self, Bars, RULER_H};
+use session_daw::ruler::{self, Bars, ruler_h};
 
 /// One phase's motion over `0..1`, as (`scroll_x`, `scroll_y`,
 /// `zoom_x`, `zoom_y`) fractions.
@@ -793,6 +793,7 @@ fn mixer_shot(
     // verify run compares them byte for byte.
     settings.prerender_tails();
     let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
+    let live_strips = std::env::var_os("FTS_BENCH_LIVE_STRIPS").is_some_and(|v| v != "0");
     let mixer = Mixer::build(
         palette,
         font,
@@ -802,13 +803,18 @@ fn mixer_shot(
         layout,
         // The shot is of the Tone phase, which is the phase the rack
         // was built for and the one the reference images were taken in.
-        if tone {
+        if tone && !live_strips {
             session_daw::tone::panels_for(TONE)
         } else {
             &[]
         },
         live,
-        session_daw::settings::Settings::default(),
+        // `FTS_BENCH_LIVE_STRIPS=1`: the Live-mode strips (the short
+        // band) — see `strip::shape`.
+        session_daw::settings::Settings {
+            live_strips,
+            ..session_daw::settings::Settings::default()
+        },
         &settings,
     );
     // The signal, when the shot is live: seventy-two meter frames of
@@ -1209,7 +1215,7 @@ fn shot(
             let a = scene.replay_lanes(
                 painter,
                 view,
-                Affine::translate((rail_x + TCP_WIDTH - scroll_x, rail_y + RULER_H - scroll_y))
+                Affine::translate((rail_x + TCP_WIDTH - scroll_x, rail_y + ruler_h() - scroll_y))
                     * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
             );
             session_daw::arrangement::titles(
@@ -1218,12 +1224,12 @@ fn shot(
                 font,
                 scene,
                 view,
-                (rail_x + TCP_WIDTH - scroll_x, rail_y + RULER_H - scroll_y),
+                (rail_x + TCP_WIDTH - scroll_x, rail_y + ruler_h() - scroll_y),
             );
             let b = scene.replay_panel(
                 painter,
                 view,
-                Affine::translate((rail_x, rail_y + RULER_H - scroll_y)),
+                Affine::translate((rail_x, rail_y + ruler_h() - scroll_y)),
             );
             ruler::grid(
                 painter,
@@ -1247,7 +1253,7 @@ fn shot(
                 // the sweep is compared against, and a hover in it
                 // would be a difference nobody asked for.
                 &session_daw::pointer::Pointer::default(),
-                Affine::translate((rail_x, rail_y + RULER_H - scroll_y)),
+                Affine::translate((rail_x, rail_y + ruler_h() - scroll_y)),
             );
             ruler::ruler(
                 painter,
@@ -1281,7 +1287,6 @@ fn shot(
                 (rail_x, rail_y),
                 scene.sections(),
                 scene.markers(),
-                rail_y + RULER_H,
                 rail_y + view.height,
             );
             // The edit cursor and the playhead, as the window draws
@@ -1309,13 +1314,13 @@ fn shot(
             // compared to the screen.
             let lanes = vello::kurbo::Rect::new(
                 rail_x + TCP_WIDTH,
-                rail_y + RULER_H,
+                rail_y + ruler_h(),
                 rail_x + view.width,
                 rail_y + view.height,
             );
             let spans = (
                 (scene.length_secs * view.pps - (view.width - TCP_WIDTH)).max(1.0),
-                (scene.content_height() - (view.height - RULER_H)).max(1.0),
+                (scene.content_height() - (view.height - ruler_h())).max(1.0),
             );
             session_daw::scrollbar::draw(
                 painter,
@@ -1912,7 +1917,7 @@ fn studio(
     ];
     let lanes_origin = (
         session_daw::rails::SIDE + TCP_WIDTH,
-        session_daw::rails::TOP + RULER_H,
+        session_daw::rails::TOP + ruler_h(),
     );
     let press_at = (lanes_origin.0 + 600.0, lanes_origin.1 + 300.0);
     let mut zoom_editor = session_daw::arrange_edit::Editor::default();

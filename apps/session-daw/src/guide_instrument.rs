@@ -125,6 +125,9 @@ impl Default for GuideInstrument {
     }
 }
 
+/// The count's and the guide's level: 8 dB under unity.
+const VOICE_GAIN: f32 = 0.398;
+
 impl PluginInstance for GuideInstrument {
     fn descriptor(&self) -> PluginDescriptor {
         PluginDescriptor {
@@ -159,6 +162,10 @@ impl PluginInstance for GuideInstrument {
             source: TriggerSource::Midi,
             enable_count: true,
             enable_guide: true,
+            // The spoken count and the cues a little under the click (which
+            // stays at unity): at unity the words came out on top of it.
+            count_gain: VOICE_GAIN,
+            guide_gain: VOICE_GAIN,
             ..GuideConfig::default()
         };
         let mut engine = GuideEngine::new(config);
