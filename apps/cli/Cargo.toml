@@ -21,6 +21,8 @@ eyre = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 libc = "0.2"
+# `session proxies` — the Ogg Vorbis proxy writer.
+fts-sample = { workspace = true, features = ["engine-native"] }
 
 [lints]
 workspace = true

@@ -23,6 +23,8 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
+
+mod proxies;
 use session::SetlistServiceClient;
 
 /// The dev-rig REAPER profile, matching `session-desktop`'s Recording Mode.
@@ -63,6 +65,22 @@ enum Command {
     },
     /// Which REAPER this would talk to, and where its cursor is.
     Status,
+    /// Write Ogg Vorbis proxies of a session's media: `Media/Bass.wav` →
+    /// `Media/Proxies/Bass.ogg`, beside what they stand in for, so they
+    /// sync with the session. What a browser or a phone plays from.
+    ///
+    /// Reads the sources from the `.RPP`; a proxy newer than its source is
+    /// kept unless `--force`.
+    Proxies {
+        /// The session's `.RPP` (or the folder holding exactly one).
+        session: PathBuf,
+        /// libvorbis quality, -0.2..=1.0 (0.4 ≈ 128 kbps stereo).
+        #[arg(long, default_value_t = 0.4)]
+        quality: f32,
+        /// Rewrite proxies that are already up to date.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> eyre::Result<()> {
@@ -80,6 +98,11 @@ async fn run(command: Command) -> eyre::Result<()> {
         Command::Setlist => setlist().await,
         Command::Seek { song, section } => seek(song, section.unwrap_or(0)).await,
         Command::Status => status().await,
+        Command::Proxies {
+            session,
+            quality,
+            force,
+        } => proxies::write(&session, quality, force),
     }
 }
 
