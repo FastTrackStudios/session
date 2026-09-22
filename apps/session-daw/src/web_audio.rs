@@ -16,11 +16,18 @@
 //!   context is made on the page's first press or key ([`unlock`]); until
 //!   then the transport runs on the engine's own clock and plays silent.
 //!
-//! One loop on the page's event loop ([`install`]) does the work: feed the
-//! stems within a time budget, then render until the queue is full. It
-//! renders only while the transport advances, and a jump of the playhead
-//! (a seek, a stop, a loop) empties the queue so the device follows at
-//! once.
+//! One loop does the work: feed the stems within a time budget, then
+//! render until the queue is full. It renders only while the transport
+//! advances, and a jump of the playhead (a seek, a stop, a loop) empties
+//! the queue so the device follows at once.
+//!
+//! **In the background.** A hidden page's timers are throttled to about
+//! one a second, which starves a quarter-second queue — the song breaks
+//! up as soon as the window goes behind another. So the loop is driven by
+//! the WORKLET's own reports (the audio thread's, every few milliseconds,
+//! and not throttled) as well as by a timer, and the queue is deepened
+//! while the page is hidden. The painting stops, as it should: only the
+//! audio keeps its cadence.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -40,9 +47,13 @@ use wasm_bindgen::closure::Closure;
 const RATE: u32 = 48_000;
 /// Frames per rendered block.
 const BLOCK: usize = 1024;
-/// How far ahead of the device to render: enough to ride out a busy
-/// frame of painting, little enough that a fader answers at once.
+/// How far ahead of the device to render while the page is in front:
+/// enough to ride out a busy frame of painting, little enough that a
+/// fader answers at once.
 const AHEAD: u64 = RATE as u64 / 4;
+/// And while it is behind another window, where nothing is being watched
+/// and a throttled timer may not come back for a second.
+const AHEAD_HIDDEN: u64 = RATE as u64 * 2;
 /// How long a tick may spend decoding stems before it renders.
 const DECODE_BUDGET_MS: u128 = 6;
 
@@ -117,6 +128,8 @@ struct Player {
     epoch: Rc<Cell<u32>>,
     /// Where the next block renders from, while playing; `None` stopped.
     next: Cell<Option<u64>>,
+    /// Whether the page is hidden — how deep the queue is kept.
+    hidden: Cell<bool>,
 }
 
 thread_local! {
@@ -151,7 +164,9 @@ pub fn install(daw: Standalone, project: &str) {
         played: Rc::new(Cell::new(0)),
         epoch: Rc::new(Cell::new(0)),
         next: Cell::new(None),
+        hidden: Cell::new(false),
     });
+    watch_visibility(&player);
     PLAYER.with(|p| *p.borrow_mut() = Some(Rc::clone(&player)));
     wasm_bindgen_futures::spawn_local(async move {
         loop {
@@ -256,6 +271,7 @@ pub fn unlock() {
         let _ = node.connect_with_audio_node(&context.destination());
         let Ok(port) = node.port() else { return };
         let (played, epoch) = (Rc::clone(&player.played), Rc::clone(&player.epoch));
+        let driven = Rc::clone(&player);
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
             move |event: web_sys::MessageEvent| {
                 let report = js_sys::Array::from(&event.data());
@@ -267,6 +283,10 @@ pub fn unlock() {
                 if tag as u32 == epoch.get() {
                     played.set(count as u64);
                 }
+                // The audio thread's own cadence, which a hidden page's
+                // throttled timers do not have: this is what keeps the
+                // queue fed when the window is behind another.
+                driven.tick();
             },
         );
         port.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
@@ -283,6 +303,11 @@ pub fn unlock() {
 impl Player {
     fn queued(&self) -> u64 {
         self.sent.get().saturating_sub(self.played.get())
+    }
+
+    /// How much audio to keep queued ahead of the device.
+    fn ahead(&self) -> u64 {
+        if self.hidden.get() { AHEAD_HIDDEN } else { AHEAD }
     }
 
     /// Empty the device's queue: a jump, a stop.
@@ -368,7 +393,7 @@ impl Player {
             self.flush();
         }
         let mut at = playhead;
-        while self.queued() < AHEAD {
+        while self.queued() < self.ahead() {
             let block = self.renderer.render_block(at, BLOCK);
             let samples = js_sys::Float32Array::from(&block.samples[..]);
             let transfer = js_sys::Array::of1(&samples.buffer());
@@ -396,4 +421,51 @@ pub fn unlock_on_first_gesture() {
     }
     // The page's lifetime: `unlock` is idempotent, so the listener stays.
     handler.forget();
+}
+
+/// Follow the page between foreground and background, so the queue is
+/// deep enough for whichever it is in.
+///
+/// Two ways of being away, because they are not the same event: the page
+/// HIDDEN (another tab, a minimised window), and the window merely behind
+/// another — which on a Mac is how a browser usually sits while somebody
+/// plays along to it, and which fires `blur`, not `visibilitychange`.
+/// Either way nothing is being watched, so the queue goes deep.
+fn watch_visibility(player: &Rc<Player>) {
+    let (Some(window), Some(document)) = (
+        web_sys::window(),
+        web_sys::window().and_then(|w| w.document()),
+    ) else {
+        return;
+    };
+    player.hidden.set(document.hidden());
+    let away = {
+        let player = Rc::clone(player);
+        move |away: bool| {
+            player.hidden.set(away);
+            // Coming back, the deep queue is left to drain: it is audio
+            // already rendered from where the transport is, and throwing
+            // it away would jump the song forward by everything queued.
+            // Nothing renders again until it is down to the shallow
+            // target, which takes a second or two, and edits are heard
+            // from there.
+            player.tick();
+        }
+    };
+    let on_visibility = {
+        let (away, document) = (away.clone(), document.clone());
+        Closure::<dyn FnMut()>::new(move || away(document.hidden()))
+    };
+    let _ = document.add_event_listener_with_callback(
+        "visibilitychange",
+        on_visibility.as_ref().unchecked_ref(),
+    );
+    for (event, gone) in [("blur", true), ("focus", false)] {
+        let away = away.clone();
+        let handler = Closure::<dyn FnMut()>::new(move || away(gone));
+        let _ = window.add_event_listener_with_callback(event, handler.as_ref().unchecked_ref());
+        // The page's lifetime.
+        handler.forget();
+    }
+    on_visibility.forget();
 }

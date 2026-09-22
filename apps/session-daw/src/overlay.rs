@@ -1448,12 +1448,13 @@ pub fn panel_controls(
 /// How thick a name field's meter strip is, at most.
 const STRIP: f64 = 2.5;
 
-/// Each visible track's level, drawn IN its name field: the left channel
-/// along the field's top edge, the right along its bottom, so the name
-/// between them stays clear. Colour and length only — the mixer's zones
-/// (safe, warm, hot, over, at `METER_ZONES`) in flat segments, no scale
-/// and no well: at a glance across forty rows, which are playing and
-/// which are hot is what an arrangement meter is for.
+/// Each visible track's level, drawn IN its name field: one thin strip
+/// low in the field, under the name, where it crosses nothing. Colour and
+/// length only — the mixer's zones (safe, warm, hot, over, at
+/// `METER_ZONES`) in flat segments, no scale and no well: at a glance
+/// across forty rows, which are playing and which are hot is what an
+/// arrangement meter is for. The louder channel is what it shows; the
+/// mixer is where a pair is read apart.
 ///
 /// Returns whether any strip is lit, so a caller knows to keep redrawing
 /// while levels fall.
@@ -1499,37 +1500,32 @@ pub fn row_meters(
             continue;
         };
         let thick = STRIP.min(field.height() / 6.0);
-        for (peak, y0) in [
-            (level.peak_left, field.y0),
-            (level.peak_right, field.y1 - thick),
-        ] {
-            let fraction = crate::engine::meter_fraction(peak).clamp(0.0, 1.0);
-            if fraction <= 0.0 || peak <= 1e-5 {
-                continue;
+        // In the lower half, a hair inside the field's bottom edge.
+        let y0 = (field.y1 - thick - 1.0).max(field.y0 + field.height() / 2.0);
+        let peak = level.peak_left.max(level.peak_right);
+        let fraction = crate::engine::meter_fraction(peak).clamp(0.0, 1.0);
+        if fraction <= 0.0 || peak <= 1e-5 {
+            continue;
+        }
+        lit = true;
+        let length = field.width() * fraction;
+        let mut from = 0.0;
+        for (zone, color) in colors.iter().enumerate() {
+            let to = edges
+                .get(zone)
+                .map_or(length, |edge| (field.width() * edge).min(length));
+            if to > from {
+                painter.fill(
+                    vello::peniko::Fill::NonZero,
+                    transform,
+                    *color,
+                    None,
+                    &vello::kurbo::Rect::new(field.x0 + from, y0, field.x0 + to, y0 + thick),
+                );
+                from = to;
             }
-            lit = true;
-            let length = field.width() * fraction;
-            let mut from = 0.0;
-            for (zone, color) in colors.iter().enumerate() {
-                let to = edges.get(zone).map_or(length, |edge| (field.width() * edge).min(length));
-                if to > from {
-                    painter.fill(
-                        vello::peniko::Fill::NonZero,
-                        transform,
-                        *color,
-                        None,
-                        &vello::kurbo::Rect::new(
-                            field.x0 + from,
-                            y0,
-                            field.x0 + to,
-                            y0 + thick,
-                        ),
-                    );
-                    from = to;
-                }
-                if from >= length {
-                    break;
-                }
+            if from >= length {
+                break;
             }
         }
     }
@@ -1994,9 +1990,8 @@ mod panel_tests {
         };
         let (lit, loud) = draw(&playing);
         assert!(lit, "a level lights the meter");
-        // A hot left channel crosses every zone; a quiet right one lights
-        // the first alone.
-        assert!(loud.commands.len() >= 4, "{} fills", loud.commands.len());
+        // One strip, crossing every zone at this level.
+        assert!(loud.commands.len() >= 3, "{} fills", loud.commands.len());
     }
 
     /// The point of the whole pass: hovering a panel control has to
