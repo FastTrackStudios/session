@@ -2318,6 +2318,21 @@ fn ground(scene: &mut Scene, palette: &Palette, at: Panel) {
 ///
 /// The labels come off, because a strip panel is a hundred and thirty
 /// pixels wide and the editor's are authored for eight hundred.
+/// The web build has no plugin painter (`eq-ui`'s `graph` is Blitz-only):
+/// `false`, and the caller draws the rack's own curve instead.
+#[cfg(not(feature = "native"))]
+fn eq_from_plugin(
+    _scene: &mut Scene,
+    _tone: &Tone,
+    _bands: &[EqBand],
+    _spectrum: &[f32],
+    _at: Panel,
+    _rack: Rack,
+) -> bool {
+    false
+}
+
+#[cfg(feature = "native")]
 fn eq_from_plugin(
     scene: &mut Scene,
     tone: &Tone,

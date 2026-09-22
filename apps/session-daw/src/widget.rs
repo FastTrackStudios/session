@@ -266,7 +266,7 @@ pub struct ArrangementWidget {
     notice: Option<crate::notice::Notice>,
     /// When and where the last click on a NAME landed, so the next one
     /// can tell whether it is the second half of a double.
-    last_name: Option<(usize, std::time::Instant)>,
+    last_name: Option<(usize, web_time::Instant)>,
     /// A knob being turned: where the press landed, and the track as it
     /// was at that moment.
     ///
@@ -684,7 +684,7 @@ impl ArrangementWidget {
         // preceded it selected the track, which is what you wanted on
         // the way here anyway.
         if spot.control == C::Name {
-            let now = std::time::Instant::now();
+            let now = web_time::Instant::now();
             let again = self.last_name.is_some_and(|(row, when)| {
                 row == spot.row && now.saturating_duration_since(when) <= crate::gesture::DOUBLE
             });
@@ -1099,10 +1099,29 @@ impl Widget for ArrangementWidget {
             || self.editor.settling()
             // A trail drawing in behind a stopped cursor changes the
             // picture every frame with nothing else moving.
-            || self.trail.alive(std::time::Instant::now())
+            || self.trail.alive(web_time::Instant::now())
     }
 
     fn handle_event(&mut self, event: &UiEvent) {
+        self.event(event);
+    }
+
+    fn paint(
+        &mut self,
+        _render_ctx: &mut dyn RenderContext,
+        _styles: &ComputedStyles,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Scene {
+        self.paint_scene(width, height, scale)
+    }
+}
+
+impl ArrangementWidget {
+    /// One input event, in the widget's own coordinates: what Blitz's
+    /// `Widget::handle_event` calls, and what the web host calls.
+    pub fn event(&mut self, event: &UiEvent) {
         // What a press here would do, asked BEFORE the press is taken: a
         // razor starts as an area under the pointer, which would then
         // answer as the area rather than as the razor being drawn.
@@ -1121,20 +1140,13 @@ impl Widget for ArrangementWidget {
         self.dirty.set(changed);
     }
 
-    fn paint(
-        &mut self,
-        render_ctx: &mut dyn RenderContext,
-        styles: &ComputedStyles,
-        width: u32,
-        height: u32,
-        scale: f64,
-    ) -> Scene {
+    /// The picture at `width` x `height`: what Blitz's `Widget::paint`
+    /// returns, and what the web host draws into its canvas.
+    pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         self.dirty.set(false);
-        self.draw(render_ctx, styles, width, height, scale)
+        self.draw(width, height, scale)
     }
-}
 
-impl ArrangementWidget {
     /// Whether this event is not the arrangement's to act on.
     ///
     /// A press with any button but the main one: the middle button is the
@@ -1331,16 +1343,9 @@ impl ArrangementWidget {
         }
     }
 
-    fn draw(
-        &mut self,
-        _render_ctx: &mut dyn RenderContext,
-        _styles: &ComputedStyles,
-        width: u32,
-        height: u32,
-        _scale: f64,
-    ) -> Scene {
+    fn draw(&mut self, width: u32, height: u32, _scale: f64) -> Scene {
         self.echoes();
-        let began = std::time::Instant::now();
+        let began = web_time::Instant::now();
         let at_now = *self.view.borrow();
         let view = self.viewport(f64::from(width), f64::from(height));
         self.size = (view.width, view.height);
@@ -1375,10 +1380,10 @@ impl ArrangementWidget {
         // gain — five `mark()` calls say the same thing and read as the
         // list of passes they are measuring.
         let mut spent = Passes::default();
-        let mut mark = std::time::Instant::now();
-        let since = |mark: &mut std::time::Instant| {
+        let mut mark = web_time::Instant::now();
+        let since = |mark: &mut web_time::Instant| {
             let spent = mark.elapsed().as_micros();
-            *mark = std::time::Instant::now();
+            *mark = web_time::Instant::now();
             spent
         };
 
@@ -1588,7 +1593,7 @@ impl ArrangementWidget {
         // And the play cursor over it, which is the transport's and not
         // the editor's — the window polls it and writes it into the
         // view like the scroll.
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         self.trail.record(now, at_now.play_at);
         crate::cursor::paint(
             &mut out,
@@ -1877,7 +1882,7 @@ mod tests {
         widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
         widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
         assert!(widget.edits.borrow().is_empty(), "{:?}", widget.edits.borrow());
-        assert_eq!(widget.pointing.borrow().icon(), winit::cursor::CursorIcon::ZoomIn);
+        assert_eq!(widget.pointing.borrow().icon(), cursor_icon::CursorIcon::ZoomIn);
     }
 
     /// A press made before the tool went up still ends: its release comes
@@ -1897,7 +1902,7 @@ mod tests {
     #[test]
     fn the_pointer_says_what_is_under_it() {
         use crate::tool::Over;
-        use winit::cursor::CursorIcon;
+        use cursor_icon::CursorIcon;
         let mut widget = widget();
         let (x, y) = at(&widget, 1, C::Volume);
         widget.handle_event(&UiEvent::PointerMove(pointer(x, y)));
@@ -1981,7 +1986,7 @@ mod tests {
         let planner = crate::studio::Planner {
             raw: std::sync::Arc::new(raw),
             scene: None,
-            path: std::sync::Arc::new(std::path::PathBuf::from("/nonexistent.RPP")),
+            kinds: std::sync::Arc::new(crate::plan::Kinds::default()),
         };
         let content_h = std::rc::Rc::new(std::cell::Cell::new(0.0));
         let mut widget = widget().with_planner(planner.clone(), std::rc::Rc::clone(&content_h));

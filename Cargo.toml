@@ -34,6 +34,7 @@ members = [
     "features/ui/daw-reaper-dioxus-ext-test",
     "apps/cli",
     "apps/desktop",
+    "apps/session-daw-web",
     "apps/session-daw",
     "apps/session-player",
     "apps/vault-sync",
@@ -408,7 +409,7 @@ sha2 = "0.10"
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 
 # ── Dynamic session templates (subtree-imported into the tree) ────────
-dynamic-template = { path = "features/dynamic-template/dynamic-template" }
+dynamic-template = { path = "features/dynamic-template/dynamic-template", default-features = false }
 patch-list = { path = "features/patch-list" }
 dynamic-template-proto = { path = "features/dynamic-template/dynamic-template-proto" }
 chord-tool = { path = "features/chord-tool/chord-tool" }

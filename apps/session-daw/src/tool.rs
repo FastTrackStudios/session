@@ -21,9 +21,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
-
-use winit::cursor::CursorIcon;
+use cursor_icon::CursorIcon;
 
 use input_config_proto::MouseModifierContext as Context;
 
@@ -56,10 +54,14 @@ pub enum Over {
     Map(Context),
 }
 
-/// The shared state, and the window it sets the pointer on.
+/// Where a pointer shape goes: the native window's cursor, or the web
+/// canvas's CSS `cursor`.
+pub type Sink = Rc<dyn Fn(CursorIcon)>;
+
+/// The shared state, and where it sets the pointer.
 #[derive(Default)]
 pub struct Pointing {
-    window: Option<Arc<dyn winit::window::Window>>,
+    window: Option<Sink>,
     /// Written by the panel.
     pub tool: Tool,
     /// The keys held, from the panel's own modifier events (the widget
@@ -81,7 +83,7 @@ pub type Shared = Rc<RefCell<Pointing>>;
 
 impl Pointing {
     #[must_use]
-    pub fn shared(window: Option<Arc<dyn winit::window::Window>>) -> Shared {
+    pub fn shared(window: Option<Sink>) -> Shared {
         Rc::new(RefCell::new(Self {
             window,
             ..Self::default()
@@ -109,7 +111,7 @@ impl Pointing {
         if self.inside
             && let Some(window) = &self.window
         {
-            window.set_cursor(winit::cursor::Cursor::Icon(self.icon()));
+            window(self.icon());
         }
     }
 }

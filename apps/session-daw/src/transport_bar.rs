@@ -20,9 +20,9 @@ const REC: &str = "#ef4444";
 const LOOP: &str = "#3aa0ff";
 
 /// The bar.
+#[cfg(feature = "native")]
 #[component]
 pub fn TransportBar() -> Element {
-    let session: StudioSession = use_context();
     let mut reading = use_signal(crate::engine::Reading::default);
     // A read a frame, published only when something a person can see
     // changed: the clock to the hundredth, the flags, the tempo.
@@ -33,17 +33,47 @@ pub fn TransportBar() -> Element {
         let Some(now) = Transport::shared().map(Transport::reading) else {
             return;
         };
-        let was = *reading.peek();
-        if (now.at - was.at).abs() >= 0.01
-            || now.playing != was.playing
-            || now.looping != was.looping
-            || now.recording != was.recording
-            || (now.bpm - was.bpm).abs() > 1e-6
-        {
-            reading.set(now);
+        publish(&mut reading, now);
+    });
+    rsx! { TransportBarView { reading: reading() } }
+}
+
+/// A new reading, published only when something a person can see changed:
+/// the clock to the hundredth, the flags, the tempo.
+fn publish(reading: &mut Signal<crate::engine::Reading>, now: crate::engine::Reading) {
+    let was = *reading.peek();
+    if (now.at - was.at).abs() >= 0.01
+        || now.playing != was.playing
+        || now.looping != was.looping
+        || now.recording != was.recording
+        || (now.bpm - was.bpm).abs() > 1e-6
+    {
+        reading.set(now);
+    }
+}
+
+/// The bar in a browser: the same view, polled on a timer (a page has no
+/// redraw event to hang it on).
+#[cfg(feature = "web")]
+#[component]
+pub fn WebTransportBar() -> Element {
+    let mut reading = use_signal(crate::engine::Reading::default);
+    use_future(move || async move {
+        loop {
+            if let Some(now) = Transport::shared().map(Transport::reading) {
+                publish(&mut reading, now);
+            }
+            gloo_timers::future::TimeoutFuture::new(33).await;
         }
     });
-    let r = reading();
+    rsx! { TransportBarView { reading: reading() } }
+}
+
+/// What the bar shows, for a reading.
+#[component]
+fn TransportBarView(reading: crate::engine::Reading) -> Element {
+    let session: StudioSession = use_context();
+    let r = reading;
     let (bar, beat) = crate::ruler::Timeline::new(&session.project.tempo)
         .beats(r.at + 1e-6, 100_000)
         .last()

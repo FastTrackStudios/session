@@ -24,7 +24,8 @@
 //! movement down rather than changing what is being dragged, which is
 //! REAPER's behaviour and everyone else's.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::hit::Hit;
 

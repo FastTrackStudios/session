@@ -10,7 +10,6 @@
 //! (organize, build from the chart, generate the click and guide), and handed
 //! to every panel as context.
 
-mod progress;
 mod shell;
 
 use std::any::Any;

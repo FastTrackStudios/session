@@ -1822,3 +1822,26 @@ daw-reaper SOCKET="":
       exit 1
     fi
     cargo run --release -p session-daw --bin vello -- --reaper {{SOCKET}}
+
+# The Session DAW view in a browser (session-daw's web_host), built to
+# apps/session-daw-web/dist: cargo → wasm-bindgen → index.html, plus the
+# demo session's project and chart under dist/session/. Host toolchain
+# (rustup target add wasm32-unknown-unknown; cargo install
+# wasm-bindgen-cli --version 0.2.126). Serve with `just web-daw-serve`.
+web-daw SESSION="../sessions/Always On Time" RPP="Always On Time.RPP" CHART="Always_on_Time.kf" PROFILE="release":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p session-daw-web --target wasm32-unknown-unknown --profile {{PROFILE}}
+    out=apps/session-daw-web/dist
+    mkdir -p "$out/session"
+    dir=$([ "{{PROFILE}}" = "dev" ] && echo debug || echo "{{PROFILE}}")
+    wasm-bindgen --target web --no-typescript --out-dir "$out" \
+        "target/wasm32-unknown-unknown/$dir/session-daw-web.wasm"
+    cp apps/session-daw-web/www/index.html "$out/"
+    cp "{{SESSION}}/{{RPP}}" "$out/session/demo.RPP"
+    cp "{{SESSION}}/{{CHART}}" "$out/session/demo.kf"
+    ls -lh "$out" "$out/session"
+
+# Serve the built web DAW on http://localhost:8765.
+web-daw-serve:
+    cd apps/session-daw-web/dist && python3 -m http.server 8765

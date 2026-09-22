@@ -91,15 +91,10 @@ struct ChartWidget {
     songstart: Option<f64>,
 }
 
-impl Widget for ChartWidget {
-    fn paint(
-        &mut self,
-        _render_ctx: &mut dyn RenderContext,
-        _styles: &ComputedStyles,
-        width: u32,
-        height: u32,
-        scale: f64,
-    ) -> Scene {
+impl ChartWidget {
+    /// The picture: what Blitz's `Widget::paint` returns, and what the web
+    /// host draws into its canvas.
+    pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         let _ = height;
         let w = f64::from(width);
         let chart_secs = self
@@ -122,48 +117,156 @@ impl Widget for ChartWidget {
     }
 }
 
+impl Widget for ChartWidget {
+    fn paint(
+        &mut self,
+        _render_ctx: &mut dyn RenderContext,
+        _styles: &ComputedStyles,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Scene {
+        self.paint_scene(width, height, scale)
+    }
+}
+
 /// The panel. Reads [`StudioSession::chart`] from context; when the session
 /// has none it says so rather than showing an empty page.
+/// The chart widget for the session's chart, and the view state its input
+/// drives. `None` without a chart (or with the fonts failing to build).
+fn build(session: &StudioSession) -> Option<(ChartWidget, Shared)> {
+    let chart = session.chart.clone()?;
+    let view = match ChartView::new() {
+        Ok(view) => view,
+        Err(e) => {
+            tracing::error!(error = %e, "chart panel: font bundle failed");
+            return None;
+        }
+    };
+    let key = std::sync::Arc::as_ptr(&chart) as usize as u64;
+    let live: Shared = Rc::new(RefCell::new(Live {
+        scroll_pt: (0.0, 0.0),
+        zoom: 1.0,
+        content_pt: (1.0, 1.0),
+        px_per_pt: 1.0,
+    }));
+    let widget = ChartWidget {
+        chart,
+        key,
+        view,
+        live: Rc::clone(&live),
+        songstart: songstart_secs(&session.project),
+    };
+    Some((widget, live))
+}
+
+/// Move the view by a screen-pixel delta, in POINTS (so it stays
+/// physically anchored to the content as the zoom changes).
+fn pan_by(live: &Shared, dx_px: f64, dy_px: f64) {
+    let mut live = live.borrow_mut();
+    let k = live.px_per_pt.max(f64::EPSILON);
+    let (cw, ch) = live.content_pt;
+    // A page and a half of slack past either edge — panning clean off the
+    // content is normal while looking for something, and the clamp is only
+    // there to stop a drag from running away into the thousands.
+    live.scroll_pt.0 = (live.scroll_pt.0 - dx_px / k).clamp(-cw * 0.5, cw * 1.5);
+    live.scroll_pt.1 = (live.scroll_pt.1 - dy_px / k).clamp(-ch * 0.5, ch * 1.5);
+}
+
+/// Zoom by `notches` steps (positive in).
+fn zoom_by(live: &Shared, notches: f64) {
+    if notches.abs() < f64::EPSILON {
+        return;
+    }
+    let mut live = live.borrow_mut();
+    live.zoom = (live.zoom * ZOOM_STEP.powf(notches)).clamp(ZOOM_MIN, ZOOM_MAX);
+}
+
+/// No chart: a quiet line where it would be.
+#[component]
+fn NoChart() -> Element {
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; width:100%; height:100%; \
+                    display:flex; align-items:center; justify-content:center; \
+                    color:#8b9099; font-size:12px; background:#1a1b1e;",
+            "No chart for this session."
+        }
+    }
+}
+
+/// The chart panel in a browser: the widget in a canvas; a wheel or a
+/// trackpad pans, ctrl+wheel (and a pinch, which browsers deliver as one)
+/// zooms, a middle-drag pans.
+#[cfg(feature = "web")]
+#[component]
+pub fn WebChart() -> Element {
+    use crate::panel::{Button, PanelEvent};
+    let session: StudioSession = use_context();
+    let built = use_hook(|| {
+        build(&session).map(|(widget, live)| {
+            (
+                crate::web_host::HostedRef(Rc::new(RefCell::new(widget))),
+                live,
+            )
+        })
+    });
+    let Some((widget, live)) = built else {
+        return rsx! { NoChart {} };
+    };
+    let input = use_hook(|| Rc::new(Cell::new((false, None::<(f64, f64)>))));
+    let on_input = move |event: PanelEvent| {
+        let (ctrl, drag) = input.get();
+        match event {
+            PanelEvent::Modifiers(mods) => input.set((mods.ctrl, drag)),
+            PanelEvent::Button { button: Button::Middle, pressed } => {
+                input.set((ctrl, pressed.then_some((f64::NAN, f64::NAN))));
+            }
+            PanelEvent::Pointer { x, y } => {
+                if let Some(from) = drag {
+                    if !from.0.is_nan() {
+                        pan_by(&live, x - from.0, y - from.1);
+                    }
+                    input.set((ctrl, Some((x, y))));
+                }
+            }
+            PanelEvent::Wheel { dx, dy } => {
+                if ctrl {
+                    zoom_by(&live, dy / 40.0);
+                } else {
+                    pan_by(&live, dx, dy);
+                }
+            }
+            _ => {}
+        }
+    };
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; width:100%; height:100%; \
+                    overflow:hidden; background:#1a1b1e;",
+            crate::web_host::WidgetCanvas { widget, panel: on_input }
+        }
+    }
+}
+
+#[cfg(feature = "web")]
+impl crate::web_host::Hosted for ChartWidget {
+    fn paint(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+        self.paint_scene(width, height, scale)
+    }
+    fn event(&mut self, _event: &blitz_traits::events::UiEvent) {}
+}
+
+#[cfg(feature = "native")]
 #[component]
 pub fn Chart() -> Element {
     let session: StudioSession = use_context();
-    let songstart = use_hook(|| songstart_secs(&session.project));
-
     let built = use_hook(|| {
-        let chart = session.chart.clone()?;
-        let view = match ChartView::new() {
-            Ok(view) => view,
-            Err(e) => {
-                tracing::error!(error = %e, "chart panel: font bundle failed");
-                return None;
-            }
-        };
-        let key = std::sync::Arc::as_ptr(&chart) as usize as u64;
-        let live: Shared = Rc::new(RefCell::new(Live {
-            scroll_pt: (0.0, 0.0),
-            zoom: 1.0,
-            content_pt: (1.0, 1.0),
-            px_per_pt: 1.0,
-        }));
-        let widget = dioxus_native_dom::CustomWidgetAttr::new(ChartWidget {
-            chart,
-            key,
-            view,
-            live: Rc::clone(&live),
-            songstart,
-        });
-        Some((widget, live))
+        build(&session)
+            .map(|(widget, live)| (dioxus_native_dom::CustomWidgetAttr::new(widget), live))
     });
-
     let Some((widget, live)) = built else {
-        return rsx! {
-            div {
-                style: "position:absolute; top:0; left:0; width:100%; height:100%; \
-                        display:flex; align-items:center; justify-content:center; \
-                        color:#8b9099; font-size:12px; background:#1a1b1e;",
-                "No chart for this session."
-            }
-        };
+        return rsx! { NoChart {} };
     };
 
     // This panel's rectangle in the window — needed to turn a window-space
@@ -179,7 +282,7 @@ pub fn Chart() -> Element {
     // it landed over this panel at all.
     let pointer = use_hook(|| Rc::new(Cell::new((0.0_f64, 0.0_f64))));
     let ctrl_held = use_hook(|| Rc::new(Cell::new(false)));
-    let measured = use_hook(|| Rc::new(Cell::new(None::<std::time::Instant>)));
+    let measured = use_hook(|| Rc::new(Cell::new(None::<web_time::Instant>)));
 
     let measuring = Rc::clone(&mounted);
     let drag_state = Rc::clone(&dragging);
@@ -192,24 +295,8 @@ pub fn Chart() -> Element {
         // Move the view by a screen-pixel delta, in POINTS (so it stays
         // physically anchored to the content as `zoom` changes) — shared by
         // a middle-drag and a trackpad's two-finger scroll.
-        let pan_by = |dx_px: f64, dy_px: f64| {
-            let mut live = driving.borrow_mut();
-            let k = live.px_per_pt.max(f64::EPSILON);
-            let (cw, ch) = live.content_pt;
-            // A page and a half of slack past either edge — panning clean
-            // off the content is normal while looking for something, and
-            // the clamp is only there to stop a drag from running away
-            // into the thousands.
-            live.scroll_pt.0 = (live.scroll_pt.0 - dx_px / k).clamp(-cw * 0.5, cw * 1.5);
-            live.scroll_pt.1 = (live.scroll_pt.1 - dy_px / k).clamp(-ch * 0.5, ch * 1.5);
-        };
-        let zoom_by = |dy: f64| {
-            if dy.abs() < f64::EPSILON {
-                return;
-            }
-            let mut live = driving.borrow_mut();
-            live.zoom = (live.zoom * ZOOM_STEP.powf(dy)).clamp(ZOOM_MIN, ZOOM_MAX);
-        };
+        let pan_by = |dx_px: f64, dy_px: f64| pan_by(&driving, dx_px, dy_px);
+        let zoom_by = |dy: f64| zoom_by(&driving, dy);
         match event {
             winit::event::WindowEvent::ModifiersChanged(state) => {
                 ctrl.set(state.state().control_key());
@@ -259,7 +346,7 @@ pub fn Chart() -> Element {
                     .get()
                     .is_none_or(|at| at.elapsed() > std::time::Duration::from_millis(200));
                 if stale && let Some(node) = measuring.borrow().clone() {
-                    measured.set(Some(std::time::Instant::now()));
+                    measured.set(Some(web_time::Instant::now()));
                     spawn(async move {
                         if let Ok(got) = node.get_client_rect().await {
                             let next = (got.origin.x, got.origin.y, got.size.width, got.size.height);

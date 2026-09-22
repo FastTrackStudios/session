@@ -5,12 +5,13 @@
 //! SONG region (lane 0) is the song's span, the SECTIONS regions (lane 1)
 //! are its parts — the regions `build_from_chart` stamps. The bar and the
 //! buttons are `session-ui`'s, unchanged; what is here is the data and the
-//! transport they drive.
+//! transport they drive. The same panels in the desktop app and the web
+//! demo: only how the reading is polled differs.
 
 use dioxus::prelude::*;
 
-use session_daw::engine::{Move, Reading, Transport, transport};
-use session_daw::studio::StudioSession;
+use crate::engine::{Move, Reading, Transport, transport};
+use crate::studio::StudioSession;
 use session_ui::components::progress::{ProgressSection, SongProgressBar};
 use session_ui::components::transport_controls::TransportControlBar;
 
@@ -40,7 +41,7 @@ impl Song {
         let percent = |t: f64| ((t - start) / span * 100.0).clamp(0.0, 100.0);
         let mut parts: Vec<_> = regions
             .iter()
-            .filter(|r| r.lane == session_daw::ruler::SECTIONS_ROW as u32)
+            .filter(|r| r.lane == crate::ruler::SECTIONS_ROW as u32)
             .collect();
         parts.sort_by(|a, b| a.start.total_cmp(&b.start));
         Some(Self {
@@ -76,10 +77,7 @@ impl Song {
 /// where a frame's travel is under a pixel.
 fn use_reading() -> Signal<Reading> {
     let mut reading = use_signal(Reading::default);
-    dioxus_native::use_window_event(move |event, _| {
-        if !matches!(event, winit::event::WindowEvent::RedrawRequested) {
-            return;
-        }
+    let mut publish = move || {
         let Some(now) = Transport::shared().map(Transport::reading) else {
             return;
         };
@@ -90,6 +88,19 @@ fn use_reading() -> Signal<Reading> {
             || now.recording != was.recording
         {
             reading.set(now);
+        }
+    };
+    #[cfg(feature = "native")]
+    dioxus_native::use_window_event(move |event, _| {
+        if matches!(event, winit::event::WindowEvent::RedrawRequested) {
+            publish();
+        }
+    });
+    #[cfg(all(feature = "web", not(feature = "native")))]
+    use_future(move || async move {
+        loop {
+            publish();
+            gloo_timers::future::TimeoutFuture::new(33).await;
         }
     });
     reading

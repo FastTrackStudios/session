@@ -94,6 +94,7 @@ impl Links {
 
 /// The DAW view's panels: the arrangement, and the mixer under it when
 /// it is open.
+#[cfg(feature = "native")]
 #[component]
 pub fn DawPanels() -> Element {
     let session: StudioSession = use_context();
@@ -116,6 +117,7 @@ pub fn DawPanels() -> Element {
 
 /// The mixer panel. No props: the session and the [`Links`] come from
 /// context.
+#[cfg(feature = "native")]
 #[component]
 pub fn Mixer() -> Element {
     let links: Links = use_context();
@@ -140,7 +142,7 @@ pub fn Mixer() -> Element {
     // along the strips.
     let mut rect = use_signal(|| (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64));
     let mounted = use_hook(|| Rc::new(RefCell::new(None::<Rc<MountedData>>)));
-    let measured = use_hook(|| Rc::new(Cell::new(None::<std::time::Instant>)));
+    let measured = use_hook(|| Rc::new(Cell::new(None::<web_time::Instant>)));
     let pointer = use_hook(|| Rc::new(Cell::new((0.0_f64, 0.0_f64))));
     let measuring = Rc::clone(&mounted);
     let scrolling = Rc::clone(&scroll);
@@ -189,7 +191,7 @@ pub fn Mixer() -> Element {
                 .get()
                 .is_none_or(|at| at.elapsed() > std::time::Duration::from_millis(200));
             if stale && let Some(node) = measuring.borrow().clone() {
-                measured.set(Some(std::time::Instant::now()));
+                measured.set(Some(web_time::Instant::now()));
                 spawn(async move {
                     if let Ok(got) = node.get_client_rect().await {
                         let next = (got.origin.x, got.origin.y, got.size.width, got.size.height);
@@ -218,6 +220,91 @@ pub fn Mixer() -> Element {
                 data: widget.clone(),
             }
         }
+    }
+}
+
+/// The DAW view's panels in a browser: [`DawPanels`], with the widgets in
+/// canvases.
+#[cfg(feature = "web")]
+#[component]
+pub fn WebDawPanels(engine: crate::web_engine::EngineRef) -> Element {
+    let session: StudioSession = use_context();
+    let links = use_context_provider(|| Links::new(session.rows.as_slice().to_vec()));
+    let open = (links.open)();
+    let arrange_bottom = if open { HEIGHT } else { 0.0 };
+    let mixer_display = if open { "block" } else { "none" };
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
+            crate::web_host::WebArrangement { engine }
+        }
+        div {
+            style: "display:{mixer_display}; position:absolute; left:0; right:0; bottom:0; \
+                    height:{HEIGHT}px; border-top:1px solid #000;",
+            WebMixer {}
+        }
+    }
+}
+
+/// The mixer panel in a browser. The wheel runs along the strips; a press
+/// hands the keyboard back to the arrangement, as [`Mixer`] does.
+#[cfg(feature = "web")]
+#[component]
+pub fn WebMixer() -> Element {
+    use crate::panel::PanelEvent;
+    let links: Links = use_context();
+    let mode: Option<Signal<session::modes::Mode>> = try_use_context();
+    let live_mode = mode.is_some_and(|mode| mode() == session::modes::Mode::Live);
+    let live = use_hook(|| Rc::new(Cell::new(false)));
+    live.set(live_mode);
+    let scroll = use_hook(|| Rc::new(Cell::new(0.0_f64)));
+    let content_w = use_hook(|| Rc::new(Cell::new(0.0_f64)));
+    let element = use_hook(|| Rc::new(RefCell::new(None::<web_sys::HtmlElement>)));
+    let widget = use_hook(|| {
+        crate::web_host::HostedRef(Rc::new(RefCell::new(MixerWidget::new(
+            links.clone(),
+            Rc::clone(&scroll),
+            Rc::clone(&content_w),
+            Rc::clone(&live),
+        ))))
+    });
+    let slot = crate::web_host::ElementSlot(Rc::clone(&element));
+    let arrange_node = Rc::clone(&links.arrange_node);
+    let on_input = move |event: PanelEvent| match event {
+        PanelEvent::Wheel { dx, dy } => {
+            let width = element
+                .borrow()
+                .as_ref()
+                .map_or(0.0, |el| el.get_bounding_client_rect().width());
+            let most = (content_w.get() - width).max(0.0);
+            scroll.set((scroll.get() - dx - dy).clamp(0.0, most));
+        }
+        PanelEvent::Button { pressed: false, .. } => {
+            if let Some(node) = arrange_node.borrow().clone() {
+                spawn(async move {
+                    let _ = node.set_focus(true).await;
+                });
+            }
+        }
+        _ => {}
+    };
+    let colors = daw_ui::studio::lanes::Colors::from_theme(&daw_ui::theming::Theme::dark());
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; right:0; bottom:0; overflow:hidden; \
+                    background:{colors.surface};",
+            crate::web_host::WidgetCanvas { widget, panel: on_input, element: Some(slot) }
+        }
+    }
+}
+
+#[cfg(feature = "web")]
+impl crate::web_host::Hosted for MixerWidget {
+    fn paint(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+        self.paint_scene(width, height, scale)
+    }
+    fn event(&mut self, event: &UiEvent) {
+        MixerWidget::event(self, event);
     }
 }
 
@@ -453,24 +540,17 @@ fn predict(tracks: &mut [daw_proto::Track], edit: &Edit) {
     }
 }
 
-impl Widget for MixerWidget {
-    fn handle_event(&mut self, event: &UiEvent) {
+impl MixerWidget {
+    /// One input event: what Blitz's `Widget::handle_event` calls, and what
+    /// the web host calls.
+    pub fn event(&mut self, event: &UiEvent) {
         let changed = self.took(event);
         self.dirty.set(changed);
     }
 
-    fn needs_redraw(&self) -> bool {
-        self.dirty.get()
-    }
-
-    fn paint(
-        &mut self,
-        _render_ctx: &mut dyn RenderContext,
-        _styles: &ComputedStyles,
-        width: u32,
-        height: u32,
-        _scale: f64,
-    ) -> Scene {
+    /// The picture: what Blitz's `Widget::paint` returns, and what the web
+    /// host draws into its canvas.
+    pub fn paint_scene(&mut self, width: u32, height: u32, _scale: f64) -> Scene {
         self.dirty.set(false);
         self.flush_drag();
         self.catch_up();
@@ -538,5 +618,26 @@ impl Widget for MixerWidget {
             at,
         );
         out
+    }
+}
+
+impl Widget for MixerWidget {
+    fn handle_event(&mut self, event: &UiEvent) {
+        self.event(event);
+    }
+
+    fn needs_redraw(&self) -> bool {
+        self.dirty.get()
+    }
+
+    fn paint(
+        &mut self,
+        _render_ctx: &mut dyn RenderContext,
+        _styles: &ComputedStyles,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Scene {
+        self.paint_scene(width, height, scale)
     }
 }

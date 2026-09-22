@@ -231,7 +231,7 @@ struct Snapback {
     from: (f64, f64),
     /// And where the item has been all along.
     to: (f64, f64),
-    started: std::time::Instant,
+    started: web_time::Instant,
 }
 
 /// How long a refused ghost takes to get back.
@@ -830,7 +830,7 @@ impl Editor {
                                 index: press.index,
                                 from: (x0, x1),
                                 to: (press.x0, press.x1),
-                                started: std::time::Instant::now(),
+                                started: web_time::Instant::now(),
                             });
                         }
                         return true;
@@ -849,7 +849,7 @@ impl Editor {
                                 index: press.index,
                                 from: (x0, x1),
                                 to: (press.x0, press.x1),
-                                started: std::time::Instant::now(),
+                                started: web_time::Instant::now(),
                             });
                         } else {
                             effects.push(Effect::ReRecord);
@@ -882,7 +882,7 @@ impl Editor {
                             index: press.index,
                             from: (x0, x1),
                             to: (press.x0, press.x1),
-                            started: std::time::Instant::now(),
+                            started: web_time::Instant::now(),
                         });
                     }
                     // And every edge that was sitting on the one just

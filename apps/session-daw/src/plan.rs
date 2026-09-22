@@ -45,8 +45,15 @@ impl Kinds {
         let Ok(text) = std::fs::read_to_string(path) else {
             return Self::default();
         };
+        Self::from_text(&text)
+    }
+
+    /// The same, from the project's text: where there is no file to read
+    /// (the web build, which is handed the text).
+    #[must_use]
+    pub fn from_text(text: &str) -> Self {
         Self {
-            by_guid: read_kinds(&text)
+            by_guid: read_kinds(text)
                 .into_iter()
                 .map(|ext| (ext.guid.clone(), ext))
                 .collect(),

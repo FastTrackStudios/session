@@ -24,7 +24,7 @@ description = "The Session DAW window — open a REAPER project and move around 
 # The window itself. WRY, not Blitz: it is what session-desktop ships on,
 # it has devtools and real CSS, and its DOM does not mind a pane adding
 # and removing nodes.
-dioxus = { workspace = true, default-features = true, features = ["desktop", "launch"] }
+dioxus = { workspace = true, features = ["hooks", "signals", "macro", "html"] }
 
 # The UI. `studio` is the rebuilt full-DAW surface; the older
 # `components` family is the REAPER-theme tracing one and is not used
@@ -44,7 +44,7 @@ dioxus-native-dom = { workspace = true }
 # opens the studio on a wgpu surface rather than rendering one frame to a
 # PNG. Same component tree, same data — the difference between proving
 # the picture and proving the program.
-dioxus-native = { workspace = true }
+dioxus-native = { workspace = true, optional = true }
 daw-control = { workspace = true }
 daw-proto = { workspace = true }
 daw-theme-art = { workspace = true }
@@ -65,7 +65,7 @@ dynamic-template = { workspace = true }
 # The album's plan and the room's profile, behind the Patch List view —
 # see `src/patch_list.rs`. The window reads them; applying one to a
 # session is the session's job, not this window's.
-patch-list = { workspace = true }
+patch-list = { workspace = true, optional = true }
 # The mouse-modifier contexts a hit reports, so bindings stay
 # configurable rather than being hard-coded per widget.
 input-config-proto = { workspace = true }
@@ -91,7 +91,7 @@ fts-audio-ui = { workspace = true }
 # this window's rack. Without it only the portable core compiles (the
 # model, the response maths and the interaction helpers), which is what
 # the wasm remotes take.
-eq-ui = { workspace = true, features = ["native"] }
+eq-ui = { workspace = true }
 saturate-dsp = { workspace = true, features = ["analysis"] }
 # The delay's style families and the reverb's rendered impulse — the
 # Depth panels draw the machine, not a picture of its knob.
@@ -107,11 +107,7 @@ saturate-profiles = { workspace = true }
 # pulls no REAPER — attaching to a live one means talking to the
 # extension's Unix socket, not linking its FFI, which is what lets this
 # window run on a machine that has no REAPER at all.
-daw = { workspace = true, features = [
-    "standalone-rpp",
-    "standalone-bootstrap",
-    "cli",
-] }
+daw = { workspace = true }
 
 # The GPU-accelerated arrangement. `anyrender` is the 2D abstraction
 # (`PaintScene`: fill/stroke/draw_glyphs/draw_image) and the portable
@@ -124,30 +120,87 @@ daw = { workspace = true, features = [
 # Depending on kurbo and peniko directly would mean pinning two more
 # versions by hand and keeping them in step with whatever Vello moves to.
 anyrender = "0.11"
-anyrender_vello = "0.12"
+anyrender_vello = { version = "0.12", optional = true }
 vello = "0.9"
-pollster = "0.4"
+pollster = { version = "0.4", optional = true }
 image = { workspace = true }
 # Finding REAPER's resource path, for the toolbar icons it installs.
-dirs = "6"
+dirs = { version = "6", optional = true }
 skrifa = "0.42"
 adaptive-grid = { workspace = true }
 # Razor areas, the same ones the expression editor uses — see the
 # `razor` crate for why the rectangle is shared and the operations on
 # its contents are not.
 razor = { workspace = true }
-winit = "0.31.0-beta.2"
+winit = { version = "0.31.0-beta.2", optional = true }
+# The pointer shapes, which winit re-exports; named directly so the web
+# host (CSS `cursor`) shares them.
+cursor-icon = "1.2"
+# `Instant` that works in a browser (std's panics on wasm32); std's own
+# everywhere else.
+web-time = "1"
 
 eyre = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread"], optional = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 # A sampling profiler for the headless benchmarks, behind the `profile`
 # feature — see below.
 pprof = { version = "0.15", features = ["flamegraph"], optional = true }
+web-sys = { workspace = true, optional = true, features = [
+    "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement",
+    "DomRect", "CssStyleDeclaration", "console", "Response", "PointerEvent",
+    "EventTarget",
+] }
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+anyrender_vello_hybrid = { workspace = true, optional = true, features = ["webgl"] }
+vello_hybrid = { workspace = true, optional = true }
+vello_common = { workspace = true, optional = true }
+rustc-hash = { version = "2", optional = true }
+gloo-timers = { workspace = true, optional = true }
+# The engine, in the page (the native build reaches it through `daw`'s
+# standalone features instead).
+daw-standalone = { workspace = true, features = ["bootstrap", "rpp-project-wasm"] }
 
 [features]
+default = ["native"]
+# The desktop app: dioxus-native (Blitz) hosts for the panels, the
+# in-process engine with its audio device, threads, the plugin-UI graph.
+native = [
+    "dioxus/desktop",
+    "dioxus/launch",
+    "dep:dioxus-native",
+    "dep:anyrender_vello",
+    "dep:pollster",
+    "dep:dirs",
+    "dep:winit",
+    "dep:tokio",
+    "dep:tracing-subscriber",
+    "eq-ui/native",
+    "daw/standalone-rpp",
+    "daw/standalone-bootstrap",
+    "daw/cli",
+    "dynamic-template/reaper",
+    "dep:patch-list",
+]
+# The browser: the same widgets, hosted in <canvas> elements under
+# dioxus-web and drawn with vello_hybrid's WebGL renderer (keyflow-ui's
+# `wasm-graphics` pattern). See `web_host`.
+web = [
+    "dioxus/web",
+    "dep:web-sys",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:anyrender_vello_hybrid",
+    "dep:vello_hybrid",
+    "dep:vello_common",
+    "dep:rustc-hash",
+    "dep:gloo-timers",
+]
 # The `#[reaper_test]` suites, which need a REAPER to talk to. Behind a
 # feature so an ordinary `cargo nextest run --workspace` does not try to
 # reach one that is not running — `just reaper-test` turns it on, via
@@ -171,7 +224,54 @@ profile = ["dep:pprof"]
 #   cargo run --release -p session-daw --bin blitz_shot --features frame-times
 #
 # See #119, and libs/vendor/anyrender_vello/UPSTREAM.md.
-frame-times = ["anyrender_vello/log_frame_times"]
+frame-times = ["anyrender_vello?/log_frame_times"]
+
+
+# Every binary is a desktop one.
+[[bin]]
+name = "session-daw"
+path = "src/main.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "blitz"
+path = "src/bin/blitz.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "blitz_arrange"
+path = "src/bin/blitz_arrange.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "blitz_controls"
+path = "src/bin/blitz_controls.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "blitz_panels"
+path = "src/bin/blitz_panels.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "blitz_shot"
+path = "src/bin/blitz_shot.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "chain-probe"
+path = "src/bin/chain-probe.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "vello"
+path = "src/bin/vello.rs"
+required-features = ["native"]
 
 [dev-dependencies]
 # Temp project trees for the Patch List view's discovery tests, and the

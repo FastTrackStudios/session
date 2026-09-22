@@ -51,7 +51,7 @@ pub struct Notice {
     /// refusal knew one.
     pub row: Option<String>,
     /// When it arrived, which is what makes it fade.
-    pub since: std::time::Instant,
+    pub since: web_time::Instant,
 }
 
 impl Notice {
@@ -61,7 +61,7 @@ impl Notice {
         Self {
             why,
             row,
-            since: std::time::Instant::now(),
+            since: web_time::Instant::now(),
         }
     }
 

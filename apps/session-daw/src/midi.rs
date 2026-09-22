@@ -121,20 +121,24 @@ impl Previews {
         let Some(runtime) = crate::open::runtime() else {
             return;
         };
-        runtime.block_on(async {
-            let Some(daw) = daw::rpc::Daw::try_get() else {
-                return;
-            };
-            let Ok(project) = daw.current_project().await else {
-                return;
-            };
-            for (guid, length) in wanted {
-                let notes = read(&project, &guid, length).await;
-                if let Ok(mut known) = self.known.lock() {
-                    known.insert(guid, notes);
-                }
+        runtime.block_on(self.fill(wanted));
+    }
+
+    /// Read the notes, awaited: [`Self::fill_blocking`] where there is no
+    /// thread to block (the web build).
+    pub async fn fill(&self, wanted: Vec<(String, f64)>) {
+        let Some(daw) = daw::rpc::Daw::try_get() else {
+            return;
+        };
+        let Ok(project) = daw.current_project().await else {
+            return;
+        };
+        for (guid, length) in wanted {
+            let notes = read(&project, &guid, length).await;
+            if let Ok(mut known) = self.known.lock() {
+                known.insert(guid, notes);
             }
-        });
+        }
     }
 }
 

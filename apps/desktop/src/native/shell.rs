@@ -100,13 +100,13 @@ fn PerformanceView() -> Element {
         div {
             style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; \
                     flex-direction:column; gap:16px; padding:16px;",
-            super::progress::ProgressBar {}
+            session_daw::progress::ProgressBar {}
             div {
                 style: "position:relative; flex:1; min-height:0; border-radius:8px; \
                         overflow:hidden; border:1px solid {RULE};",
                 session_daw::chart_panel::Chart {}
             }
-            super::progress::TransportButtons {}
+            session_daw::progress::TransportButtons {}
         }
     }
 }

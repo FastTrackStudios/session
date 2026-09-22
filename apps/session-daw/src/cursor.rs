@@ -26,7 +26,8 @@
 //! which is why [`Playhead::seek`] exists — a jump is told to the
 //! cursor rather than inferred from a position that moved too far.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 /// Where the audio is, as something that can be asked at any moment.
 #[derive(Clone, Copy, Debug)]
@@ -803,7 +804,8 @@ mod look_tests {
 #[cfg(test)]
 mod trail_tests {
     use super::Trail;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+use web_time::Instant;
 
     const PPS: f64 = 100.0;
     const FULL: f64 = 90.0;
