@@ -13,7 +13,9 @@ path = "src/main.rs"
 [dependencies]
 session = { workspace = true, features = ["reaper"] }
 session-proto = { workspace = true }
-dawfile-reaper = { workspace = true }
+# `peaks-*` = `session peaks`: the `.sessionpeaks` builder, WAV through
+# a memory map and Ogg proxies through symphonia.
+dawfile-reaper = { workspace = true, features = ["peaks-wav", "peaks-ogg"] }
 daw = { workspace = true, features = ["reaper", "cli"] }
 vox = { workspace = true }
 vox-stream = { workspace = true }

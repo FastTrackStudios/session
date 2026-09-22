@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 
 mod multitracks;
+mod peaks;
 mod proxies;
 use session::SetlistServiceClient;
 
@@ -82,6 +83,21 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Write the waveform peaks cache for a session's media:
+    /// `Media/Bass.wav` → `Media/Peaks/Bass.wav.sessionpeaks`, beside
+    /// what it describes, so it syncs and streams with the session.
+    ///
+    /// The file is REAPER's own format under another name: a
+    /// `Media/peaks/*.reapeaks` REAPER already wrote is adopted rather
+    /// than recomputed, and a cache written here is one REAPER reads.
+    /// Sources with no WAV are scanned from their Ogg proxy.
+    Peaks {
+        /// The session's `.RPP` (or the folder holding exactly one).
+        session: PathBuf,
+        /// Rescan sources whose cache is already up to date.
+        #[arg(long)]
+        force: bool,
+    },
     /// Turn folders of multitracks into sessions on the grid: the click
     /// stem gives the tempo and where bar one is, every stem is trimmed to
     /// it, and the guide's cues become regions and a chart to start from.
@@ -130,6 +146,7 @@ async fn run(command: Command) -> eyre::Result<()> {
             quality,
             force,
         } => proxies::write(&session, quality, force),
+        Command::Peaks { session, force } => peaks::write(&session, force),
         Command::GuideLibrary {
             library,
             out,

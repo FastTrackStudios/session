@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Where a media file's proxy lives — the same rule Task's share links
 /// apply (`task_server::share::proxy_path`).
-fn proxy_of(media: &Path) -> Option<PathBuf> {
+pub(crate) fn proxy_of(media: &Path) -> Option<PathBuf> {
     let dir = media.parent()?;
     if dir.file_name().is_some_and(|n| n == "Proxies") {
         return None;
@@ -20,7 +20,7 @@ fn proxy_of(media: &Path) -> Option<PathBuf> {
 }
 
 /// The session's `.RPP`: the path itself, or the one `.RPP` in a folder.
-fn project_file(session: &Path) -> eyre::Result<PathBuf> {
+pub(crate) fn project_file(session: &Path) -> eyre::Result<PathBuf> {
     if session.is_file() {
         return Ok(session.to_path_buf());
     }
@@ -41,7 +41,7 @@ fn project_file(session: &Path) -> eyre::Result<PathBuf> {
 
 /// Every media file the project's sources name (`FILE "…"`), resolved
 /// against the project's folder, each once.
-fn sources(project: &Path) -> eyre::Result<Vec<PathBuf>> {
+pub(crate) fn sources(project: &Path) -> eyre::Result<Vec<PathBuf>> {
     let text = std::fs::read_to_string(project)?;
     let base = project.parent().unwrap_or(Path::new("."));
     let mut out: Vec<PathBuf> = text
