@@ -135,6 +135,9 @@ pub fn launch() {
 fn window_attributes() -> winit::window::WindowAttributes {
     let attributes = winit::window::WindowAttributes::default()
         .with_title("Session")
+        // Opens filling the screen; this is the size it restores to when
+        // un-maximized.
+        .with_maximized(true)
         .with_surface_size(winit::dpi::LogicalSize::new(1600.0, 1000.0))
         .with_min_surface_size(winit::dpi::LogicalSize::new(720.0, 480.0));
     #[cfg(target_os = "macos")]
