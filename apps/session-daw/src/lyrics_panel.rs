@@ -366,6 +366,8 @@ pub fn LyricsPanel() -> Element {
     let own = use_hook(LyricsChoice::new);
     let LyricsChoice { mut view, mut layer } = try_use_context::<LyricsChoice>().unwrap_or(own);
     let (size, mut node) = use_size();
+    let mut open = use_signal(|| false);
+    let (mut awake, mut moved) = use_controls(open);
     let at = reading().at;
     let has = words.lyrics.layers();
     rsx! {
@@ -373,6 +375,12 @@ pub fn LyricsPanel() -> Element {
             style: "position:absolute; top:0; left:0; width:100%; height:100%; overflow:hidden; \
                     background:#07080b; color:{TEXT}; font-family:system-ui, sans-serif;",
             onmounted: move |e| node.set(Some(e.data())),
+            onmousemove: move |_| {
+                moved.set(web_time::Instant::now());
+                if !*awake.peek() {
+                    awake.set(true);
+                }
+            },
             if words.lyrics.lines.is_empty() {
                 div {
                     style: "position:absolute; top:0; left:0; width:100%; height:100%; display:flex; \
@@ -388,28 +396,57 @@ pub fn LyricsPanel() -> Element {
                     View::Confidence => rsx! { Confidence { words: words.clone(), at, size: size() } },
                 }
             }
-            // The switch, out of the way in the corner.
-            div {
-                style: "position:absolute; top:8px; right:8px; display:flex; align-items:center; gap:2px; \
-                        padding:2px; border-radius:7px; background:rgba(10,11,14,0.72); \
-                        border:1px solid {RULE};",
-                if view() == View::Audience {
-                    for each in [Layer::Section, Layer::Slide, Layer::Line] {
-                        Pill {
-                            label: each.name().to_owned(),
-                            on: layer() == each,
-                            available: has.contains(&each),
-                            pick: move |()| layer.set(each),
-                        }
+            // Which view: a dropdown in the corner, there only while the
+            // mouse is moving over the panel (or its menu is open) — a
+            // screen someone reads from carries no controls the rest of
+            // the time.
+            if awake() || open() {
+                div {
+                    style: "position:absolute; top:8px; right:8px; display:flex; flex-direction:column; \
+                            align-items:flex-end;",
+                    button {
+                        style: "height:24px; padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
+                                background:rgba(12,13,17,0.86); color:#d5d8de; font-size:11px; font-weight:700; \
+                                cursor:pointer; white-space:nowrap;",
+                        onclick: move |_| open.toggle(),
+                        "{view().name()}  \u{25BE}"
                     }
-                    div { style: "width:1px; height:14px; margin:0 3px; background:{RULE};" }
-                }
-                for each in View::ALL {
-                    Pill {
-                        label: each.name().to_owned(),
-                        on: view() == each,
-                        available: true,
-                        pick: move |()| view.set(each),
+                    if open() {
+                        div {
+                            style: "margin-top:4px; min-width:170px; padding:4px; border-radius:8px; \
+                                    background:#121318; border:1px solid {RULE}; \
+                                    box-shadow:0 8px 24px rgba(0,0,0,0.55);",
+                            for each in View::ALL {
+                                MenuRow {
+                                    label: each.name().to_owned(),
+                                    on: view() == each,
+                                    available: true,
+                                    pick: move |()| {
+                                        view.set(each);
+                                        open.set(false);
+                                    },
+                                }
+                            }
+                            if view() == View::Audience {
+                                div { style: "height:1px; margin:4px 2px; background:{RULE};" }
+                                div {
+                                    style: "padding:2px 8px 4px 8px; font-size:9px; font-weight:800; letter-spacing:1.2px; \
+                                            text-transform:uppercase; color:#6b707a;",
+                                    "Show"
+                                }
+                                for each in [Layer::Section, Layer::Slide, Layer::Line] {
+                                    MenuRow {
+                                        label: each.name().to_owned(),
+                                        on: layer() == each,
+                                        available: has.contains(&each),
+                                        pick: move |()| {
+                                            layer.set(each);
+                                            open.set(false);
+                                        },
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -417,27 +454,54 @@ pub fn LyricsPanel() -> Element {
     }
 }
 
+/// How long the view's dropdown stays after the mouse stops moving.
+const CONTROLS_LINGER: Duration = Duration::from_millis(2500);
+
+/// Whether the panel's controls are up: woken by a mouse moving over it,
+/// asleep again [`CONTROLS_LINGER`] after it stops (never while `open`).
+fn use_controls(open: Signal<bool>) -> (Signal<bool>, Signal<web_time::Instant>) {
+    let mut awake = use_signal(|| false);
+    let moved = use_signal(web_time::Instant::now);
+    use_future(move || async move {
+        let (tick, mut ticks) = futures_channel::mpsc::unbounded::<()>();
+        std::thread::spawn(move || {
+            while tick.unbounded_send(()).is_ok() {
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        });
+        while ticks.next().await.is_some() {
+            if *awake.peek() && !*open.peek() && moved.peek().elapsed() > CONTROLS_LINGER {
+                awake.set(false);
+            }
+        }
+    });
+    (awake, moved)
+}
+
+/// One row of the view's dropdown.
 #[component]
-fn Pill(label: String, on: bool, available: bool, pick: EventHandler<()>) -> Element {
+fn MenuRow(label: String, on: bool, available: bool, pick: EventHandler<()>) -> Element {
     let (bg, fg) = match (on, available) {
-        (true, _) => (ACCENT, "#0b0c0e"),
+        (true, _) => ("#1f2a3a", "#ffffff"),
         (false, true) => ("transparent", "#c7cad1"),
         (false, false) => ("transparent", "#4b4f57"),
     };
+    let mark = if on { "\u{2713}" } else { "" };
     rsx! {
-        button {
-            style: "flex:none; height:20px; padding:0 8px; border-radius:5px; border:none; \
-                    background:{bg}; color:{fg}; font-size:10px; font-weight:700; cursor:pointer; \
-                    white-space:nowrap;",
+        div {
+            style: "display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:5px; \
+                    background:{bg}; color:{fg}; font-size:12px; font-weight:600; cursor:pointer;",
             onclick: move |_| {
                 if available {
                     pick.call(());
                 }
             },
+            div { style: "width:12px; color:{ACCENT}; font-weight:800;", "{mark}" }
             "{label}"
         }
     }
 }
+
 
 /// The room's view: the words and nothing else, as large as the panel
 /// allows, centred, on a dark field lit by the section's colour.
