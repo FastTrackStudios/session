@@ -230,6 +230,77 @@ fn fit(lines: &[String], w: f64, h: f64, max: f64) -> f64 {
 /// from the white slide above it.
 const NEXT_YELLOW: &str = "#f5c542";
 
+/// The song as a strip of its sections, each as long as it lasts and in
+/// its colour: the one the song is in lit, those gone faint.
+#[component]
+fn SectionStrip(words: Words, at: f64, height: f64) -> Element {
+    let current = words.section_at(at);
+    let span = (words.song.1 - words.song.0).max(1e-6);
+    let parts: Vec<(f64, String, f64)> = words
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(k, s)| {
+            let opacity = match current {
+                Some(i) if k == i => 1.0,
+                Some(i) if k < i => 0.25,
+                _ => 0.5,
+            };
+            ((s.end - s.start) / span * 100.0, words.color(k), opacity)
+        })
+        .collect();
+    rsx! {
+        div {
+            style: "display:flex; gap:2px; height:{height}px;",
+            for (k, (width, fill, opacity)) in parts.into_iter().enumerate() {
+                div { key: "{k}", style: "flex:none; width:{width}%; height:{height}px; border-radius:1px; background:{fill}; opacity:{opacity};" }
+            }
+        }
+    }
+}
+
+/// A section's name as a rail spells it: the chart's abbreviation
+/// written out, its number and part kept — `VS 2B` is "Verse 2B".
+fn spelled(name: &str) -> String {
+    let (kind, rest) = name.trim().split_once(' ').unwrap_or((name.trim(), ""));
+    let full = match kind.to_ascii_uppercase().as_str() {
+        "VS" | "V" => "Verse",
+        "CH" | "C" => "Chorus",
+        "PRE" | "PRE-CH" | "PC" => "Pre-Chorus",
+        "POST" | "POST-CH" => "Post-Chorus",
+        "BR" | "B" => "Bridge",
+        "IN" | "INTRO" => "Intro",
+        "OUT" | "OUTRO" => "Outro",
+        "INT" => "Interlude",
+        "INST" => "Instrumental",
+        "TURN" | "TA" => "Turnaround",
+        "TAG" => "Tag",
+        "REFRAIN" | "REF" => "Refrain",
+        "BD" | "BREAKDOWN" => "Breakdown",
+        "COUNT" => "Count",
+        "END" | "ENDING" => "Ending",
+        _ => return name.trim().to_owned(),
+    };
+    if rest.is_empty() { full.to_owned() } else { format!("{full} {rest}") }
+}
+
+/// The Confidence Monitor's left edge: the slide's section as a strip of
+/// its colour with its name printed down it.
+#[component]
+fn SectionRail(color: String, name: String) -> Element {
+    rsx! {
+        div {
+            style: "flex:none; width:22px; height:100%; display:flex; align-items:center; justify-content:center; \
+                    background:{color};",
+            div {
+                style: "flex:none; white-space:nowrap; transform:rotate(90deg); font-size:11px; font-weight:800; \
+                        letter-spacing:1.5px; text-transform:uppercase; color:#0b0c0e;",
+                "{name}"
+            }
+        }
+    }
+}
+
 /// A section's colour as the next slide's text: itself, unless it is
 /// whitish (bright and barely tinted) or not a `#rrggbb` — then yellow.
 fn next_color(color: &str) -> String {
@@ -482,17 +553,7 @@ fn Performer(words: Words, at: f64, size: (f64, f64)) -> Element {
     let mid = (big * 0.66).max(15.0);
     let small = (big * 0.52).max(13.0);
     let next = words.sections.get(i + 1).map(|s| (s.name.clone(), (words.shows_from(s) - at).max(0.0), words.color(i + 1)));
-    let (song_start, song_end) = words.song;
-    let song_span = (song_end - song_start).max(1e-6);
-    let strip: Vec<(f64, String, f64)> = words
-        .sections
-        .iter()
-        .enumerate()
-        .map(|(k, s)| {
-            let opacity = if k == i { 1.0 } else if k < i { 0.25 } else { 0.5 };
-            ((s.end - s.start) / song_span * 100.0, words.color(k), opacity)
-        })
-        .collect();
+    let strip_words = words.clone();
     let row = |r: Row, n: usize| -> Element {
         match r {
             Row::Heading(k) => {
@@ -562,10 +623,8 @@ fn Performer(words: Words, at: f64, size: (f64, f64)) -> Element {
             }
             // The song as a strip of its sections.
             div {
-                style: "flex:none; display:flex; gap:2px; height:3px; margin:0 16px;",
-                for (k, (width, fill, opacity)) in strip.into_iter().enumerate() {
-                    div { key: "{k}", style: "flex:none; width:{width}%; height:3px; border-radius:1px; background:{fill}; opacity:{opacity};" }
-                }
+                style: "flex:none; margin:0 16px;",
+                SectionStrip { words: strip_words, at, height: 3.0 }
             }
             // The prompter: from just above the line being sung, on.
             div {
@@ -587,6 +646,14 @@ fn Confidence(words: Words, at: f64, size: (f64, f64)) -> Element {
     let now = words.texts(words.slide_on_screen(at));
     let next_slide = words.slide_next(at);
     let next = words.texts(next_slide);
+    // Each half's section, for its rail: the slide's own, or — with no
+    // slide up (an instrumental, the count) — the section the song is in.
+    let now_section = words.slide_on_screen(at).map(|n| words.slides[n].section).or_else(|| words.section_at(at));
+    let now_rail = now_section.map(|s| (words.color(s), spelled(&words.sections[s].name)));
+    let next_rail = next_slide.map(|n| {
+        let s = words.slides[n].section;
+        (words.color(s), spelled(&words.sections[s].name))
+    });
     let next_color = next_slide.map_or_else(
         || NEXT_YELLOW.to_owned(),
         |n| next_color(&words.color(words.slides[n].section)),
@@ -597,7 +664,7 @@ fn Confidence(words: Words, at: f64, size: (f64, f64)) -> Element {
         .filter(|s| Some(*s) != words.section_at(at))
         .map(|s| words.sections[s].name.clone());
     let (w, h) = (size.0.max(1.0), size.1.max(1.0));
-    let half = (h - 2.0) / 2.0;
+    let half = (h - 12.0) / 2.0;
     let now_font = fit(&now, w * 0.92, half, 110.0);
     let next_font = fit(&next, w * 0.92, half, 90.0);
     rsx! {
@@ -605,13 +672,19 @@ fn Confidence(words: Words, at: f64, size: (f64, f64)) -> Element {
             style: "position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; \
                     background:#000000;",
             div {
-                style: "flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; \
-                        justify-content:center; padding:0 4%; text-align:center;",
-                for (k, text) in now.iter().enumerate() {
-                    div {
-                        key: "{k}",
-                        style: "font-size:{now_font}px; line-height:1.12; font-weight:800; color:#ffffff;",
-                        "{text}"
+                style: "flex:1; min-height:0; display:flex;",
+                if let Some((color, name)) = now_rail {
+                    SectionRail { color, name }
+                }
+                div {
+                    style: "flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; \
+                            justify-content:center; padding:0 4%; text-align:center;",
+                    for (k, text) in now.iter().enumerate() {
+                        div {
+                            key: "{k}",
+                            style: "font-size:{now_font}px; line-height:1.12; font-weight:800; color:#ffffff;",
+                            "{text}"
+                        }
                     }
                 }
             }
@@ -619,7 +692,7 @@ fn Confidence(words: Words, at: f64, size: (f64, f64)) -> Element {
                 style: "flex:none; position:relative; height:2px; background:#3a3d44;",
                 if let Some(name) = next_section {
                     div {
-                        style: "position:absolute; left:12px; top:-8px; padding:0 6px; background:#000000; \
+                        style: "position:absolute; left:32px; top:-8px; padding:0 6px; background:#000000; \
                                 font-size:11px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; \
                                 color:{next_color};",
                         "{name}"
@@ -627,15 +700,26 @@ fn Confidence(words: Words, at: f64, size: (f64, f64)) -> Element {
                 }
             }
             div {
-                style: "flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; \
-                        justify-content:center; padding:0 4%; text-align:center;",
-                for (k, text) in next.iter().enumerate() {
-                    div {
-                        key: "{k}",
-                        style: "font-size:{next_font}px; line-height:1.12; font-weight:800; color:{next_color};",
-                        "{text}"
+                style: "flex:1; min-height:0; display:flex;",
+                if let Some((color, name)) = next_rail {
+                    SectionRail { color, name }
+                }
+                div {
+                    style: "flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; \
+                            justify-content:center; padding:0 4%; text-align:center;",
+                    for (k, text) in next.iter().enumerate() {
+                        div {
+                            key: "{k}",
+                            style: "font-size:{next_font}px; line-height:1.12; font-weight:800; color:{next_color};",
+                            "{text}"
+                        }
                     }
                 }
+            }
+            // Where the song is, along the very bottom.
+            div {
+                style: "flex:none; padding:0 6px 6px 6px;",
+                SectionStrip { words: words.clone(), at, height: 4.0 }
             }
         }
     }
@@ -653,5 +737,15 @@ mod tests {
         assert_eq!(next_color("#f2f2f2"), NEXT_YELLOW);
         assert_eq!(next_color("#dde3ea"), NEXT_YELLOW);
         assert_eq!(next_color("rgb(1,2,3)"), NEXT_YELLOW);
+    }
+
+    /// A rail spells the section out, keeping its number and part.
+    #[test]
+    fn a_rail_spells_the_section() {
+        assert_eq!(spelled("VS 2B"), "Verse 2B");
+        assert_eq!(spelled("CH 1"), "Chorus 1");
+        assert_eq!(spelled("PRE-CH"), "Pre-Chorus");
+        assert_eq!(spelled("IN"), "Intro");
+        assert_eq!(spelled("Mystery 3"), "Mystery 3");
     }
 }
