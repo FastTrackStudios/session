@@ -74,34 +74,115 @@ pub fn open_silent(path: &Path) -> eyre::Result<Opened> {
 }
 
 fn open_with_audio(path: &Path, audio: bool) -> eyre::Result<Opened> {
-    let opened = parse(path)?;
+    let opened = load(path)?;
     bootstrap(&opened.daw)?;
-    opened
-        .daw
-        .set_meters(daw::standalone::metering::Meters::new(opened.track_count));
-    if audio {
-        attach_audio(&opened);
-    }
+    AUDIBLE.store(audio, std::sync::atomic::Ordering::Relaxed);
+    switch_to(&opened.daw, &opened.project_guid, audio);
     Ok(opened)
 }
 
-/// Step one: the file becomes a backend.
+/// Whether this window plays — set by the first open (a screenshot or a
+/// test opens silent), and what [`switch_song`] follows.
+static AUDIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The process's engine: every song this window opens lives in it, side by
+/// side, one of them current — a setlist is several projects in one
+/// `Standalone`, not several engines. Made by the first open.
+static ENGINE: OnceLock<Standalone> = OnceLock::new();
+
+fn engine() -> &'static Standalone {
+    ENGINE.get_or_init(|| {
+        let daw = Standalone::new();
+        // The instrument the Click / Count / Guide MIDI tracks play through.
+        crate::guide_instrument::install(
+            &daw,
+            crate::guide_instrument::Library::Folder(crate::guide_instrument::samples_dir()),
+        );
+        daw
+    })
+}
+
+/// Load another song into the engine the first open made — for a
+/// setlist, after the first song. It does not become current and nothing
+/// plays it until [`switch_to`] says so.
 ///
-/// Media references resolve against the project's own directory, the way
-/// REAPER stores them, and uncompressed PCM is mmap'd rather than
+/// # Errors
+///
+/// The file could not be read or parsed, or its media did not materialize.
+pub fn open_another(path: &Path) -> eyre::Result<Opened> {
+    load(path)
+}
+
+/// Make `project_guid` the song the window shows and the transport plays:
+/// the engine's current project, its meters, and — with `audio` — the
+/// audio engine, moved from whichever song had it.
+///
+/// Moving the audio engine closes the device and opens it again on the
+/// new song, a short gap. Between songs that is fine; a set that runs
+/// straight on without one wants the engine to hand the stream over
+/// instead, which daw-standalone does not do yet.
+pub fn switch_to(daw: &Standalone, project_guid: &str, audio: bool) {
+    daw.set_current_project(project_guid);
+    let tracks = daw::service::Tracks::all(daw, daw::service::ProjectContext::Current).len();
+    daw.set_meters(daw::standalone::metering::Meters::new(tracks));
+    if audio {
+        attach_audio(daw, project_guid);
+    }
+}
+
+/// [`switch_to`] on the process's engine — what picking a setlist tab
+/// does. The audio moves with it when the window plays at all.
+pub fn switch_song(project_guid: &str) {
+    switch_to(engine(), project_guid, AUDIBLE.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+/// The project the engine has current — the song on screen.
+#[must_use]
+pub fn current_song() -> Option<String> {
+    use daw::service::Projects as _;
+    engine().current().map(|p| p.guid)
+}
+
+/// Colour a song's SONG region (`0xRRGGBB`; `0` clears it) and save the
+/// song into `saved`, its `.session`, when it has one. A save that fails
+/// is logged — the colour still holds for this run.
+pub fn set_song_color(project_guid: &str, rgb: u32, saved: Option<&Path>) {
+    use daw::service::Regions as _;
+    let daw = engine();
+    let project = daw::service::ProjectContext::Project(project_guid.to_owned());
+    let song_lane = session::ruler_lanes::CoreLane::Song.lane_index();
+    let region = daw
+        .all(project.clone())
+        .into_iter()
+        .find(|r| r.lane == Some(song_lane));
+    let Some(id) = region.and_then(|r| r.id) else {
+        tracing::warn!(song.project = project_guid, "no SONG region to colour");
+        return;
+    };
+    if let Err(e) = daw.set_color(project, id, rgb) {
+        tracing::warn!(error = %e, "the song's colour could not be set");
+        return;
+    }
+    if let Some(dir) = saved
+        && let Err(e) = crate::session_file::save_session(daw, project_guid, dir)
+    {
+        tracing::warn!(session.save_error = %e, "the song's colour could not be saved");
+    }
+}
+
+/// Step one: the file becomes a project in the engine.
+///
+/// Media references are anchored to the project's own folder (see
+/// `project_loader::anchor_media` — every song has its own
+/// `Media/Click.wav`), and uncompressed PCM is mmap'd rather than
 /// decoded. A source that cannot be found is a warning, never a failed
 /// open — a session with one missing take is still a session worth
 /// looking at.
-fn parse(path: &Path) -> eyre::Result<Opened> {
+fn load(path: &Path) -> eyre::Result<Opened> {
     let ProjectText { text, media_dir } = project_text(path)?;
-    let daw = Standalone::new();
-    // The instrument the Click / Count / Guide MIDI tracks play through.
-    crate::guide_instrument::install(
-        &daw,
-        crate::guide_instrument::Library::Folder(crate::guide_instrument::samples_dir()),
-    );
+    let daw = engine().clone();
     daw.media_bay().set_file_resolver(Box::new(
-        daw::standalone::media_bay::ProjectRelativeResolver::new(media_dir),
+        daw::standalone::media_bay::ProjectRelativeResolver::new(media_dir.clone()),
     ));
     let name = path
         .file_stem()
@@ -109,6 +190,7 @@ fn parse(path: &Path) -> eyre::Result<Opened> {
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
     let summary = load_rpp_text(&daw, &name, &path.to_string_lossy(), &text)
         .map_err(|e| eyre::eyre!("{name} did not parse: {e}"))?;
+    daw::standalone::project_loader::anchor_media(&daw, &summary.project_guid, &media_dir);
 
     let audio = daw::standalone::audio_engine::materialize::materialize_via_bay(
         &daw,
@@ -123,7 +205,7 @@ fn parse(path: &Path) -> eyre::Result<Opened> {
         );
     }
 
-    let track_count = daw::service::Tracks::all(&daw, daw::service::ProjectContext::Current).len();
+    let track_count = daw::service::Tracks::all(&daw, daw::service::ProjectContext::Project(summary.project_guid.clone())).len();
     Ok(Opened {
         daw,
         name,
@@ -238,17 +320,25 @@ pub fn runtime() -> Option<&'static tokio::runtime::Runtime> {
 /// process's life — dropping it stops the stream. Failure is not fatal:
 /// the soft clock still moves the playhead, silently, which is enough to
 /// read a session by.
-fn attach_audio(opened: &Opened) {
+/// The audio engine, playing whichever song is current. Replaced — the old
+/// one dropped, which closes its stream — when the current song changes.
+static AUDIO: std::sync::Mutex<Option<daw::standalone::audio_engine::AudioEngine>> =
+    std::sync::Mutex::new(None);
+
+fn attach_audio(daw: &Standalone, project_guid: &str) {
     let Some(rt) = RUNTIME.get() else {
         return;
     };
     let _guard = rt.enter();
-    match opened.daw.attach_audio_engine(&opened.project_guid) {
+    let mut slot = AUDIO.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Close the old stream before opening the device again.
+    drop(slot.take());
+    match daw.attach_audio_engine(project_guid) {
         Ok(engine) => {
             if let Some(stats) = engine.stats() {
                 log_audio_health(stats, engine.sample_rate());
             }
-            Box::leak(Box::new(engine));
+            *slot = Some(engine);
         }
         Err(e) => tracing::warn!(error = %e, "no audio engine; the transport will run silent"),
     }

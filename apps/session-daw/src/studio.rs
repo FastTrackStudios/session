@@ -148,8 +148,51 @@ impl StudioSession {
     /// The project could not be opened or read back. A prepare step that
     /// fails is logged and the session opens as it was.
     pub fn open(path: &std::path::Path, prepare: &crate::prepare::Prepare) -> eyre::Result<Self> {
+        Self::open_as(path, prepare, true).map(|(session, _)| session)
+    }
+
+    /// [`Self::open`] for a song of a setlist: the first (`first`) stands
+    /// the engine up and takes the audio; the rest load into the same
+    /// engine beside it. Each is current while it is prepared and read —
+    /// the guide and the read-back work on the current project — so the
+    /// caller makes the song it wants current afterwards
+    /// ([`crate::open::switch_to`]). Returns the song's project guid too.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_as(
+        path: &std::path::Path,
+        prepare: &crate::prepare::Prepare,
+        first: bool,
+    ) -> eyre::Result<(Self, String)> {
+        Self::open_first_as(path, prepare, first.then_some(true))
+    }
+
+    /// [`Self::open_as`], where `first` is `Some(audio)` for the song that
+    /// stands the engine up — with or without a device — and `None` for
+    /// the rest.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_first_as(
+        path: &std::path::Path,
+        prepare: &crate::prepare::Prepare,
+        first: Option<bool>,
+    ) -> eyre::Result<(Self, String)> {
         let plan = Source::choose(path, prepare);
-        let opened = crate::open::open_and_serve(&plan.open)?;
+        let opened = if let Some(audio) = first {
+            if audio {
+                crate::open::open_and_serve(&plan.open)?
+            } else {
+                crate::open::open_silent(&plan.open)?
+            }
+        } else {
+            let opened = crate::open::open_another(&plan.open)?;
+            crate::open::switch_to(&opened.daw, &opened.project_guid, false);
+            opened
+        };
         let mut save_to = plan.save_to;
         if plan.prepare
             && let Err(e) = prepare.run(&opened)
@@ -196,13 +239,16 @@ impl StudioSession {
                 .ok()
                 .map(Arc::new)
         });
-        Ok(Self {
-            project,
-            rows,
-            previews,
-            chart,
-            planner,
-        })
+        Ok((
+            Self {
+                project,
+                rows,
+                previews,
+                chart,
+                planner,
+            },
+            opened.project_guid,
+        ))
     }
 }
 

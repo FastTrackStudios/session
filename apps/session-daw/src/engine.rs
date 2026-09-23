@@ -653,6 +653,10 @@ pub enum Move {
     ToggleLoop,
     /// Record on or off.
     ToggleRecord,
+    /// Move to a time and play from it — one command, in order, so the
+    /// play cannot land before the move (what rolling into the next song
+    /// of a set does).
+    PlayFrom,
 }
 
 /// Send a transport command, off the event loop.
@@ -692,6 +696,10 @@ async fn run_transport(command: Move, seconds: f64) {
         Move::End => transport.goto_end().await,
         Move::ToggleLoop => transport.toggle_loop().await,
         Move::ToggleRecord => transport.toggle_recording().await,
+        Move::PlayFrom => match transport.set_position(seconds.max(0.0)).await {
+            Ok(()) => transport.play().await,
+            Err(error) => Err(error),
+        },
     };
     if let Err(error) = outcome {
         tracing::warn!(error = %error, command = ?command, "the transport refused");

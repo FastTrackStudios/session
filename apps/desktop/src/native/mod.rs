@@ -20,33 +20,43 @@ use std::path::{Path, PathBuf};
 /// this repo.
 const EXAMPLE: &str = "/Volumes/build-disk/development/sessions/Always On Time/Always On Time.RPP";
 
-/// Which session to open, in order: `FTS_SESSION_PROJECT` (and
-/// `FTS_SESSION_CHART`, where an empty value skips the chart); the session
-/// opened last time; the example, if this machine has it; and otherwise
-/// the user's pick from an Open dialog. `None` when the dialog is
-/// cancelled.
+/// What to open, in order: `FTS_SESSION_SETLIST` (a setlist); then
+/// `FTS_SESSION_PROJECT` (one song); what was open last time; the example,
+/// if this machine has it; and otherwise the user's pick from an Open
+/// dialog. `None` when the dialog is cancelled.
 ///
-/// The chart, unless the environment names one, is the `.kf` beside the
-/// project: a session folder carries its own.
-fn choose() -> Option<(PathBuf, Option<PathBuf>)> {
-    let project = std::env::var_os("FTS_SESSION_PROJECT")
+/// A song is a setlist of one, so what comes back is always a list — with
+/// the path it came from, which is what is remembered.
+fn choose() -> Option<(PathBuf, Vec<PathBuf>)> {
+    let target = std::env::var_os("FTS_SESSION_SETLIST")
+        .or_else(|| std::env::var_os("FTS_SESSION_PROJECT"))
         .map(PathBuf::from)
-        .or_else(|| remembered().filter(|p| p.is_file()))
+        .or_else(|| remembered().filter(|p| p.exists()))
         .or_else(|| Some(PathBuf::from(EXAMPLE)).filter(|p| p.is_file()))
         .or_else(pick)?;
-    let chart = match std::env::var_os("FTS_SESSION_CHART") {
-        Some(path) if path.is_empty() => None,
-        Some(path) => Some(PathBuf::from(path)),
-        None => session_daw::prepare::chart_beside(&project),
-    };
-    Some((project, chart))
+    let songs = songs_of(&target)?;
+    Some((target, songs))
+}
+
+/// The songs `target` names: a setlist's (a folder of song folders, or a
+/// `.setlist` file — see `session_daw::setlist::read_setlist`), or the one
+/// song it is.
+fn songs_of(target: &Path) -> Option<Vec<PathBuf>> {
+    let setlist = (target.is_dir() && !session_daw::open::is_session(target))
+        || target.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("setlist"));
+    if !setlist {
+        return Some(vec![target.to_path_buf()]);
+    }
+    session_daw::setlist::read_setlist(target)
+        .inspect_err(|e| tracing::error!(error = %e, "the setlist could not be read"))
+        .ok()
 }
 
 /// The Open dialog: a REAPER project.
 fn pick() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .set_title("Open a session")
-        .add_filter("REAPER project", &["RPP", "rpp"])
+        .add_filter("Song or setlist", &["RPP", "rpp", "setlist"])
         .pick_file()
 }
 
@@ -73,31 +83,27 @@ fn remember(project: &Path) {
     }
 }
 
-/// Open the session, then the window. Returns when the window closes, or
-/// straight away when no session was chosen.
+/// Open the setlist — every song into the one engine, the first current —
+/// then the window. Returns when the window closes, or straight away when
+/// nothing was chosen.
 ///
 /// A session that fails to open says why and offers the Open dialog again,
 /// rather than quitting with no window and nothing on screen.
 pub fn launch() {
     let mut chosen = choose();
-    let session = loop {
-        let Some((project, chart)) = chosen else { return };
-        let prepare = session_daw::prepare::Prepare {
-            organize: true,
-            chart,
-            guide: true,
-        };
-        match session_daw::studio::StudioSession::open(&project, &prepare) {
-            Ok(session) => {
-                remember(&project);
-                break session;
+    let setlist = loop {
+        let Some((target, songs)) = chosen else { return };
+        match session_daw::setlist::Setlist::open(&songs) {
+            Ok(setlist) => {
+                remember(&target);
+                break setlist;
             }
             Err(e) => {
                 tracing::error!(error = %e, "could not open the session");
                 let again = rfd::MessageDialog::new()
                     .set_level(rfd::MessageLevel::Error)
                     .set_title("Could not open the session")
-                    .set_description(format!("{}\n\n{e}", project.display()))
+                    .set_description(format!("{}\n\n{e}", target.display()))
                     .set_buttons(rfd::MessageButtons::OkCancelCustom(
                         "Open Another…".into(),
                         "Quit".into(),
@@ -106,10 +112,7 @@ pub fn launch() {
                 if again != rfd::MessageDialogResult::Custom("Open Another…".into()) {
                     return;
                 }
-                chosen = pick().map(|project| {
-                    let chart = session_daw::prepare::chart_beside(&project);
-                    (project, chart)
-                });
+                chosen = pick().and_then(|target| songs_of(&target).map(|songs| (target, songs)));
             }
         }
     };
@@ -122,7 +125,7 @@ pub fn launch() {
 
     let attributes = window_attributes();
     let contexts: Vec<Box<dyn Fn() -> Box<dyn Any> + Send + Sync>> =
-        vec![Box::new(move || Box::new(session.clone()) as Box<dyn Any>)];
+        vec![Box::new(move || Box::new(setlist.clone()) as Box<dyn Any>)];
     dioxus_native::launch_cfg(shell::Shell, contexts, vec![Box::new(attributes)]);
 }
 

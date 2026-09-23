@@ -71,6 +71,8 @@ pub fn TopBar(
     on_zoom: Option<EventHandler<()>>,
     /// Picking a song from the setlist tabs.
     on_pick: Option<EventHandler<usize>>,
+    /// Recolouring a song from its tab (see [`SongTabs`]).
+    on_color: Option<EventHandler<(usize, Option<String>)>>,
 ) -> Element {
     let mut picking = use_signal(|| false);
     rsx! {
@@ -103,7 +105,7 @@ pub fn TopBar(
                 }
             }
             // The setlist, filling whatever the bar has left.
-            SongTabs { on_pick }
+            SongTabs { on_pick, on_color }
             div {
                 style: "flex:none;",
                 onmousedown: move |event| event.stop_propagation(),
@@ -144,59 +146,139 @@ pub fn TopBar(
     }
 }
 
-/// The setlist across the bar: a tab per song, each in the song's own
-/// colour, filling as it plays.
+/// The setlist across the bar, as Safari lays out its tabs: one rounded
+/// strip in the middle of the bar, a tab per song sharing its width, the
+/// current one raised.
 ///
-/// The tabs SHARE the bar's spare width rather than each taking a fixed
-/// size — three songs are three wide tabs, twelve are twelve narrow ones,
-/// and either way the set is one glance rather than a list to read. The
-/// current song's tab is filled to where the playhead is in it, so the
-/// same glance says how far through it is.
+/// Each tab carries its song's colour — a dot beside the title, and a
+/// progress line along its foot filled to how far through the song the
+/// set is (the playhead in the current song, where it was left in the
+/// others). The colour is the song's own: set by hand from the dot, or
+/// derived from its title ([`crate::setlist::title_color`]).
+///
+/// The tabs SHARE the width rather than each taking a fixed size — three
+/// songs are three wide tabs, twelve are twelve narrow ones, and either way
+/// the set is one glance rather than a list to read.
 #[component]
-pub fn SongTabs(on_pick: Option<EventHandler<usize>>) -> Element {
+pub fn SongTabs(
+    on_pick: Option<EventHandler<usize>>,
+    /// A colour picked for a song by hand: its index and the CSS colour,
+    /// or `None` for "back to the title's colour".
+    on_color: Option<EventHandler<(usize, Option<String>)>>,
+) -> Element {
     let Some(setlist) = try_use_context::<Signal<Setlist>>() else {
         // No setlist (a single session opened straight): nothing to show,
         // and the bar's spare width goes to the transport.
         return rsx! { div { style: "flex:1;" } };
     };
     let reading = crate::progress::use_reading();
+    let mut coloring = use_signal(|| None::<usize>);
     let list = setlist();
     if list.songs.is_empty() {
         return rsx! { div { style: "flex:1;" } };
     }
     let at = reading().at;
+    let count = list.songs.len();
     rsx! {
         div {
-            style: "flex:1; min-width:0; display:flex; gap:3px; height:28px; \
-                    align-items:stretch; overflow:hidden;",
+            style: "position:relative; flex:1; min-width:0; display:flex; height:30px; \
+                    padding:2px; gap:0; align-items:stretch; background:#0f1012; \
+                    border:1px solid {RULE}; border-radius:9px;",
             onmousedown: move |event| event.stop_propagation(),
             for (index, song) in list.songs.iter().cloned().enumerate() {
                 {
                     let current = index == list.at;
-                    let filled = if current { song.progress(at) } else { f64::from(u8::from(index < list.at)) };
-                    let percent = filled * 100.0;
-                    // The fill is the song's colour over its own dim
-                    // ground, so a tab says which song and how far at once.
-                    let ground = if current { "#0f1012" } else { "#131417" };
+                    let percent = list.progress_of(index, at) * 100.0;
+                    let ground = if current { "#2b2e35" } else { "transparent" };
                     let ink = if current { TEXT } else { DIM };
-                    let border = if current { song.color.clone() } else { RULE.to_owned() };
+                    // A hairline between two tabs that are not raised, as
+                    // Safari draws it; none beside the current one.
+                    let divider = if index > 0 && !current && index != list.at + 1 {
+                        RULE
+                    } else {
+                        "transparent"
+                    };
+                    let color = song.color.clone();
                     rsx! {
-                        button {
-                            style: "flex:1; min-width:0; padding:0 8px; border-radius:6px; \
-                                    border:1px solid {border}; color:{ink}; font-size:12px; \
-                                    font-weight:600; text-align:left; cursor:pointer; \
-                                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \
-                                    background:linear-gradient(90deg, {song.color} 0%, \
-                                    {song.color} {percent}%, {ground} {percent}%, {ground} 100%);",
+                        div {
+                            key: "{song.project}",
+                            style: "position:relative; flex:1; min-width:0; display:flex; \
+                                    align-items:center; justify-content:center; gap:7px; \
+                                    padding:0 12px; border-radius:7px; background:{ground}; \
+                                    border-left:1px solid {divider}; cursor:default;",
                             onclick: move |_| {
                                 if let Some(pick) = on_pick {
                                     pick.call(index);
                                 }
                             },
-                            "{song.name}"
+                            // The song's colour; a click here recolours it.
+                            div {
+                                style: "flex:none; width:9px; height:9px; border-radius:5px; \
+                                        background:{color}; cursor:pointer;",
+                                onclick: move |event| {
+                                    event.stop_propagation();
+                                    coloring.set(if coloring() == Some(index) { None } else { Some(index) });
+                                },
+                            }
+                            span {
+                                style: "min-width:0; overflow:hidden; text-overflow:ellipsis; \
+                                        white-space:nowrap; color:{ink}; font-size:12px; \
+                                        font-weight:600;",
+                                "{song.name}"
+                            }
+                            // How far through the song: a line along the foot.
+                            div {
+                                style: "position:absolute; left:10px; right:10px; bottom:2px; \
+                                        height:2px; border-radius:1px; background:#ffffff14;",
+                                div {
+                                    style: "width:{percent}%; height:2px; border-radius:1px; \
+                                            background:{color};",
+                                }
+                            }
                         }
                     }
                 }
+            }
+            if let Some(index) = coloring() {
+                ColorMenu {
+                    // Under the tab it belongs to.
+                    left: format!("{:.3}%", (index as f64 + 0.5) / count as f64 * 100.0),
+                    on_pick: move |choice: Option<String>| {
+                        coloring.set(None);
+                        if let Some(color) = on_color {
+                            color.call((index, choice));
+                        }
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// The colours a song can be given by hand, and "Auto" — back to the
+/// colour its title gives it.
+#[component]
+fn ColorMenu(left: String, on_pick: EventHandler<Option<String>>) -> Element {
+    rsx! {
+        div {
+            style: "position:absolute; top:34px; left:{left}; margin-left:-86px; z-index:20; \
+                    width:172px; padding:8px; display:flex; flex-wrap:wrap; gap:6px; \
+                    background:{BAR_BG}; border:1px solid {RULE}; border-radius:9px; \
+                    box-shadow:0 8px 24px rgba(0,0,0,0.5);",
+            onmousedown: move |event| event.stop_propagation(),
+            for color in crate::setlist::COLORS {
+                div {
+                    style: "width:34px; height:20px; border-radius:5px; background:{color}; \
+                            cursor:pointer;",
+                    onclick: move |_| on_pick.call(Some(color.to_owned())),
+                }
+            }
+            div {
+                style: "flex:1; min-width:100%; height:22px; display:flex; align-items:center; \
+                        justify-content:center; border-radius:5px; border:1px solid {RULE}; \
+                        color:{DIM}; font-size:11px; cursor:pointer;",
+                onclick: move |_| on_pick.call(None),
+                "Auto — from the title"
             }
         }
     }

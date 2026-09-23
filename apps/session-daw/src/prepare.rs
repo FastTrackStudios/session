@@ -181,8 +181,12 @@ pub fn steps(
         );
     }
     if let Some(text) = chart {
-        let built = session::keyflow::from_chart::build_from_chart(daw, &project, text)
-            .map_err(|e| eyre::eyre!("chart: {e}"))?;
+        // Rebuild, not build: a multitrack can arrive with structure of its
+        // own — the importer's guessed `Cue N` sections, its SONGSTART —
+        // and the chart replaces it rather than landing beside it.
+        let built = session::keyflow::from_chart::rebuild_from_chart(daw, &project, text)
+            .map_err(|e| eyre::eyre!("chart: {e}"))?
+            .built;
         tracing::info!(
             title = %built.title,
             bpm = built.tempo_bpm,
