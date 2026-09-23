@@ -98,6 +98,17 @@ fn remember(project: &Path) {
 /// A session that fails to open says why and offers the Open dialog again,
 /// rather than quitting with no window and nothing on screen.
 pub fn launch() {
+    // How this app dials a Session engine (Remote on another Session): the
+    // connector lives with the app's iroh identity (`crate::remote`).
+    #[cfg(feature = "session")]
+    session_daw::open::set_engine_dialer(|address| {
+        Box::pin(async move {
+            let addr = crate::remote::EngineAddr::parse(&address).map_err(|e| eyre::eyre!(e))?;
+            let engine = crate::remote::connect_engine_daw(&addr).await?;
+            let daw = engine.daw.clone();
+            Ok((daw, Box::new(engine) as session_daw::open::EngineConnection))
+        })
+    });
     let mode = session_daw::open::launch_mode();
     session_daw::open::set_mode(mode.clone());
     let remote = if mode.owns_project() {

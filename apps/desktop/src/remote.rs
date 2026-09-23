@@ -305,7 +305,6 @@ pub struct EngineDaw {
     /// The facade: hand a clone to `daw::init_from_parts`.
     pub daw: daw::rpc::Daw,
     /// Which engine this is, as it was dialed.
-    #[allow(dead_code)] // Read by the Remote mode that lands separately.
     pub addr: EngineAddr,
     _connection: vox_core::ConnectionHandle,
 }
@@ -328,7 +327,6 @@ impl std::ops::Deref for EngineDaw {
 ///
 /// The engine could not be reached, or the vox handshake failed.
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(dead_code)] // The Remote mode that calls this lands separately.
 pub async fn connect_engine_daw(addr: &EngineAddr) -> eyre::Result<EngineDaw> {
     match addr {
         EngineAddr::Ws(_) => connect_engine_daw_from(None, addr).await,

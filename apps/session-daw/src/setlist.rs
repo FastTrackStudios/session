@@ -250,11 +250,7 @@ impl Setlist {
     fn open_with(paths: &[std::path::PathBuf], audio: bool) -> eyre::Result<Self> {
         let mut songs = Vec::new();
         for path in paths {
-            let prepare = crate::prepare::Prepare {
-                organize: true,
-                chart: crate::prepare::chart_beside(path),
-                guide: true,
-            };
+            let prepare = crate::prepare::Prepare::for_song(path);
             match StudioSession::open_first_as(path, &prepare, songs.is_empty().then_some(audio)) {
                 Ok((session, guid)) => {
                     let name = path

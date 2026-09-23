@@ -85,55 +85,6 @@ impl Planner {
     }
 }
 
-/// What [`StudioSession::open`] actually opens, whether it prepares it,
-/// and where it saves the result.
-///
-/// Preparing (organize, build from the chart, generate the guide) is done
-/// ONCE: the result is saved as `Song.session` beside `Song.RPP`, and from
-/// then on the saved session is what opens — the `.RPP` is only the
-/// multitrack it started from. A `.session` opened directly is never
-/// prepared again. `FTS_SESSION_REPREPARE=1` prepares the `.RPP` afresh and
-/// saves over the old session; nothing else overwrites one.
-#[cfg(feature = "native")]
-#[derive(Debug, PartialEq)]
-struct Source {
-    open: std::path::PathBuf,
-    prepare: bool,
-    save_to: Option<std::path::PathBuf>,
-}
-
-#[cfg(feature = "native")]
-impl Source {
-    fn choose(path: &std::path::Path, prepare: &crate::prepare::Prepare) -> Self {
-        let reprepare = std::env::var("FTS_SESSION_REPREPARE").is_ok_and(|v| v == "1");
-        Self::choose_with(path, prepare, reprepare)
-    }
-
-    fn choose_with(path: &std::path::Path, prepare: &crate::prepare::Prepare, reprepare: bool) -> Self {
-        if crate::open::is_session(path) {
-            return Self {
-                open: path.to_path_buf(),
-                prepare: false,
-                save_to: None,
-            };
-        }
-        let saved = path.with_extension("session");
-        if saved.is_dir() && !reprepare {
-            return Self {
-                open: saved,
-                prepare: false,
-                save_to: None,
-            };
-        }
-        let prepare = !prepare.is_empty();
-        Self {
-            open: path.to_path_buf(),
-            prepare,
-            save_to: prepare.then_some(saved),
-        }
-    }
-}
-
 impl PartialEq for StudioSession {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.project.0, &other.project.0) && Arc::ptr_eq(&self.rows.0, &other.rows.0)
@@ -184,7 +135,7 @@ impl StudioSession {
         prepare: &crate::prepare::Prepare,
         first: Option<bool>,
     ) -> eyre::Result<(Self, String)> {
-        let plan = Source::choose(path, prepare);
+        let plan = crate::open::song_plan(path, prepare);
         let opened = if let Some(audio) = first {
             if audio {
                 crate::open::open_and_serve(&plan.open)?
@@ -196,29 +147,7 @@ impl StudioSession {
             crate::open::switch_to(&opened.daw, &opened.project_guid, false);
             opened
         };
-        let mut save_to = plan.save_to;
-        if plan.prepare
-            && let Err(e) = prepare.run(&opened)
-        {
-            // A half-prepared session saved would be opened as prepared
-            // next time; open this one as it was and save nothing.
-            tracing::error!(error = %e, "preparing the session failed; opening it as it was");
-            save_to = None;
-        }
-        if let Some(dir) = &save_to {
-            match crate::session_file::save_session(&opened.daw, &opened.project_guid, dir)
-            {
-                Ok(at) => tracing::info!(
-                    session.saved = %at.display(),
-                    session.from = %plan.open.display(),
-                    "prepared once; saved as a session"
-                ),
-                Err(e) => tracing::warn!(
-                    session.save_error = %e,
-                    "the prepared session could not be saved; it will be prepared again next time"
-                ),
-            }
-        }
+        crate::open::prepare_and_save(&opened, &plan, prepare);
         let session = Self::read_current(Some(plan.open.as_path()), prepare.chart.clone())?;
         Ok((session, opened.project_guid))
     }
@@ -595,7 +524,7 @@ pub fn ScrollBar(
 
 #[cfg(all(test, feature = "native"))]
 mod source_tests {
-    use super::Source;
+    // How a song file opens: [`crate::open::SongPlan`].
     use crate::prepare::Prepare;
 
     fn prepared() -> Prepare {
@@ -624,8 +553,8 @@ mod source_tests {
         let (dir, rpp) = song();
         let _ = std::fs::remove_dir_all(dir.join("Song.session"));
         assert_eq!(
-            Source::choose_with(&rpp, &prepared(), false),
-            Source {
+            crate::open::song_plan_with(&rpp, &prepared(), false),
+            crate::open::SongPlan {
                 open: rpp.clone(),
                 prepare: true,
                 save_to: Some(dir.join("Song.session")),
@@ -633,8 +562,8 @@ mod source_tests {
         );
         // Nothing to prepare is nothing to save.
         assert_eq!(
-            Source::choose_with(&rpp, &Prepare::default(), false),
-            Source {
+            crate::open::song_plan_with(&rpp, &Prepare::default(), false),
+            crate::open::SongPlan {
                 open: rpp,
                 prepare: false,
                 save_to: None,
@@ -649,17 +578,17 @@ mod source_tests {
         let (dir, rpp) = song();
         let saved = dir.join("Song.session");
         std::fs::create_dir_all(&saved).expect("a session");
-        let as_saved = Source {
+        let as_saved = crate::open::SongPlan {
             open: saved.clone(),
             prepare: false,
             save_to: None,
         };
-        assert_eq!(Source::choose_with(&rpp, &prepared(), false), as_saved);
-        assert_eq!(Source::choose_with(&saved, &prepared(), false), as_saved);
+        assert_eq!(crate::open::song_plan_with(&rpp, &prepared(), false), as_saved);
+        assert_eq!(crate::open::song_plan_with(&saved, &prepared(), false), as_saved);
         // Asked to, the multitrack is prepared afresh over it.
         assert_eq!(
-            Source::choose_with(&rpp, &prepared(), true),
-            Source {
+            crate::open::song_plan_with(&rpp, &prepared(), true),
+            crate::open::SongPlan {
                 open: rpp,
                 prepare: true,
                 save_to: Some(saved),

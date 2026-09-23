@@ -49,8 +49,9 @@ mod session_view;
 // LAN-reachable `/vox` WebSocket instead of opening a GUI window.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod engine_server;
-// `--engine --project/--setlist`: what the headless engine opens first.
-#[cfg(all(feature = "session", not(target_arch = "wasm32")))]
+// `--engine --project/--setlist`: what the headless engine opens first —
+// through the app's own song-opening path, so it needs the app (`native`).
+#[cfg(all(feature = "session", feature = "native", not(target_arch = "wasm32")))]
 mod engine_open;
 // Home page data layer: the on-disk track libraries + their setlist notes.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
@@ -170,7 +171,16 @@ fn main() {
         if let (false, Some(target), Some(engine)) =
             (recording, args.open.as_ref(), session_engine::engine())
         {
-            if let Err(e) = rt.block_on(engine_open::open(engine, target)) {
+            #[cfg(feature = "native")]
+            let opened = rt.block_on(engine_open::open(engine, target));
+            // Songs open through the app's one path (session-daw): a build
+            // without the app opens none, rather than a second way.
+            #[cfg(not(feature = "native"))]
+            let opened: eyre::Result<()> = {
+                let _ = (engine, target);
+                Err(eyre::eyre!("this build opens no songs: built without the app (feature `native`)"))
+            };
+            if let Err(e) = opened {
                 tracing::error!("--engine: could not open {target:?}: {e:?}");
                 std::process::exit(1);
             }

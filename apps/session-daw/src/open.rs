@@ -114,13 +114,104 @@ static ENGINE: OnceLock<Standalone> = OnceLock::new();
 fn engine() -> &'static Standalone {
     ENGINE.get_or_init(|| {
         let daw = Standalone::new();
-        // The instrument the Click / Count / Guide MIDI tracks play through.
-        crate::guide_instrument::install(
-            &daw,
-            crate::guide_instrument::Library::Folder(crate::guide_instrument::samples_dir()),
-        );
+        equip(&daw);
         daw
     })
+}
+
+/// Make an engine a Session engine: what every engine a song opens into
+/// needs, whoever runs it — this window, or `session-desktop --engine`.
+/// Today that is the instrument the Click / Count / Guide MIDI tracks
+/// play through.
+pub fn equip(daw: &Standalone) {
+    crate::guide_instrument::install(
+        daw,
+        crate::guide_instrument::Library::Folder(crate::guide_instrument::samples_dir()),
+    );
+}
+
+// ── opening a song: the one way ─────────────────────────────────────────
+
+/// What opening a song file means: which file is read, whether it is
+/// prepared on the way, and where the prepared song is saved.
+///
+/// Preparing (organize, build from the chart, generate the guide) is done
+/// ONCE: the result is saved as `Song.session` beside `Song.RPP`, and from
+/// then on the saved session is what opens — the `.RPP` is only the
+/// multitrack it started from. A `.session` opened directly is never
+/// prepared again. `FTS_SESSION_REPREPARE=1` prepares the `.RPP` afresh and
+/// saves over the old session; nothing else overwrites one.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SongPlan {
+    pub open: std::path::PathBuf,
+    pub prepare: bool,
+    pub save_to: Option<std::path::PathBuf>,
+}
+
+/// How `path` opens (see [`SongPlan`]).
+#[must_use]
+pub fn song_plan(path: &Path, prepare: &crate::prepare::Prepare) -> SongPlan {
+    let reprepare = std::env::var("FTS_SESSION_REPREPARE").is_ok_and(|v| v == "1");
+    song_plan_with(path, prepare, reprepare)
+}
+
+pub(crate) fn song_plan_with(path: &Path, prepare: &crate::prepare::Prepare, reprepare: bool) -> SongPlan {
+    if is_session(path) {
+        return SongPlan { open: path.to_path_buf(), prepare: false, save_to: None };
+    }
+    let saved = path.with_extension("session");
+    if saved.is_dir() && !reprepare {
+        return SongPlan { open: saved, prepare: false, save_to: None };
+    }
+    let prepare = !prepare.is_empty();
+    SongPlan { open: path.to_path_buf(), prepare, save_to: prepare.then_some(saved) }
+}
+
+/// After a song's file is open: prepare it if its plan says so, and save
+/// the prepared song as its `.session` — so the next open is the prepared
+/// one. A preparation that fails saves nothing (a half-prepared session
+/// would open as prepared next time).
+pub fn prepare_and_save(opened: &Opened, plan: &SongPlan, prepare: &crate::prepare::Prepare) {
+    let mut save_to = plan.save_to.clone();
+    if plan.prepare
+        && let Err(e) = prepare.run(opened)
+    {
+        tracing::error!(error = %e, "preparing the session failed; opening it as it was");
+        save_to = None;
+    }
+    if let Some(dir) = &save_to {
+        match crate::session_file::save_session(&opened.daw, &opened.project_guid, dir) {
+            Ok(at) => tracing::info!(
+                session.saved = %at.display(),
+                session.from = %plan.open.display(),
+                "prepared once; saved as a session"
+            ),
+            Err(e) => tracing::warn!(
+                session.save_error = %e,
+                "the prepared session could not be saved; it will be prepared again next time"
+            ),
+        }
+    }
+}
+
+/// Open a song into `daw` — THE way a song is opened, whoever runs the
+/// engine (this window in Engine mode, `session-desktop --engine`): the
+/// prepared `.session` when there is one, otherwise the file itself,
+/// prepared and saved as its `.session` once. `daw` should be
+/// [`equip`]ped. The song does not become current.
+///
+/// # Errors
+///
+/// The file could not be read or parsed, or its media did not materialize.
+pub fn open_song_into(
+    daw: &Standalone,
+    path: &Path,
+    prepare: &crate::prepare::Prepare,
+) -> eyre::Result<(Opened, SongPlan)> {
+    let plan = song_plan(path, prepare);
+    let opened = load_into(daw, &plan.open)?;
+    prepare_and_save(&opened, &plan, prepare);
+    Ok((opened, plan))
 }
 
 /// Load another song into the engine the first open made — for a
@@ -426,12 +517,23 @@ pub fn set_song_color(project_guid: &str, rgb: u32, saved: Option<&Path>) {
 /// open — a session with one missing take is still a session worth
 /// looking at.
 fn load(path: &Path) -> eyre::Result<Opened> {
+    load_into(engine(), path)
+}
+
+/// Load exactly `path` (a `.RPP` or a `.session`) into `daw`: parse it,
+/// resolve and anchor its media, materialize its audio. No preparing, no
+/// choosing — see [`open_song_into`] for opening a *song*.
+///
+/// # Errors
+///
+/// The file could not be read or parsed, or its media did not materialize.
+pub fn load_into(daw: &Standalone, path: &Path) -> eyre::Result<Opened> {
     // Absolute from here on: the project's path is what a later save
     // writes its media relative to, and a path relative to wherever the
     // app was started from means nothing once it is saved.
     let path = &std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let ProjectText { text, media_dir } = project_text(path)?;
-    let daw = engine().clone();
+    let daw = daw.clone();
     daw.media_bay().set_file_resolver(Box::new(
         daw::standalone::media_bay::ProjectRelativeResolver::new(media_dir.clone()),
     ));
@@ -695,30 +797,7 @@ pub fn attach_to_reaper(socket: Option<std::path::PathBuf>) -> eyre::Result<Atta
     // window that prints the project it asked for, instead of the one it
     // got, is how an attached-to-the-wrong-REAPER bug survives a whole
     // session unnoticed.
-    let daw = daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("the facade did not install"))?;
-    let (name, guid, path, track_count) = rt.block_on(async {
-        let project = daw.current_project().await?;
-        let info = project.info().await?;
-        let tracks = project.tracks().all().await?;
-        Ok::<_, daw::rpc::Error>((info.name, info.guid, info.path, tracks.len()))
-    })?;
-
-    // Attached is Remote, whatever the launch said — a caller that attaches
-    // without choosing a mode first (a test) is not left reporting Engine.
-    // A Cue window stays Cue.
-    let state = mode();
-    if state.owns_project() {
-        set_mode(ModeState::remote(RemoteTarget::Reaper { socket: socket_for_mode }, false));
-    }
-    set_remote_current(Some(guid.clone()));
-    watch_remote_current(rt);
-
-    Ok(Attached {
-        name,
-        project_guid: guid,
-        path: Some(path).filter(|p| !p.is_empty()).map(Into::into),
-        track_count,
-    })
+    read_back(rt, RemoteTarget::Reaper { socket: socket_for_mode })
 }
 
 // ── which of the two ways in ─────────────────────────────────────────
@@ -844,10 +923,86 @@ pub fn request_mode(to: AudioMode) -> bool {
 pub fn attach(target: &RemoteTarget) -> eyre::Result<Attached> {
     match target {
         RemoteTarget::Reaper { socket } => attach_to_reaper(socket.clone()),
-        RemoteTarget::Session { address } => eyre::bail!(
-            "driving another Session engine ({address}) is not wired yet — attach to REAPER, or open in Engine mode"
-        ),
+        RemoteTarget::Session { address } => attach_to_engine(address),
     }
+}
+
+/// Something that keeps a dialed engine's connection open for as long
+/// as it lives (dropping it closes the connection).
+pub type EngineConnection = Box<dyn std::any::Any + Send + Sync>;
+
+/// Dials a Session engine: its address as a person pastes it
+/// (`fts-engine:<id>`, `ws://host:4040/vox`) in, its daw facade out.
+///
+/// Installed by the app (the dialer lives with the app's network
+/// identity — its iroh endpoint and key — not here).
+pub type EngineDialer = fn(
+    String,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = eyre::Result<(daw::rpc::Daw, EngineConnection)>> + Send>,
+>;
+
+static ENGINE_DIALER: OnceLock<EngineDialer> = OnceLock::new();
+
+/// The connection to the Session engine this window is attached to.
+static ENGINE_CONNECTION: std::sync::RwLock<Option<EngineConnection>> = std::sync::RwLock::new(None);
+
+/// Install how this app dials a Session engine (once, at launch).
+pub fn set_engine_dialer(dialer: EngineDialer) {
+    let _ = ENGINE_DIALER.set(dialer);
+}
+
+/// Attach to a Session engine (`session-desktop --engine`) the way
+/// [`attach_to_reaper`] attaches to REAPER: the engine owns the project
+/// and plays it; this window drives it through the daw facade.
+///
+/// # Errors
+///
+/// When this window already owns a project, no dialer is installed, the
+/// engine cannot be reached, or its project cannot be read back.
+pub fn attach_to_engine(address: &str) -> eyre::Result<Attached> {
+    if BUNDLE.get().is_some() {
+        eyre::bail!("this window already owns a project; it cannot also drive a Session engine");
+    }
+    let dial = ENGINE_DIALER
+        .get()
+        .ok_or_else(|| eyre::eyre!("this build cannot dial a Session engine"))?;
+    let rt = engine_runtime()?;
+    let (daw, connection) = rt
+        .block_on(dial(address.to_owned()))
+        .map_err(|e| eyre::eyre!("could not reach the Session engine at {address}: {e}"))?;
+    let block_on_rt = Arc::new(tokio::runtime::Builder::new_current_thread().enable_all().build()?);
+    daw::init_from_parts(daw, block_on_rt);
+    if let Ok(mut slot) = ENGINE_CONNECTION.write() {
+        *slot = Some(connection);
+    }
+    read_back(rt, RemoteTarget::Session { address: address.to_owned() })
+}
+
+/// After an attach: read the project back (never report what was hoped
+/// for), and record this window as Remote on `target`.
+fn read_back(rt: &'static tokio::runtime::Runtime, target: RemoteTarget) -> eyre::Result<Attached> {
+    let daw = daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("the facade did not install"))?;
+    let (name, guid, path, track_count) = rt.block_on(async {
+        let project = daw.current_project().await?;
+        let info = project.info().await?;
+        let tracks = project.tracks().all().await?;
+        Ok::<_, daw::rpc::Error>((info.name, info.guid, info.path, tracks.len()))
+    })?;
+    // Attached is Remote, whatever the launch said — a caller that attaches
+    // without choosing a mode first (a test) is not left reporting Engine.
+    // A Cue window stays Cue.
+    if mode().owns_project() {
+        set_mode(ModeState::remote(target, false));
+    }
+    set_remote_current(Some(guid.clone()));
+    watch_remote_current(rt);
+    Ok(Attached {
+        name,
+        project_guid: guid,
+        path: Some(path).filter(|p| !p.is_empty()).map(Into::into),
+        track_count,
+    })
 }
 
 /// Attach again, to whatever REAPER is there now.

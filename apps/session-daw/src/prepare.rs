@@ -22,6 +22,14 @@ pub struct Prepare {
 }
 
 impl Prepare {
+    /// Everything a song gets on its first open: organized, built from the
+    /// chart beside it, and given its guide. What a setlist's songs get,
+    /// and what `session-desktop --engine` gives a song.
+    #[must_use]
+    pub fn for_song(path: &std::path::Path) -> Self {
+        Self { organize: true, chart: chart_beside(path), guide: true }
+    }
+
     /// From `FTS_BLITZ_ORGANIZE=1`, `FTS_BLITZ_CHART=<file.kf>` and
     /// `FTS_BLITZ_GUIDE=1`.
     #[must_use]
@@ -48,8 +56,9 @@ impl Prepare {
     /// The step that failed, and why.
     #[cfg(feature = "native")]
     pub fn run(&self, opened: &crate::open::Opened) -> eyre::Result<()> {
-        let runtime = crate::open::runtime().ok_or_else(|| eyre::eyre!("no engine runtime"))?;
-        let _entered = runtime.enter();
+        // This window's runtime when it has one; otherwise whatever
+        // runtime the caller runs on (`session-desktop --engine`).
+        let _entered = crate::open::runtime().map(|runtime| runtime.enter());
         let chart = match &self.chart {
             Some(path) => Some(
                 std::fs::read_to_string(path)
