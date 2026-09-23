@@ -927,6 +927,22 @@ split-debuginfo = "unpacked"
 
 # Escape hatch: full DWARF for stepping in gdb/lldb. Everything else is
 # identical to dev, so package opt-level overrides below still apply.
+# `release-fast`: the release build you run while working on it — the
+# app, `blitz_shot`, `prepare`. Release's optimisation (the renderer and
+# the audio thread need it; a dev build of the app is too slow to use),
+# but INCREMENTAL, with many codegen units, so an edit recompiles the
+# pieces of a crate that changed instead of the whole crate at O3 from
+# scratch. `--release` stays the profile for shipping (and for measuring
+# performance: 256 units inline a little less than 16).
+#
+#   cargo build --profile release-fast -p session-desktop
+#
+# Measured on this tree: see the `build-performance` skill.
+[profile.release-fast]
+inherits = "release"
+incremental = true
+codegen-units = 256
+
 [profile.dev-dbg]
 inherits = "dev"
 debug = 2
