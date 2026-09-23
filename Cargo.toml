@@ -840,12 +840,16 @@ pipewire-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git"
 # Rebased branches are parked on the fork at fts-focus-2026-08 (onto
 # main) and fts-focus-2026-08b (onto db12391a, the last commit with
 # the `incremental` feature) so the rebase does not have to be redone.
-blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
-blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
-blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
-blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
-blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
-blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
+# The sibling checkout, branch `session-stale-mousedown` (db4318a9 plus the
+# fix for a drag whose pressed node was removed — it panicked Blitz on every
+# press that re-rendered). Push it to the fork and pin its rev here before
+# this repo is pushed.
+blitz-dom = { path = "../blitz/packages/blitz-dom" }
+blitz-traits = { path = "../blitz/packages/blitz-traits" }
+blitz-paint = { path = "../blitz/packages/blitz-paint" }
+blitz-shell = { path = "../blitz/packages/blitz-shell" }
+blitz-net = { path = "../blitz/packages/blitz-net" }
+blitz-html = { path = "../blitz/packages/blitz-html" }
 # Vendored in-tree rather than patched to a sibling checkout, because a
 # path outside this repo builds on one machine and nowhere else. Three
 # measured changes to the present path — the GPU barrier removed, frame
@@ -1183,6 +1187,9 @@ world-sys = { path = "../daw/libs/vendor/world" }
 # keyflow tags a release with it and the pin moves.
 engraver-proto = { path = "../keyflow/features/engraver/proto" }
 editor-keyflow-lang = { path = "../keyflow/features/editor/editor-keyflow-lang" }
+# The chart parser: a one-shot meter (`!T2/4`) alone on its line is a bar.
+keyflow = { path = "../keyflow/crates/keyflow/keyflow" }
+keyflow-text = { path = "../keyflow/crates/keyflow/keyflow-text" }
 
 [patch."https://github.com/FastTrackStudios/editor"]
 # Sibling checkout: the fence renderers made features (not yet tagged).

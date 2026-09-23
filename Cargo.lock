@@ -78,7 +78,6 @@ dependencies = [
 [[package]]
 name = "accesskit_xplat"
 version = "0.1.1"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -1695,7 +1694,6 @@ dependencies = [
 [[package]]
 name = "blitz-dom"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -1706,7 +1704,7 @@ dependencies = [
  "color",
  "cssparser 0.37.0",
  "cursor-icon",
- "debug_timer 0.1.3 (git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb)",
+ "debug_timer 0.1.3",
  "euclid",
  "html-escape",
  "image",
@@ -1739,7 +1737,6 @@ dependencies = [
 [[package]]
 name = "blitz-html"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -1750,7 +1747,6 @@ dependencies = [
 [[package]]
 name = "blitz-net"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
 dependencies = [
  "blitz-traits",
  "data-url",
@@ -1762,7 +1758,6 @@ dependencies = [
 [[package]]
 name = "blitz-paint"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
 dependencies = [
  "anyrender",
  "anyrender_svg",
@@ -1782,7 +1777,6 @@ dependencies = [
 [[package]]
 name = "blitz-shell"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
 dependencies = [
  "accesskit",
  "accesskit_xplat",
@@ -1806,7 +1800,6 @@ dependencies = [
 [[package]]
 name = "blitz-traits"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
 dependencies = [
  "atomic_refcell",
  "bitflags 2.13.1",
@@ -3766,13 +3759,12 @@ dependencies = [
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
 
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
 
 [[package]]
 name = "debugid"
@@ -5011,7 +5003,7 @@ name = "editor-keyflow-lang"
 version = "0.1.0"
 dependencies = [
  "editor-state",
- "keyflow-text 0.1.0",
+ "keyflow-text",
 ]
 
 [[package]]
@@ -5094,7 +5086,6 @@ dependencies = [
 [[package]]
 name = "engraver"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1#1b8ae02cf2f9f9941136b1adfb61c51c8300f83f"
 dependencies = [
  "engraver-proto",
 ]
@@ -5115,7 +5106,7 @@ dependencies = [
  "keyflow-midi",
  "keyflow-proto",
  "keyflow-syntax",
- "keyflow-text 0.1.0",
+ "keyflow-text",
  "kurbo 0.13.1",
  "lyon",
  "macro_rules_attribute",
@@ -8239,7 +8230,6 @@ dependencies = [
 [[package]]
 name = "keyflow"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1#1b8ae02cf2f9f9941136b1adfb61c51c8300f83f"
 dependencies = [
  "color-eyre",
  "colored",
@@ -8251,7 +8241,7 @@ dependencies = [
  "getrandom 0.2.17",
  "helgoboss-midi",
  "keyflow-proto",
- "keyflow-text 0.1.0 (git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1)",
+ "keyflow-text",
  "regex",
  "tracing",
  "uuid",
@@ -8260,11 +8250,6 @@ dependencies = [
 [[package]]
 name = "keyflow-chordpro"
 version = "0.1.0"
-
-[[package]]
-name = "keyflow-chordpro"
-version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1#1b8ae02cf2f9f9941136b1adfb61c51c8300f83f"
 
 [[package]]
 name = "keyflow-daw-analysis"
@@ -8285,7 +8270,7 @@ name = "keyflow-midi"
 version = "0.1.0"
 dependencies = [
  "keyflow-proto",
- "keyflow-text 0.1.0",
+ "keyflow-text",
  "midly",
 ]
 
@@ -8332,18 +8317,7 @@ dependencies = [
 name = "keyflow-text"
 version = "0.1.0"
 dependencies = [
- "keyflow-chordpro 0.1.0",
- "keyflow-proto",
- "keyflow-syntax",
- "tracing",
-]
-
-[[package]]
-name = "keyflow-text"
-version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1#1b8ae02cf2f9f9941136b1adfb61c51c8300f83f"
-dependencies = [
- "keyflow-chordpro 0.1.0 (git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1)",
+ "keyflow-chordpro",
  "keyflow-proto",
  "keyflow-syntax",
  "tracing",
@@ -14428,7 +14402,6 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/FastTrackStudios/blitz?rev=db4318a9e635973b01ce1500203592d34f12b4bb#db4318a9e635973b01ce1500203592d34f12b4bb"
 dependencies = [
  "stylo",
  "stylo_atoms",
@@ -18479,19 +18452,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "baseview"
-version = "0.3.3"
-
-[[patch.unused]]
-name = "dsp-golden"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "phon"
-version = "0.2.0-rc.5"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
-
-[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -18593,4 +18553,17 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "phon"
+version = "0.2.0-rc.5"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
+
+[[patch.unused]]
+name = "baseview"
+version = "0.3.3"
+
+[[patch.unused]]
+name = "dsp-golden"
 version = "0.1.0"
