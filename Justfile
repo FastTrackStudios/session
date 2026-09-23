@@ -1310,7 +1310,7 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
 studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p session-daw --bin blitz_shot
+    cargo build --profile release-fast -p session-daw --bin blitz_shot
     # Through `env`, not as a bare `VAR=x` prefix: bash decides what is
     # an assignment BEFORE it expands anything, so `${FPS:+FTS_BLITZ_FPS=1}`
     # in that position becomes a command name and the recipe dies with
@@ -1321,7 +1321,7 @@ studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     FTS_BLITZ_SIZE="{{SIZE}}" \
     FTS_BLITZ_SCENE="{{SCENE}}" \
     FTS_BLITZ_LOG=/tmp/fts-studio.log \
-    ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
+    ./target/release-fast/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
 
 # The studio, on the golden session.
 #
@@ -1403,7 +1403,7 @@ studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
 drive SIZE="2560x1440" SCENE="drum-mixing" DISPLAY_NUM="99":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p session-daw --bin blitz_shot
+    cargo build --profile release-fast -p session-daw --bin blitz_shot
     just drive-stop "{{DISPLAY_NUM}}"
     # A killed Xvfb leaves its lock behind and the next one refuses to
     # start — silently, as far as anything asking the display is
@@ -1431,7 +1431,7 @@ drive SIZE="2560x1440" SCENE="drum-mixing" DISPLAY_NUM="99":
         FTS_BLITZ_FPS=0 \
         FTS_PRESENT=immediate \
         FTS_BLITZ_LOG=/tmp/fts-drive.log \
-        ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-drive.png \
+        ./target/release-fast/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-drive.png \
         > /tmp/fts-drive.out 2>&1 < /dev/null &
     disown || true
     # Software rendering opens slowly; a minute is generous and a hang
@@ -1517,17 +1517,43 @@ daw-animate PROJECT="" SIZE="2560x1440":
 # (tempo, markers, section regions, Keyflow folder), and generate the
 # click and guide — the multitrack's own click/guide stems are kept,
 # muted, beside them. Leave CHART empty to open the session as it is.
+# The desktop app, as you run it while working on it: `release-fast`
+# (release's optimisation, incremental — see Cargo.toml). A one-line edit
+# rebuilds in ~15 s instead of ~60 s. `PROJECT` is a `.RPP` (its prepared
+# `.session` beside it opens instead, once there is one) or a `.session`.
+app PROJECT="" CHART="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --profile release-fast -p session-desktop
+    project='{{PROJECT}}'
+    chart='{{CHART}}'
+    vars=(RUST_LOG="${RUST_LOG:-warn,session_daw=info}")
+    if [[ -n "$project" ]]; then vars+=(FTS_SESSION_PROJECT="$project"); fi
+    if [[ -n "$chart" ]]; then vars+=(FTS_SESSION_CHART="$chart"); fi
+    env "${vars[@]}" ./target/release-fast/session-desktop
+
+# Prepare songs once — organize, build from the chart, generate the click
+# and guide — and save each as `Song.session` beside its `.RPP`, which the
+# app then opens instead. One process per song (the engine is
+# process-wide). `just prepare ../sessions/imported/*/*.RPP`
+[positional-arguments]
+prepare +PROJECTS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --profile release-fast -p session-daw --bin prepare
+    for p in "$@"; do ./target/release-fast/prepare "$p"; done
+
 studio-song PROJECT CHART="" SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p session-daw --bin blitz_shot
+    cargo build --profile release-fast -p session-daw --bin blitz_shot
     prep=()
     if [[ -n "{{CHART}}" ]]; then
         prep=(FTS_BLITZ_ORGANIZE=1 "FTS_BLITZ_CHART={{CHART}}" FTS_BLITZ_GUIDE=1)
     fi
     env FTS_BLITZ_WINDOW=1 FTS_BLITZ_SIZE="{{SIZE}}" ${prep[@]+"${prep[@]}"} \
         RUST_LOG="${RUST_LOG:-warn,session_daw=info}" \
-        ./target/release/blitz_shot "{{PROJECT}}" /tmp/fts-studio.png
+        ./target/release-fast/blitz_shot "{{PROJECT}}" /tmp/fts-studio.png
 
 # Everything CI runs, in CI's order, with one command.
 #
