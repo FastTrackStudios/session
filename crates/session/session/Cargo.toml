@@ -119,6 +119,11 @@ vox-websocket = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
+# The live session as a Loro doc, presence and shared transport
+# (FastTrackStudios/session#139).
+[dependencies.session-sync]
+workspace = true
+
 [features]
 # Real REAPER integration: window-layout modes (screensets), auto-colour
 # action registration, the DawModule extension glue, take-ranking, live

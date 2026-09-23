@@ -97,6 +97,9 @@ pub mod rpc_services;
 
 // Re-export service implementations for library use
 pub use setlist::SetlistServiceImpl;
+
+/// Collaboration: the session as a Loro doc, presence, shared transport.
+pub use session_sync as sync;
 #[cfg(not(target_arch = "wasm32"))]
 pub use song::SongServiceImpl;
 

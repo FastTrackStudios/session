@@ -1229,6 +1229,9 @@ impl Widget for ArrangementWidget {
             // The toolbar changed the panel's shape: nothing else will
             // ask for the frame that re-cuts it.
             || self.scene.tcp.compact != self.compact.get()
+            // Other people's pointers glide and their play cursors move
+            // with nothing happening here.
+            || crate::ghosts::active()
     }
 
     fn handle_event(&mut self, event: &UiEvent) {
@@ -1778,6 +1781,20 @@ impl ArrangementWidget {
             0.0,
             view.height,
             self.scene.tcp.width(),
+        );
+        // Everyone else in the session, faintly: their selections,
+        // cursors and mouse. Over your cursors so a peer on the same spot
+        // is still seen, but drawn thin and pale so theirs never reads as
+        // yours.
+        crate::ghosts::paint(
+            &mut out,
+            &self.palette,
+            &self.font,
+            &self.scene,
+            &self.rows,
+            view,
+            lanes_at,
+            view.height,
         );
         // An open rename, over the name it replaces. Last of the panel
         // passes, because it is a field ON one and has to cover it.

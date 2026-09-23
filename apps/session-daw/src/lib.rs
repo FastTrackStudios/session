@@ -14,6 +14,7 @@ pub mod art;
 pub mod balance;
 pub mod chart_panel;
 pub mod cursor;
+pub mod ghosts;
 pub mod engine;
 pub mod expression;
 pub mod folder_item;
