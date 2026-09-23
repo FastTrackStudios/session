@@ -14,6 +14,8 @@
 
 #[cfg(feature = "engine")]
 pub mod bridge;
+#[cfg(feature = "net")]
+pub mod clock;
 pub mod diff;
 pub mod doc;
 #[cfg(feature = "engine")]

@@ -10,10 +10,12 @@ default = []
 # The bridge to a live daw project, through daw-control.
 engine = ["dep:daw-control", "dep:daw-proto", "dep:eyre"]
 # Hosting and joining a session over vox (architect's crdt sync).
-net = ["dep:crdt", "dep:architect", "dep:uuid", "dep:tokio", "dep:vox", "dep:eyre", "dep:tracing"]
+net = ["dep:crdt", "dep:architect", "dep:uuid", "dep:tokio", "dep:vox", "dep:eyre", "dep:tracing", "dep:facet"]
 
 [dependencies]
 loro.workspace = true
+# The shared clock, positions and drift correction (backend-agnostic).
+daw-transport-sync.workspace = true
 daw-control = { workspace = true, optional = true }
 daw-proto = { workspace = true, optional = true }
 eyre = { workspace = true, optional = true }
@@ -23,6 +25,7 @@ uuid = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 vox = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+facet = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

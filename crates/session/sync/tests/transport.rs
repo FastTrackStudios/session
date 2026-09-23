@@ -203,3 +203,18 @@ fn playing_apart_nobody_is_moved() {
     b.pressed(3100.0);
     assert_eq!(b.tick(&at("washed", true, 5.0), 3500.0), Default::default());
 }
+
+#[test]
+fn a_leaders_stamped_playhead_round_trips() {
+    use session_sync::transport::SyncPosition;
+    let p = SyncPosition {
+        song: Some("Washed".into()),
+        position: daw_transport_sync::Position {
+            host_micros: 123_456_789.25,
+            playhead_seconds: 61.000_020_8,
+            playrate: 1.000_08,
+            is_playing: true,
+        },
+    };
+    assert_eq!(SyncPosition::decode(&p.encode()), Some(p));
+}

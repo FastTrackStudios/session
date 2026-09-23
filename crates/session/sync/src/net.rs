@@ -92,6 +92,11 @@ impl SetHost {
                 doc_presence_service_descriptor(),
                 DocPresenceDispatcher::new(self.registry.clone()),
             )
+            // The session's shared clock: this host's (see `clock`).
+            .with(
+                crate::clock::session_clock_service_descriptor(),
+                crate::clock::SessionClockDispatcher::new(crate::clock::ClockHost),
+            )
     }
 
     /// This host's own presence, as a peer of its own set — over an

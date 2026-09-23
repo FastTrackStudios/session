@@ -150,6 +150,8 @@ vox-core = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 editor-crdt = { workspace = true, optional = true }
 futures-timer = { workspace = true, optional = true }
+# Sample-accurate shared transport: the drift follower and the shared clock.
+daw-transport-sync = { workspace = true, optional = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }
 
@@ -222,6 +224,7 @@ native = [
     "dep:uuid",
     "dep:editor-crdt",
     "dep:futures-timer",
+    "dep:daw-transport-sync",
 ]
 # The browser: the same widgets, hosted in <canvas> elements under
 # dioxus-web and drawn with vello_hybrid's WebGL renderer (keyflow-ui's

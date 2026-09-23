@@ -147,6 +147,7 @@ daw-synchronization = { git = "https://github.com/FastTrackStudios/daw", tag = "
 daw-link = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
 daw-network = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
 daw-audio-sync = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
+daw-transport-sync = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
 dawfile-aaf = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
 dawfile-ableton = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
 dawfile-dawproject = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
@@ -1147,6 +1148,7 @@ daw-allocator = { path = "../daw/features/audio/daw-allocator" }
 daw-audio-graph = { path = "../daw/features/audio/daw-audio-graph" }
 daw-audio-io = { path = "../daw/features/audio/daw-audio-io" }
 daw-audio-sync = { path = "../daw/features/sync/daw-audio-sync" }
+daw-transport-sync = { path = "../daw/features/sync/daw-transport-sync" }
 daw-bridge = { path = "../daw/features/reaper/daw-bridge" }
 daw-control = { path = "../daw/crates/daw/control" }
 daw-csi = { path = "../daw/features/surfaces/daw-csi" }

@@ -390,3 +390,60 @@ impl TransportSync {
         entry
     }
 }
+
+/// The presence key a peer publishes its clock-stamped playhead under
+/// while it leads the shared transport.
+#[must_use]
+pub fn sync_key(peer: &str) -> String {
+    format!("{peer}/sync")
+}
+
+/// A leader's playhead for followers to lock to: where it was, when (in
+/// the session's shared clock, µs), how fast, on which song. Published
+/// every tick while it leads — a projection is exact at the stated rate,
+/// but the leader's own device clock wanders against the shared one, so
+/// followers want fresh stamps, not just the last change.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncPosition {
+    pub song: Option<String>,
+    pub position: daw_transport_sync::Position,
+}
+
+impl SyncPosition {
+    #[must_use]
+    pub fn encode(&self) -> LoroValue {
+        let p = self.position;
+        let m: std::collections::HashMap<String, LoroValue> = [
+            ("at", LoroValue::Double(p.host_micros)),
+            ("playhead", LoroValue::Double(p.playhead_seconds)),
+            ("rate", LoroValue::Double(p.playrate)),
+            ("playing", LoroValue::Bool(p.is_playing)),
+            ("song", self.song.as_deref().map_or(LoroValue::Null, LoroValue::from)),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        LoroValue::from(m)
+    }
+
+    #[must_use]
+    pub fn decode(v: &LoroValue) -> Option<Self> {
+        let LoroValue::Map(m) = v else { return None };
+        let f = |k: &str| match m.get(k)? {
+            LoroValue::Double(d) => Some(*d),
+            _ => None,
+        };
+        Some(Self {
+            song: match m.get("song") {
+                Some(LoroValue::String(s)) => Some(s.to_string()),
+                _ => None,
+            },
+            position: daw_transport_sync::Position {
+                host_micros: f("at")?,
+                playhead_seconds: f("playhead")?,
+                playrate: f("rate")?,
+                is_playing: matches!(m.get("playing")?, LoroValue::Bool(true)),
+            },
+        })
+    }
+}

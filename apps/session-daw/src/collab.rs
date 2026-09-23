@@ -30,7 +30,10 @@ use std::time::Duration;
 use session::sync::engine::MediaRoot;
 use session::sync::net::{PresenceSink, SetHost, SetPeer, session_id, song_id};
 use session::sync::presence::{self, PeerState, PlayState, Pointer, Roster, Throttle};
-use session::sync::transport::{self, Command, LocalTransport, SharedTransport, TransportMode, TransportSync};
+use session::sync::clock::SharedClock;
+use session::sync::transport::{
+    self, Command, LocalTransport, SharedTransport, SyncPosition, TransportMode, TransportSync,
+};
 use session::sync::{Bridge, Change, ORIGIN_LOCAL, SessionDoc};
 use uuid::Uuid;
 
@@ -233,7 +236,7 @@ fn open_local_with(mut docs: HashMap<String, SessionDoc>) -> eyre::Result<()> {
             bridges.push((Song { project: guid, key, doc: bridge.doc().clone() }, bridge));
         }
         let presence: Arc<dyn PresenceSink> = Arc::new(Alone);
-        let started = start(bridges, Arc::clone(&presence), String::new(), "local".into(), String::new(), None, None);
+        let started = start(bridges, Arc::clone(&presence), SharedClock::owned(), String::new(), "local".into(), String::new(), None, None);
         let mut live = started.into_live(String::new(), false, presence);
         live.shared = false;
         Ok::<_, eyre::Report>(Some(live))
@@ -399,7 +402,7 @@ fn host_inner(name: String) -> eyre::Result<String> {
 
         let me = format!("host-{}", &endpoint.id().to_string()[..8]);
         let presence: Arc<dyn PresenceSink> = Arc::new(host.own_presence().await?);
-        let started = start(bridges, Arc::clone(&presence), set, me, name, Some(host), Some(endpoint));
+        let started = start(bridges, Arc::clone(&presence), SharedClock::owned(), set, me, name, Some(host), Some(endpoint));
         Ok::<_, eyre::Report>((ticket.clone(), started.into_live(ticket, true, presence)))
     })?;
     if let Ok(mut slot) = LIVE.lock() {
@@ -442,6 +445,13 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
             .establish::<crdt::sync::DocPresenceClient>()
             .await
             .map_err(|e| eyre::eyre!("session presence handshake: {e:?}"))?;
+        // The host's clock is the session's: pinged from here on.
+        let clock = SharedClock::follow(
+            vox_core::initiator_on(dial(&endpoint).await?)
+                .establish::<session::sync::clock::SessionClockClient>()
+                .await
+                .map_err(|e| eyre::eyre!("session clock handshake: {e:?}"))?,
+        );
 
         let mut peer = SetPeer::new(id);
         peer.run_presence(presence_client);
@@ -475,7 +485,7 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
         }
         crate::studio::request_resync();
         let me = format!("peer-{}", &endpoint.id().to_string()[..8]);
-        let started = start(bridges, Arc::clone(&presence), set, me, name, None, Some(endpoint));
+        let started = start(bridges, Arc::clone(&presence), clock, set, me, name, None, Some(endpoint));
         let _keep = peer;
         Ok::<_, eyre::Report>(started.into_live(ticket.to_string(), false, presence))
     })?;
@@ -533,9 +543,11 @@ impl Started {
 }
 
 /// Spawn the session's task. `host` and `endpoint` are kept alive by it.
+#[allow(clippy::too_many_arguments)]
 fn start(
     bridges: Vec<(Song, Bridge)>,
     presence: Arc<dyn PresenceSink>,
+    clock: SharedClock,
     set: String,
     me: String,
     name: String,
@@ -604,6 +616,9 @@ fn start(
         let mut out = Outbox::new(me.clone(), name);
         let mut roster = Roster::default();
         let mut seen: HashMap<String, session::sync::loro::LoroValue> = HashMap::default();
+        // Sample-accurate following (daw-transport-sync): the leader's
+        // stamped playhead, this engine locked to it.
+        let mut lock = Lock::default();
         let key_of = |project: Option<String>| {
             project.and_then(|p| songs.iter().find(|s| s.project == p).map(|s| s.key.clone()))
         };
@@ -705,7 +720,16 @@ fn start(
                     if let Some(entry) = tick.publish {
                         presence.set(transport::KEY, entry.encode());
                     }
+                    let leader = sync.lock().ok().and_then(|s| s.current().map(|c| c.by.clone()));
+                    let locked = lock.step(current, leader.as_deref(), &me, here.as_ref(), &seen, &clock, presence.as_ref());
                     for command in tick.commands {
+                        // Locked to the leader's stamped playhead, the
+                        // drift follower starts, stops and moves this
+                        // engine (to the sample); the coarse commands are
+                        // only for a song switch, or when it cannot lock.
+                        if locked && !matches!(command, Command::SwitchSong(_)) {
+                            continue;
+                        }
                         obey(command, &songs);
                     }
                     crate::ghosts::publish(Some(on_this_song), 0.0, current == TransportMode::Independent);
@@ -723,6 +747,105 @@ fn start(
         presence.delete(&presence::key(&me, presence::PLAY));
     });
     started
+}
+
+/// This engine's lock to the leader of the shared transport.
+///
+/// Playing together, whoever pressed last leads: its engine plays on its
+/// own, and every tick it stamps its playhead in the session's shared
+/// clock ([`SyncPosition`] under its `sync` key). Everyone else locks to
+/// that with daw-transport-sync's drift follower — a scheduled locate to
+/// start or catch a jump, then a rate nudge of a fraction of a percent,
+/// resampled, so the engines hold within a few samples and never click.
+#[derive(Default)]
+struct Lock {
+    follower: daw_transport_sync::Follower,
+    /// What this peer was doing last tick.
+    role: Role,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    #[default]
+    Apart,
+    Leading,
+    Following,
+}
+
+impl Lock {
+    /// One tick. Returns whether this engine is locked to a leader (the
+    /// coarse transport commands then stand down).
+    #[allow(clippy::too_many_arguments)]
+    fn step(
+        &mut self,
+        mode: TransportMode,
+        leader: Option<&str>,
+        me: &str,
+        here: Option<&String>,
+        seen: &HashMap<String, session::sync::loro::LoroValue>,
+        clock: &SharedClock,
+        presence: &dyn PresenceSink,
+    ) -> bool {
+        let backend = crate::open::current_song().and_then(|p| sync_backend(&p));
+        let role = match (mode, leader) {
+            (TransportMode::Shared, Some(l)) if l == me => Role::Leading,
+            (TransportMode::Shared, Some(_)) => Role::Following,
+            _ => Role::Apart,
+        };
+        if role != self.role {
+            // A new role starts from rate 1 and nothing learned (the
+            // mismatch is against a leader that may have changed).
+            self.follower.reset();
+            if let Some(b) = &backend {
+                b.set_rate(1.0);
+            }
+            if self.role == Role::Leading {
+                presence.delete(&transport::sync_key(me));
+            }
+            self.role = role;
+        }
+        let (Some(backend), Some(offset)) = (backend, clock.offset_micros()) else { return false };
+        match role {
+            Role::Apart => false,
+            Role::Leading => {
+                if let Some(snapshot) = backend.snapshot() {
+                    let stamped = SyncPosition { song: here.cloned(), position: snapshot.position().shifted(offset) };
+                    presence.set(&transport::sync_key(me), stamped.encode());
+                }
+                false
+            }
+            Role::Following => {
+                let Some(lead) = leader
+                    .and_then(|l| seen.get(&transport::sync_key(l)))
+                    .and_then(SyncPosition::decode)
+                else {
+                    return false;
+                };
+                // Another song: the switch comes first (the coarse path).
+                if lead.song.as_ref() != here {
+                    return false;
+                }
+                let now = daw_transport_sync::clock::now_micros_f64();
+                let correction = self.follower.tick(backend.as_ref(), &lead.position, offset, now);
+                if !matches!(correction, daw_transport_sync::Correction::Hold) {
+                    tracing::debug!(
+                        sync.correction = ?correction,
+                        sync.drift_us = self.follower.controller().last_drift().map(|d| d * 1e6),
+                        sync.offset_us = offset,
+                        "collab: following the leader"
+                    );
+                }
+                true
+            }
+        }
+    }
+}
+
+/// The engine's sync backend for a song's project (daw-transport-sync),
+/// if the engine offers one.
+fn sync_backend(project: &str) -> Option<Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>> {
+    let _ = project;
+    None
 }
 
 /// Do what the shared transport asks of this engine — quietly: it is not
