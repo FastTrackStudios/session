@@ -7,7 +7,7 @@
 //!   through it, its lines with the one being sung lit, and what comes
 //!   next.
 //!
-//! The lines are the song's own: the LINES track's items, one a line,
+//! The lines are the song's own: the Lyrics track's items, one a line,
 //! labelled with its text ([`session::lyrics::stamp_lines`] puts them
 //! there from a synced `.lrc` when a song is prepared). Sections and
 //! slides are derived from them against the song's section regions
@@ -56,7 +56,7 @@ impl Words {
         let lyrics = project
             .tracks
             .iter()
-            .find(|t| t.name.trim().eq_ignore_ascii_case(session::lyrics::LINES_TRACK))
+            .find(|t| session::lyrics::is_lyrics_track(&t.name))
             .map(|track| {
                 Lyrics::from_items(project.lane(&track.guid).iter().filter_map(|item| {
                     Some((item.position.as_seconds(), item.length.as_seconds(), project.title(item)?))

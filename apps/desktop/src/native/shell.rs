@@ -153,6 +153,7 @@ fn SongViews(
                         editor: editor_open().then(|| rsx! { ChartEditor {} }),
                         chart: rsx! { session_daw::chart_panel::Chart { paged: true } },
                         chart_corner: rsx! { EditorToggle { open: editor_open } },
+                        under_chart: rsx! { session_daw::lyrics_panel::LyricsPanel {} },
                         panels: rsx! { Arrangement { docked: true } },
                     }
                 },

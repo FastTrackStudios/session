@@ -608,7 +608,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: GUIDE,
-        text: "**Keyflow/** KEY, CHORD, LINES, HITS as MIDI items\n(`flow.scenes.keyflow-folder`).",
+        text: "**Keyflow/** KEY, CHORD, LINES, Lyrics, HITS as MIDI items\n(`flow.scenes.keyflow-folder`).",
         check: None,
     },
     Item {

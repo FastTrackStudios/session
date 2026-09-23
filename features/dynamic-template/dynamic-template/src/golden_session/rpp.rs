@@ -886,7 +886,9 @@ mod tests {
         // scaffolded from a chart could not pass the checklist meant to
         // check it — and the Guide folder gained Count, which the guide
         // engine has always stamped and this had no track for.
-        assert_eq!(tracks.len(), 277);
+        // 278 with Lyrics beside LINES: the song's words, one item a
+        // line, where LINES is the chart's melodies.
+        assert_eq!(tracks.len(), 278);
     }
 
     #[test]

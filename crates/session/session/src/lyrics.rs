@@ -267,11 +267,18 @@ impl Lyrics {
     }
 }
 
-/// The Keyflow folder's track the lines are kept on: one empty item a
+/// The Keyflow folder's track the lyrics are kept on: one empty item a
 /// line, spanning it, labelled with its text — so the lines are part of
-/// the song (saved in its `.session`, moved with its edits) and the
-/// display reads them from the song, not from a file beside it.
-pub const LINES_TRACK: &str = "LINES";
+/// the song (saved in its `.session`, moved and trimmed in the
+/// arrangement) and the display reads them from the song, not from a
+/// file beside it. (Not LINES, beside it: that is the chart's melodies.)
+pub const LYRICS_TRACK: &str = "Lyrics";
+
+/// Whether `name` is the lyrics track's.
+#[must_use]
+pub fn is_lyrics_track(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case(LYRICS_TRACK)
+}
 
 impl Lyrics {
     /// The lines as a track holds them: `(start, length, label)` per item.
@@ -293,8 +300,9 @@ impl Lyrics {
     }
 }
 
-/// Put `lyrics` on the LINES track — made if the song has none — in place
-/// of whatever lines were there. Returns how many lines were stamped.
+/// Put `lyrics` on the Lyrics track — made in the Keyflow folder, before
+/// its closing HITS, if the song has none — in place of whatever lines
+/// were there. Returns how many lines were stamped.
 ///
 /// # Errors
 ///
@@ -308,13 +316,16 @@ where
     D: daw::service::Tracks + daw::service::Items,
 {
     use daw::service::{Duration, ItemRef, PositionInSeconds, TrackRef};
-    let track = match daw
-        .all(project.clone())
-        .into_iter()
-        .find(|t| t.name.trim().eq_ignore_ascii_case(LINES_TRACK))
-    {
-        Some(track) => TrackRef::Guid(track.guid),
-        None => TrackRef::Guid(daw.add(project.clone(), LINES_TRACK, None)?),
+    let tracks = daw.all(project.clone());
+    let track = match tracks.iter().find(|t| is_lyrics_track(&t.name)) {
+        Some(track) => TrackRef::Guid(track.guid.clone()),
+        None => {
+            let before_hits = tracks
+                .iter()
+                .find(|t| t.name.trim().eq_ignore_ascii_case("HITS"))
+                .map(|t| t.index);
+            TrackRef::Guid(daw.add(project.clone(), LYRICS_TRACK, before_hits)?)
+        }
     };
     for item in daw.get_items(project.clone(), track.clone()) {
         daw.delete_item(project.clone(), ItemRef::Guid(item.guid))?;

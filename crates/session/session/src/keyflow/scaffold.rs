@@ -64,7 +64,8 @@ fn scaffold<D: ScaffoldDaw>(daw: &D, text: &str) -> eyre::Result<()> {
     Ok(())
 }
 
-/// Create the Keyflow folder with KEY / CHORD / LINES / HITS child tracks.
+/// Create the Keyflow folder with KEY / CHORD / LINES / Lyrics / HITS
+/// child tracks.
 ///
 /// The same four the golden session's shape names and the generator
 /// writes into. They disagreed until now — this built MELODY and SCALE
@@ -81,6 +82,7 @@ pub(crate) fn build_keyflow_folder<D: Tracks>(daw: &D, project: &ProjectContext)
     daw.add(project.clone(), "KEY", None)?;
     daw.add(project.clone(), "CHORD", None)?;
     daw.add(project.clone(), "LINES", None)?;
+    daw.add(project.clone(), crate::lyrics::LYRICS_TRACK, None)?;
     let hits = daw.add(project.clone(), "HITS", None)?;
     daw.set_folder_depth(project.clone(), TrackRef::Guid(hits), -1)?; // last child closes folder
     Ok(())

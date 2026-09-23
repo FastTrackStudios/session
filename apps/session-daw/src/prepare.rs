@@ -236,10 +236,14 @@ pub fn steps(
             sections = built.sections,
             "prepare: song built from chart"
         );
-        // The key and the chords read from the ruler's CHORDS lane,
-        // so the folder that holds them is out of the track panel
-        // until someone opens it to edit — which the lane follows.
-        target.hide_in_tcp("Keyflow")?;
+        // The key and the chords read from the ruler's CHORDS lane, so
+        // their tracks are out of the track panel, and LINES and HITS
+        // with them until something writes melodies and hits there; the
+        // Keyflow folder stays, for its Lyrics track — the lines as
+        // items, to be moved and trimmed where the song has them.
+        for track in ["KEY", "CHORD", "LINES", "HITS"] {
+            target.hide_in_tcp(track)?;
+        }
     }
     if guide {
         session::guide::Guide::new(daw.clone())

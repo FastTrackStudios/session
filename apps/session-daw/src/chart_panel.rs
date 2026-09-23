@@ -79,6 +79,15 @@ struct Live {
 
 type Shared = Rc<RefCell<Live>>;
 
+/// How much of the next page a fitted page shows beside it: about its
+/// first measure.
+pub const NEXT_PAGE_PEEK: f64 = 0.3;
+
+/// The shape of a fitted chart, height over width: a Letter page and
+/// [`NEXT_PAGE_PEEK`] of the next across, the page's height down — what
+/// a host sizes the chart's pane to so nothing is left over around it.
+pub const FITTED_ASPECT: f64 = 792.0 / (612.0 * (1.0 + NEXT_PAGE_PEEK) + 24.0);
+
 /// The widget: owns the layout cache; the pan and zoom live in [`Live`].
 struct ChartWidget {
     chart: std::sync::Arc<keyflow::Chart>,
@@ -140,14 +149,14 @@ impl ChartWidget {
         out
     }
 
-    /// Put ONE page on the panel: the page the playhead is on, its corners
-    /// on the panel's corners.
+    /// Put the page the playhead is on on the panel, its top-left on the
+    /// panel's, with the start of the next page beside it.
     ///
-    /// The zoom is whatever makes the page fit — by its width or its
-    /// height, whichever runs out first — and the scroll is the page's own
-    /// corner, so there is no paper showing beside it and no gap above it.
-    /// A page is A4-ish and a panel rarely is, so one axis has room left
-    /// over; nothing is cropped to take it.
+    /// The zoom fits the page and [`NEXT_PAGE_PEEK`] of the next one
+    /// across the width — or the page alone down the height, whichever
+    /// runs out first — and the scroll is the page's own corner. The
+    /// Overview sizes the chart's pane to that shape, so the room left
+    /// under it goes to the lyrics.
     ///
     /// Before the downbeat (the count-in, or stopped at zero) that is the
     /// first page; past the chart's end, the page it ended on stays up.
@@ -172,7 +181,13 @@ impl ChartWidget {
         if page_w <= 0.0 || page_h <= 0.0 || per_pt <= 0.0 {
             return;
         }
-        let zoom = (w / (page_w * per_pt)).min(h / (page_h * per_pt));
+        // Across: the page, and the first measure or so of the next one
+        // beside it — what is coming is on screen before the page turns.
+        let across = self
+            .view
+            .page(self.page + 1)
+            .map_or(page_w, |(next_x, ..)| (next_x - x) + page_w * NEXT_PAGE_PEEK);
+        let zoom = (w / (across * per_pt)).min(h / (page_h * per_pt));
         let mut live = self.live.borrow_mut();
         live.zoom = zoom;
         live.scroll_pt = (x, y);
