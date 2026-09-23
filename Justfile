@@ -1570,6 +1570,16 @@ app PROJECT="" CHART="" MODE="":
     # by file, and launching one rewritten in place fails (-10810).
     rm -f "$bundle/Contents/MacOS/session-desktop"
     cp target/release-fast/session-desktop "$bundle/Contents/MacOS/session-desktop"
+    # One signature across rebuilds. The linker's ad-hoc one names the
+    # binary by a build hash, so every build is a new app to macOS and it
+    # asks again for the removable drive; a real identity and a fixed
+    # identifier keep the grant. SESSION_SIGN_IDENTITY overrides the pick.
+    identity="${SESSION_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
+        | awk -F'"' '/Apple Development/ {print $2; exit}')}"
+    if [[ -n "$identity" ]]; then
+        codesign --force --sign "$identity" --identifier app.fasttrackstudio.session.dev "$bundle" \
+            || echo "codesign with '$identity' failed; the build keeps its ad-hoc signature"
+    fi
     open -n --stdout "$log" --stderr "$log" "${envs[@]}" "$bundle"
     echo "log: $log"
 
