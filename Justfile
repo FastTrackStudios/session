@@ -1520,17 +1520,43 @@ daw-animate PROJECT="" SIZE="2560x1440":
 # The desktop app, as you run it while working on it: `release-fast`
 # (release's optimisation, incremental — see Cargo.toml). A one-line edit
 # rebuilds in ~15 s instead of ~60 s. `PROJECT` is a `.RPP` (its prepared
-# `.session` beside it opens instead, once there is one) or a `.session`.
-app PROJECT="" CHART="":
+# `.session` beside it opens instead, once there is one), a `.session`, or
+# a setlist (a folder of songs, or a `.setlist`); `MODE` opens in a mode:
+#   just app "../sessions/Worship Set.setlist" "" organize
+app PROJECT="" CHART="" MODE="":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --profile release-fast -p session-desktop
+    # A bare binary started from a shell is not a foreground app on macOS
+    # (it opens behind whatever is in front); wrapped in a bundle and
+    # started with `open`, it comes forward like any app.
+    bundle="target/release-fast/Session Dev.app"
+    mkdir -p "$bundle/Contents/MacOS"
+    cp target/release-fast/session-desktop "$bundle/Contents/MacOS/session-desktop"
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+        '<plist version="1.0"><dict>' \
+        '<key>CFBundleName</key><string>Session Dev</string>' \
+        '<key>CFBundleIdentifier</key><string>app.fasttrackstudio.session.dev</string>' \
+        '<key>CFBundleExecutable</key><string>session-desktop</string>' \
+        '<key>CFBundlePackageType</key><string>APPL</string>' \
+        '<key>NSHighResolutionCapable</key><true/>' \
+        '</dict></plist>' > "$bundle/Contents/Info.plist"
+    envs=(--env "RUST_LOG=${RUST_LOG:-warn,session_daw=info}")
     project='{{PROJECT}}'
     chart='{{CHART}}'
-    vars=(RUST_LOG="${RUST_LOG:-warn,session_daw=info}")
-    if [[ -n "$project" ]]; then vars+=(FTS_SESSION_PROJECT="$project"); fi
-    if [[ -n "$chart" ]]; then vars+=(FTS_SESSION_CHART="$chart"); fi
-    env "${vars[@]}" ./target/release-fast/session-desktop
+    mode='{{MODE}}'
+    if [[ -n "$project" ]]; then
+        # A folder or a .setlist is a set; anything else is one song.
+        if [[ -d "$project" && "$project" != *.session ]] || [[ "$project" == *.setlist ]]; then
+            envs+=(--env "FTS_SESSION_SETLIST=$(cd "$(dirname "$project")" && pwd)/$(basename "$project")")
+        else
+            envs+=(--env "FTS_SESSION_PROJECT=$(cd "$(dirname "$project")" && pwd)/$(basename "$project")")
+        fi
+    fi
+    if [[ -n "$chart" ]]; then envs+=(--env "FTS_SESSION_CHART=$chart"); fi
+    if [[ -n "$mode" ]]; then envs+=(--env "FTS_SESSION_MODE=$mode"); fi
+    pkill -f 'Session Dev.app/Contents/MacOS/session-desktop' || true
+    open -n "${envs[@]}" "$bundle"
 
 # Prepare songs once — organize, build from the chart, generate the click
 # and guide — and save each as `Song.session` beside its `.RPP`, which the
