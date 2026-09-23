@@ -491,13 +491,24 @@ pub fn project_text(song: &Song, stems: &[Stem]) -> String {
         .iter()
         .map(|s| s.seconds - song.first_beat)
         .fold(0.0, f64::max);
+    // On the SECTIONS lane, where sections live: they are the importer's
+    // guess at the song's sections, and a chart built over the song
+    // replaces what is on that lane — so a real chart supersedes the
+    // guesses instead of landing beside them. The file numbers lanes from
+    // one; `CoreLane` is REAPER's API numbering, from zero.
+    let sections_lane =
+        i32::try_from(session::ruler_lanes::CoreLane::Sections.lane_index() + 1).unwrap_or(2);
     for (index, start) in song.sections.iter().enumerate() {
         let next = song.sections.get(index + 1).copied().unwrap_or(end);
-        builder = builder.region(
-            i32::try_from(index + 2).unwrap_or(2),
-            *start,
-            next.max(start + bar),
-            format!("Cue {}", index + 1),
+        builder = builder.add_marker(
+            dawfile_reaper::builder::MarkerBuilder::region(
+                i32::try_from(index + 2).unwrap_or(2),
+                *start,
+                next.max(start + bar),
+                format!("Cue {}", index + 1),
+            )
+            .lane(sections_lane)
+            .build(),
         );
     }
     use dawfile_reaper::RppSerialize as _;
