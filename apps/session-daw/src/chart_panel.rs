@@ -83,6 +83,12 @@ type Shared = Rc<RefCell<Live>>;
 /// first measure.
 pub const NEXT_PAGE_PEEK: f64 = 0.3;
 
+/// The shape a fitted chart takes, width over height: a Letter page, the
+/// gap between pages and [`NEXT_PAGE_PEEK`] of the next across, the
+/// page's height down — what a host sizes the chart's pane to so the
+/// chart fills it with nothing left over.
+pub const FITTED_WIDTH_OVER_HEIGHT: f64 = (612.0 * (1.0 + NEXT_PAGE_PEEK) + 40.0) / 792.0;
+
 /// The widget: owns the layout cache; the pan and zoom live in [`Live`].
 struct ChartWidget {
     chart: std::sync::Arc<keyflow::Chart>,

@@ -307,7 +307,11 @@ pub fn OverviewLayout(
 ) -> Element {
     // The chart takes the column's full width, and — with something under
     // it — the larger share of its height; the rest goes under it.
-    let chart_h = if under_chart.is_some() { "68%" } else { "100%" };
+    let chart_h = if under_chart.is_some() {
+        format!("aspect-ratio:{};", crate::chart_panel::FITTED_WIDTH_OVER_HEIGHT)
+    } else {
+        "height:100%;".to_owned()
+    };
     let chart_w = if editor.is_some() { "width:30%; min-width:240px;" } else { "width:38%; min-width:280px;" };
     rsx! {
         div {
@@ -331,13 +335,15 @@ pub fn OverviewLayout(
                     }
                 }
                 // The chart over whatever the host puts under it — the
-                // lyrics, in the room a 16:9 screen leaves below a page.
+                // lyrics, in the room a 16:9 screen leaves below a page —
+                // as one pane: the chart exactly its fitted shape across
+                // the column's width, the rest below it the lyrics'.
                 div {
                     style: "position:relative; {chart_w} height:100%; display:flex; \
-                            flex-direction:column; gap:10px;",
+                            flex-direction:column; border-radius:8px; overflow:hidden; \
+                            border:1px solid {RULE};",
                     div {
-                        style: "position:relative; flex:none; width:100%; height:{chart_h}; \
-                                border-radius:8px; overflow:hidden; border:1px solid {RULE};",
+                        style: "position:relative; flex:none; width:100%; {chart_h}",
                         {chart}
                         if let Some(corner) = chart_corner {
                             div { style: "position:absolute; top:8px; left:8px;", {corner} }
@@ -345,8 +351,8 @@ pub fn OverviewLayout(
                     }
                     if let Some(under) = under_chart {
                         div {
-                            style: "position:relative; flex:1; min-height:0; width:100%; border-radius:8px; \
-                                    overflow:hidden; border:1px solid {RULE};",
+                            style: "position:relative; flex:1; min-height:0; width:100%; \
+                                    border-top:1px solid {RULE};",
                             {under}
                         }
                     }
