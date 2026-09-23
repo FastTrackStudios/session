@@ -41,6 +41,12 @@ dioxus-native-dom = { workspace = true }
 dioxus-native = { workspace = true, optional = true }
 daw-control = { workspace = true }
 daw-proto = { workspace = true }
+# The Organize view's keyflow editor.
+editor-view = { workspace = true, optional = true }
+editor-state = { workspace = true, optional = true }
+keyflow-editor-lang = { workspace = true, optional = true }
+# The chart editor's worker replies over it (what `use_coroutine` hands out).
+futures-channel = { workspace = true, optional = true }
 daw-theme-art = { workspace = true }
 # The mix phases the mixer's left rail lists.
 session = { workspace = true }
@@ -192,6 +198,12 @@ native = [
     "daw/cli",
     "dynamic-template/reaper",
     "dep:patch-list",
+    "dep:editor-view",
+    "editor-view/native",
+    "dep:editor-state",
+    "dep:keyflow-editor-lang",
+    "dep:futures-channel",
+    "dep:futures-util",
 ]
 # The browser: the same widgets, hosted in <canvas> elements under
 # dioxus-web and drawn with vello_hybrid's WebGL renderer (keyflow-ui's

@@ -57,6 +57,9 @@ pub struct StudioSession {
     /// was opened with no `--chart`, or the file failed to parse: the DAW
     /// and Performance views still work without it.
     pub chart: Option<Arc<keyflow::Chart>>,
+    /// The `.kf` the chart was read from — what Organize mode's editor
+    /// opens and saves. `None` with no chart file.
+    pub chart_file: Option<std::path::PathBuf>,
     /// How the rows were planned, kept so they can be planned again after
     /// a change the plan depends on (a track shown or hidden) without
     /// reading the whole session back from the engine.
@@ -245,6 +248,7 @@ impl StudioSession {
                 rows,
                 previews,
                 chart,
+                chart_file: prepare.chart.clone(),
                 planner,
             },
             opened.project_guid,
@@ -261,6 +265,29 @@ pub fn read_back(
     project_path: &std::path::Path,
 ) -> Option<(ProjectRef, RowsRef)> {
     Some(plan_rows(&fetch()?, scene, project_path))
+}
+
+/// Asked for when something changed the session in the ENGINE rather
+/// than through the arrangement — a toolbar action, an edited chart laid
+/// over the song — so the arrangement reads it back on its next frame.
+static RESYNC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ask the arrangement to read the session back from the engine.
+pub fn request_resync() {
+    RESYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a read-back is asked for; asking clears it.
+#[must_use]
+pub fn take_resync() -> bool {
+    RESYNC.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether one is waiting, without taking it — what a panel's
+/// `needs_redraw` asks.
+#[must_use]
+pub fn resync_pending() -> bool {
+    RESYNC.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The open project, as the engine has it.

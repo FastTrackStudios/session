@@ -136,6 +136,13 @@ pub fn switch_song(project_guid: &str) {
     switch_to(engine(), project_guid, AUDIBLE.load(std::sync::atomic::Ordering::Relaxed));
 }
 
+/// Run `f` against the process's engine — for what acts on the session
+/// directly (the Organize toolbar's inserts, an edited chart laid over the
+/// song) rather than through the facade.
+pub fn with_engine<R>(f: impl FnOnce(&Standalone) -> R) -> R {
+    f(engine())
+}
+
 /// The project the engine has current — the song on screen.
 #[must_use]
 pub fn current_song() -> Option<String> {

@@ -368,6 +368,7 @@ mod tests {
                 rows: daw_ui::studio::RowsRef(std::sync::Arc::default()),
                 previews: crate::midi::Previews::default(),
                 chart: None,
+                chart_file: None,
                 planner: crate::studio::Planner {
                     raw: std::sync::Arc::default(),
                     scene: None,

@@ -1000,6 +1000,22 @@ impl MarkerKind {
     }
 }
 
+impl SectionKind {
+    /// The colour its region is stamped in, as CSS (`#rrggbb`) — so a
+    /// toolbar button and the region it inserts cannot disagree.
+    #[must_use]
+    pub fn css_color(self) -> String {
+        let native = section_type_color(&self.section_type());
+        // Undo `reaper_native_rgb`: BGR with a flag on Windows, RGB with a
+        // flag elsewhere.
+        #[cfg(target_os = "windows")]
+        let rgb = ((native & 0xff) << 16) | (native & 0xff00) | ((native >> 16) & 0xff);
+        #[cfg(not(target_os = "windows"))]
+        let rgb = native & 0x00ff_ffff;
+        format!("#{rgb:06x}")
+    }
+}
+
 #[cfg(target_os = "windows")]
 const fn reaper_native_rgb(rgb: u32) -> u32 {
     let r = rgb & 0x0000FF;

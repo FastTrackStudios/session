@@ -685,6 +685,16 @@ libc = "0.2"
 #   collection-proto     → apps/desktop (optional, `session` feature)
 #   attachments-proto    → features/song (optional, `attachments` feature)
 editor = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+# The editor itself, from its own repo — what the Organize view's keyflow
+# editor is built on (Blitz-native: `editor-view/native`). The core only:
+# no Typst / Mermaid fence renderers (`default-features = false`).
+editor-view = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.9", default-features = false }
+editor-state = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.9", default-features = false }
+# Keyflow's language support for it (syntax colours, live diagnostics) —
+# keyflow's own copy, which moved there from task at keyflow v0.2.0.
+# Renamed because task's older `editor-keyflow-lang` (above, for the site)
+# has the same package name.
+keyflow-editor-lang = { package = "editor-keyflow-lang", git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.2" }
 editor-keyflow = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 editor-keyflow-lang = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 view-knowledge-graph = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
@@ -1172,6 +1182,14 @@ world-sys = { path = "../daw/libs/vendor/world" }
 # section theme. Sibling checkout, branch `tag-section` off v0.2.1, until
 # keyflow tags a release with it and the pin moves.
 engraver-proto = { path = "../keyflow/features/engraver/proto" }
+editor-keyflow-lang = { path = "../keyflow/features/editor/editor-keyflow-lang" }
+
+[patch."https://github.com/FastTrackStudios/editor"]
+# Sibling checkout: the fence renderers made features (not yet tagged).
+editor-view = { path = "../editor/features/ui" }
+editor-state = { path = "../editor/crates/editor-state" }
+editor-vim = { path = "../editor/features/vim" }
+editor-syntax = { path = "../editor/features/syntax" }
 
 [patch."https://github.com/FastTrackStudios/processor"]
 # baseview lives in the processor repo's own `vendor/`, which is why it

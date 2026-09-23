@@ -872,3 +872,22 @@ use web_time::Instant;
         assert!(trail.length(now, PPS, FULL) < 1e-9, "a jump back smeared");
     }
 }
+
+/// The arrangement's edit cursor and time selection, as last drawn — for
+/// what acts on them from outside the arrangement (the Organize toolbar's
+/// inserts, which go through the engine and read ITS cursor and
+/// selection, so they are handed these first).
+static CURRENT: std::sync::Mutex<Option<Edit>> = std::sync::Mutex::new(None);
+
+/// Publish the arrangement's edit state (every frame it draws).
+pub fn publish(edit: Edit) {
+    if let Ok(mut slot) = CURRENT.lock() {
+        *slot = Some(edit);
+    }
+}
+
+/// The arrangement's edit state as last drawn, if it has drawn.
+#[must_use]
+pub fn current() -> Option<Edit> {
+    CURRENT.lock().ok().and_then(|slot| *slot)
+}

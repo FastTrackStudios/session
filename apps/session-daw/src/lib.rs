@@ -35,6 +35,10 @@ pub mod notice;
 pub mod num;
 pub mod options;
 #[cfg(feature = "native")]
+pub mod chart_editor;
+#[cfg(feature = "native")]
+pub mod organize;
+#[cfg(feature = "native")]
 pub mod open;
 /// On the web there is no in-process tokio runtime: the engine clients
 /// (`engine::Transport`, `Applier`, `Meters`, …) find none and run

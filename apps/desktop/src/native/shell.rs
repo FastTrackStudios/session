@@ -40,8 +40,14 @@ pub fn Shell() -> Element {
         Ok("setup") => View::Setup,
         _ => View::Daw,
     });
-    // Live for now: the docked mixer's compact strips are the Live ones.
-    let mode = use_signal(|| Mode::Live);
+    // Live unless `FTS_SESSION_MODE` names another (`organize`, …): the
+    // docked mixer's compact strips are the Live ones.
+    let mode = use_signal(|| {
+        std::env::var("FTS_SESSION_MODE")
+            .ok()
+            .and_then(|name| Mode::ALL.into_iter().find(|m| m.display_name().eq_ignore_ascii_case(&name)))
+            .unwrap_or(Mode::Live)
+    });
     // The mode, for the panels that change with it (the mixer's strips
     // are live-mode strips in Live).
     use_context_provider(|| mode);
@@ -60,6 +66,9 @@ pub fn Shell() -> Element {
         div {
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; flex-direction:column; \
                     background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
+            // A press anywhere but the chart editor (which stops it) gives
+            // the keyboard back to the transport.
+            onmousedown: move |_| session_daw::keys::set_editing(false),
             TopBar {
                 view,
                 mode,
@@ -117,11 +126,13 @@ fn WithSong(session: session_daw::studio::StudioSession, children: Element) -> E
 fn SongViews(session: session_daw::studio::StudioSession, view: Signal<session_daw::shell::View>) -> Element {
     use session_daw::shell::{OverviewLayout, View};
     use_context_provider(|| session);
+    let mode: Signal<Mode> = use_context();
     rsx! {
         div {
             style: "position:relative; flex:1; min-height:0;",
             match view() {
                 View::Setup => rsx! { session_daw::setup::SetupView {} },
+                View::Daw if mode() == Mode::Organize => rsx! { OrganizeView {} },
                 View::Daw => rsx! { DawView {} },
                 View::Performance => rsx! { PerformanceView {} },
                 View::Overview => rsx! {
@@ -163,6 +174,43 @@ fn use_live_advance(mut setlist: Signal<session_daw::setlist::Setlist>, mode: Si
             session_daw::engine::transport(session_daw::engine::Move::PlayFrom, 0.0);
         }
     });
+}
+
+/// The DAW view in Organize mode: the song's chart as text on the left,
+/// edited live — every pause in typing lays it over the song — the chart
+/// it makes in the middle, and the arrangement on the right under the
+/// Organize toolbar (markers, sections, time signatures).
+#[component]
+fn OrganizeView() -> Element {
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex;",
+            // A chart's lines are short: the editor needs a column, not a
+            // quarter of the window.
+            div {
+                style: "position:relative; flex:none; width:300px; border-right:1px solid {RULE};",
+                session_daw::chart_editor::ChartEditor {}
+            }
+            // Exactly one page wide at the pane's height — the chart is laid
+            // out on Letter (612 x 792 pt), so the whole page shows, no
+            // more and no less.
+            div {
+                style: "position:relative; flex:none; height:100%; aspect-ratio:612 / 792; \
+                        max-width:45%; border-right:1px solid {RULE};",
+                // A whole page at a time, fitted to the pane, following the
+                // song — the edit's effect is seen without scrolling to it.
+                session_daw::chart_panel::Chart { paged: true }
+            }
+            div {
+                style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
+                session_daw::organize::OrganizeToolbar {}
+                div {
+                    style: "position:relative; flex:1; min-height:0;",
+                    session_daw::mixer_panel::DawPanels {}
+                }
+            }
+        }
+    }
 }
 
 /// The DAW view: the arrangement, with the mixer docked under it on `x`.

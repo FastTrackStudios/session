@@ -256,6 +256,7 @@ fn open(path: &std::path::Path, audio: bool) -> StudioSession {
         rows,
         previews,
         chart,
+        chart_file: None,
         planner,
     }
 }

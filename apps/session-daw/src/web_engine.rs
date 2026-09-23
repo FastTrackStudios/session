@@ -153,6 +153,7 @@ pub async fn open(
             rows,
             previews,
             chart,
+            chart_file: None,
             planner,
         },
     ))

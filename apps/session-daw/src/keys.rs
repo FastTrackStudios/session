@@ -516,16 +516,27 @@ mod tests {
 /// (the transport's) stand aside, so a space typed into a name is a space.
 static TYPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// See [`TYPING`]. Set by whatever holds a text field, every frame it is
-/// drawn — so a field that closes without saying so frees the keyboard a
-/// frame later rather than never.
+/// The chart editor's half of [`TYPING`]: set when it is clicked into,
+/// cleared by a click anywhere else.
+static EDITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// See [`TYPING`]. Set by the arrangement every frame it is drawn (a rename
+/// open or not) — so a field that closes without saying so frees the
+/// keyboard a frame later rather than never.
 pub fn set_typing(on: bool) {
     TYPING.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The chart editor has the keyboard (`true`) or has lost it.
+pub fn set_editing(on: bool) {
+    EDITING.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a text field has the keyboard: a rename, or the chart editor.
 #[must_use]
 pub fn typing() -> bool {
     TYPING.load(std::sync::atomic::Ordering::Relaxed)
+        || EDITING.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether the window acts on the transport's keys itself

@@ -96,12 +96,23 @@ struct ChartWidget {
     /// The page a paged panel is showing (1-indexed), kept between frames
     /// so a playhead outside the chart leaves the page where it was.
     page: u32,
+    /// The last live chart taken ([`publish_live`]).
+    live_seen: u64,
 }
 
 impl ChartWidget {
     /// The picture: what Blitz's `Widget::paint` returns, and what the web
     /// host draws into its canvas.
     pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+        // An edited chart laid over the song: draw that one from now on.
+        if let Some((chart, songstart, number)) = live_since(self.live_seen) {
+            self.key = std::sync::Arc::as_ptr(&chart) as usize as u64;
+            self.chart = chart;
+            if songstart.is_some() {
+                self.songstart = songstart;
+            }
+            self.live_seen = number;
+        }
         let (w, h) = (f64::from(width), f64::from(height));
         let chart_secs = self
             .songstart
@@ -201,6 +212,7 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         songstart: songstart_secs(&session.project),
         paged,
         page: 1,
+        live_seen: 0,
     };
     Some((widget, live))
 }
@@ -427,6 +439,44 @@ pub fn Chart(
             }
         }
     }
+}
+
+/// A chart laid over the song since it opened — by Organize mode's editor
+/// — with the SONGSTART it moved to, for the song it belongs to. Numbered,
+/// so a panel knows whether it has the latest.
+struct LiveChart {
+    project: String,
+    chart: std::sync::Arc<keyflow::Chart>,
+    songstart: Option<f64>,
+    number: u64,
+}
+
+static LIVE: std::sync::Mutex<Option<LiveChart>> = std::sync::Mutex::new(None);
+
+/// Publish an edited chart for `project`: its chart panels show it from
+/// their next frame.
+pub fn publish_live(project: &str, chart: std::sync::Arc<keyflow::Chart>, songstart: Option<f64>) {
+    if let Ok(mut slot) = LIVE.lock() {
+        let number = slot.as_ref().map_or(1, |live| live.number + 1);
+        *slot = Some(LiveChart {
+            project: project.to_owned(),
+            chart,
+            songstart,
+            number,
+        });
+    }
+}
+
+/// The live chart for the song on screen, if newer than `seen`.
+fn live_since(seen: u64) -> Option<(std::sync::Arc<keyflow::Chart>, Option<f64>, u64)> {
+    #[cfg(feature = "native")]
+    let current = crate::open::current_song();
+    #[cfg(not(feature = "native"))]
+    let current: Option<String> = None;
+    let slot = LIVE.lock().ok()?;
+    let live = slot.as_ref()?;
+    (live.number > seen && current.as_deref() == Some(live.project.as_str()))
+        .then(|| (std::sync::Arc::clone(&live.chart), live.songstart, live.number))
 }
 
 /// Where the MARKS lane's SONGSTART marker sits, in project seconds — the

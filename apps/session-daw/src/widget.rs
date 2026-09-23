@@ -578,6 +578,35 @@ impl ArrangementWidget {
         true
     }
 
+    /// Read the session back from the engine and draw that: what a change
+    /// made there rather than here (a toolbar insert, an edited chart laid
+    /// over the song) needs. MIDI items the arrangement has not seen — a
+    /// chart's new chords — get their notes read first, so they draw
+    /// filled rather than empty.
+    #[cfg(feature = "native")]
+    fn resync(&mut self) {
+        let Some(fresh) = crate::studio::fetch() else {
+            tracing::warn!("the session could not be read back from the engine");
+            return;
+        };
+        let unread: Vec<(String, f64)> = fresh
+            .items
+            .values()
+            .flatten()
+            .filter(|item| fresh.is_midi(&item.guid) && self.previews.get(&item.guid).is_none())
+            .map(|item| (item.guid.clone(), item.length.as_seconds()))
+            .collect();
+        if !unread.is_empty() {
+            self.previews.fill_blocking(unread);
+        }
+        let Some((planner, raw)) = self.replan.as_mut() else {
+            return;
+        };
+        *raw = fresh;
+        let (project, rows) = planner.plan(raw);
+        self.restructure((*project.0).clone(), rows.as_slice().to_vec());
+    }
+
     /// Take a new set of rows (tracks shown or hidden): everything the
     /// rows are drawn and hit-tested from, then the recording.
     fn restructure(
@@ -1179,8 +1208,10 @@ impl Widget for ArrangementWidget {
     fn needs_redraw(&self) -> bool {
         // A notice fading and a refused ghost going home both change the
         // picture with no event behind them, so neither can wait on
-        // `dirty` — nothing is going to set it.
+        // `dirty` — nothing is going to set it. Nor can a read-back the
+        // engine asked for.
         self.dirty.get()
+            || crate::studio::resync_pending()
             || self
                 .notice
                 .as_ref()
@@ -1196,6 +1227,11 @@ impl Widget for ArrangementWidget {
     }
 
     fn handle_event(&mut self, event: &UiEvent) {
+        // A press in the arrangement takes the keyboard from the chart
+        // editor, so the space bar plays again.
+        if matches!(event, UiEvent::PointerDown(_)) {
+            crate::keys::set_editing(false);
+        }
         self.event(event);
     }
 
@@ -1441,6 +1477,14 @@ impl ArrangementWidget {
         // A rename open is a text field holding the keyboard: the window's
         // transport keys stand aside while it is (a space in a name).
         crate::keys::set_typing(self.renaming.is_some());
+        // Where the edit cursor and selection are, for the toolbar's inserts.
+        crate::cursor::publish(self.editor.cursor);
+        // The engine changed the session under us (a toolbar insert, an
+        // edited chart): read it back before drawing it.
+        #[cfg(feature = "native")]
+        if crate::studio::take_resync() {
+            self.resync();
+        }
         // The panel's shape, if the toolbar has changed it: the rows are
         // RECORDED to it, so this re-cuts rather than re-scales.
         if self.scene.tcp.compact != self.compact.get() {
