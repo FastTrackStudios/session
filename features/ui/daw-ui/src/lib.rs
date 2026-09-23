@@ -28,9 +28,9 @@ pub mod layouts;
 pub mod panel_registration;
 pub mod prelude;
 pub mod signals;
-/// The studio window — a full DAW UI over the `daw` facade, written for
-/// a WebView. A rebuild rather than a refactor of the `components`
-/// family above: see its docs for the four rules it is built on.
+/// The studio's shared pieces — the project snapshot, the by-pointer
+/// handles, the folder fold, and the colours the DOM around the painted
+/// arrangement uses. The WebView studio window it once was is retired.
 #[cfg(feature = "studio")]
 pub mod studio;
 

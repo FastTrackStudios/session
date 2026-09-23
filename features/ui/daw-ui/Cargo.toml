@@ -94,11 +94,9 @@ web = [
     "dep:input-keybinds",
 ]
 native = ["dep:dioxus-native"]
-# The studio window: TCP, arrangement, transport and mixer over the live
-# `daw` facade, rendered by a WebView. Needs `web` for the dioxus dep and
-# nothing else -- the module deliberately draws its own chrome from CSS
-# rather than from `daw-theme-art`'s vector controls, which exist to be
-# rasterised into a REAPER theme and are measured in art pixels.
+# The studio's shared pieces (`studio`): the project snapshot the Session
+# DAW reads, the folder fold, and the arrangement's CSS colours. Needs
+# `web` for the dioxus dep and nothing else.
 studio = ["web"]
 # Folder-hierarchy mixer (`widgets::mixer::Mixer`, driven by
 # `daw_proto::track::FolderDepthChange`). daw-proto is already a hard dep.
