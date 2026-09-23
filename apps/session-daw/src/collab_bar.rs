@@ -41,6 +41,13 @@ pub fn CollabBar() -> Element {
         let chart = chart.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(1500));
+            // The song's own record of its edits, from the first moment —
+            // shared or not.
+            if std::env::var_os("FTS_COLLAB_JOIN").is_none()
+                && let Err(e) = crate::collab::open_local(chart.clone())
+            {
+                tracing::warn!(collab.error = %e, "collab: the song's history is not being kept");
+            }
             if std::env::var_os("FTS_COLLAB_HOST").is_some() {
                 match crate::collab::host(display_name(), chart) {
                     Ok(ticket) => {

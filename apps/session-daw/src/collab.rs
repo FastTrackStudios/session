@@ -47,6 +47,11 @@ struct Live {
     doc: SessionDoc,
     presence: Arc<dyn PresenceSink>,
     me: String,
+    /// Shared with anyone (hosting or joined), or only this machine's
+    /// record of the song's edits.
+    shared: bool,
+    /// The engine project this doc belongs to.
+    project: String,
 }
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
@@ -84,7 +89,78 @@ pub fn join_in_background(ticket: String, name: String) {
 /// The session's status, if one is live.
 #[must_use]
 pub fn status() -> Option<Status> {
-    LIVE.lock().ok()?.as_ref().map(|l| l.status.clone())
+    LIVE.lock().ok()?.as_ref().filter(|l| l.shared).map(|l| l.status.clone())
+}
+
+/// The open song's full edit history, to save with it — `None` when no
+/// session doc is keeping one for `project` (yet).
+#[must_use]
+pub fn history(project: &str) -> Option<session::sync::loro::LoroDoc> {
+    let live = LIVE.lock().ok()?;
+    let l = live.as_ref().filter(|l| l.project == project)?;
+    Some(l.doc.loro().clone())
+}
+
+/// Presence for a session nobody else is in.
+struct Alone;
+
+impl PresenceSink for Alone {
+    fn set(&self, _: &str, _: session::sync::loro::LoroValue) {}
+    fn delete(&self, _: &str) {}
+    fn states(&self) -> std::collections::HashMap<String, session::sync::loro::LoroValue> {
+        std::collections::HashMap::new()
+    }
+}
+
+/// Keep a session doc for the open song, shared with nobody: every edit
+/// is recorded (and saved with the `.session`), and sharing later puts
+/// this same doc — history and all — on the network. Started from the
+/// history the `.session` was saved with, when it still matches.
+///
+/// # Errors
+/// When the engine is not up or cannot be read.
+pub fn open_local(chart_file: Option<std::path::PathBuf>) -> eyre::Result<()> {
+    record(open_local_with(chart_file, None))
+}
+
+fn open_local_with(chart_file: Option<std::path::PathBuf>, doc: Option<SessionDoc>) -> eyre::Result<()> {
+    let runtime = crate::open::runtime().ok_or_else(|| eyre::eyre!("the engine is not up"))?;
+    let chart = chart_file.and_then(|p| std::fs::read_to_string(p).ok());
+    let live = runtime.block_on(async move {
+        let (project, media, _song, path) = current_project().await?;
+        let guid = project.guid().to_owned();
+        if LIVE.lock().ok().is_some_and(|l| l.as_ref().is_some_and(|l| l.project == guid)) {
+            return Ok(None);
+        }
+        let doc = doc.unwrap_or_else(|| {
+            crate::open::is_session(&path)
+                .then(|| crate::session_file::load_session_history(&path))
+                .flatten()
+                .map_or_else(SessionDoc::new, SessionDoc::from_loro)
+        });
+        let chart = chart.unwrap_or_else(|| doc.read().chart);
+        let bridge = Bridge::host(project, media, doc, chart).await?;
+        let doc = bridge.doc().clone();
+        let presence: Arc<dyn PresenceSink> = Arc::new(Alone);
+        let started = start(bridge, Arc::clone(&presence), "local".into(), String::new(), None, None);
+        let mut live = started.with(String::new(), false, doc, presence);
+        live.shared = false;
+        live.project = guid;
+        Ok::<_, eyre::Report>(Some(live))
+    })?;
+    if let Some(live) = live
+        && let Ok(mut slot) = LIVE.lock()
+    {
+        stop(slot.take());
+        *slot = Some(live);
+    }
+    Ok(())
+}
+
+fn stop(live: Option<Live>) -> Option<SessionDoc> {
+    let live = live?;
+    let _ = live.stop.send(true);
+    Some(live.doc)
 }
 
 /// A chart the others changed since the editor last looked.
@@ -139,14 +215,29 @@ pub fn set_shared_transport(shared: bool) {
     l.presence.set(transport::KEY, state.encode());
 }
 
-/// Leave the session (or stop hosting it).
+/// Leave the session (or stop hosting it). The song keeps its doc —
+/// everything edited together stays in its history — shared with nobody.
 pub fn leave() {
-    if let Ok(mut live) = LIVE.lock()
-        && let Some(l) = live.take()
-    {
-        let _ = l.stop.send(true);
-    }
+    let doc = LIVE.lock().ok().and_then(|mut live| {
+        let shared = live.as_ref().is_some_and(|l| l.shared);
+        shared.then(|| stop(live.take())).flatten()
+    });
     crate::ghosts::publish(None, 0.0, false);
+    if let Some(doc) = doc {
+        std::thread::spawn(move || {
+            if let Err(e) = open_local_with(None, Some(doc)) {
+                tracing::warn!(collab.error = %e, "collab: the song's history could not be kept");
+            }
+        });
+    }
+}
+
+/// Take the open song's doc (and stop whatever was keeping it), to carry
+/// into a session.
+fn take_doc(project: &str) -> Option<SessionDoc> {
+    let mut live = LIVE.lock().ok()?;
+    let same = live.as_ref().is_some_and(|l| l.project == project);
+    if same { stop(live.take()) } else { stop(live.take()).and(None) }
 }
 
 fn next_seq() -> u64 {
@@ -174,13 +265,16 @@ pub fn host(name: String, chart_file: Option<std::path::PathBuf>) -> eyre::Resul
 }
 
 fn host_inner(name: String, chart_file: Option<std::path::PathBuf>) -> eyre::Result<String> {
-    leave();
     let runtime = crate::open::runtime().ok_or_else(|| eyre::eyre!("the engine is not up"))?;
-    let chart = chart_file.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    let chart = chart_file.and_then(|p| std::fs::read_to_string(p).ok());
     let (ticket, live) = runtime.block_on(async move {
-        let (project, media, song) = current_project().await?;
+        let (project, media, song, _) = current_project().await?;
         let id = session_id(&song);
-        let bridge = Bridge::host(project, media, SessionDoc::new(), chart).await?;
+        let guid = project.guid().to_owned();
+        // The song's own doc, history and all, is what goes on the network.
+        let doc = take_doc(&guid).unwrap_or_default();
+        let chart = chart.unwrap_or_else(|| doc.read().chart);
+        let bridge = Bridge::host(project, media, doc, chart).await?;
         let host = CollabHost::new(id, bridge.doc());
         let endpoint = architect::iroh_link::bind_endpoint(secret_key())
             .await
@@ -194,7 +288,9 @@ fn host_inner(name: String, chart_file: Option<std::path::PathBuf>) -> eyre::Res
         let me = format!("host-{}", &endpoint.id().to_string()[..8]);
         let presence: Arc<dyn PresenceSink> = Arc::new(host.clone());
         let live = start(bridge, Arc::clone(&presence), me, name, Some(host), Some(endpoint));
-        Ok::<_, eyre::Report>((ticket.clone(), live.with(ticket, true, doc, presence)))
+        let mut live = live.with(ticket.clone(), true, doc, presence);
+        live.project = guid;
+        Ok::<_, eyre::Report>((ticket, live))
     })?;
     if let Ok(mut slot) = LIVE.lock() {
         *slot = Some(live);
@@ -212,11 +308,11 @@ pub fn join(ticket: &str, name: String) -> eyre::Result<()> {
 }
 
 fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
-    leave();
     let runtime = crate::open::runtime().ok_or_else(|| eyre::eyre!("the engine is not up"))?;
     let (endpoint_id, id) = parse_ticket(ticket)?;
     let live = runtime.block_on(async move {
-        let (project, media, song) = current_project().await?;
+        let (project, media, song, _) = current_project().await?;
+        let guid = project.guid().to_owned();
         if session_id(&song) != id {
             eyre::bail!("open the same song first — this ticket is for another one");
         }
@@ -259,8 +355,12 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
         let bridge = Bridge::join(project, media, doc.clone()).await?;
         crate::studio::request_resync();
         let me = format!("peer-{}", &endpoint.id().to_string()[..8]);
+        // This machine's own record of the song gives way to the host's.
+        drop(take_doc(&guid));
         let live = start(bridge, Arc::clone(&presence), me, name, None, Some(endpoint));
-        Ok::<_, eyre::Report>(live.with(ticket.to_string(), false, doc, presence))
+        let mut live = live.with(ticket.to_string(), false, doc, presence);
+        live.project = guid;
+        Ok::<_, eyre::Report>(live)
     })?;
     if let Ok(mut slot) = LIVE.lock() {
         *slot = Some(live);
@@ -288,7 +388,7 @@ fn parse_ticket(ticket: &str) -> eyre::Result<(architect::iroh_link::iroh::Endpo
 /// two copies of one song never share it. The file's stem is the same on
 /// every machine (`Washed`); once songs live in the Task library this is
 /// the library's song id.
-async fn current_project() -> eyre::Result<(daw_control::Project, MediaRoot, String)> {
+async fn current_project() -> eyre::Result<(daw_control::Project, MediaRoot, String, std::path::PathBuf)> {
     let daw = daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
     let project = daw.current_project().await?;
     let path = std::path::PathBuf::from(project.info().await?.path);
@@ -296,7 +396,7 @@ async fn current_project() -> eyre::Result<(daw_control::Project, MediaRoot, Str
     let song = path
         .file_stem()
         .map_or_else(|| project.guid().to_owned(), |s| s.to_string_lossy().into_owned());
-    Ok((project, MediaRoot(folder), song))
+    Ok((project, MediaRoot(folder), song, path))
 }
 
 /// The half-built `Live` [`start`] returns; finished by the caller.
@@ -317,6 +417,8 @@ impl Started {
             doc,
             presence,
             me: self.me,
+            shared: true,
+            project: String::new(),
         }
     }
 }
