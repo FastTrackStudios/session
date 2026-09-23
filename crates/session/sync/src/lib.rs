@@ -22,6 +22,7 @@ pub mod model;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod presence;
+pub mod transport;
 
 #[cfg(feature = "engine")]
 pub use bridge::Bridge;
