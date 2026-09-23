@@ -236,22 +236,27 @@ fn remote_carets(state: &editor_state::EditorState) -> Vec<editor_state::Decorat
             continue;
         };
         let (a, h) = (rope.char_to_byte(a.min(max)), rope.char_to_byte(h.min(max)));
-        let color = format!("#{:06x}", peer.color & 0x00ff_ffff);
+        let (r, g, b) = ((peer.color >> 16) & 0xff, (peer.color >> 8) & 0xff, peer.color & 0xff);
+        let color = format!("rgb({r},{g},{b})");
         if a != h {
             out.push(editor_state::DecoratedRange::mark_with_attrs(
                 a.min(h)..a.max(h),
                 "collab-selection",
-                vec![("style".to_owned(), format!("background-color: {color}38;"))],
+                vec![("style".to_owned(), format!("background-color: rgba({r},{g},{b},0.28);"))],
             ));
         }
         let name = peer.name.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        // A bar the height of the line, and the name above it — clear of
+        // the text it points into.
         out.push(editor_state::DecoratedRange::widget(
             h,
             format!(
-                "<span class=\"collab-caret\" style=\"border-left:2px solid {color}; margin-left:-1px; \
-                 position:relative;\"><span style=\"position:absolute; top:-15px; left:-1px; \
-                 background:{color}; color:#101114; font-size:10px; padding:0 3px; \
-                 border-radius:3px; white-space:nowrap;\">{name}</span></span>"
+                "<span class=\"collab-caret\" style=\"display:inline-block; position:relative; \
+                 width:0; height:1.2em; vertical-align:text-bottom; \
+                 border-left:2px solid {color}; margin-left:-1px;\">\
+                 <span style=\"position:absolute; bottom:1.15em; left:-2px; background:{color}; \
+                 color:#101114; font-size:9px; line-height:12px; padding:0 3px; \
+                 border-radius:3px 3px 3px 0; white-space:nowrap;\">{name}</span></span>"
             ),
         ));
     }

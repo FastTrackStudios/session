@@ -670,6 +670,21 @@ impl Outbox {
         let beat = (now / 3000.0) as u64;
         if self.puppet_beat != Some(beat) {
             self.puppet_beat = Some(beat);
+            // A caret in the chart, a line further down each time, as a
+            // stable position the others resolve against their own copy.
+            if let (Some(state), Some((doc, _, _))) = (self.state.as_mut(), chart_context()) {
+                let chart = doc.read().chart;
+                let starts: Vec<usize> = std::iter::once(0)
+                    .chain(chart.match_indices('\n').map(|(i, _)| i + 1))
+                    .filter(|i| *i < chart.len())
+                    .collect();
+                if let Some(at) = starts.get((beat as usize) % starts.len().max(1)) {
+                    let at = chart[..*at].chars().count();
+                    let end = at + 4;
+                    state.chart_caret = doc.chart_cursor(at).zip(doc.chart_cursor(end));
+                    sink.set(&presence::key(&self.me, presence::STATE), state.encode());
+                }
+            }
             if let Some(guid) = tracks.iter().find(|g| {
                 crate::ghosts::local_track_name(g).is_some_and(|n| n.starts_with("Drums"))
             }) {
