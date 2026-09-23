@@ -76,8 +76,11 @@ pub fn OrganizeToolbar() -> Element {
     let signatures = session::keyflow::time_signature::TIME_SIGNATURES;
     rsx! {
         div {
-            style: "flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px; \
-                    padding:6px 8px; background:#141518; border-bottom:1px solid {RULE};",
+            // One row, always: what does not fit scrolls sideways rather
+            // than wrapping the toolbar taller over the arrangement.
+            style: "flex:none; display:flex; flex-wrap:nowrap; align-items:center; gap:4px; \
+                    height:36px; padding:0 8px; overflow-x:auto; overflow-y:hidden; \
+                    background:#141518; border-bottom:1px solid {RULE};",
             for (button, label) in STRUCTURE {
                 ToolButton { button, label: label.to_owned() }
             }
@@ -95,7 +98,7 @@ fn ToolButton(button: Button, label: String) -> Element {
     rsx! {
         button {
             title: button.title(),
-            style: "height:24px; padding:0 9px; border-radius:5px; border:1px solid {RULE}; \
+            style: "flex:none; height:24px; padding:0 9px; border-radius:5px; border:1px solid {RULE}; \
                     border-left:3px solid {color}; background:#1c1e22; color:{TEXT}; \
                     font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;",
             onclick: move |event| press(button, event.modifiers().shift()),
