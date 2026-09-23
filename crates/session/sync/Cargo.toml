@@ -1,0 +1,15 @@
+[package]
+name = "session-sync"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+description = "The live session as a Loro document: its schema, and the diff between it and the engine"
+
+[dependencies]
+loro.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true

@@ -41,6 +41,7 @@ members = [
     "apps/web",
     "crates/session/proto",
     "crates/session/session",
+    "crates/session/sync",
     "crates/session/ui",
     "features/chord-tool/chord-tool",
     "features/chord-tool/chord-tool-daw",
@@ -189,6 +190,7 @@ daw-theme-reaper = { path = "features/ui/daw-theme-reaper" }
 # documented exceptions: Dioxus components / the guide engine).
 session = { path = "crates/session/session" }
 session-proto = { path = "crates/session/proto" }
+session-sync = { path = "crates/session/sync" }
 session-ui = { path = "crates/session/ui", default-features = false }
 # Portable guide engine (click / count-in / section guide). Optional `tts`
 # feature adds local Chatterbox TTS (its ort/chatterbox pins live in the
