@@ -201,6 +201,9 @@ native = [
     # Take peaks folded from the `.sessionpeaks` (or REAPER's `.reapeaks`)
     # cache beside the media, rather than a PCM scan on every open.
     "daw-standalone/reapeaks",
+    # A song pulled from the library has only its Ogg proxies: they stream
+    # around the playhead (a native butler thread), never decoded whole.
+    "daw-standalone/stream-ogg",
     # Prepared once, saved as `Song.session`, opened from it after.
     "daw/standalone-session-file",
     "daw/cli",

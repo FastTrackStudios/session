@@ -42,6 +42,7 @@ members = [
     "crates/session/proto",
     "crates/session/session",
     "crates/session/sync",
+    "crates/session/library",
     "crates/session/ui",
     "features/chord-tool/chord-tool",
     "features/chord-tool/chord-tool-daw",
@@ -713,6 +714,15 @@ ssg-ui = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 ssg-build = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 collection-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main", default-features = false }
 attachments-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+# The song library in Task (FastTrackStudios/session#140): keyflow's model
+# — songs, their charts, songlist collections — and each song's session
+# as a File Root, dialled with the same task-dial the web app uses.
+resources-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+files-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+files-client = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+task-dial = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+links-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+session-library = { path = "crates/session/library" }
 
 # Task's externals not already pinned above (root pins win everywhere
 # a key already existed — dioxus, serde, tokio, facet/vox rc.5 fleet,
@@ -1283,3 +1293,19 @@ architect-story-shell = { path = "../architect/features/story/architect-story-sh
 architect-story-snapshots = { path = "../architect/features/story/architect-story-snapshots" }
 architect-telemetry = { path = "../architect/features/telemetry" }
 architect-ui = { path = "../architect/features/ui/architect-ui" }
+
+[patch."https://github.com/FastTrackStudios/task"]
+# Sibling checkout, branch `session-share-cli` (the rc.7 fleet): session
+# and task are being built together — the library, sessions as File Roots,
+# streaming (#140). Replace with a tag pin before pushing.
+attachments-proto = { path = "../task/features/attachments/attachments-proto" }
+collection-proto = { path = "../task/features/collection/collection-proto" }
+links-proto = { path = "../task/features/links/links-proto" }
+ssg = { path = "../task/features/ssg/ssg" }
+ssg-build = { path = "../task/features/ssg/ssg-build" }
+ssg-ui = { path = "../task/features/ssg/ssg-ui" }
+ssg-vault = { path = "../task/features/ssg/ssg-vault" }
+resources-proto = { path = "../task/features/resources/resources-proto" }
+files-proto = { path = "../task/features/files/files-proto" }
+files-client = { path = "../task/features/files/files-client" }
+task-dial = { path = "../task/crates/task-dial" }

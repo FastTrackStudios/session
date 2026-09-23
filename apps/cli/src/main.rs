@@ -59,6 +59,11 @@ enum Command {
     },
     /// Print the loaded setlist: every song, and every section under it.
     Setlist,
+    /// The song library in Task (keyflow's): setlists, and pulling a
+    /// setlist's sessions down to open here. Server, org and token from
+    /// FTS_TASK_SERVER / FTS_TASK_ORG / FTS_TASK_TOKEN.
+    #[command(subcommand)]
+    Library(LibraryCommand),
     /// Move the cursor to a song, and optionally a section within it.
     Seek {
         /// Song index, 0-based — as printed by `session setlist`.
@@ -184,8 +189,55 @@ fn init_tracing() {
         .try_init();
 }
 
+#[derive(clap::Subcommand)]
+enum LibraryCommand {
+    /// Every setlist in the org, with its songs.
+    List,
+    /// Download a setlist's sessions (proxies, charts, lyrics, the
+    /// `.session`) and write a `.setlist` the app opens.
+    Pull {
+        /// The setlist's title (`Worship Set`).
+        setlist: String,
+        /// Where to put it. Default: the platform cache, under the org.
+        #[arg(long)]
+        into: Option<PathBuf>,
+        /// The original media too, not only the proxies.
+        #[arg(long)]
+        originals: bool,
+    },
+}
+
+async fn library(command: LibraryCommand) -> eyre::Result<()> {
+    let lib = session_library::Library::from_env();
+    let setlists = lib.setlists().await?;
+    match command {
+        LibraryCommand::List => {
+            for list in &setlists {
+                println!("{} ({} songs)", list.title, list.songs.len());
+                for song in &list.songs {
+                    let by = song.writers.join(", ");
+                    println!("  song:{:<28} {}{}", song.slug, song.title, if by.is_empty() { String::new() } else { format!(" — {by}") });
+                }
+            }
+        }
+        LibraryCommand::Pull { setlist, into, originals } => {
+            let list = setlists
+                .iter()
+                .find(|l| l.title == setlist)
+                .ok_or_else(|| eyre::eyre!("no setlist `{setlist}` in {}", lib.org))?;
+            let into = into.unwrap_or_else(|| {
+                std::env::temp_dir().join("fts-session-library").join(&lib.org)
+            });
+            let file = lib.pull_setlist(list, &into, originals).await?;
+            println!("{}", file.display());
+        }
+    }
+    Ok(())
+}
+
 async fn run(command: Command) -> eyre::Result<()> {
     match command {
+        Command::Library(command) => library(command).await,
         Command::Open { paths } => open(&paths).await,
         Command::Setlist => setlist().await,
         Command::Seek { song, section } => seek(song, section.unwrap_or(0)).await,

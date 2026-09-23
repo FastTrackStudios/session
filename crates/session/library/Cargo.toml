@@ -1,0 +1,22 @@
+[package]
+name = "session-library"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+description = "The song library in Task: songs, their charts, setlists, and each song's session as a File Root"
+
+[dependencies]
+collection-proto = { workspace = true, features = ["vox"] }
+resources-proto.workspace = true
+links-proto.workspace = true
+files-proto.workspace = true
+files-client.workspace = true
+task-dial.workspace = true
+vox-core.workspace = true
+eyre.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
