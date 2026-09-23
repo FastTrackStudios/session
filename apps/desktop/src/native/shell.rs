@@ -57,6 +57,9 @@ pub fn Shell() -> Element {
     // picking another song keeps it as it was.
     let mut editor_open = use_signal(|| *mode.peek() == Mode::Organize);
     use_effect(move || editor_open.set(mode() == Mode::Organize));
+    // Whether the mixer is open, per mode (Organize starts closed) — above
+    // the songs, so it holds across them.
+    use_context_provider(session_daw::mixer_panel::MixerMemory::new);
     // The songs, as the launch opened them — a signal from here on, which
     // the tabs read and a pick or a recolour writes.
     let opened: session_daw::setlist::Setlist = use_context();
@@ -202,7 +205,7 @@ fn Arrangement(#[props(default)] docked: bool) -> Element {
             }
             div {
                 style: "position:relative; flex:1; min-height:0;",
-                session_daw::mixer_panel::DawPanels { docked }
+                session_daw::mixer_panel::DawPanels { docked, mode: Some(mode()) }
             }
         }
     }

@@ -99,6 +99,43 @@ impl Links {
     }
 }
 
+/// Whether the mixer is open, remembered per mode and per view (docked in
+/// the Overview or summoned in the DAW view) — a context the shell
+/// provides above the songs, so picking another song keeps it.
+///
+/// Unremembered, the Overview's docked mixer is open except in Organize,
+/// where the room goes to the arrangement; the DAW view's is closed.
+#[derive(Clone, Copy, PartialEq)]
+pub struct MixerMemory(pub Signal<std::collections::HashMap<(bool, session::modes::Mode), bool>>);
+
+impl MixerMemory {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Signal::new(std::collections::HashMap::new()))
+    }
+
+    /// Open or closed, for panels `docked` or not, shown in `mode`.
+    fn wanted(memory: Option<Self>, docked: bool, mode: Option<session::modes::Mode>) -> bool {
+        let fallback = docked && mode != Some(session::modes::Mode::Organize);
+        match (memory, mode) {
+            (Some(memory), Some(mode)) => memory.0.peek().get(&(docked, mode)).copied().unwrap_or(fallback),
+            _ => fallback,
+        }
+    }
+
+    fn remember(mut self, docked: bool, mode: session::modes::Mode, open: bool) {
+        if self.0.peek().get(&(docked, mode)) != Some(&open) {
+            self.0.write().insert((docked, mode), open);
+        }
+    }
+}
+
+impl Default for MixerMemory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The DAW view's panels: the arrangement, and the mixer under it when
 /// it is open.
 #[cfg(feature = "native")]
@@ -108,13 +145,37 @@ pub fn DawPanels(
     /// docked pair rather than a panel `x` summons.
     #[props(default)]
     docked: bool,
+    /// The mode the panels are shown in, for [`MixerMemory`]: whether the
+    /// mixer is open is remembered per mode, and Organize starts closed.
+    #[props(default)]
+    mode: Option<session::modes::Mode>,
 ) -> Element {
     let session: StudioSession = use_context();
+    let memory = try_use_context::<MixerMemory>();
     let links = use_context_provider(|| {
         let mut links = Links::new(session.rows.as_slice().to_vec());
-        links.open = Signal::new(docked);
+        links.open = Signal::new(MixerMemory::wanted(memory, docked, mode));
         links.docked = docked;
         links
+    });
+    // Into another mode: the mixer as that mode last had it.
+    let mut open_sig = links.open;
+    let mut shown_in = use_signal(|| mode);
+    use_effect(use_reactive!(|mode| {
+        if *shown_in.peek() != mode {
+            shown_in.set(mode);
+            let want = MixerMemory::wanted(memory, docked, mode);
+            if *open_sig.peek() != want {
+                open_sig.set(want);
+            }
+        }
+    }));
+    // And whatever it is now (`x`), remembered for this mode.
+    use_effect(move || {
+        let open = open_sig();
+        if let (Some(memory), Some(mode)) = (memory, *shown_in.peek()) {
+            memory.remember(docked, mode, open);
+        }
     });
     let open = (links.open)();
     let arrange_bottom = if open { HEIGHT } else { 0.0 };
