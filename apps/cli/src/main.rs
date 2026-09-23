@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
+mod lyrics;
 mod multitracks;
 mod peaks;
 mod proxies;
@@ -124,15 +125,63 @@ enum Command {
         #[arg(long, default_value_t = 0.6)]
         quality: f32,
     },
+    /// Line-synced lyrics for songs, as `<Song>.lrc` beside each `.RPP`.
+    Lyrics {
+        #[command(subcommand)]
+        command: LyricsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum LyricsCommand {
+    /// Find line-synced lyrics for each song and write `<Song>.lrc`.
+    ///
+    /// Title and artists come from the song's chart (`<Song>.kf`, first
+    /// line `Title - Artist1, Artist2`); each artist is searched, then the
+    /// title alone. Of the versions found, the one whose length is closest
+    /// to the chart's SONGSTART→SONGEND is written. Provider: LRCLIB.
+    Fetch {
+        /// Songs' `.RPP` files (or folders holding exactly one).
+        paths: Vec<PathBuf>,
+        /// Search for this title instead of the chart's.
+        #[arg(long)]
+        title: Option<String>,
+        /// Search under this artist instead of the chart's (repeatable).
+        #[arg(long = "artist")]
+        artists: Vec<String>,
+        /// Take this exact LRCLIB record, skipping the search.
+        #[arg(long)]
+        lrclib_id: Option<String>,
+        /// Take candidate N (as listed, from 1) instead of the closest length.
+        #[arg(long)]
+        pick: Option<usize>,
+        /// Replace a `.lrc` that is already there.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
+    init_tracing();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()?;
     runtime.block_on(run(cli.command))
+}
+
+/// Diagnostics go to stderr through `tracing`, quiet unless asked:
+/// `RUST_LOG=info` prints each command's wide event (e.g. one
+/// `lyrics.fetch` span per song) as it closes.
+fn init_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan};
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_span_events(FmtSpan::CLOSE)
+        .try_init();
 }
 
 async fn run(command: Command) -> eyre::Result<()> {
@@ -153,6 +202,24 @@ async fn run(command: Command) -> eyre::Result<()> {
             quality,
         } => proxies::guide_library(&library, &out, quality),
         Command::Import { folders, out, force } => import(&folders, &out, force),
+        Command::Lyrics {
+            command:
+                LyricsCommand::Fetch {
+                    paths,
+                    title,
+                    artists,
+                    lrclib_id,
+                    pick,
+                    force,
+                },
+        } => lyrics::fetch(&lyrics::FetchArgs {
+            paths,
+            title,
+            artists,
+            lrclib_id,
+            pick,
+            force,
+        }),
     }
 }
 

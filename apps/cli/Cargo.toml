@@ -28,6 +28,13 @@ fts-sample = { workspace = true, features = ["engine-native", "mapped"] }
 # `session import` — reading a multitrack folder onto the grid.
 keyflow = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# `session lyrics fetch` — LRCLIB over HTTPS. Blocking on purpose: the
+# provider seam is a plain trait walked in order, and ureq 2 (rustls) is
+# already in the lockfile, so this adds no new crates.
+ureq = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
