@@ -861,12 +861,27 @@ anyrender_vello = { path = "libs/vendor/anyrender_vello" }
 # them, so serialized keybind configs (`keys "<C-s>"`) could not be
 # re-parsed. Drop the vendor once upstream fixes can_be_bare.
 styx-format = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.1.0" }
-# Vendored phon rc.5 + derive support for parse/display opaque scalars
-# (Uuid, chrono DateTime/NaiveDate, url, …). Upstream rc.5 PANICS (and the
-# reply path aborts the process) the first time a vox RPC reply contains
-# such a field — every task-server list/stats call died. Drop the vendor
-# once upstream phon derives these scalars.
-phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.1.0" }
+# Vendored phon rc.7 + derive support for parse/display opaque scalars
+# (Uuid, chrono DateTime/NaiveDate, url, …). Upstream (rc.5 through rc.7)
+# PANICS (and the reply path aborts the process) the first time a vox RPC
+# reply contains such a field — every task-server list/stats call died.
+# Drop the vendor once upstream phon derives these scalars.
+#
+# (This entry used to point at vendor v0.1.0, which is phon rc.5: against
+# this repo's rc.7 graph cargo filed it under [patch.unused] and quietly
+# used unpatched upstream rc.7.)
+#
+# SIBLING-CHECKOUT PATH, as is facet-core's below (../vendor, a clone of
+# FastTrackStudios/vendor): the rc.7 forward-ports are committed there
+# locally but not tagged yet. Replace both with a pinned vendor tag before
+# this repo is pushed, same as the `../daw` paths.
+phon = { path = "../vendor/phon" }
+# Vendored facet-core rc.7 with one change: chrono's display fns keep
+# sub-second precision. chrono types are opaque scalars whose only encode
+# path is `display`, so upstream's `SecondsFormat::Secs` rounded EVERY
+# timestamp on every vox RPC to the second — and anything ordered by one
+# could invert when two events shared a second.
+facet-core = { path = "../vendor/facet-core" }
 # Vendored phon-jit rc.5 with a one-line build.rs fix: force the stable,
 # call-based stencils. Upstream's nightly detection can be true while no real
 # nightly is present (the pinned nix toolchain), so it compiled the `become`
