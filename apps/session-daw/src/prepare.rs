@@ -63,8 +63,51 @@ impl Prepare {
             self.organize,
             chart.as_deref(),
             self.guide,
-        )
+        )?;
+        // The song's synced lyrics, when a `.lrc` sits beside its chart:
+        // onto the LINES track, from where the song starts.
+        if let (Some(path), Some(text)) = (&self.chart, chart.as_deref())
+            && let Some(lrc) = lrc_beside(path)
+        {
+            let lines = stamp_lyrics(&opened.daw, &opened.project_guid, text, &lrc)?;
+            tracing::info!(lyrics.lines = lines, "prepare: lyrics stamped");
+        }
+        Ok(())
     }
+}
+
+/// The one `.lrc` beside a chart, if there is exactly one.
+#[must_use]
+pub fn lrc_beside(chart: &std::path::Path) -> Option<PathBuf> {
+    let mut found = std::fs::read_dir(chart.parent()?)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lrc")));
+    let lrc = found.next()?;
+    found.next().is_none().then_some(lrc)
+}
+
+/// Stamp the synced lyrics in `lrc` onto the song's LINES track: the
+/// recording's 0 at the song's start (SONGSTART, from the chart), the
+/// last line held to its end. Returns how many lines went on.
+///
+/// # Errors
+///
+/// The chart does not lay out, the `.lrc` cannot be read, or a line's
+/// item could not be made.
+pub fn stamp_lyrics(
+    daw: &daw_standalone::sync::Standalone,
+    project_guid: &str,
+    chart: &str,
+    lrc: &std::path::Path,
+) -> eyre::Result<usize> {
+    let layout = session::setlist::chart_import::chart_to_layout(chart)
+        .map_err(|e| eyre::eyre!("chart: {e:?}"))?;
+    let text = std::fs::read_to_string(lrc).map_err(|e| eyre::eyre!("lyrics {}: {e}", lrc.display()))?;
+    let lyrics = session::lyrics::Lyrics::from_lrc(&text, layout.song_start_seconds, layout.song_end_seconds);
+    let project = ProjectContext::Project(project_guid.to_owned());
+    session::lyrics::stamp_lines(daw, project, &lyrics).map_err(|e| eyre::eyre!("lyrics: {e}"))
 }
 
 /// The one `.kf` chart in the project's folder, if there is exactly one.

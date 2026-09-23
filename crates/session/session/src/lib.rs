@@ -63,6 +63,7 @@ pub mod key_actions;
 // wasm-gated it and broke the task-web image build — so keep a
 // non-attribute line between this and any gated module added above.
 pub mod keyflow;
+pub mod lyrics;
 pub mod mix_phases;
 pub mod modes;
 pub mod playback;

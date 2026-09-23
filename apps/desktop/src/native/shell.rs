@@ -221,9 +221,17 @@ fn PerformanceView() -> Element {
                     flex-direction:column; gap:16px; padding:16px;",
             session_daw::progress::ProgressBar {}
             div {
-                style: "position:relative; flex:1; min-height:0; border-radius:8px; \
-                        overflow:hidden; border:1px solid {RULE};",
-                session_daw::chart_panel::Chart {}
+                style: "position:relative; flex:1; min-height:0; display:flex; gap:16px;",
+                div {
+                    style: "position:relative; flex:1; min-width:0; height:100%; border-radius:8px; \
+                            overflow:hidden; border:1px solid {RULE};",
+                    session_daw::chart_panel::Chart {}
+                }
+                div {
+                    style: "position:relative; width:38%; min-width:320px; height:100%; border-radius:8px; \
+                            overflow:hidden; border:1px solid {RULE};",
+                    session_daw::lyrics_panel::LyricsPanel {}
+                }
             }
             session_daw::progress::TransportButtons {}
         }
