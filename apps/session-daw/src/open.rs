@@ -291,16 +291,18 @@ pub fn switch_song(project_guid: &str) {
     }
 }
 
-/// Where a Cue window's local click/guide engine will be told the song
-/// changed.
-///
-/// TODO(#142 follow-up — the cue engine): load the song's click and guide
-/// (from the remote project's Click / Count / Guide tracks, or a
-/// pre-rendered cue) into a small local engine, follow the remote
-/// transport, and call [`set_cue_ready`] once it can play. Until then Cue
-/// behaves exactly as Remote, and its indicator says `cue pending`.
+/// A Cue window's click and guide follow the song by themselves: the Cue
+/// task ([`crate::cue`]) watches the remote's current song, whoever changed
+/// it (a pick here, a tab in REAPER).
 fn cue_follow_song(project_guid: &str) {
-    tracing::debug!(song.project = project_guid, "cue: no cue engine yet; nothing follows the song locally");
+    tracing::debug!(song.project = project_guid, "cue: the song changed; the Cue task follows");
+}
+
+/// The engine a Cue window plays its click and guide on: this process's
+/// own — the one Engine mode plays a whole song on (Cue is its first
+/// stage).
+pub(crate) fn cue_engine() -> &'static Standalone {
+    engine()
 }
 
 /// Something only the local engine can do — skipped, with one warning each,
@@ -921,10 +923,14 @@ pub fn request_mode(to: AudioMode) -> bool {
 /// As [`attach_to_reaper`]; a Session engine target is not wired yet
 /// (#142 follow-up) and says so rather than attaching to something else.
 pub fn attach(target: &RemoteTarget) -> eyre::Result<Attached> {
-    match target {
+    let attached = match target {
         RemoteTarget::Reaper { socket } => attach_to_reaper(socket.clone()),
         RemoteTarget::Session { address } => attach_to_engine(address),
-    }
+    }?;
+    // Idle unless Cue is asked for; then the click and guide play here,
+    // locked to what this window drives.
+    crate::cue::start();
+    Ok(attached)
 }
 
 /// Something that keeps a dialed engine's connection open for as long

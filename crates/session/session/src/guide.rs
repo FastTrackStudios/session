@@ -75,6 +75,23 @@ const GUIDE_FOLDER_ORDER: [&str; 7] = [
 /// An empty track beside the click, for a shaker loop.
 const SHAKER: &str = "Shaker";
 
+/// The tracks the guide generates — what a Cue engine plays (the click,
+/// the count, the spoken guide; the shaker beside the click), as opposed
+/// to the multitrack's own click/guide stems filed beside them.
+pub const GENERATED_TRACKS: [&str; 4] = ["Click", SHAKER, "Count", "Guide"];
+
+/// Whether a track is one the guide generates, or the folder they live in:
+/// the tracks a Cue engine keeps playing.
+#[must_use]
+pub fn is_cue_track(name: &str, is_folder: bool) -> bool {
+    let name = name.trim();
+    if is_folder {
+        name.eq_ignore_ascii_case(CLICK_GUIDE_FOLDER)
+    } else {
+        GENERATED_TRACKS.iter().any(|t| name.eq_ignore_ascii_case(t))
+    }
+}
+
 /// The template's group folder for click and guide material — the
 /// `Guide/` a session opens with at the top. (The CLICK + GUIDE BUS is
 /// its bus: routing, fed by sends, not where the tracks live.)

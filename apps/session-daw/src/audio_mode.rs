@@ -7,7 +7,8 @@
 //!   today, another Session engine soon) through the `daw` facade, and that
 //!   system owns the project and plays it.
 //! - **Cue** — Remote, plus a small local engine that plays the click and
-//!   the guide (the cue engine is later work — see [`set_cue_ready`]).
+//!   the guide, sample-locked to the remote (`crate::cue`; it reports
+//!   through [`set_cue_ready`]).
 //! - **Engine** — everything: the in-process daw-standalone engine owns the
 //!   project and plays it through this machine's device.
 //!

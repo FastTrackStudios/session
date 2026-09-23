@@ -17,6 +17,8 @@ pub mod chart_panel;
 #[cfg(feature = "native")]
 pub mod collab;
 #[cfg(feature = "native")]
+pub mod cue;
+#[cfg(feature = "native")]
 pub mod collab_bar;
 #[cfg(feature = "native")]
 pub mod collab_pointers;
