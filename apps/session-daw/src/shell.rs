@@ -31,6 +31,42 @@ pub const TEXT: &str = "#e5e7eb";
 pub const DIM: &str = "#8b9099";
 pub const ACCENT: &str = "#3aa0ff";
 
+/// How much room the top bar has, and so how much of it is spelled out.
+///
+/// - **Full** — everything, as on a wide screen: the views as a segmented
+///   control, tempo and key each labelled, the clock beside the bar.beat.
+/// - **Compact** — half a wide screen: the views fold into a menu, tempo
+///   and key into one small pill.
+/// - **Narrow** — smaller still: the clock and go-to-start/end go too
+///   (Home / End on the keyboard, the tabs for the songs).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+pub enum Density {
+    Narrow,
+    Compact,
+    Full,
+}
+
+impl Density {
+    /// For a bar `width` logical pixels wide.
+    #[must_use]
+    pub fn for_width(width: f64) -> Self {
+        if width >= 1700.0 {
+            Self::Full
+        } else if width >= 1250.0 {
+            Self::Compact
+        } else {
+            Self::Narrow
+        }
+    }
+}
+
+/// The bar's density, for what sits in it (the transport, the
+/// collaboration button); `Full` outside a bar.
+#[must_use]
+pub fn use_density() -> Density {
+    try_use_context::<Signal<Density>>().map_or(Density::Full, |d| d())
+}
+
 /// The views the top bar switches between.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
@@ -73,14 +109,27 @@ pub fn TopBar(
     on_pick: Option<EventHandler<usize>>,
     /// Recolouring a song from its tab (see [`SongTabs`]).
     on_color: Option<EventHandler<(usize, Option<String>)>>,
+    /// How wide the bar is, in logical pixels, when the host knows (a
+    /// window does; `None` lays it out in full).
+    #[props(default)]
+    width: Option<f64>,
 ) -> Element {
     let mut picking = use_signal(|| false);
+    let mut choosing_view = use_signal(|| false);
+    let density = width.map_or(Density::Full, Density::for_width);
+    let mut shared = use_context_provider(|| Signal::new(density));
+    use_effect(use_reactive!(|density| {
+        if *shared.peek() != density {
+            shared.set(density);
+        }
+    }));
+    let mode_label = if density == Density::Narrow { "" } else { "Mode" };
     rsx! {
         div {
             style: "position:relative; height:{BAR_H}px; flex:none; display:flex; \
                     align-items:center; gap:8px; padding-left:{lights}px; \
                     padding-right:10px; background:{BAR_BG}; \
-                    border-bottom:1px solid {RULE};",
+                    border-bottom:1px solid {RULE}; z-index:30;",
             onmousedown: move |_| {
                 if let Some(drag) = on_drag {
                     drag.call(());
@@ -91,16 +140,52 @@ pub fn TopBar(
                     zoom.call(());
                 }
             },
-            // The views, as a segmented control.
-            div {
-                style: "display:flex; gap:2px; padding:2px; background:#0f1012; \
-                        border:1px solid {RULE}; border-radius:7px; flex:none;",
-                for each in View::ALL {
+            if density == Density::Full {
+                // The views, as a segmented control.
+                div {
+                    style: "display:flex; gap:2px; padding:2px; background:#0f1012; \
+                            border:1px solid {RULE}; border-radius:7px; flex:none;",
+                    for each in View::ALL {
+                        button {
+                            style: segment(view() == each),
+                            onmousedown: move |event| event.stop_propagation(),
+                            onclick: move |_| view.set(each),
+                            "{each.name()}"
+                        }
+                    }
+                }
+            } else {
+                // The views, folded into a menu: the one showing, and a
+                // chevron.
+                div {
+                    style: "position:relative; flex:none;",
+                    onmousedown: move |event| event.stop_propagation(),
                     button {
-                        style: segment(view() == each),
-                        onmousedown: move |event| event.stop_propagation(),
-                        onclick: move |_| view.set(each),
-                        "{each.name()}"
+                        style: "display:flex; align-items:center; gap:6px; height:26px; \
+                                padding:0 8px 0 10px; border-radius:6px; border:1px solid {RULE}; \
+                                background:#0f1012; color:{TEXT}; font-size:12px; font-weight:600; \
+                                cursor:pointer;",
+                        onclick: move |_| choosing_view.toggle(),
+                        "{view().name()}"
+                        Chevron {}
+                    }
+                    if choosing_view() {
+                        div {
+                            style: "position:absolute; left:0; top:30px; z-index:40; \
+                                    min-width:150px; padding:4px; background:{BAR_BG}; \
+                                    border:1px solid {RULE}; border-radius:8px; \
+                                    box-shadow:0 8px 24px rgba(0,0,0,0.5);",
+                            for each in View::ALL {
+                                div {
+                                    style: option(view() == each),
+                                    onclick: move |_| {
+                                        view.set(each);
+                                        choosing_view.set(false);
+                                    },
+                                    "{each.name()}"
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -122,12 +207,14 @@ pub fn TopBar(
                             padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
                             background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer;",
                     onclick: move |_| picking.toggle(),
-                    span { style: "color:{DIM};", "Mode" }
+                    if !mode_label.is_empty() {
+                        span { style: "color:{DIM};", "{mode_label}" }
+                    }
                     span { style: "font-weight:600;", "{mode().display_name()}" }
                 }
                 if picking() {
                     div {
-                        style: "position:absolute; right:0; top:30px; z-index:10; \
+                        style: "position:absolute; right:0; top:30px; z-index:40; \
                                 min-width:160px; padding:4px; background:{BAR_BG}; \
                                 border:1px solid {RULE}; border-radius:8px; \
                                 box-shadow:0 8px 24px rgba(0,0,0,0.5);",
@@ -144,6 +231,20 @@ pub fn TopBar(
                     }
                 }
             }
+        }
+    }
+}
+
+/// A small down chevron, for a button that opens a menu.
+#[component]
+pub fn Chevron() -> Element {
+    rsx! {
+        svg {
+            width: "10",
+            height: "10",
+            view_box: "0 0 10 10",
+            fill: "none",
+            path { d: "M2 3.5 L5 6.5 L8 3.5", stroke: DIM, stroke_width: "1.5", stroke_linecap: "round", stroke_linejoin: "round" }
         }
     }
 }
@@ -192,9 +293,12 @@ pub fn SongTabs(
     }
     let at = reading().at;
     let count = list.songs.len();
+    let min_w = count * 24 + 6;
     rsx! {
         div {
-            style: "position:relative; flex:1; min-width:0; display:flex; height:30px; \
+            // Never narrower than a dot (and who is there) per song: the
+            // names give way first, then the bar's other controls.
+            style: "position:relative; flex:1; min-width:{min_w}px; display:flex; height:30px; \
                     padding:2px; gap:0; align-items:stretch; background:#0f1012; \
                     border:1px solid {RULE}; border-radius:9px;",
             onmousedown: move |event| event.stop_propagation(),

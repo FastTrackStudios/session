@@ -1381,6 +1381,17 @@ impl ArrangementWidget {
                     let (track, fy) = if y < ruler {
                         (None, (y / ruler.max(1.0)).clamp(0.0, 1.0))
                     } else {
+                        // Past the last track (the empty lanes below it):
+                        // still relative to the music — so far below the
+                        // last track, in its heights — so a window whose
+                        // lanes end sooner (the mixer docked under them)
+                        // puts it out of sight, not on the ruler.
+                        let past_last = || {
+                            let row = self.rows.len().checked_sub(1)?;
+                            let (top, h) = self.scene.row_band(row, view)?;
+                            let guid = self.rows.get(row)?.0.guid.clone();
+                            Some((Some(guid), ((content_y - top) / h.max(1.0)).max(0.0)))
+                        };
                         self.scene
                             .row_at_screen(content_y, view)
                             .and_then(|row| {
@@ -1388,6 +1399,7 @@ impl ArrangementWidget {
                                 let guid = self.rows.get(row)?.0.guid.clone();
                                 Some((Some(guid), ((content_y - top) / h.max(1.0)).clamp(0.0, 1.0)))
                             })
+                            .or_else(past_last)
                             .unwrap_or((None, 1.0))
                     };
                     crate::ghosts::local_pointer(

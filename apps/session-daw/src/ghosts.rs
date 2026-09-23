@@ -44,12 +44,22 @@ pub fn publish(roster: Option<Roster>, clock_offset_ms: f64, show_play: bool) {
     }
 }
 
-/// Everyone in the session and the song each is on — by the song's
-/// project here: (project, name, colour), for the song tabs.
-static EVERYONE: Mutex<Vec<(String, String, u32)>> = Mutex::new(Vec::new());
+/// Someone else in the session, and the song they are on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Person {
+    /// Their song's project here (what the tabs know it by).
+    pub project: String,
+    /// Their song's name everywhere (`Washed`).
+    pub song: String,
+    pub name: String,
+    pub color: u32,
+}
+
+/// Everyone else in the session.
+static EVERYONE: Mutex<Vec<Person>> = Mutex::new(Vec::new());
 
 /// Publish who is on which song.
-pub fn publish_everyone(everyone: Vec<(String, String, u32)>) {
+pub fn publish_everyone(everyone: Vec<Person>) {
     if let Ok(mut slot) = EVERYONE.lock()
         && *slot != everyone
     {
@@ -57,12 +67,18 @@ pub fn publish_everyone(everyone: Vec<(String, String, u32)>) {
     }
 }
 
+/// Everyone else in the session.
+#[must_use]
+pub fn everyone() -> Vec<Person> {
+    EVERYONE.lock().map(|all| all.clone()).unwrap_or_default()
+}
+
 /// The people on the song that is `project` here: (name, colour).
 #[must_use]
 pub fn on_song(project: &str) -> Vec<(String, u32)> {
     EVERYONE
         .lock()
-        .map(|all| all.iter().filter(|(s, _, _)| s == project).map(|(_, n, c)| (n.clone(), *c)).collect())
+        .map(|all| all.iter().filter(|p| p.project == project).map(|p| (p.name.clone(), p.color)).collect())
         .unwrap_or_default()
 }
 

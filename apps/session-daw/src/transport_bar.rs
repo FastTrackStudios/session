@@ -69,10 +69,13 @@ pub fn WebTransportBar() -> Element {
     rsx! { TransportBarView { reading: reading() } }
 }
 
-/// What the bar shows, for a reading.
+/// What the bar shows, for a reading — as much as the bar has room for
+/// (see [`crate::shell::Density`]).
 #[component]
 fn TransportBarView(reading: crate::engine::Reading) -> Element {
+    use crate::shell::Density;
     let session: StudioSession = use_context();
+    let density = crate::shell::use_density();
     let r = reading;
     let (bar, beat) = crate::ruler::Timeline::new(&session.project.tempo)
         .beats(r.at + 1e-6, 100_000)
@@ -83,14 +86,19 @@ fn TransportBarView(reading: crate::engine::Reading) -> Element {
         .unwrap_or_else(|| "—".to_owned());
     let minutes = (r.at / 60.0).floor();
     let seconds = r.at - minutes * 60.0;
+    let clock = format!("{minutes:.0}:{seconds:05.2}");
+    let bpm = tempo_text(r.bpm);
+    let ends = density != Density::Narrow;
     rsx! {
         div {
             style: "height:100%; flex:none; display:flex; align-items:center; gap:4px;",
             // A press here is a button, not a drag of the window the bar
             // it sits in is the title bar of.
             onmousedown: move |event| event.stop_propagation(),
-            Button { title: "Go to start", on: false, color: TEXT, glyph: Glyph::Home,
-                onpress: move |()| transport(Move::Home, 0.0) }
+            if ends {
+                Button { title: "Go to start", on: false, color: TEXT, glyph: Glyph::Home,
+                    onpress: move |()| transport(Move::Home, 0.0) }
+            }
             Button { title: "Play / stop", on: r.playing, color: PLAY,
                 glyph: if r.playing { Glyph::Stop } else { Glyph::Play },
                 onpress: move |()| transport(Move::PlayStop, 0.0) }
@@ -98,53 +106,80 @@ fn TransportBarView(reading: crate::engine::Reading) -> Element {
                 onpress: move |()| transport(Move::ToggleRecord, 0.0) }
             Button { title: "Loop", on: r.looping, color: LOOP, glyph: Glyph::Loop,
                 onpress: move |()| transport(Move::ToggleLoop, 0.0) }
-            Button { title: "Go to end", on: false, color: TEXT, glyph: Glyph::End,
-                onpress: move |()| transport(Move::End, 0.0) }
-            div { style: "width:6px;" }
+            if ends {
+                Button { title: "Go to end", on: false, color: TEXT, glyph: Glyph::End,
+                    onpress: move |()| transport(Move::End, 0.0) }
+            }
+            div { style: "width:4px;" }
             // Where the song is: the bar and beat first, the clock under it
-            // in weight — the bar is what an editor counts in.
+            // in weight — the bar is what an editor counts in. Narrow, the
+            // clock is the tooltip.
             div {
-                style: "display:flex; align-items:baseline; gap:10px; padding:3px 12px; \
-                        border-radius:5px; background:#0b0c0e; border:1px solid {RULE}; \
-                        font-family:ui-monospace, monospace;",
-                span { style: "font-size:16px; font-weight:600; color:{TEXT};", "{bar}.{beat}" }
-                span { style: "font-size:12px; color:{DIM};", "{minutes:.0}:{seconds:05.2}" }
+                title: "{clock}",
+                style: "height:26px; box-sizing:border-box; display:flex; align-items:center; \
+                        gap:10px; padding:0 10px; border-radius:6px; background:#0b0c0e; \
+                        border:1px solid {RULE}; font-family:ui-monospace, monospace;",
+                span { style: "font-size:15px; font-weight:600; color:{TEXT};", "{bar}.{beat}" }
+                if density != Density::Narrow {
+                    span { style: "font-size:12px; color:{DIM};", "{clock}" }
+                }
             }
-            // The tempo, as a two-sided pill: a note glyph on the left (a
-            // quarter note today — the slot a future eighth-note tempo
-            // reading would swap it for) says what unit `bpm` counts,
-            // the number sits on the right of its own divider.
-            div {
-                style: "display:flex; align-items:stretch; border-radius:5px; \
-                        background:#0b0c0e; border:1px solid {RULE}; overflow:hidden;",
+            if density == Density::Full {
+                // Tempo and key as one card, each a small label over its
+                // value — what the song is doing where the playhead is.
                 div {
-                    style: "display:flex; align-items:center; padding:0 8px; \
-                            border-right:1px solid {RULE};",
+                    style: "height:30px; box-sizing:border-box; display:flex; align-items:stretch; \
+                            border-radius:6px; background:#0b0c0e; border:1px solid {RULE};",
+                    Reading { label: "BPM", value: bpm, mono: true }
+                    div { style: "width:1px; margin:5px 0; background:{RULE};" }
+                    Reading { label: "KEY", value: key }
+                }
+            } else {
+                // One small pill: `68 · F`, a note glyph for what the
+                // first number is.
+                div {
+                    title: "Tempo {bpm} BPM, key {key}",
+                    style: "height:26px; box-sizing:border-box; display:flex; align-items:center; \
+                            gap:6px; padding:0 9px; border-radius:6px; background:#0b0c0e; \
+                            border:1px solid {RULE}; white-space:nowrap;",
                     NoteGlyph {}
-                }
-                span {
-                    style: "display:flex; align-items:center; padding:0 10px; \
-                            font-size:12px; color:{TEXT}; font-family:ui-monospace, monospace;",
-                    if r.bpm > 0.0 { "{r.bpm:.1}" } else { "—" }
-                }
-            }
-            // The key where the song is — the KEY track's change in force,
-            // shortened: "F", "Fm", never "major".
-            div {
-                style: "display:flex; align-items:stretch; border-radius:5px; \
-                        background:#0b0c0e; border:1px solid {RULE}; overflow:hidden;",
-                div {
-                    style: "display:flex; align-items:center; padding:0 8px; \
-                            border-right:1px solid {RULE};",
-                    KeyGlyph {}
-                }
-                span {
-                    style: "display:flex; align-items:center; padding:0 10px; \
-                            font-size:12px; font-weight:600; color:{TEXT};",
-                    "{key}"
+                    span { style: "font-size:12px; color:{TEXT}; font-family:ui-monospace, monospace;", "{bpm}" }
+                    span { style: "font-size:12px; color:{DIM};", "·" }
+                    span { style: "font-size:12px; font-weight:700; color:{TEXT};", "{key}" }
                 }
             }
         }
+    }
+}
+
+/// One labelled number in the tempo/key card.
+#[component]
+fn Reading(label: &'static str, value: String, #[props(default)] mono: bool) -> Element {
+    let family = if mono { "ui-monospace, monospace" } else { "system-ui, sans-serif" };
+    rsx! {
+        div {
+            style: "display:flex; flex-direction:column; justify-content:center; align-items:flex-start; \
+                    padding:0 10px; min-width:34px;",
+            span {
+                style: "font-size:8px; line-height:9px; letter-spacing:0.8px; font-weight:700; color:{DIM};",
+                "{label}"
+            }
+            span {
+                style: "font-size:13px; line-height:15px; font-weight:700; color:{TEXT}; font-family:{family};",
+                "{value}"
+            }
+        }
+    }
+}
+
+/// A tempo as a person reads it: `68`, `72.5` — no `.0`.
+fn tempo_text(bpm: f64) -> String {
+    if bpm <= 0.0 {
+        "—".to_owned()
+    } else if (bpm - bpm.round()).abs() < 0.05 {
+        format!("{:.0}", bpm.round())
+    } else {
+        format!("{bpm:.1}")
     }
 }
 
@@ -166,27 +201,6 @@ fn NoteGlyph() -> Element {
                 d: "M7.3 14.2 V1.5",
                 stroke: TEXT, stroke_width: "1.6", stroke_linecap: "round",
             }
-        }
-    }
-}
-
-/// A key, stroked — the KEY pill's unit glyph.
-#[component]
-fn KeyGlyph() -> Element {
-    rsx! {
-        svg {
-            width: "16",
-            height: "14",
-            view_box: "0 0 22 18",
-            fill: "none",
-            stroke: TEXT,
-            stroke_width: "1.8",
-            stroke_linecap: "round",
-            stroke_linejoin: "round",
-            circle { cx: "6", cy: "9", r: "4.4" }
-            path { d: "M10.2 9 H20" }
-            path { d: "M15.5 9 V12.5" }
-            path { d: "M18.5 9 V12.5" }
         }
     }
 }

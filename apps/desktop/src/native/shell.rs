@@ -67,6 +67,7 @@ pub fn Shell() -> Element {
     let opened: session_daw::setlist::Setlist = use_context();
     let mut setlist = use_context_provider(|| Signal::new(opened));
     use_live_advance(setlist, mode);
+    session_daw::collab_bar::use_follow_song(setlist);
     // `FTS_SESSION_SONG=<n>` (1-based): open the set on its n-th song — to
     // start somewhere other than the top, or (the collaboration demo) to
     // put a second window on a different song from the first.
@@ -82,6 +83,21 @@ pub fn Shell() -> Element {
     // Space plays and stops whatever has the focus.
     session_daw::keys::use_window_transport_keys();
     let window = dioxus_native::use_window();
+    // The bar's width, for how much of it is spelled out: the window's,
+    // in logical pixels, kept as it is resized.
+    let logical = |w: &std::sync::Arc<dyn winit::window::Window>| {
+        f64::from(w.surface_size().width) / w.scale_factor().max(1.0)
+    };
+    let mut width = use_signal(|| logical(&window));
+    let measuring = window.clone();
+    dioxus_native::use_window_event(move |event, _| {
+        if matches!(event, winit::event::WindowEvent::SurfaceResized(_) | winit::event::WindowEvent::ScaleFactorChanged { .. }) {
+            let now = logical(&measuring);
+            if (*width.peek() - now).abs() > 0.5 {
+                width.set(now);
+            }
+        }
+    });
     let (dragging, zooming) = (window.clone(), window);
     let current = setlist.read().current().cloned();
     rsx! {
@@ -106,10 +122,13 @@ pub fn Shell() -> Element {
                             key: "{song.project}",
                             session: song.session.clone(),
                             session_daw::transport_bar::TransportBar {}
-                            session_daw::collab_bar::CollabBar {}
                         }
                     }
+                    // Once, not per song: it is the whole set's session,
+                    // and mounting it starts one from the environment.
+                    session_daw::collab_bar::CollabBar {}
                 },
+                width: width(),
                 // Anywhere on the bar that is not a control drags the
                 // window; a double click zooms it.
                 on_drag: move |()| {
@@ -125,6 +144,8 @@ pub fn Shell() -> Element {
                     let picked = setlist.write().pick(index, at).map(|song| song.project.clone());
                     if let Some(project) = picked {
                         session_daw::open::switch_song(&project);
+                        // Playing together, everyone goes with it.
+                        session_daw::collab::transport_pressed();
                     }
                 },
                 on_color: move |(index, color): (usize, Option<String>)| {

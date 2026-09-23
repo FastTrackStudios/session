@@ -1,6 +1,8 @@
-//! The collaboration control in the top bar: share this song, join
-//! someone's, and — once in a session — who is here, and whether everyone
-//! plays on their own or together.
+//! The collaboration control in the top bar: one button, showing who is
+//! here as a row of avatars (or, alone, a share glyph), that opens the
+//! session card — share this set or join someone's, the people and the song
+//! each is on, whether everyone plays on their own or together, the
+//! invite, and leaving.
 //!
 //! Also starts a session from the environment, for the two-instance demo
 //! and tests: `FTS_COLLAB_HOST=1` shares the song once it is open and
@@ -12,7 +14,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 
-use crate::shell::{ACCENT, RULE, TEXT};
+use crate::shell::{ACCENT, BAR_BG, DIM, Density, RULE, TEXT};
 
 /// Where an env-started host leaves its ticket.
 fn ticket_path() -> std::path::PathBuf {
@@ -32,6 +34,10 @@ pub fn CollabBar() -> Element {
     let mut status = use_signal(crate::collab::status);
     let mut error = use_signal(|| None::<String>);
     let mut joining = use_signal(String::new);
+    let mut people = use_signal(crate::ghosts::everyone);
+    let mut open = use_signal(|| false);
+    let mut copied = use_signal(|| false);
+    let density = crate::shell::use_density();
 
     // The environment's session, once the song is up.
     use_hook(move || {
@@ -90,76 +96,295 @@ pub fn CollabBar() -> Element {
             if *error.peek() != why {
                 error.set(why);
             }
+            let here = crate::ghosts::everyone();
+            if *people.peek() != here {
+                people.set(here);
+            }
         }
     });
 
-    let button = |active: bool| {
-        let (bg, fg, border) = if active { (ACCENT, "#0b0c0e", ACCENT) } else { ("transparent", TEXT, RULE) };
-        format!(
-            "height:22px; padding:0 9px; border-radius:5px; border:1px solid {border}; \
-             background:{bg}; color:{fg}; font-size:11px; font-weight:600; cursor:pointer;"
-        )
-    };
-    let body = match status() {
-        None => rsx! {
-            button {
-                style: button(false),
-                title: "Share this song: others can join and edit it with you",
-                onclick: move |_| crate::collab::host_in_background(display_name()),
-                "Share"
-            }
-            input {
-                style: "height:20px; width:120px; padding:0 6px; border-radius:5px; border:1px solid {RULE}; \
-                        background:#15171b; color:{TEXT}; font-size:11px;",
-                placeholder: "paste a ticket",
-                value: "{joining}",
-                oninput: move |e| joining.set(e.value()),
-                onmousedown: move |e| { crate::keys::set_editing(true); e.stop_propagation(); },
-            }
-            button {
-                style: button(false),
-                onclick: move |_| crate::collab::join_in_background(joining.peek().trim().to_owned(), display_name()),
-                "Join"
-            }
-        },
-        Some(live) => {
-            let who = match live.peers {
-                0 => "just you".to_owned(),
-                1 => "1 other here".to_owned(),
-                n => format!("{n} others here"),
-            };
-            let label = if live.hosting { "Sharing" } else { "Joined" };
-            let shared = live.shared_transport;
-            let ticket = live.ticket.clone();
+    let live = status();
+    let others = people();
+    // The button: who is here, you first — or, alone, a share glyph.
+    let face = match &live {
+        Some(l) => {
+            let mut faces = vec![(l.name.clone(), l.color)];
+            faces.extend(others.iter().map(|p| (p.name.clone(), p.color)));
+            let extra = faces.len().saturating_sub(4);
+            faces.truncate(4);
             rsx! {
-                span {
-                    style: "font-size:11px; color:{TEXT}; white-space:nowrap;",
-                    title: "{ticket}",
-                    span { style: "color:#4ac26b;", "● " }
-                    "{label} · {who}"
-                }
-                button {
-                    style: button(shared),
-                    title: if shared { "Everyone plays together — click to play on your own" } else { "Everyone plays on their own — click to play together" },
-                    onclick: move |_| { crate::collab::set_shared_transport(!shared); status.set(crate::collab::status()); },
-                    if shared { "Playing together" } else { "Playing apart" }
-                }
-                button {
-                    style: button(false),
-                    onclick: move |_| { crate::collab::leave(); status.set(None); },
-                    "Leave"
+                span { style: "width:7px; height:7px; border-radius:4px; background:#4ac26b; flex:none;" }
+                div {
+                    style: "display:flex; align-items:center;",
+                    for (i, (name, color)) in faces.into_iter().enumerate() {
+                        Avatar { name, color, size: 20.0, overlap: i > 0 }
+                    }
+                    if extra > 0 {
+                        span { style: "margin-left:4px; font-size:11px; color:{DIM};", "+{extra}" }
+                    }
                 }
             }
         }
+        None => rsx! {
+            ShareGlyph {}
+            if density == Density::Full {
+                span { style: "font-size:12px; font-weight:600; color:{TEXT};", "Share" }
+            }
+        },
+    };
+    let title = match &live {
+        Some(l) => format!("{} · {}", if l.hosting { "Sharing" } else { "Joined" }, who(l.peers)),
+        None => "Share this set, or join someone's".to_owned(),
     };
     rsx! {
         div {
-            style: "display:flex; align-items:center; gap:6px; margin-left:10px;",
-            {body}
-            if let Some(why) = error() {
-                span { style: "font-size:11px; color:#e3b341; max-width:220px; overflow:hidden; \
-                               text-overflow:ellipsis; white-space:nowrap;", title: "{why}", "{why}" }
+            style: "position:relative; flex:none; margin-left:8px;",
+            onmousedown: move |event| event.stop_propagation(),
+            button {
+                title: "{title}",
+                style: "height:28px; box-sizing:border-box; display:flex; align-items:center; gap:7px; \
+                        padding:0 8px; border-radius:14px; border:1px solid {RULE}; \
+                        background:#0f1012; cursor:pointer;",
+                onclick: move |_| open.toggle(),
+                {face}
+                if error().is_some() {
+                    span { style: "width:7px; height:7px; border-radius:4px; background:#e3b341;" }
+                }
             }
+            if open() {
+                div {
+                    style: "position:absolute; right:0; top:34px; z-index:40; width:300px; \
+                            box-sizing:border-box; padding:14px; display:flex; flex-direction:column; \
+                            gap:12px; background:{BAR_BG}; border:1px solid {RULE}; border-radius:12px; \
+                            box-shadow:0 12px 32px rgba(0,0,0,0.55); color:{TEXT};",
+                    // Heading: what this is, and a close.
+                    div {
+                        style: "display:flex; align-items:center; justify-content:space-between;",
+                        div {
+                            style: "display:flex; flex-direction:column; gap:2px;",
+                            span { style: "font-size:13px; font-weight:700;",
+                                match &live {
+                                    Some(l) if l.hosting => rsx! { "Sharing {l.set}" },
+                                    Some(l) => rsx! { "In {l.set}" },
+                                    None => rsx! { "Play together" },
+                                }
+                            }
+                            span { style: "font-size:11px; color:{DIM};",
+                                match &live {
+                                    Some(l) => rsx! { "{who(l.peers)}" },
+                                    None => rsx! { "Share this set, or join someone's" },
+                                }
+                            }
+                        }
+                        button {
+                            style: "width:22px; height:22px; border:none; border-radius:6px; background:transparent; \
+                                    color:{DIM}; font-size:14px; cursor:pointer;",
+                            onclick: move |_| open.set(false),
+                            "×"
+                        }
+                    }
+                    match live.clone() {
+                        None => rsx! {
+                            button {
+                                style: primary(),
+                                onclick: move |_| crate::collab::host_in_background(display_name()),
+                                "Share this set"
+                            }
+                            Section { label: "Join" }
+                            div {
+                                style: "display:flex; gap:6px;",
+                                input {
+                                    style: "flex:1; min-width:0; height:26px; box-sizing:border-box; padding:0 8px; \
+                                            border-radius:6px; border:1px solid {RULE}; background:#0f1012; \
+                                            color:{TEXT}; font-size:11px;",
+                                    placeholder: "paste a ticket",
+                                    value: "{joining}",
+                                    oninput: move |e| joining.set(e.value()),
+                                    onmousedown: move |e| { crate::keys::set_editing(true); e.stop_propagation(); },
+                                }
+                                button {
+                                    style: secondary(),
+                                    onclick: move |_| crate::collab::join_in_background(joining.peek().trim().to_owned(), display_name()),
+                                    "Join"
+                                }
+                            }
+                        },
+                        Some(l) => {
+                            let shared = l.shared_transport;
+                            let ticket = l.ticket.clone();
+                            let current = crate::open::current_song().and_then(|p| crate::collab::key_of(&p));
+                            rsx! {
+                                Section { label: "People" }
+                                div {
+                                    style: "display:flex; flex-direction:column; gap:6px;",
+                                    Row { name: l.name.clone(), color: l.color, note: "you".to_owned() }
+                                    for p in others.iter().cloned() {
+                                        Row {
+                                            name: p.name,
+                                            color: p.color,
+                                            note: if current.as_deref() == Some(p.song.as_str()) { "here".to_owned() } else { format!("on {}", p.song) },
+                                        }
+                                    }
+                                }
+                                Section { label: "Transport" }
+                                div {
+                                    style: "display:flex; gap:2px; padding:2px; background:#0f1012; \
+                                            border:1px solid {RULE}; border-radius:7px;",
+                                    button {
+                                        style: "{half(!shared)}",
+                                        title: "Everyone plays on their own; the others' playheads show faintly",
+                                        onclick: move |_| { crate::collab::set_shared_transport(false); status.set(crate::collab::status()); },
+                                        "Apart"
+                                    }
+                                    button {
+                                        style: "{half(shared)}",
+                                        title: "One transport: play here and it plays for everyone",
+                                        onclick: move |_| { crate::collab::set_shared_transport(true); status.set(crate::collab::status()); },
+                                        "Together"
+                                    }
+                                }
+                                Section { label: "Invite" }
+                                div {
+                                    style: "display:flex; gap:6px;",
+                                    input {
+                                        style: "flex:1; min-width:0; height:26px; box-sizing:border-box; padding:0 8px; \
+                                                border-radius:6px; border:1px solid {RULE}; background:#0f1012; \
+                                                color:{DIM}; font-size:10px; font-family:ui-monospace, monospace;",
+                                        readonly: true,
+                                        value: "{ticket}",
+                                        onmousedown: move |e| e.stop_propagation(),
+                                    }
+                                    button {
+                                        style: secondary(),
+                                        onclick: move |_| copied.set(copy(&ticket)),
+                                        if copied() { "Copied" } else { "Copy" }
+                                    }
+                                }
+                                button {
+                                    style: "height:28px; border-radius:7px; border:1px solid #5a2a2a; background:transparent; \
+                                            color:#f28b82; font-size:12px; font-weight:600; cursor:pointer;",
+                                    onclick: move |_| {
+                                        crate::collab::leave();
+                                        status.set(None);
+                                        copied.set(false);
+                                    },
+                                    if l.hosting { "Stop sharing" } else { "Leave" }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(why) = error() {
+                        span { style: "font-size:11px; color:#e3b341;", "{why}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn who(peers: usize) -> String {
+    match peers {
+        0 => "Just you so far".to_owned(),
+        1 => "1 other here".to_owned(),
+        n => format!("{n} others here"),
+    }
+}
+
+fn primary() -> String {
+    format!(
+        "height:30px; border-radius:7px; border:none; background:{ACCENT}; color:#0b0c0e; \
+         font-size:12px; font-weight:700; cursor:pointer;"
+    )
+}
+
+fn secondary() -> String {
+    format!(
+        "height:26px; padding:0 10px; border-radius:6px; border:1px solid {RULE}; background:transparent; \
+         color:{TEXT}; font-size:11px; font-weight:600; cursor:pointer;"
+    )
+}
+
+fn half(on: bool) -> String {
+    let (bg, fg) = if on { (ACCENT, "#0b0c0e") } else { ("transparent", DIM) };
+    format!(
+        "flex:1; height:24px; border:none; border-radius:5px; background:{bg}; color:{fg}; \
+         font-size:12px; font-weight:600; cursor:pointer;"
+    )
+}
+
+/// Put the ticket on the clipboard (macOS: `pbcopy`). Whether it went.
+fn copy(text: &str) -> bool {
+    use std::io::Write as _;
+    #[cfg(target_os = "macos")]
+    let child = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn();
+    #[cfg(not(target_os = "macos"))]
+    let child: std::io::Result<std::process::Child> =
+        Err(std::io::Error::other("no clipboard here yet"));
+    let Ok(mut child) = child else { return false };
+    let wrote = child.stdin.take().is_some_and(|mut stdin| stdin.write_all(text.as_bytes()).is_ok());
+    child.wait().is_ok_and(|s| s.success()) && wrote
+}
+
+/// A small caps heading in the card.
+#[component]
+fn Section(label: &'static str) -> Element {
+    rsx! {
+        span {
+            style: "margin-bottom:-6px; font-size:9px; letter-spacing:0.9px; font-weight:700; color:{DIM};",
+            "{label.to_uppercase()}"
+        }
+    }
+}
+
+/// A person in the card: avatar, name, where they are.
+#[component]
+fn Row(name: String, color: u32, note: String) -> Element {
+    rsx! {
+        div {
+            style: "display:flex; align-items:center; gap:8px;",
+            Avatar { name: name.clone(), color, size: 22.0, overlap: false }
+            span { style: "flex:1; min-width:0; font-size:12px; font-weight:600; overflow:hidden; \
+                           text-overflow:ellipsis; white-space:nowrap;", "{name}" }
+            span { style: "font-size:11px; color:{DIM}; white-space:nowrap;", "{note}" }
+        }
+    }
+}
+
+/// A person's initial on their colour.
+#[component]
+pub fn Avatar(name: String, color: u32, size: f64, overlap: bool) -> Element {
+    let (r, g, b) = ((color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
+    let initial = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+    let margin = if overlap { -size * 0.3 } else { 0.0 };
+    let font = (size * 0.5).round();
+    let radius = size / 2.0;
+    rsx! {
+        div {
+            title: "{name}",
+            style: "flex:none; width:{size}px; height:{size}px; border-radius:{radius}px; margin-left:{margin}px; \
+                    box-sizing:border-box; background:rgb({r},{g},{b}); border:2px solid #0f1012; \
+                    display:flex; align-items:center; justify-content:center; \
+                    color:#101114; font-size:{font}px; font-weight:700; line-height:1;",
+            "{initial}"
+        }
+    }
+}
+
+/// Two people — the share button's glyph when no one is here yet.
+#[component]
+fn ShareGlyph() -> Element {
+    rsx! {
+        svg {
+            width: "18",
+            height: "14",
+            view_box: "0 0 22 16",
+            fill: "none",
+            stroke: TEXT,
+            stroke_width: "1.6",
+            stroke_linecap: "round",
+            circle { cx: "8", cy: "5", r: "3" }
+            path { d: "M2.5 15 C2.5 11 5 9.5 8 9.5 C11 9.5 13.5 11 13.5 15" }
+            path { d: "M18 4 V10 M15 7 H21" }
         }
     }
 }
@@ -210,4 +435,22 @@ pub fn PeerDots(project: String) -> Element {
             }
         }
     }
+}
+
+/// Open the song the shared transport asks for — playing together, someone
+/// else picked another song of the set.
+pub fn use_follow_song(mut setlist: Signal<crate::setlist::Setlist>) {
+    use_future(move || async move {
+        loop {
+            futures_timer::Delay::new(Duration::from_millis(100)).await;
+            let Some(project) = crate::collab::take_song_request() else { continue };
+            let index = setlist.peek().songs.iter().position(|s| s.project == project);
+            let at = crate::engine::Transport::shared().map_or(0.0, |t| t.read().0);
+            if let Some(index) = index
+                && setlist.write().pick(index, at).is_some()
+            {
+                crate::open::switch_song(&project);
+            }
+        }
+    });
 }
