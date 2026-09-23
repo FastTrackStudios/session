@@ -19,6 +19,8 @@ pub mod doc;
 #[cfg(feature = "engine")]
 pub mod engine;
 pub mod model;
+#[cfg(feature = "net")]
+pub mod net;
 pub mod presence;
 
 #[cfg(feature = "engine")]

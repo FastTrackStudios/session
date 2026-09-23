@@ -9,12 +9,24 @@ description = "The live session as a Loro document: its schema, and the diff bet
 default = []
 # The bridge to a live daw project, through daw-control.
 engine = ["dep:daw-control", "dep:daw-proto", "dep:eyre"]
+# Hosting and joining a session over vox (architect's crdt sync).
+net = ["dep:crdt", "dep:architect", "dep:uuid", "dep:tokio", "dep:vox", "dep:eyre"]
 
 [dependencies]
 loro.workspace = true
 daw-control = { workspace = true, optional = true }
 daw-proto = { workspace = true, optional = true }
 eyre = { workspace = true, optional = true }
+crdt = { workspace = true, optional = true, features = ["vox"] }
+architect = { workspace = true, optional = true, features = ["vox"] }
+uuid = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+vox = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+crdt = { workspace = true, features = ["vox"] }
+architect = { workspace = true, features = ["vox", "local"] }
 
 [lib]
 doctest = false
