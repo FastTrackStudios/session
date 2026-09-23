@@ -1532,7 +1532,6 @@ app PROJECT="" CHART="" MODE="":
     # started with `open`, it comes forward like any app.
     bundle="target/release-fast/Session Dev.app"
     mkdir -p "$bundle/Contents/MacOS"
-    cp target/release-fast/session-desktop "$bundle/Contents/MacOS/session-desktop"
     printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
         '<plist version="1.0"><dict>' \
         '<key>CFBundleName</key><string>Session Dev</string>' \
@@ -1541,7 +1540,13 @@ app PROJECT="" CHART="" MODE="":
         '<key>CFBundlePackageType</key><string>APPL</string>' \
         '<key>NSHighResolutionCapable</key><true/>' \
         '</dict></plist>' > "$bundle/Contents/Info.plist"
-    envs=(--env "RUST_LOG=${RUST_LOG:-warn,session_daw=info}")
+    # Everything the app prints, panics with their backtraces included, goes
+    # here — `open` would otherwise throw it away.
+    # ~/Library/Logs, not target/: `open` cannot write a launched app's
+    # output onto an external volume (-10810).
+    mkdir -p "$HOME/Library/Logs/Session Dev"
+    log="$HOME/Library/Logs/Session Dev/session-dev.log"
+    envs=(--env "RUST_LOG=${RUST_LOG:-warn,session_daw=info}" --env RUST_BACKTRACE=1)
     project='{{PROJECT}}'
     chart='{{CHART}}'
     mode='{{MODE}}'
@@ -1556,7 +1561,14 @@ app PROJECT="" CHART="" MODE="":
     if [[ -n "$chart" ]]; then envs+=(--env "FTS_SESSION_CHART=$chart"); fi
     if [[ -n "$mode" ]]; then envs+=(--env "FTS_SESSION_MODE=$mode"); fi
     pkill -f 'Session Dev.app/Contents/MacOS/session-desktop' || true
-    open -n "${envs[@]}" "$bundle"
+    # Let a killed copy go before its bundle is opened again.
+    sleep 1
+    # A new file, never an overwrite: macOS caches a binary's code signature
+    # by file, and launching one rewritten in place fails (-10810).
+    rm -f "$bundle/Contents/MacOS/session-desktop"
+    cp target/release-fast/session-desktop "$bundle/Contents/MacOS/session-desktop"
+    open -n --stdout "$log" --stderr "$log" "${envs[@]}" "$bundle"
+    echo "log: $log"
 
 # Prepare songs once — organize, build from the chart, generate the click
 # and guide — and save each as `Song.session` beside its `.RPP`, which the
