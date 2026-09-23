@@ -49,6 +49,9 @@ mod session_view;
 // LAN-reachable `/vox` WebSocket instead of opening a GUI window.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod engine_server;
+// `--engine --project/--setlist`: what the headless engine opens first.
+#[cfg(all(feature = "session", not(target_arch = "wasm32")))]
+mod engine_open;
 // Home page data layer: the on-disk track libraries + their setlist notes.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod setlist_library;
@@ -126,16 +129,20 @@ fn main() {
         log_ring::install_panic_hook();
     }
 
-    // `--engine`: headless, serves the setlist over a LAN-reachable /vox
-    // WebSocket for other devices on the network — no GUI window, never
-    // returns. Checked before the GUI's own session bootstrap below since
-    // it replaces the whole rest of `main` rather than adding to it.
+    // `--engine`: headless — serves the setlist and (Live Mode) the whole
+    // daw facade over a LAN-reachable /vox WebSocket and over iroh, for
+    // other devices and for Session UIs attaching to it as a Remote — no
+    // GUI window, never returns. Checked before the GUI's own session
+    // bootstrap below since it replaces the whole rest of `main` rather
+    // than adding to it. Arguments: see `engine_server::EngineArgs`.
     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
     if std::env::args().any(|a| a == "--engine") {
+        let args = engine_server::EngineArgs::parse(&std::env::args().collect::<Vec<_>>());
         // Same mode switch the GUI path uses below — `--engine` just
         // replaces the GUI with a LAN server on top of whichever engine
         // that env var selects.
-        if std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording") {
+        let recording = std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording");
+        if recording {
             match reaper_engine::bootstrap_blocking() {
                 Ok(()) => {
                     tracing::info!("--engine: recording mode ready (connected to live REAPER)");
@@ -144,6 +151,11 @@ fn main() {
                     tracing::error!("--engine: recording mode failed to connect to REAPER: {e:?}");
                     std::process::exit(1);
                 }
+            }
+            if args.open.is_some() {
+                tracing::warn!(
+                    "--engine: --project/--setlist ignored in recording mode (REAPER owns the project)"
+                );
             }
         } else {
             match session_engine::bootstrap_blocking() {
@@ -154,12 +166,16 @@ fn main() {
                 }
             }
         }
-        let port = std::env::args()
-            .position(|a| a == "--port")
-            .and_then(|i| std::env::args().nth(i + 1))
-            .and_then(|p| p.parse::<u16>().ok());
         let rt = tokio::runtime::Runtime::new().expect("build the --engine server runtime");
-        if let Err(e) = rt.block_on(engine_server::run(port)) {
+        if let (false, Some(target), Some(engine)) =
+            (recording, args.open.as_ref(), session_engine::engine())
+        {
+            if let Err(e) = rt.block_on(engine_open::open(engine, target)) {
+                tracing::error!("--engine: could not open {target:?}: {e:?}");
+                std::process::exit(1);
+            }
+        }
+        if let Err(e) = rt.block_on(engine_server::run(&args)) {
             tracing::error!("--engine: server failed: {e:?}");
             std::process::exit(1);
         }

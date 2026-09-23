@@ -215,7 +215,8 @@ daw-control = { workspace = true, optional = true }
 # "rpp-project"/"rpp-loader": real .RPP parse + audio materialize
 # (`project_loader::load_rpp_via_bay`) — the Home page's "Load & Play"
 # loads a setlist's songs this way instead of hand-seeding stems.
-daw-standalone = { workspace = true, features = ["bootstrap", "audio", "rpp-project", "rpp-loader"], optional = true }
+# "session-file": `--engine --project Song.session` (engine_open.rs).
+daw-standalone = { workspace = true, features = ["bootstrap", "audio", "rpp-project", "rpp-loader", "session-file"], optional = true }
 # The Home page's library/setlist scanner — reuses the exact scan/RPP-
 # build/note-writing code the `session-vault-sync` and `session-player`
 # CLIs already use, rather than re-implementing it here.
