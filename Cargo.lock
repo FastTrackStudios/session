@@ -13189,9 +13189,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
- "webkit2gtk",
  "winit",
- "wry",
 ]
 
 [[package]]

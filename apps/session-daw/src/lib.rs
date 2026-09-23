@@ -6,8 +6,6 @@
 //! browser through `web_host`. The headless tools (`bin/bench`,
 //! `bin/blitz_shot`) draw through the same widget, so a benchmark or a
 //! screenshot is a picture of the window rather than of a copy of it.
-//!
-//! `main.rs` is the older dioxus/WebView studio.
 
 pub mod animate;
 pub mod arrange_edit;
@@ -21,11 +19,6 @@ pub mod expression;
 pub mod folder_item;
 pub mod fps;
 pub mod guide_instrument;
-/// Lifts WebKitGTK's 60 fps rAF cap. Linux-only: it binds `webkit2gtk`.
-/// (WKWebView on macOS has its own cap — 72 fps on a 144 Hz panel — and
-/// its own switch; not done yet.)
-#[cfg(target_os = "linux")]
-pub mod frame_rate;
 pub mod gesture;
 #[cfg(feature = "native")]
 pub mod headless;
@@ -82,7 +75,6 @@ pub mod rename;
 pub mod routes;
 pub mod row;
 pub mod ruler;
-pub mod scrollbar;
 pub mod settings;
 pub mod simulate;
 pub mod strip;
@@ -90,7 +82,6 @@ pub mod studio;
 pub mod take_window;
 pub mod tcp;
 pub mod text;
-pub mod theme;
 pub mod tone;
 pub mod tool;
 pub mod toolbar;

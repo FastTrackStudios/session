@@ -997,67 +997,6 @@ ee-fps $LINES="20":
       | awk '{ printf "%6.1f fps   worst %6.1f ms\n", $1, $2 }' \
       | tail -n "$LINES"
 
-# ── The Session DAW window ──────────────────────────────────────────
-#
-# TCP + arrangement + transport over a real REAPER project, in a WRY
-# WebView. The panels live in `daw_ui::studio`; `apps/session-daw` is
-# launch and the loader thread.
-#
-# Not the expression editor. That arrives once this holds its frame rate
-# with a real session open, and it arrives as a panel this window mounts.
-#
-# Same practice staging as `ee-practice` — reused, not re-copied — so the
-# numbers here and there are from the same project. Served, so `rsx!`
-# edits hot-reload into the running window.
-#
-# The window reports the rate its own compositor presented at a couple of
-# times a second (`ui.fps`, `ui.worst_frame_ms`), so a scroll can be
-# measured from a terminal rather than a screenshot: `just daw-fps`.
-daw $SONG="set-in-stone" $FRESH="false":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ "$SONG" == "both" ]]; then
-        echo 'Open one song per window: just daw set-in-stone / just daw unbreakable' >&2
-        exit 2
-    fi
-    staging=(--cached)
-    if [[ "$FRESH" == "true" ]]; then staging=(); fi
-    project=$(cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG")
-    mkdir -p target
-    RUST_LOG="${RUST_LOG:-warn,daw_ui::studio::fps=info}" \
-    SESSION_DAW_PROJECT="$project" \
-        dx serve -p session-daw --platform desktop 2>&1 | tee target/session-daw.log
-
-# Does the studio drop frames while you use it?
-#
-# Drives a real scroll and a real ctrl-zoom over the arrangement on a
-# private display and reports the WORST frame in each half-second window.
-# WebKit caps rAF near 60, so a clean run is a flat 62.x with a 17ms
-# worst frame; a dropped frame shows as ~33ms and cannot hide.
-#
-# Xvfb is not a GPU — these are a FLOOR, not what the real window does.
-# A clean run here is strong evidence; a dirty one is worth chasing
-# before believing. Check `uptime` first: this box runs other people's
-# work, and a measurement under a moving load is not one.
-daw-stress:
-    scripts/ui-stress/daw-gesture.sh
-
-# The window's own frame rate, off the log rather than a screenshot.
-#
-# Read the LOW end of the range and the worst frame. A window that idles
-# between gestures averages beautifully and still feels terrible. The
-# budget is 120 fps — 8.33 ms a frame.
-daw-fps $LINES="20":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    log=target/session-daw.log
-    if [[ ! -f "$log" ]]; then echo "no $log — run just daw first" >&2; exit 1; fi
-    sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$log" \
-      | grep -o 'ui\.fps=[0-9.]*  *ui\.worst_frame_ms=[0-9.]*' \
-      | sed -E 's/ui\.fps=([0-9.]*)  *ui\.worst_frame_ms=([0-9.]*)/\1 \2/' \
-      | awk '{ printf "%6.1f fps   worst %6.1f ms\n", $1, $2 }' \
-      | tail -n "$LINES"
-
 # Prepare self-contained projects without opening a window; prints their paths.
 # Reuses the shared staging; pass FRESH=true for a throwaway copy.
 ee-practice-prepare $SONG="both" $FRESH="false":
@@ -1135,36 +1074,6 @@ ee-stress $SONG="set-in-stone" $FRAMES="120" $PROFILE="dev" $ENFORCE="false":
     printf 'Practice project: %s\nReport directory: %s\n' "$project" "$report_root"
     RUST_BACKTRACE=1 FTS_STRESS_FRAMES="$FRAMES" FTS_STRESS_PROFILE="$PROFILE" "$artifact_root/$artifact_profile/examples/stress" "$project" --drums --size 1600x900 --out "$report_root" 2>&1 | tee "$report_root/run.log"
     python3 scripts/ui-stress/run.py "$report_root" "${options[@]}"
-
-# Measure the studio on the RIGHT-hand display, out of your way.
-#
-# Drives the window's own scroll (no input driver needed — see
-# `daw_ui::studio::autoscroll`) and reports the worst frame per
-# half-second window. `PROBE` takes `FTS_STUDIO_PROBE` switches, so a
-# bisect is one argument: `just daw-sweep v build:0`.
-#
-# Check `uptime` first and read the load this prints. This box's load has
-# swung between 25 and 308 in a single session, and a measurement taken
-# across that swing is not a measurement — compare only runs whose load
-# matches.
-daw-sweep AXIS="v" PROBE="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source scripts/ui-stress/daw-display.sh
-    project="${SESSION_DAW_PROJECT:-/tmp/fts-drum-practice-cache/set-in-stone/set in stone.practice.RPP}"
-    mkdir -p target
-    echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
-    FTS_STUDIO_PROBE="{{PROBE}}" FTS_STUDIO_AUTOSCROLL="{{AXIS}}" \
-    RUST_LOG="${RUST_LOG:-warn,daw_ui::studio=info}" \
-    SESSION_DAW_PROJECT="$project" \
-        timeout 70 ./target/debug/session-daw > target/daw-sweep.log 2>&1 || true
-    echo "load after:  $(cut -d' ' -f1-3 /proc/loadavg)"
-    sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' target/daw-sweep.log \
-      | grep -oE 'ui\.fps=[0-9.]+ +ui\.worst_frame_ms=[0-9.]+' \
-      | sed -E 's/ui\.fps=([0-9.]+) +ui\.worst_frame_ms=([0-9.]+)/\1 \2/' \
-      | awk 'NR>10{n++; if(min==""||$1<min)min=$1; if($2>max)max=$2}
-             END{if(n)printf "%6.1f fps   worst %6.1f ms   (n=%d)\n",min,max,n;
-                 else print "no samples — did the project mount?"}'
 
 # The orchestral test fixture: 2,000 tracks, 20,000 items, no media.
 #
