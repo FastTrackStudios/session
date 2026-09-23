@@ -1,229 +1,303 @@
-# Handoff: the live Session — setlist, Organize mode, live keyflow
+# Handoff: the live Session — charts, lyrics, and the Overview
 
-Written 2026-09-22 (evening), replacing the morning's version of this file.
-Everything is **committed locally only** — nothing pushed, merged or
-deployed, by the user's standing rule (commit locally; push once the WASM
-demo is right). Six sibling checkouts under `/Volumes/build-disk/development/`
-are in play, and the session app now builds **four of them from local
-paths** (§5 — they must be pushed and pinned before session is pushed).
+Written 2026-09-23, replacing the 2026-09-22 version of this file (which
+covered the setlist, Organize mode and live keyflow; what is still true of
+it is kept below). Everything is **committed locally only** — nothing
+pushed, merged or deployed, by the user's standing rule (commit locally;
+push once the WASM demo is right). Six sibling checkouts under
+`/Volumes/build-disk/development/` are in play, and the session app builds
+**four of them from local paths** (§8 — they must be pushed and pinned
+before session is pushed).
 
 ## 1. What we are building, in the user's words
 
 Session is the live player and the DAW: a setlist of songs that plays
 itself on a service, and the arrangement/mixer/chart to prepare them with.
-Keyflow (`.kf`) is the song's chart and the source of its structure: tempo,
-meter, sections, key, chords — and from them the click, count and spoken
-cues. Prepare a song **once**, save it as a `.session`, open that from then on.
+Keyflow (`.kf`) is the song's chart and the source of its structure —
+tempo, meter, sections, key, chords — and from them the click, count and
+spoken cues. Lyrics are layered — Song, Section, Slides, Lines, Words,
+Syllables, Syllables + melody — and a deeper layer gives every layer above
+it. Prepare a song **once**, save it as a `.session`, open that from then
+on.
 
-## 2. Run it, and read what it did
+## 2. Run it, and see what it did
 
 ```bash
 cd /Volumes/build-disk/development/session
-just app "../sessions/Worship Set.setlist" "" organize   # the setlist, starting in Organize mode
-just app "../sessions/imported/Praise/Praise.RPP"         # one song (its .session opens if there is one)
-just prepare ../sessions/imported/*/*.RPP                  # prepare songs into .session ahead of time
+FTS_SESSION_VIEW=overview just app "../sessions/Worship Set.setlist" "" live   # the set, Overview, Live mode
+FTS_SESSION_VIEW=overview just app "../sessions/Worship Set.setlist" "" organize
+just app "../sessions/imported/God, I'm Just Grateful/God, I'm Just Grateful.RPP"   # one song (quoting handles the ')
+just prepare ../sessions/imported/*/*.RPP        # prepare songs into .session ahead of time
+FTS_SESSION_REPREPARE=1 ./target/release-fast/prepare "<Song>.RPP"   # re-prepare one (after a chart or .lrc change)
+cargo run -p session-cli -- lyrics fetch <Song>.RPP [--pick N --force]  # synced lyrics → <Song>.lrc
 ```
 
-- `just app` builds the **`release-fast`** profile (release optimisation,
-  incremental — a one-line edit rebuilds in ~15 s instead of ~60 s; see the
-  `build-performance` skill), wraps the binary in
-  `target/release-fast/Session Dev.app` and starts it with `open`, so it
-  comes to the front. (A bare binary started from a shell opens BEHIND other
-  windows and cannot be raised.)
-- **Logs:** everything it prints — tracing, panics with `RUST_BACKTRACE=1` —
-  goes to `~/Library/Logs/Session Dev/session-dev.log`. When the user says
-  "it crashed", read that first.
-- **Seeing the window yourself:** computer-use cannot target the unbundled
-  binary. Find its window id (Swift `CGWindowListCopyWindowInfo` by pid,
-  window named "Session") and `screencapture -x -o -l <id> out.png`. You
-  **cannot click or type into it** — interaction is tested by the user or
-  by tests. Say which when reporting.
-- `blitz_shot` renders a song headless, through the app's own panels:
-  `FTS_BLITZ_SIZE=1800x900 ./target/release-fast/blitz_shot <song.RPP|.session> out.png`.
+- `just app` builds `release-fast`, wraps the binary in
+  `target/release-fast/Session Dev.app`, **signs it with the Apple
+  Development identity and a fixed identifier** (so macOS keeps its
+  removable-drive grant across rebuilds — the user confirmed no more
+  prompts), and opens it in front. Env passed through: `FTS_SESSION_VIEW`
+  (overview/performance/setup), `FTS_LYRICS_VIEW` (audience/performer/
+  confidence), the MODE argument (live/organize/…).
+- **Logs:** `~/Library/Logs/Session Dev/session-dev.log` (tracing, panics
+  with backtraces). The file appends across runs: find the *latest*
+  `SWELL API provider not found` line (one per launch) before reading a
+  panic. "It crashed" → read this first.
+- **Seeing the window:** you cannot click or type into it — interaction is
+  the user's, or a test's. Screenshot it by window id:
 
-## 3. Where it stands
+  ```swift
+  // winid.swift — usage: swift winid.swift <pid>
+  import CoreGraphics
+  import Foundation
+  let pid = Int32(CommandLine.arguments[1])!
+  let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as! [[String: Any]]
+  for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid {
+      print("\(w[kCGWindowNumber as String]!) name=\(w[kCGWindowName as String] as? String ?? "")")
+  }
+  ```
 
-### Done this session
+  ```bash
+  pid=$(pgrep -f "Session Dev.app/Contents/MacOS/session-desktop" | head -1)
+  wid=$(swift winid.swift $pid | grep "name=Session" | awk '{print $1}')
+  screencapture -x -o -l $wid out.png   # 2560x1320; crop with sips -c H W --cropOffset Y X
+  ```
 
-**Songs and the `.session` format**
-- `daw_standalone::session_file` (daw repo): a live engine project saved as
-  a `.session` and loaded back — the exact inverse of the `.rpp` loader,
-  merged over the original file so what the engine does not model (FX
-  state, unknown lines) survives. Round-trip tests on a fixture and on the
-  real Always On Time.
-- **Prepare once:** opening `Song.RPP` opens `Song.session` beside it if it
-  exists; otherwise it prepares (organize → build from the chart → generate
-  click/count/guide) and saves `Song.session`. `FTS_SESSION_REPREPARE=1`
-  re-prepares. The `prepare` bin / `just prepare` does it ahead of time.
-- All 7 imported songs + the curated `sessions/Always On Time` are prepared.
-  Their charts are the real ones from battleship `~/Downloads/worship kf`,
-  copied into each song folder as `<Song>.kf` (the importer's placeholder
-  chart is kept as `<Song>.kf.imported`). Chart tempos were checked against
-  the click stems — exact (the stems click at 2×); the importer's own tempos
-  (129.2, 139.67, 143.55) were wrong and are replaced by the charts'.
-- The importer's guessed `Cue N` regions now go on the SECTIONS lane, so a
-  chart replaces them. The 7 imported RPPs were migrated (originals kept as
-  `.RPP.bak`) and re-prepared — no `Cue N` regions remain.
-- Media paths are anchored per song (`project_loader::anchor_media`) and a
-  song opens from its absolute path — relative anchoring once broke every
-  source (no peaks, no audio).
+- **Measuring the live layout** (when a pane looks wrong only in the
+  window — see §7): a temporary `onmounted` + `MountedData::get_client_rect()`
+  logged with `tracing::info!` twice a second, read from the log, then
+  deleted. Headless probes did NOT reproduce the one layout bug that
+  mattered. Never call `get_scroll_size()` from a `use_future` —
+  it panicked ("RefCell already mutably borrowed").
 
-**The setlist** (`session-daw/src/setlist.rs`, `open.rs`, the desktop shell)
-- One engine holds every song; `Setlist::open` opens each, the first current.
-  A setlist is a folder of song folders or a `.setlist` file —
-  `sessions/Worship Set.setlist` (the 7 songs, with the curated Always On Time).
-- Safari-style tabs in the top bar: a colour dot (from the title, or set by
-  hand from the dot — saved to the song's SONG region and its `.session`),
-  and a progress line per tab (the playhead in the current song, where it
-  was left in the others).
-- Picking a tab remounts the views on that song and **moves the audio
-  engine** to it (drop + re-attach: a short device gap). Live mode rolls
-  into the next song at a song's end (`Move::PlayFrom`).
+## 3. Where it stands — done in this session (2026-09-22/23)
 
-**Organize mode** (Mode menu → Organize, in the DAW view)
-- Left: the song's `.kf` in `editor-view` (Blitz-native, from the editor
-  repo), with keyflow colours and live diagnostics (`editor-keyflow-lang`).
-- **Live:** each ~350 ms pause in typing → a worker thread →
-  `prepare::apply_chart` (`rebuild_from_chart` + guide regeneration) → saves
-  the `.kf` and the `.session` → the chart panel shows the new chart
-  (`chart_panel::publish_live`) → the arrangement reads the song back
-  (`studio::request_resync`). Text that does not parse changes nothing.
-- Middle: the chart, one page fitted and following the song. A middle-drag,
-  trackpad scroll or wheel takes it off the fit; a double-click puts it back.
-- Right: the arrangement under the **Organize toolbar** — REAPER's
-  "Organize 1" (`nix/reaper-config/reaper-menu.ini`): Count-In, =START,
-  SONGSTART, the sections, SONGEND, =END, then the time signatures (Shift =
-  one measure). A press hands the arrangement's edit cursor and time
-  selection to the engine, runs the session's own action, regenerates the
-  guide and resyncs.
-- `rebuild_from_chart` (session crate) replaces exactly what a chart owns
-  (SONG/SECTIONS regions; COUNT-IN, SONGSTART, SONGEND, =END; the tempo map;
-  the KEY and CHORD items). Prepare uses it too.
-- **Meter:** measures lay out at their own meter, meter changes are stamped
-  as time-signature points, and chords are placed at their measure's real
-  start. The keyflow parser was fixed so `!T2/4` alone on its line is a bar
-  of 2/4. God, I'm Just Grateful's Breakdown is now that bar (chart edited,
-  song re-prepared: 2/4 at 66.67 s, 4/4 again at 68.33 s).
+### Charts (keyflow) and the songs' `.kf`
 
-**The arrangement and the app**
-- Real waveforms from take peaks (the `.sessionpeaks` / `.reapeaks` cache),
-  drawn normalized per take (display only; gain capped at about +27.6 dB).
-- One arrangement painter: the widget. The vello window, `frame.rs`, the
-  WRY window, the synthetic Blitz experiments and the unused
-  `daw_ui::studio` parts are gone; `bench` and `blitz_shot` draw through the
-  widget.
-- A compact track panel in the docked (Overview) arrangement.
-  `Viewport::panel_w` is the one number everything placed against time reads.
-- Follow playhead (a toolbar toggle, on by default): the view pages, it
-  does not slide.
-- Space always plays/stops: the **window** reads the transport keys
-  (`keys::use_window_transport_keys`), the widget leaves play/stop to it,
-  and a rename or the chart editor holding the keyboard makes it stand aside.
-- The window opens maximized. Crashes fixed: a `peek()` borrow held across a
-  `set` in follow; Blitz panicking on a drag whose pressed node was removed.
+All seven imported songs + the curated `sessions/Always On Time` have
+their **real chords** in their `.kf` now (the user dictated rhythms; old
+charts kept beside them as `<Song>.kf.before-chords`):
 
-### Not verified by an agent — the user should check
+| song | notes / guesses to confirm |
+|---|---|
+| God, I'm Just Grateful | CH 2A, 3A, 3B end on 5–4; CH 2B → 1/3 2m7; CH 3C "Alt" ends N.C. (`r r`); pushes `1maj7 /// 5 /` etc. |
+| Holy Forever | Pre 1 has no passing 6; Pre 2 ends 42; Turn removed; Tag 2 = "We'll sing…amen" line (guess); CH B's 1/3 pickup on beat 3 of the previous bar (guess) |
+| Thank God I'm Free | CH = first half, Post = second half; Bridge 2/Tag B/D# as a 2-beat pickup (guess); Chorus 2 = 6 bars N.C. (`r1`) then A5 G#5 E F#m |
+| Washed | intro/verse `1/3 / 4 /// '5/7 / 6m ///`, verse ends `2m //// '5sus ////`, chorus `1 '4 6m '5sus`; bridge/refrain 2 bars a chord (guess) |
+| Who Else | INST = 42 5 42 5; three bridges (BR C is 4 bars: 42 5 6m7 5); bar splits are guesses |
+| Always On Time, Praise | charts unchanged (they had chords) |
 
-Anything needing a click or a key in the live window: typing in the chart
-editor, the Organize toolbar with and without a time selection, switching
-tabs with audio, Space after clicking the progress bar, the chart's
-middle-drag and double-click. The engine-side behaviour under each has tests.
+Keyflow language/engine changes (keyflow + daw's keyflow-proto):
+- `42` / `4:2` / `G2` = add2, displayed `4add2`; `add4` stays `add4`;
+  `5(add4)` parses (a parenthesised addition belongs to its chord — the
+  chart parser used to read it as a rhythm group and leak a `_2` length).
+- **Chord memory is OFF by default**; `/CHORD_MEMORY=true` under the header
+  turns it on. Explicit assignments (`Cm = Cm7b5`) still apply.
+- Bare `r` / `s` = a bar of rest/space in place (was dropped + padded at the
+  end). Bare `PRE`/`Post`/`Intro`/`Outro` headers replay (were excluded). A
+  chart may open on a counted `PRE`/`Post`. A bare header replays the
+  **most recent** writing of that section.
+- The engraver's playback cursor keeps time at each measure's own meter
+  (the 2/4 Breakdown bug).
+- Chord track: a chord ends at its bar line; rests make no item; **pushes
+  (`'4`) sound an eighth early** on the CHORD track.
 
-### Known issues and open threads
+### The ruler's CHORDS lane, and the Keyflow folder
 
-- **Asked for next:** DAW → `.kf` — regenerate the chart text from the
-  session when the arrangement is edited (two-way sync; the kf → DAW half is
-  live). Nothing exists for it yet. Until it does, Organize-toolbar inserts
-  do not reach the `.kf` text either.
-- **Left and right rail toolbars** in the arrangement — only the top one is
-  back, in Organize. The old rails in `rails.rs` were the vello window's
-  scene/phase/mode switchers, which is not what the user means; ask.
-- Switching songs reopens the audio device (a gap). A seamless handover
-  needs daw-standalone to swap the project under one stream.
-- The browser demo (`session-daw-web`) opens one song: no setlist, and it
-  does not fetch `Media/Peaks/*.sessionpeaks` (its items draw plain).
-- `golden_scenes` fails: 8 mixer scenes drifted before this work, not ours.
-  `just daw-scenes` refreshes them once the user has looked at them.
-- Tab titles are clipped mid-glyph (Blitz has no `text-overflow: ellipsis`).
-- `~/.config/fts/guide-samples/Counts/English Female - 8.wav` is missing;
-  every prepare warns about it.
-- `chart_to_layout` counts bpm in quarter notes (a bar of 6/8 is 3 quarters).
-- Worktree `/Volumes/build-disk/development/session-onepath` (branch
-  `one-arrangement-painter`) is fully cherry-picked into `macos-compat` and
-  can be removed (`git worktree remove`); it shares `target/`.
+- Chord/key names are item **labels** (REAPER `P_NOTES`), and the
+  `.session` round trip dropped them → blank CHORDS lane. Fixed in
+  daw-standalone (loader reads `<NOTES>`, writer writes it; an empty take
+  is added for take-less KEY items). All songs re-prepared.
+- The Keyflow folder is **visible** now, with KEY, CHORD, LINES, HITS hidden
+  (`prepare` hides them); only its new **Lyrics** track shows. The user
+  wants the chords on the ruler lane, not as tracks. **LINES is for
+  melodies** — never put lyrics there.
 
-## 4. What is next, in the order the user asked
+### Lyrics (new)
 
-1. Confirm the live window works (the "not verified" list): fix what the
-   user reports, starting from `~/Library/Logs/Session Dev/session-dev.log`.
-2. DAW → `.kf` generation and two-way sync. In the user's words: "the
-   current DAW state should always be reflected as a .kf file text that we
-   can live edit and vice versa" — toolbar inserts and arrangement edits
-   must reach the text.
-3. The left and right rail toolbars for the arrangement.
-4. A section/measure progress bar under the main progress bar.
-5. The web demo: setlist, peaks from the share link, then replace `/demo`
-   in `apps/web` and deploy — only after the user says the demo is right.
-6. The iPhone app.
+- **Model** — `crates/session/session/src/lyrics.rs`: `Layer` (7 layers),
+  `Lyrics { lines }` with `Line/Word/Syllable` (seconds + optional pitch),
+  `from_lrc`, `deepest()/layers()`, `sections(&[SectionSpan])` (a line
+  belongs to the section it overlaps most), `slides(sections, 2)`,
+  `from_items`, `stamp_lines` (onto the Lyrics track, created before HITS
+  in the Keyflow folder), `Anchor` + `align`.
+- **Fetch** — `session lyrics fetch` (apps/cli/src/lyrics/): LRCLIB (no
+  auth), provider trait with room for Spotify/Deezer/Musixmatch; title +
+  artists from the `.kf` header; picks the version nearest the song's
+  SONGSTART→SONGEND length (`--pick N` to override). All 8 songs have a
+  `<Song>.lrc`. Doubtful picks: **Holy Forever** (nearest recording is 82 s
+  shorter), **Praise** (radio edit), **Always On Time** (credited "feat.
+  Bella Cordero"). The user pointed at
+  github.com/tappyduckmancodes/multiplatform-lyric-downloader as the model.
+- **Anchors** — each `.lrc` carries `[#anchor: <section> | <beats> | <line> |
+  drop-before]`; prepare resolves the section to its region's downbeat
+  (`VS 1` also matches `VS 1A`), adds beats at the song's tempo, shifts
+  every line, optionally drops lines before. Set per the user:
+  Always On Time `VS 1 | -1`, Grateful/Holy Forever/Praise/Free `VS 1 | 0`
+  (Free drops 3 ad-libs), Washed `VS 1 | -1` (drops the opening chorus),
+  Who Else `CH 1 | -2 | Who else is worthy`. One anchor = one global shift;
+  lines drift where the recording's arrangement differs.
+- **Panel** — `apps/session-daw/src/lyrics_panel.rs`, in the Overview
+  under the chart (and in the Performance view beside it). Three views:
+  **Confidence Monitor** (default; ProPresenter stage display: current
+  slide white, rule, next slide in its **section colour**, yellow if the
+  colour is whitish; rotated section-name rails down the left of each
+  half; the section strip along the bottom), **Performer** (one header
+  line — section chip, progress, "next in Ns" — over a self-scrolling
+  teleprompter of the whole song), **Audience** (words sized to fill,
+  section-tinted glow, title card, dark in instrumentals; layer
+  Section/Slides/Lines). The view picker is a **dropdown that appears only
+  while the mouse moves** over the panel (2.5 s linger). The choice is held
+  across songs (`LyricsChoice` context in the desktop shell). The panel
+  runs **ahead** of the song: sections/slides 1 s early (a pickup brings
+  its section in), lines 0.4 s early.
 
-## 5. Repos, branches, and what must be pushed first
+### The Overview and the app
+
+- DAW tab = the arrangement only. The chart editor is a column in the
+  Overview beside the chart, toggled by an **Edit** button at the chart's
+  top-left; Organize opens it, other modes close it.
+- Overview left column = one pane: the chart (full width, `aspect-ratio`
+  of a fitted page + 30% of the next) over the lyrics.
+- The chart's paged fit shows the page plus the next page's first measure.
+- Organize toolbar: one row, scrolls sideways.
+- Mixer open/closed remembered per mode and view (`MixerMemory`); Organize
+  starts closed.
+- A song opens fitted: `z v` then `z x` on first paint.
+
+## 4. The user's preferences learned this session
+
+- Wants fixes in the tool, not workarounds in data ("we should be fixing
+  the keyflow parser itself").
+- Keyflow folder tracks stay hidden except Lyrics; chords live on the ruler.
+- The chart preview takes the full width; no gaps between panes.
+- Lyrics switch a little early; section changes must be obvious on the
+  stage display (colour + rail).
+- Delegates: happy for subagents to take keyflow parser work.
+
+## 5. Known issues and open threads
+
+- **The lyrics panel reads the Lyrics track once**, when the song mounts;
+  moving lyric items in the arrangement does not update it until the song
+  is reopened. Next obvious fix (re-read on `studio::request_resync`).
+- Word / Syllable / Syllable+melody layers have types, no workflow (the
+  user: "later"). keyflow-sync has an alignment pipeline to lean on.
+- Spotify/Deezer/Musixmatch providers not written (Spotify needs the
+  user's own token via env var — never handle secrets).
+- Lyrics are not in the web demo.
+- keyflow: `050_chart_view::nashville_and_roman_end_to_end` fails (expects
+  `6m`, gets `6`) — pre-existing, not ours.
+- session: `golden_scenes` — 8 mixer scenes drifted before this work.
+- `~/.config/fts/guide-samples/Counts/English Female - 8.wav` missing
+  (every prepare warns).
+- `daw/docs/guides/keyflow/*.md` is a drifted copy of keyflow's guides;
+  only keyflow's has the new sections/chords wording.
+- From the previous handoff, still open: DAW → `.kf` two-way sync;
+  left/right rail toolbars (ask what the user means); a section/measure
+  progress bar under the main one; seamless song switching (device gap);
+  the web demo (setlist, peaks); tab titles clipped mid-glyph;
+  `chart_to_layout` counts bpm in quarter notes; worktree
+  `/Volumes/build-disk/development/session-onepath` can be removed.
+
+## 6. What is next
+
+In the user's order of interest: keep polishing the lyric views (they
+react fast — screenshot every change); lyrics word/syllable workflows;
+DAW → `.kf` sync; the web demo (then replace `/demo` in `apps/web`,
+deploy only after the user approves); the iPhone app.
+
+## 7. Traps learned the hard way
+
+- **Blitz: absolutely placed content inside a flex item that gets its
+  size from the row's stretch is laid out against the PRE-stretch size**
+  (2 px): the chart editor was a one-line sliver until clicked. Give the
+  column an explicit `height:100%`. Headless probes don't show it.
+- **Blitz: `aspect-ratio` + `max-height`** shrinks the WIDTH to keep the
+  ratio — the chart went narrow. Use one or the other.
+- Blitz does support `transform: rotate(…)` (the rails) and
+  `radial-gradient`.
+- **Blitz crash "invalid key" in `snapshot_node`** — a click on a node the
+  click removes (a closing menu). Fixed in the blitz branch (`e30bcb29`,
+  with a test); if another "invalid key" shows, look for the same shape.
+- **rsx format strings can't hold an inline `if`** (`{if a {1} else {2}}`)
+  — compute a variable first.
+- Item labels only persist because of the `<NOTES>` fix — anything that
+  names items (chords, keys, lyric lines) depends on it.
+- `prepare` rebuilds from the **`.RPP`**, not the `.session`: re-preparing
+  discards anything edited only in the session (e.g. lyric items moved by
+  hand). Once hand edits matter, prepare must stop being the way to apply
+  a `.lrc`.
+- dynamic-template has a deliberate **track-count tripwire**
+  (`golden_session::rpp` asserts 278 since Lyrics was added).
+- **Testing keyflow alone doesn't resolve** (its lockfile wants tags that
+  don't exist: `keyflow-proto` from daw's local branch, architect
+  `v0.7.5`). Borrow the session lockfile and patch both crates, restoring
+  keyflow's own `Cargo.lock` after:
+
+  ```bash
+  cd /Volumes/build-disk/development/keyflow
+  cp Cargo.lock /tmp/kf.lock && cp ../session/Cargo.lock Cargo.lock
+  P='patch."https://github.com/FastTrackStudios/daw"'
+  cargo test -p keyflow-text --config "$P.keyflow-proto.path=\"../daw/crates/keyflow/keyflow-proto\"" \
+                             --config "$P.keyflow-syntax.path=\"../daw/crates/keyflow/keyflow-syntax\""
+  cp /tmp/kf.lock Cargo.lock
+  ```
+
+  keyflow's and session's `Cargo.lock` carry uncommitted changes that are
+  not ours — never commit them.
+- Probing a chart quickly: a throwaway test in
+  `features/engraver/proto/src/engraver/layout/chart/tests.rs` that
+  `keyflow_text::chart::parse_chart`s a file and prints each bar's
+  `full_symbol@position.total_duration.beat` (and `push_pull`), run with
+  the recipe above, then the file restored. `prepare` also refuses a chart
+  whose bar counts don't add up.
+- From before: never run cargo inside `nix develop`; a `.peek()` in an
+  `if let` scrutinee holds its borrow; `git add justfile` matches nothing
+  (it is `Justfile`); guide generation writes one item per role — don't
+  clear past the song; `!T2/4` on a section *header* line is not a meter
+  change; the in-app browser pane has no audio; the box's load is often
+  50–150 — compare CPU time, not wall time.
+
+## 8. Repos, branches, and what must be pushed first
 
 | repo | branch | local-only work |
 |---|---|---|
-| `session` | `macos-compat` | ~60 commits past `origin/main` |
-| `daw` | `tag-section` | `.session` bridge, sessionpeaks, anchor_media, the marker-GUID fix |
-| `keyflow` | `tag-section` | Tag, `page_number_at_time`, editor-state without fences, **the `!T` parser fix** |
+| `session` | `macos-compat` | ~80 commits past `origin/main` (today: the lyrics system, Overview, editor toggle, mixer memory, fit-on-open, signing, chord track) |
+| `daw` | `tag-section` | ~29: `.session` bridge, sessionpeaks, anchor_media, marker GUID; today: add2/add4, chord-memory setting, **item labels through `.session`** |
+| `keyflow` | `tag-section` | today: cursor meter fix, chord memory off, 42=add2, parser fixes (parens, bare r, bare PRE/Post, counted PRE/Post first), LotF tests ignored |
 | `editor` | `main` (3 ahead of origin) | test CSS path, typst/mermaid as features, `EDITOR_CSS` |
-| `blitz` | `session-stale-mousedown` (off `db4318a9`) | the drag panic fix |
-| `task` | `session-share-cli` | share links (the morning's; untouched since) |
+| `blitz` | `session-stale-mousedown` | the drag panic fix **and the focus "invalid key" fix** |
+| `task` | `session-share-cli` | share links (untouched since the 22nd) |
 
-Session's `Cargo.toml` `[patch]` tables point at sibling paths for `daw` (as
-before), `keyflow` (engraver-proto, editor-keyflow-lang, **keyflow,
-keyflow-text**), `editor` (editor-view, -state, -vim, -syntax) and
-**`blitz-*`**. Before session is pushed: push those branches or tags, move
-the git pins (the blitz `rev`, the keyflow and editor tags) and drop the
-path entries.
+Session's `Cargo.toml` `[patch]` tables point at sibling paths for `daw`
+(keyflow-proto, keyflow-syntax, daw crates), `keyflow` (engraver-proto,
+editor-keyflow-lang, keyflow, keyflow-text), `editor` (editor-view, -state,
+-vim, -syntax) and `blitz-*`. Before session is pushed: push those branches
+or tags, move the git pins (the blitz `rev`, the keyflow and editor tags,
+daw's tag) and drop the path entries. Data outside git: the songs' `.kf`,
+`.lrc` and `.session` files under `/Volumes/build-disk/development/sessions/`.
 
-## 6. Traps learned the hard way
-
-- **Never run cargo inside `nix develop`** — it recompiles the world.
-- A `.peek()` in an `if let`/`match` scrutinee holds its borrow for the
-  whole block; a `set` inside it panics "already borrowed".
-- `open --stdout` onto the external `/Volumes/build-disk` fails
-  (LaunchServices -10810), and so does launching a bundle whose binary was
-  overwritten in place (rm, then cp).
-- `git add justfile` matches nothing: the file is `Justfile` (the volume is
-  case-insensitive, git is not).
-- A relative folder handed to `anchor_media` anchored nothing (it is
-  absolutized now).
-- Guide generation writes ONE item per role over the whole song; do not
-  "clear past the song" — that deletes the new item.
-- keyflow: `!T2/4` on a section *header* line is not a meter change; it goes
-  on its own line or before a chord.
-- The in-app browser pane has no audio device; audio is checked by ear.
-- This box's load is often 50–150 from other agents: compare CPU time, not
-  wall time, when benchmarking.
-
-## 7. Files worth reading first
+## 9. Files worth reading first
 
 | what | where |
 |---|---|
-| open, the engine, the audio slot, switching songs | `apps/session-daw/src/open.rs` |
-| prepare, apply_chart, chart_beside | `apps/session-daw/src/prepare.rs` |
-| StudioSession, the prepare-once policy, resync | `apps/session-daw/src/studio.rs` |
-| the setlist, colours, reading a `.setlist` | `apps/session-daw/src/setlist.rs` |
-| the tabs, the top bar | `apps/session-daw/src/shell.rs` |
-| the desktop shell, the Organize layout, live advance | `apps/desktop/src/native/shell.rs`, `mod.rs` |
-| the chart editor (live) | `apps/session-daw/src/chart_editor.rs` |
-| the Organize toolbar | `apps/session-daw/src/organize.rs` |
-| the chart panel (paged, live chart, pan/zoom) | `apps/session-daw/src/chart_panel.rs` |
+| lyrics model, anchors, stamping | `crates/session/session/src/lyrics.rs` |
+| lyrics panel (3 views, dropdown) | `apps/session-daw/src/lyrics_panel.rs` |
+| lyrics fetcher (LRCLIB) | `apps/cli/src/lyrics/` |
+| prepare, stamp_lyrics, apply_chart | `apps/session-daw/src/prepare.rs` |
+| the Overview layout | `apps/session-daw/src/shell.rs` (`OverviewLayout`) |
+| the desktop shell (views, editor toggle, contexts) | `apps/desktop/src/native/shell.rs` |
+| chart panel (paged fit, next-page peek) | `apps/session-daw/src/chart_panel.rs` |
+| chord track voicings (pushes, rests) | `crates/session/session/src/keyflow/generate.rs` |
 | rebuild_from_chart | `crates/session/session/src/keyflow/from_chart.rs` |
-| chart → timeline (meters) | `crates/session/session/src/setlist/chart_import.rs` |
-| the window's transport keys | `apps/session-daw/src/keys.rs` |
-| `.session` save and load | `daw/features/standalone/daw-standalone/src/session_file.rs` |
-| the peaks cache | `daw/features/dawfile/dawfile-reaper/src/sessionpeaks.rs` |
+| mixer memory | `apps/session-daw/src/mixer_panel.rs` |
+| `.session` save/load (labels) | `daw/features/standalone/daw-standalone/src/session_file.rs`, `project_loader.rs` |
+| chord parsing (add2/add4, parens) | `daw/crates/keyflow/keyflow-proto/src/chord/definition.rs`, `normalization.rs` |
+| chord memory setting | `daw/crates/keyflow/keyflow-proto/src/chart/memory.rs`, `settings.rs` |
+| chart parser | `keyflow/crates/keyflow/keyflow-text/src/chart/parser/{chords,sections,metadata}.rs` |
+| open, setlist, tabs | `apps/session-daw/src/open.rs`, `setlist.rs`, `shell.rs` |
 
-## 8. The browser demo and Task (unchanged since the morning)
+## 10. The browser demo and Task (unchanged since 2026-09-22 morning)
 
 ```bash
 # Task's local servers (ACME on :18080) — plants the demo world first.
@@ -246,20 +320,11 @@ cd session
 cargo run -p session-cli -- proxies "../sessions/imported/<Song>"
 cargo run -p session-cli -- guide-library ~/.config/fts/guide-samples /tmp/guide-ogg
 
-# Import multitracks (already done for the seven)
-cargo run -p session-cli -- import ../sessions/multitracks --out ../sessions/imported
-
 # The web bundle (release + wasm-opt, ~2 min), and a static server on :8765
 just web-daw                      # optionally: SESSION RPP CHART to bake a session in
 just web-daw-serve
 ```
 
 The demo page takes its session from the query:
-
-```
-http://localhost:8765/?share=<link>&project=<Song>.RPP&chart=<Song>.kf&guide=<guide link>
-```
-
-Both links were minted against the local Task server during this work
-(`acme-audio`, tokens `66db5c05…` for the session, `b2c6d8e8…` for the
-guide library). Re-mint after a fresh `just demo fresh`.
+`http://localhost:8765/?share=<link>&project=<Song>.RPP&chart=<Song>.kf&guide=<guide link>`.
+Re-mint the share links after a fresh `just demo fresh`.
