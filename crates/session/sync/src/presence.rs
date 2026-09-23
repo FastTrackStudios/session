@@ -434,9 +434,11 @@ impl PointerTrail {
                 return place(&sample.1);
             };
             let k = (t - prev.0) / (sample.0 - prev.0);
+            // Into a place this view cannot show: gone at once, not left
+            // where it last was.
             return match (place(&prev.1), place(&sample.1)) {
                 (Some(a), Some(b)) => Some(((b.0 - a.0).mul_add(k, a.0), (b.1 - a.1).mul_add(k, a.1))),
-                (a, b) => b.or(a),
+                (_, b) => b,
             };
         }
         before.and_then(|s| place(&s.1))

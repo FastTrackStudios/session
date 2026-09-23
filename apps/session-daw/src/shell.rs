@@ -148,6 +148,17 @@ pub fn TopBar(
     }
 }
 
+/// Who else in the session is on a song, for its tab.
+#[cfg(feature = "native")]
+fn peer_dots(project: String) -> Element {
+    rsx! { crate::collab_bar::PeerDots { project } }
+}
+
+#[cfg(not(feature = "native"))]
+fn peer_dots(_project: String) -> Element {
+    rsx! {}
+}
+
 /// The setlist across the bar, as Safari lays out its tabs: one rounded
 /// strip in the middle of the bar, a tab per song sharing its width, the
 /// current one raised.
@@ -201,13 +212,17 @@ pub fn SongTabs(
                         "transparent"
                     };
                     let color = song.color.clone();
+                    // A set of many songs in a narrow window: tabs too
+                    // small for the usual inset keep their dot in view.
+                    let pad = if count > 5 { 4 } else { 12 };
                     rsx! {
                         div {
                             key: "{song.project}",
                             style: "position:relative; flex:1; min-width:0; display:flex; \
                                     align-items:center; justify-content:center; gap:7px; \
-                                    padding:0 12px; border-radius:7px; background:{ground}; \
-                                    border-left:1px solid {divider}; cursor:default;",
+                                    padding:0 {pad}px; border-radius:7px; background:{ground}; \
+                                    border-left:1px solid {divider}; cursor:default; \
+                                    overflow:hidden;",
                             onclick: move |_| {
                                 if let Some(pick) = on_pick {
                                     pick.call(index);
@@ -228,6 +243,7 @@ pub fn SongTabs(
                                         font-weight:600;",
                                 "{song.name}"
                             }
+                            {peer_dots(song.project.clone())}
                             // How far through the song: a line along the foot.
                             div {
                                 style: "position:absolute; left:10px; right:10px; bottom:2px; \

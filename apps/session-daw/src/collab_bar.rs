@@ -13,7 +13,6 @@ use std::time::Duration;
 use dioxus::prelude::*;
 
 use crate::shell::{ACCENT, RULE, TEXT};
-use crate::studio::StudioSession;
 
 /// Where an env-started host leaves its ticket.
 fn ticket_path() -> std::path::PathBuf {
@@ -30,26 +29,23 @@ fn display_name() -> String {
 
 #[component]
 pub fn CollabBar() -> Element {
-    let session: StudioSession = use_context();
     let mut status = use_signal(crate::collab::status);
     let mut error = use_signal(|| None::<String>);
     let mut joining = use_signal(String::new);
 
     // The environment's session, once the song is up.
-    let chart = session.chart_file.clone();
     use_hook(move || {
-        let chart = chart.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(1500));
             // The song's own record of its edits, from the first moment —
             // shared or not.
             if !crate::collab::env_set("FTS_COLLAB_JOIN")
-                && let Err(e) = crate::collab::open_local(chart.clone())
+                && let Err(e) = crate::collab::open_local()
             {
                 tracing::warn!(collab.error = %e, "collab: the song's history is not being kept");
             }
             if crate::collab::env_set("FTS_COLLAB_HOST") {
-                match crate::collab::host(display_name(), chart) {
+                match crate::collab::host(display_name()) {
                     Ok(ticket) => {
                         let path = ticket_path();
                         if let Err(e) = std::fs::write(&path, &ticket) {
@@ -104,13 +100,12 @@ pub fn CollabBar() -> Element {
              background:{bg}; color:{fg}; font-size:11px; font-weight:600; cursor:pointer;"
         )
     };
-    let chart = session.chart_file.clone();
     let body = match status() {
         None => rsx! {
             button {
                 style: button(false),
                 title: "Share this song: others can join and edit it with you",
-                onclick: move |_| crate::collab::host_in_background(display_name(), chart.clone()),
+                onclick: move |_| crate::collab::host_in_background(display_name()),
                 "Share"
             }
             input {
@@ -164,6 +159,54 @@ pub fn CollabBar() -> Element {
             if let Some(why) = error() {
                 span { style: "font-size:11px; color:#e3b341; max-width:220px; overflow:hidden; \
                                text-overflow:ellipsis; white-space:nowrap;", title: "{why}", "{why}" }
+            }
+        }
+    }
+}
+
+/// Who else is on a song: a coloured initial each, for its tab.
+#[component]
+pub fn PeerDots(project: String) -> Element {
+    let mut here = use_signal(Vec::<(String, u32)>::new);
+    let watching = project.clone();
+    use_future(move || {
+        let watching = watching.clone();
+        async move {
+            loop {
+                let now = crate::ghosts::on_song(&watching);
+                if *here.peek() != now {
+                    here.set(now);
+                }
+                futures_timer::Delay::new(Duration::from_millis(300)).await;
+            }
+        }
+    });
+    let people = here();
+    if people.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        // In the tab's corner, over whatever is there: a tab in a narrow
+        // window has no room to spare in its row.
+        div {
+            style: "position:absolute; top:1px; right:2px; display:flex; align-items:center; \
+                    pointer-events:none;",
+            for (i, (name, color)) in people.into_iter().enumerate() {
+                {
+                    let (r, g, b) = ((color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
+                    let initial = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                    let overlap = if i == 0 { 0 } else { -5 };
+                    rsx! {
+                        div {
+                            title: "{name}",
+                            style: "width:14px; height:14px; border-radius:7px; margin-left:{overlap}px; \
+                                    background:rgb({r},{g},{b}); border:1.5px solid #0f1012; \
+                                    display:flex; align-items:center; justify-content:center; \
+                                    color:#101114; font-size:8px; font-weight:700; line-height:1;",
+                            "{initial}"
+                        }
+                    }
+                }
             }
         }
     }

@@ -44,6 +44,28 @@ pub fn publish(roster: Option<Roster>, clock_offset_ms: f64, show_play: bool) {
     }
 }
 
+/// Everyone in the session and the song each is on — by the song's
+/// project here: (project, name, colour), for the song tabs.
+static EVERYONE: Mutex<Vec<(String, String, u32)>> = Mutex::new(Vec::new());
+
+/// Publish who is on which song.
+pub fn publish_everyone(everyone: Vec<(String, String, u32)>) {
+    if let Ok(mut slot) = EVERYONE.lock()
+        && *slot != everyone
+    {
+        *slot = everyone;
+    }
+}
+
+/// The people on the song that is `project` here: (name, colour).
+#[must_use]
+pub fn on_song(project: &str) -> Vec<(String, u32)> {
+    EVERYONE
+        .lock()
+        .map(|all| all.iter().filter(|(s, _, _)| s == project).map(|(_, n, c)| (n.clone(), *c)).collect())
+        .unwrap_or_default()
+}
+
 /// Anyone to draw: the arrangement keeps repainting while there is, so
 /// pointers glide and play cursors move.
 #[must_use]
@@ -228,7 +250,11 @@ pub fn window_pointers(window: (f64, f64)) -> Vec<(f64, f64, String, u32)> {
                 Pointer::Anchor { panel, key, u, v } => {
                     let (rx, ry, rw, rh) = region_rect(panel)?;
                     let (px, py) = anchor_for(panel)?.place(key, *u, *v, (rw, rh))?;
-                    Some((rx + px, ry + py))
+                    // Only where this window shows it: a measure on a page
+                    // (or a strip scrolled) out of view is not drawn at all
+                    // — never over whatever lies past the panel's edge.
+                    let inside = (0.0..=rw).contains(&px) && (0.0..=rh).contains(&py);
+                    inside.then_some((rx + px, ry + py))
                 }
                 _ => None,
             })?;
@@ -435,15 +461,22 @@ pub fn paint(
         if matches!(peer.trail.latest(), Some(Pointer::Timeline { .. }))
             && let Some((x, y)) = peer.trail.screen_at(local_now, |p| match p {
                 Pointer::Timeline { at, track, y } => {
-                    let y = match track.as_deref().and_then(|g| row_of.get(g)).and_then(|r| band(*r)) {
-                        Some((top, h)) => y.mul_add(h, top),
-                        None => y * crate::ruler::ruler_h(),
+                    let (x, y) = match track {
+                        // Over a track: in its row, if this view shows the
+                        // row — not scrolled under the ruler, not past the
+                        // lanes' foot (where, in a shorter arrangement, the
+                        // mixer or another panel is).
+                        Some(guid) => {
+                            let (top, h) = row_of.get(guid.as_str()).and_then(|r| band(*r))?;
+                            (x_of(*at), y.mul_add(h, top))
+                        }
+                        None => (x_of(*at), y * crate::ruler::ruler_h()),
                     };
-                    Some((x_of(*at), y))
+                    let lanes_top = if track.is_some() { oy } else { 0.0 };
+                    ((left..=view.width).contains(&x) && (lanes_top..=height).contains(&y)).then_some((x, y))
                 }
                 _ => None,
             })
-            && x >= left
         {
             paint_pointer(painter, palette, font, &state.name, color, Point::new(x, y));
         }

@@ -143,19 +143,17 @@ impl crate::ghosts::Anchor for ChartAnchor {
         let (k, scroll) = self.view()?;
         let (px, py) = (scroll.0 + x / k, scroll.1 + y / k);
         let live = self.live.borrow();
-        // The measure across the point whose staff is nearest it — within
-        // a staff's height or so of the system, not over the page margin.
-        let hit = live
-            .boxes
-            .iter()
-            .filter(|b| px >= b.x0 && px <= b.x1)
-            .filter(|b| py >= b.staff_y - 1.5 * b.staff_height && py <= b.staff_y + 2.5 * b.staff_height)
-            .min_by(|a, b| {
-                let centre = |m: &keyflow::engraver::renderer::view::MeasureBox| {
-                    (py - (m.staff_y + m.staff_height / 2.0)).abs()
-                };
-                centre(a).total_cmp(&centre(b))
-            })?;
+        // The nearest measure — to its staff's box, from anywhere on the
+        // chart (a margin, the gap between systems): a pointer in the chart
+        // is always somewhere in the music, so every other view puts it in
+        // the same place, whatever its zoom or page. Off the box, `u`/`v`
+        // run past 0..1 and keep the offset.
+        let distance = |b: &keyflow::engraver::renderer::view::MeasureBox| {
+            let dx = (b.x0 - px).max(px - b.x1).max(0.0);
+            let dy = (b.staff_y - py).max(py - (b.staff_y + b.staff_height)).max(0.0);
+            dx.hypot(dy)
+        };
+        let hit = live.boxes.iter().min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
         Some((
             hit.measure.to_string(),
             (px - hit.x0) / (hit.x1 - hit.x0).max(f64::EPSILON),

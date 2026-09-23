@@ -1568,7 +1568,7 @@ app PROJECT="" CHART="" MODE="":
     # Collaboration (collab_bar.rs): share on open, or join a ticket / the
     # file a host writes one to. A joining copy is a SECOND window beside
     # the host, so it neither kills the running one nor shares its log.
-    for var in FTS_COLLAB_HOST FTS_COLLAB_JOIN FTS_COLLAB_NAME FTS_COLLAB_TICKET FTS_COLLAB_PUPPET FTS_COLLAB_PUPPET_TRANSPORT FTS_COLLAB_PUPPET_MOUSE FTS_WINDOW_POS FTS_WINDOW_SIZE; do
+    for var in FTS_COLLAB_HOST FTS_COLLAB_JOIN FTS_COLLAB_NAME FTS_COLLAB_TICKET FTS_COLLAB_PUPPET FTS_COLLAB_PUPPET_TRANSPORT FTS_COLLAB_PUPPET_MOUSE FTS_WINDOW_POS FTS_WINDOW_SIZE FTS_SESSION_SONG; do
         if [[ -n "${!var:-}" ]]; then envs+=(--env "$var=${!var}"); fi
     done
     if [[ -n "${FTS_COLLAB_JOIN:-}" ]]; then
@@ -1610,16 +1610,21 @@ duo PROJECT MODE="live" NAME_A="Cody" NAME_B="Alice":
     # The main screen's usable area, in points: below the menu bar, above
     # the Dock — NOT Finder's desktop bounds, which span every monitor.
     read -r X Y W H < <(swift -e 'import AppKit; let s = NSScreen.main!; let f = s.visibleFrame; print(Int(f.origin.x), Int(s.frame.height - f.maxY), Int(f.width), Int(f.height))' 2>/dev/null)
-    half=$((W / 2))
+    # Not an even split: the sharer's window is a little narrower, so
+    # every panel is a different size on each side — what anchored
+    # pointers have to survive. DUO_SPLIT is the left one's share, in %.
+    left=$((W * ${DUO_SPLIT:-44} / 100))
+    right=$((W - left))
     ticket="${TMPDIR:-/tmp}/fts-session-ticket"
     rm -f "$ticket"
     FTS_COLLAB_HOST=1 FTS_COLLAB_NAME={{quote(NAME_A)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
-        FTS_WINDOW_POS="${X},${Y}" FTS_WINDOW_SIZE="${half}x${H}" \
+        FTS_WINDOW_POS="${X},${Y}" FTS_WINDOW_SIZE="${left}x${H}" \
         just app {{quote(PROJECT)}} "" {{quote(MODE)}}
     for _ in $(seq 1 90); do [[ -s "$ticket" ]] && break; sleep 1; done
     [[ -s "$ticket" ]] || { echo "the host did not share (see the log)"; exit 1; }
-    FTS_COLLAB_JOIN="$ticket" FTS_COLLAB_NAME={{quote(NAME_B)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
-        FTS_WINDOW_POS="$((X + half)),${Y}" FTS_WINDOW_SIZE="${half}x${H}" \
+    # JOIN_SONG=<n> starts the joiner on the set's n-th song.
+    FTS_SESSION_SONG="${JOIN_SONG:-}" FTS_COLLAB_JOIN="$ticket" FTS_COLLAB_NAME={{quote(NAME_B)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
+        FTS_WINDOW_POS="$((X + left)),${Y}" FTS_WINDOW_SIZE="${right}x${H}" \
         just app {{quote(PROJECT)}} "" {{quote(MODE)}}
     echo "sharing: $(cat "$ticket")"
 

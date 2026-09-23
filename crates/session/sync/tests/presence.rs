@@ -189,3 +189,23 @@ fn a_pointer_can_be_anchored_to_what_it_is_over() {
     let p = Pointer::Anchor { panel: "chart".into(), key: "39".into(), u: 0.75, v: -0.2 };
     assert_eq!(Pointer::decode(&p.encode(1.0)), Some((p, 1.0)));
 }
+
+#[test]
+fn a_pointer_moving_where_this_view_cannot_show_is_gone_not_left_behind() {
+    // Page 1's measure is on screen here; page 2's is not.
+    let place = |p: &Pointer| match p {
+        Pointer::Anchor { key, u, v, .. } if key == "3" => Some((u * 100.0, v * 40.0)),
+        _ => None,
+    };
+    let anchor = |key: &str| Pointer::Anchor { panel: "chart".into(), key: key.into(), u: 0.5, v: 0.5 };
+    let mut trail = PointerTrail::default();
+    trail.push(anchor("3"), 0.0, 0.0);
+    trail.push(anchor("40"), 100.0, 100.0);
+    // On its way to measure 40 it is already nowhere here — not parked
+    // on measure 3, and not somewhere past the chart's edge.
+    assert_eq!(trail.screen_at(50.0 + INTERPOLATION_DELAY_MS, place), None);
+    assert_eq!(trail.screen_at(500.0 + INTERPOLATION_DELAY_MS, place), None);
+    // And back on page 1, it is drawn again.
+    trail.push(anchor("3"), 200.0, 200.0);
+    assert_eq!(trail.screen_at(900.0 + INTERPOLATION_DELAY_MS, place), Some((50.0, 20.0)));
+}

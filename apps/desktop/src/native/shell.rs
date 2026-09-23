@@ -67,6 +67,18 @@ pub fn Shell() -> Element {
     let opened: session_daw::setlist::Setlist = use_context();
     let mut setlist = use_context_provider(|| Signal::new(opened));
     use_live_advance(setlist, mode);
+    // `FTS_SESSION_SONG=<n>` (1-based): open the set on its n-th song — to
+    // start somewhere other than the top, or (the collaboration demo) to
+    // put a second window on a different song from the first.
+    use_hook(move || {
+        let index = std::env::var("FTS_SESSION_SONG").ok().and_then(|n| n.parse::<usize>().ok());
+        if let Some(index) = index.and_then(|n| n.checked_sub(1)) {
+            let picked = setlist.write().pick(index, 0.0).map(|song| song.project.clone());
+            if let Some(project) = picked {
+                session_daw::open::switch_song(&project);
+            }
+        }
+    });
     // Space plays and stops whatever has the focus.
     session_daw::keys::use_window_transport_keys();
     let window = dioxus_native::use_window();
