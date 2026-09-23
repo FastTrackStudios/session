@@ -71,6 +71,10 @@ struct Live {
     /// `cursor_y_pt` makes.
     content_pt: (f64, f64),
     px_per_pt: f64,
+    /// The view was moved by hand (a pan or a zoom): a paged panel stops
+    /// fitting the page and following the song until a double-click hands
+    /// it back.
+    manual: bool,
 }
 
 type Shared = Rc<RefCell<Live>>;
@@ -148,6 +152,10 @@ impl ChartWidget {
     /// Before the downbeat (the count-in, or stopped at zero) that is the
     /// first page; past the chart's end, the page it ended on stays up.
     fn fit_page(&mut self, w: f64, h: f64, scale: f64, chart_secs: Option<f64>) {
+        // Moved by hand: the view is where it was put.
+        if self.live.borrow().manual {
+            return;
+        }
         match chart_secs {
             Some(secs) if secs < 0.0 => self.page = 1,
             Some(secs) => {
@@ -203,6 +211,7 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         zoom: 1.0,
         content_pt: (1.0, 1.0),
         px_per_pt: 1.0,
+        manual: false,
     }));
     let widget = ChartWidget {
         chart,
@@ -218,9 +227,11 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
 }
 
 /// Move the view by a screen-pixel delta, in POINTS (so it stays
-/// physically anchored to the content as the zoom changes).
+/// physically anchored to the content as the zoom changes). Takes the view
+/// off the fitted page (see [`Live::manual`]).
 fn pan_by(live: &Shared, dx_px: f64, dy_px: f64) {
     let mut live = live.borrow_mut();
+    live.manual = true;
     let k = live.px_per_pt.max(f64::EPSILON);
     let (cw, ch) = live.content_pt;
     // A page and a half of slack past either edge — panning clean off the
@@ -236,6 +247,7 @@ fn zoom_by(live: &Shared, notches: f64) {
         return;
     }
     let mut live = live.borrow_mut();
+    live.manual = true;
     live.zoom = (live.zoom * ZOOM_STEP.powf(notches)).clamp(ZOOM_MIN, ZOOM_MAX);
 }
 
@@ -276,6 +288,7 @@ pub fn WebChart(
         return rsx! { NoChart {} };
     };
     let input = use_hook(|| Rc::new(Cell::new((false, None::<(f64, f64)>))));
+    let refit = Rc::clone(&live);
     let on_input = move |event: PanelEvent| {
         let (ctrl, drag) = input.get();
         match event {
@@ -305,6 +318,8 @@ pub fn WebChart(
         div {
             style: "position:absolute; top:0; left:0; width:100%; height:100%; \
                     overflow:hidden; background:#1a1b1e;",
+            // Back to the whole page, following the song.
+            ondoubleclick: move |_| refit.borrow_mut().manual = false,
             crate::web_host::WidgetCanvas { widget, panel: on_input }
         }
     }
@@ -432,6 +447,11 @@ pub fn Chart(
                     overflow:hidden; background:#1a1b1e;",
             onmounted: move |event| {
                 *mounted.borrow_mut() = Some(event.data());
+            },
+            // Back to the whole page, following the song.
+            ondoubleclick: {
+                let live = Rc::clone(&live);
+                move |_| live.borrow_mut().manual = false
             },
             object {
                 style: "position:absolute; top:0; left:0; width:100%; height:100%;",
