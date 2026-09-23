@@ -56,6 +56,12 @@ struct Live {
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 
+/// Whether an environment switch is on: set, and not to nothing.
+#[must_use]
+pub fn env_set(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| !v.is_empty())
+}
+
 /// Why the last share or join failed, for the bar.
 static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
@@ -631,7 +637,7 @@ impl Outbox {
     }
 
     fn publish(&mut self, sink: &dyn PresenceSink, now: f64) {
-        if std::env::var_os("FTS_COLLAB_PUPPET").is_some() {
+        if env_set("FTS_COLLAB_PUPPET") {
             self.puppet(sink, now);
             return;
         }
@@ -718,7 +724,7 @@ impl Outbox {
         if self.puppet_beat != Some(beat) {
             // Every fourth beat, everyone plays together from 20 s; the
             // beat after, apart again.
-            if self.puppet_beat.is_some() && std::env::var_os("FTS_COLLAB_PUPPET_TRANSPORT").is_some() {
+            if self.puppet_beat.is_some() && env_set("FTS_COLLAB_PUPPET_TRANSPORT") {
                 let together = beat % 4 == 0;
                 let press = SharedTransport {
                     mode: if together { TransportMode::Shared } else { TransportMode::Independent },

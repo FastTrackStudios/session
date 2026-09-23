@@ -43,12 +43,12 @@ pub fn CollabBar() -> Element {
             std::thread::sleep(Duration::from_millis(1500));
             // The song's own record of its edits, from the first moment —
             // shared or not.
-            if std::env::var_os("FTS_COLLAB_JOIN").is_none()
+            if !crate::collab::env_set("FTS_COLLAB_JOIN")
                 && let Err(e) = crate::collab::open_local(chart.clone())
             {
                 tracing::warn!(collab.error = %e, "collab: the song's history is not being kept");
             }
-            if std::env::var_os("FTS_COLLAB_HOST").is_some() {
+            if crate::collab::env_set("FTS_COLLAB_HOST") {
                 match crate::collab::host(display_name(), chart) {
                     Ok(ticket) => {
                         let path = ticket_path();
@@ -59,7 +59,7 @@ pub fn CollabBar() -> Element {
                     }
                     Err(e) => tracing::warn!(collab.error = %e, "collab: could not host"),
                 }
-            } else if let Some(join) = std::env::var_os("FTS_COLLAB_JOIN") {
+            } else if let Some(join) = std::env::var_os("FTS_COLLAB_JOIN").filter(|v| !v.is_empty()) {
                 let join = join.to_string_lossy().into_owned();
                 let ticket = if join.starts_with("fts-session:") {
                     Some(join)
