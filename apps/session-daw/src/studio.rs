@@ -219,21 +219,42 @@ impl StudioSession {
                 ),
             }
         }
+        let session = Self::read_current(Some(plan.open.as_path()), prepare.chart.clone())?;
+        Ok((session, opened.project_guid))
+    }
+
+    /// The facade's current project, read the way the studio lays it out —
+    /// whatever backend the facade points at. `path` is where the project
+    /// sits on this machine, when it does (the track kinds the template
+    /// wrote are read from it); `chart` the `.kf` to show beside it.
+    ///
+    /// What a Remote window's songs are made of: REAPER's project, read
+    /// back rather than opened (see `crate::setlist::Setlist::attach`).
+    ///
+    /// # Errors
+    ///
+    /// The project could not be read back.
+    pub fn read_current(path: Option<&std::path::Path>, chart: Option<std::path::PathBuf>) -> eyre::Result<Self> {
         const SCENE: &str = "drum-mixing";
-        let path = plan.open.as_path();
-        let raw = fetch().ok_or_else(|| eyre::eyre!("could not read {} back", path.display()))?;
+        let raw = fetch().ok_or_else(|| {
+            eyre::eyre!(
+                "could not read {} back",
+                path.map_or_else(|| "the current project".to_owned(), |p| p.display().to_string())
+            )
+        })?;
         let planner = Planner {
             raw: Arc::new(raw),
             scene: Some(SCENE),
             kinds: Arc::new(
-                crate::open::project_text(path)
+                path.filter(|p| p.exists())
+                    .and_then(|p| crate::open::project_text(p).ok())
                     .map(|read| crate::plan::Kinds::from_text(&read.text))
                     .unwrap_or_default(),
             ),
         };
         let (project, rows) = planner.plan(&planner.raw);
         let previews = previews_of(&project);
-        let chart = prepare.chart.as_deref().and_then(|chart_path| {
+        let parsed = chart.as_deref().and_then(|chart_path| {
             let text = std::fs::read_to_string(chart_path)
                 .inspect_err(|e| tracing::error!(error = %e, path = %chart_path.display(), "chart: could not read"))
                 .ok()?;
@@ -242,17 +263,14 @@ impl StudioSession {
                 .ok()
                 .map(Arc::new)
         });
-        Ok((
-            Self {
-                project,
-                rows,
-                previews,
-                chart,
-                chart_file: prepare.chart.clone(),
-                planner,
-            },
-            opened.project_guid,
-        ))
+        Ok(Self {
+            project,
+            rows,
+            previews,
+            chart: parsed,
+            chart_file: chart,
+            planner,
+        })
     }
 }
 

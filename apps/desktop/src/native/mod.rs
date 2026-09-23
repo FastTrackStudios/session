@@ -9,6 +9,12 @@
 //! daw-standalone engine, prepared the way `just studio-song` prepares it
 //! (organize, build from the chart, generate the click and guide), and handed
 //! to every panel as context.
+//!
+//! That is Engine mode. In Remote and Cue (`--audio remote|cue`,
+//! `--reaper [socket]`, `FTS_AUDIO_MODE`, or the top bar's audio menu last
+//! time — see `session_daw::open::launch_mode`) nothing is opened here: the
+//! window attaches to the system it drives and its open projects are the
+//! set (`session_daw::setlist::Setlist::attach`).
 
 mod shell;
 
@@ -43,7 +49,9 @@ fn choose() -> Option<(PathBuf, Vec<PathBuf>)> {
 /// song it is.
 fn songs_of(target: &Path) -> Option<Vec<PathBuf>> {
     let setlist = (target.is_dir() && !session_daw::open::is_session(target))
-        || target.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("setlist"));
+        || target
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("setlist"));
     if !setlist {
         return Some(vec![target.to_path_buf()]);
     }
@@ -90,9 +98,66 @@ fn remember(project: &Path) {
 /// A session that fails to open says why and offers the Open dialog again,
 /// rather than quitting with no window and nothing on screen.
 pub fn launch() {
+    let mode = session_daw::open::launch_mode();
+    session_daw::open::set_mode(mode.clone());
+    let remote = if mode.owns_project() {
+        None
+    } else {
+        mode.target
+    };
+    let setlist = match remote {
+        Some(target) => match attach(&target) {
+            Some(setlist) => setlist,
+            None => return,
+        },
+        None => match open_chosen() {
+            Some(setlist) => setlist,
+            None => return,
+        },
+    };
+    run(setlist);
+}
+
+/// Attach to the system a Remote or Cue window drives. When it is not
+/// there, say so and offer to try again, to open a session here in Engine
+/// mode instead, or to quit — never quietly play the set here while
+/// someone thinks REAPER is.
+fn attach(target: &session_daw::open::RemoteTarget) -> Option<session_daw::setlist::Setlist> {
+    loop {
+        match session_daw::setlist::Setlist::attach(target) {
+            Ok(setlist) => return Some(setlist),
+            Err(e) => {
+                tracing::error!(error = %e, audio.target = target.kind(), "could not attach to the system this window drives");
+                let answer = rfd::MessageDialog::new()
+                    .set_level(rfd::MessageLevel::Error)
+                    .set_title("Could not reach it")
+                    .set_description(format!("{}\n\n{e}", target.describe()))
+                    .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                        "Try Again".into(),
+                        "Open in Engine Mode".into(),
+                        "Quit".into(),
+                    ))
+                    .show();
+                match answer {
+                    rfd::MessageDialogResult::Custom(choice) if choice == "Try Again" => {}
+                    rfd::MessageDialogResult::Custom(choice) if choice == "Open in Engine Mode" => {
+                        session_daw::open::set_mode(session_daw::open::ModeState::engine());
+                        return open_chosen();
+                    }
+                    _ => return None,
+                }
+            }
+        }
+    }
+}
+
+/// Engine mode: open the chosen song or setlist into the engine.
+fn open_chosen() -> Option<session_daw::setlist::Setlist> {
     let mut chosen = choose();
     let setlist = loop {
-        let Some((target, songs)) = chosen else { return };
+        let Some((target, songs)) = chosen else {
+            return None;
+        };
         match session_daw::setlist::Setlist::open(&songs) {
             Ok(setlist) => {
                 remember(&target);
@@ -110,13 +175,17 @@ pub fn launch() {
                     ))
                     .show();
                 if again != rfd::MessageDialogResult::Custom("Open Another…".into()) {
-                    return;
+                    return None;
                 }
                 chosen = pick().and_then(|target| songs_of(&target).map(|songs| (target, songs)));
             }
         }
     };
+    Some(setlist)
+}
 
+/// The window, over `setlist`.
+fn run(setlist: session_daw::setlist::Setlist) {
     // `FTS_SESSION_AUTOPLAY=1` starts playing as the window opens — for
     // measuring a session while it plays without a hand on the mouse.
     if std::env::var("FTS_SESSION_AUTOPLAY").is_ok_and(|v| v != "0") {

@@ -26,12 +26,32 @@
 //! duration is a self-inflicted wait — so this runs on a worker thread
 //! and the UI waits for the facade to appear
 //! (`daw_ui::studio::project::fetch_when_ready`).
+//!
+//! # The audio mode
+//!
+//! Which of the two a window is, is its audio mode ([`AudioMode`], issue
+//! #142), held here as process state and read everywhere through [`mode`]:
+//! **Engine** owns (the in-process engine plays), **Remote** borrows (the
+//! other system plays; nothing here does), **Cue** borrows with a local
+//! click and guide. It is set once at launch ([`launch_mode`],
+//! [`set_mode`]) and can climb at runtime (see [`crate::audio_mode`]).
+//!
+//! Everything that reaches the local engine rather than the facade goes
+//! through here and says what it needs ([`with_local_engine`],
+//! [`LocalOnly`]): in Remote it is skipped with one warning, never run
+//! against an engine that holds nothing. What the facade CAN do in Remote
+//! is done through it — the song on screen ([`current_song`]), switching
+//! songs ([`switch_song`]), a song's colour ([`set_song_color`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use daw::standalone::Standalone;
 use daw::standalone::project_loader::load_rpp_text;
+
+pub use crate::audio_mode::{
+    AudioMode, Assets, ModeState, RemoteTarget, begin_asset_load, set_assets_progress, set_cue_ready,
+};
 
 /// Keeps the in-process link's acceptor alive for the process's
 /// lifetime. Dropping it silently disconnects every panel.
@@ -74,6 +94,7 @@ pub fn open_silent(path: &Path) -> eyre::Result<Opened> {
 }
 
 fn open_with_audio(path: &Path, audio: bool) -> eyre::Result<Opened> {
+    refuse_unless_local(path)?;
     let opened = load(path)?;
     bootstrap(&opened.daw)?;
     AUDIBLE.store(audio, std::sync::atomic::Ordering::Relaxed);
@@ -110,7 +131,23 @@ fn engine() -> &'static Standalone {
 ///
 /// The file could not be read or parsed, or its media did not materialize.
 pub fn open_another(path: &Path) -> eyre::Result<Opened> {
+    refuse_unless_local(path)?;
     load(path)
+}
+
+/// Opening a file is standing it up in the local engine — which a Remote
+/// or Cue window has none of: the system it drives owns the projects.
+fn refuse_unless_local(path: &Path) -> eyre::Result<()> {
+    let state = mode();
+    if state.owns_project() {
+        return Ok(());
+    }
+    let target = state.target.as_ref().map_or_else(|| "another system".to_owned(), RemoteTarget::describe);
+    eyre::bail!(
+        "{} is not opened here: this window is in {} mode, driving {target}",
+        path.display(),
+        state.requested.name()
+    )
 }
 
 /// Make `project_guid` the song the window shows and the transport plays:
@@ -130,34 +167,237 @@ pub fn switch_to(daw: &Standalone, project_guid: &str, audio: bool) {
     }
 }
 
-/// [`switch_to`] on the process's engine — what picking a setlist tab
-/// does. The audio moves with it when the window plays at all.
+/// Make `project_guid` the song on screen — what picking a setlist tab
+/// does.
+///
+/// - **Engine**: [`switch_to`] on the process's engine; the audio moves
+///   with it when the window plays at all.
+/// - **Remote / Cue**: the facade's project service selects it — a REAPER
+///   tab — and waits for the answer, so a play pressed next plays this
+///   song. A Cue window's click and guide go with it
+///   ([`cue_follow_song`]).
 pub fn switch_song(project_guid: &str) {
-    switch_to(engine(), project_guid, AUDIBLE.load(std::sync::atomic::Ordering::Relaxed));
+    let state = mode();
+    if state.owns_project() {
+        switch_to(engine(), project_guid, AUDIBLE.load(std::sync::atomic::Ordering::Relaxed));
+        return;
+    }
+    set_remote_current(Some(project_guid.to_owned()));
+    let selected = facade_blocking("switch song", |daw| {
+        let guid = project_guid.to_owned();
+        async move { daw.select_project(guid).await.map(|_| ()) }
+    });
+    if let Err(e) = selected {
+        tracing::warn!(
+            audio.mode = state.requested.name(),
+            song.project = project_guid,
+            error = %e,
+            "remote: the song could not be selected on the system this window drives"
+        );
+    }
+    if state.requested == AudioMode::Cue {
+        cue_follow_song(project_guid);
+    }
 }
 
-/// Run `f` against the process's engine — for what acts on the session
-/// directly (the Organize toolbar's inserts, an edited chart laid over the
-/// song) rather than through the facade.
-pub fn with_engine<R>(f: impl FnOnce(&Standalone) -> R) -> R {
-    f(engine())
+/// Where a Cue window's local click/guide engine will be told the song
+/// changed.
+///
+/// TODO(#142 follow-up — the cue engine): load the song's click and guide
+/// (from the remote project's Click / Count / Guide tracks, or a
+/// pre-rendered cue) into a small local engine, follow the remote
+/// transport, and call [`set_cue_ready`] once it can play. Until then Cue
+/// behaves exactly as Remote, and its indicator says `cue pending`.
+fn cue_follow_song(project_guid: &str) {
+    tracing::debug!(song.project = project_guid, "cue: no cue engine yet; nothing follows the song locally");
 }
 
-/// The project the engine has current — the song on screen.
+/// Something only the local engine can do — skipped, with one warning each,
+/// in a window that drives another system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalOnly {
+    /// Rebuilding the song's structure from an edited chart
+    /// (`session::keyflow::from_chart` runs on the sync backend traits,
+    /// which only an in-process backend implements).
+    ChartRebuild,
+    /// Writing a song's `.session` — the native format is the local
+    /// engine's project; a remote system saves its own.
+    SessionSave,
+    /// daw-transport-sync's per-buffer backend, which followers lock to.
+    /// Following over the facade is a separate issue.
+    TransportSync,
+}
+
+impl LocalOnly {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::ChartRebuild => "chart_rebuild",
+            Self::SessionSave => "session_save",
+            Self::TransportSync => "transport_sync",
+        }
+    }
+
+    const fn bit(self) -> u32 {
+        match self {
+            Self::ChartRebuild => 1,
+            Self::SessionSave => 2,
+            Self::TransportSync => 4,
+        }
+    }
+}
+
+/// The capabilities already warned about, so each warns once.
+static WARNED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The process's engine, when this window owns its project (Engine mode);
+/// `None` in Remote and Cue — for a caller that has its own remote path
+/// (the Organize toolbar), so nothing is warned about.
+#[must_use]
+pub fn local_engine() -> Option<&'static Standalone> {
+    crate::audio_mode::owns_project().then(engine)
+}
+
+/// Run `f` against the process's engine when this window owns its project
+/// (Engine mode) — for what acts on the session directly rather than
+/// through the facade. `None` in Remote and Cue, where there is no local
+/// project to act on: `what` says what was skipped, once.
+pub fn with_local_engine<R>(what: LocalOnly, f: impl FnOnce(&Standalone) -> R) -> Option<R> {
+    if let Some(daw) = local_engine() {
+        return Some(f(daw));
+    }
+    let first = WARNED.fetch_or(what.bit(), std::sync::atomic::Ordering::Relaxed) & what.bit() == 0;
+    if first {
+        let state = mode();
+        tracing::warn!(
+            audio.mode = state.requested.name(),
+            audio.target = state.target.as_ref().map(RemoteTarget::kind),
+            audio.capability = what.name(),
+            "remote: this needs the local engine, which this window does not run; skipped"
+        );
+    }
+    None
+}
+
+/// The song on screen: the engine's current project in Engine; in Remote
+/// and Cue, the facade's current project — as last selected here or seen
+/// on the remote (a tab picked in REAPER itself), kept fresh by a poll
+/// rather than asked for on every call: panels ask every frame.
 #[must_use]
 pub fn current_song() -> Option<String> {
     use daw::service::Projects as _;
-    engine().current().map(|p| p.guid)
+    if crate::audio_mode::owns_project() {
+        return engine().current().map(|p| p.guid);
+    }
+    REMOTE_CURRENT.read().ok().and_then(|slot| slot.clone())
+}
+
+/// The remote's current project, as [`current_song`] reports it.
+static REMOTE_CURRENT: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Bumped by every selection made here, so a poll that was already in
+/// flight when the song changed cannot write the old song back.
+static REMOTE_PICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn set_remote_current(guid: Option<String>) {
+    REMOTE_PICKS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut slot) = REMOTE_CURRENT.write() {
+        *slot = guid;
+    }
+}
+
+/// Keep [`REMOTE_CURRENT`] following the remote's current project, twice a
+/// second, for the life of the process. Started once, by the first attach.
+fn watch_remote_current(rt: &'static tokio::runtime::Runtime) {
+    static WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if WATCHING.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    rt.spawn(async {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if crate::audio_mode::owns_project() {
+                continue;
+            }
+            let Some(daw) = daw::rpc::Daw::try_get() else { continue };
+            let picks = REMOTE_PICKS.load(std::sync::atomic::Ordering::SeqCst);
+            // A gone REAPER is the reattach loop's business; the last
+            // known song stays until it answers again.
+            if let Ok(project) = daw.current_project().await
+                && REMOTE_PICKS.load(std::sync::atomic::Ordering::SeqCst) == picks
+                && let Ok(mut slot) = REMOTE_CURRENT.write()
+                && slot.as_deref() != Some(project.guid())
+            {
+                *slot = Some(project.guid().to_owned());
+            }
+        }
+    });
+}
+
+/// Run one facade call to completion from a sync context (the UI thread,
+/// a worker), on the engine runtime, bounded so a remote that has gone
+/// quiet cannot hang the caller.
+pub(crate) fn facade_blocking<F, Fut, T>(what: &str, f: F) -> eyre::Result<T>
+where
+    F: FnOnce(&'static daw::rpc::Daw) -> Fut,
+    Fut: std::future::Future<Output = Result<T, daw::rpc::Error>> + Send,
+    T: Send,
+{
+    let daw = daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("{what}: the daw facade is not up"))?;
+    let call = f(daw);
+    block_on_engine(async {
+        tokio::time::timeout(std::time::Duration::from_secs(3), call)
+            .await
+            .map_err(|_| eyre::eyre!("{what}: the remote did not answer"))?
+            .map_err(|e| eyre::eyre!("{what}: {e}"))
+    })
+    .ok_or_else(|| eyre::eyre!("{what}: the engine runtime is not up"))?
+}
+
+/// Run `future` to completion on the engine runtime from sync code — on a
+/// scoped thread of its own when the caller is already inside a runtime,
+/// where blocking on another would panic. `None` before there is one.
+pub(crate) fn block_on_engine<T: Send>(future: impl std::future::Future<Output = T> + Send) -> Option<T> {
+    let rt = runtime()?;
+    if tokio::runtime::Handle::try_current().is_err() {
+        return Some(rt.block_on(future));
+    }
+    std::thread::scope(|scope| scope.spawn(|| rt.block_on(future)).join().ok())
 }
 
 /// Colour a song's SONG region (`0xRRGGBB`; `0` clears it) and save the
 /// song into `saved`, its `.session`, when it has one. A save that fails
 /// is logged — the colour still holds for this run.
+///
+/// In Remote and Cue the colour goes through the facade's region service
+/// (REAPER shows it on its region too); there is no `.session` to save —
+/// the remote system saves its own project.
 pub fn set_song_color(project_guid: &str, rgb: u32, saved: Option<&Path>) {
+    let song_lane = session::ruler_lanes::CoreLane::Song.lane_index();
+    if !crate::audio_mode::owns_project() {
+        let coloured = facade_blocking("song colour", |daw| {
+            let guid = project_guid.to_owned();
+            async move {
+                let regions = daw.project(guid).await?.regions();
+                let region = regions.all().await?.into_iter().find(|r| r.lane == Some(song_lane));
+                match region.and_then(|r| r.id) {
+                    Some(id) => regions.set_color(id, rgb).await.map(|()| true),
+                    None => Ok(false),
+                }
+            }
+        });
+        match coloured {
+            Ok(true) => {}
+            Ok(false) => tracing::warn!(song.project = project_guid, "no SONG region to colour"),
+            Err(e) => tracing::warn!(error = %e, "the song's colour could not be set"),
+        }
+        if saved.is_some() {
+            with_local_engine(LocalOnly::SessionSave, |_| ());
+        }
+        return;
+    }
     use daw::service::Regions as _;
     let daw = engine();
     let project = daw::service::ProjectContext::Project(project_guid.to_owned());
-    let song_lane = session::ruler_lanes::CoreLane::Song.lane_index();
     let region = daw
         .all(project.clone())
         .into_iter()
@@ -431,6 +671,7 @@ pub fn attach_to_reaper(socket: Option<std::path::PathBuf>) -> eyre::Result<Atta
     }
     let rt = engine_runtime()?;
     let socket_for_retry = socket.clone();
+    let socket_for_mode = socket.clone();
     let connection = rt
         .block_on(daw::cli::connect(socket))
         .map_err(|e| eyre::eyre!("could not attach to REAPER: {e}"))?;
@@ -462,6 +703,16 @@ pub fn attach_to_reaper(socket: Option<std::path::PathBuf>) -> eyre::Result<Atta
         Ok::<_, daw::rpc::Error>((info.name, info.guid, info.path, tracks.len()))
     })?;
 
+    // Attached is Remote, whatever the launch said — a caller that attaches
+    // without choosing a mode first (a test) is not left reporting Engine.
+    // A Cue window stays Cue.
+    let state = mode();
+    if state.owns_project() {
+        set_mode(ModeState::remote(RemoteTarget::Reaper { socket: socket_for_mode }, false));
+    }
+    set_remote_current(Some(guid.clone()));
+    watch_remote_current(rt);
+
     Ok(Attached {
         name,
         project_guid: guid,
@@ -489,24 +740,12 @@ pub enum Source {
 
 /// Read the source from the command line and the environment.
 ///
-/// `--reaper` wins over a path, because asking for both is a mistake
-/// worth answering rather than a preference worth guessing at — and the
-/// live one is the one you would have meant.
+/// Remote on REAPER ([`launch_mode`]) wins over a path, because asking for
+/// both is a mistake worth answering rather than a preference worth
+/// guessing at — and the live one is the one you would have meant.
 pub fn source() -> Option<Source> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(at) = args.iter().position(|a| a == "--reaper") {
-        // An optional socket path may follow, so `--reaper /tmp/x.sock`
-        // works when discovery would find more than one REAPER.
-        let socket = args
-            .get(at + 1)
-            .filter(|a| !a.starts_with("--"))
-            .map(std::path::PathBuf::from);
+    if let Some(RemoteTarget::Reaper { socket }) = launch_mode().target {
         return Some(Source::Reaper(socket));
-    }
-    if std::env::var(REAPER_ENV).is_ok_and(|v| v != "0") {
-        return Some(Source::Reaper(
-            std::env::var(SOCKET_ENV).ok().map(std::path::PathBuf::from),
-        ));
     }
     std::env::args()
         .nth(1)
@@ -518,9 +757,98 @@ pub fn source() -> Option<Source> {
 }
 
 /// Attach to a live REAPER rather than opening a file.
-pub const REAPER_ENV: &str = "SESSION_DAW_REAPER";
+pub const REAPER_ENV: &str = crate::audio_mode::REAPER_ENV;
 /// Which REAPER, when more than one is running.
-pub const SOCKET_ENV: &str = "FTS_SOCKET";
+pub const SOCKET_ENV: &str = crate::audio_mode::SOCKET_ENV;
+
+// ── the audio mode ───────────────────────────────────────────────────
+
+/// The process's audio mode: requested, effective, the target, loading.
+#[must_use]
+pub fn mode() -> ModeState {
+    crate::audio_mode::state()
+}
+
+/// Set the process's audio mode — at launch, before the first open or
+/// attach.
+pub fn set_mode(state: ModeState) {
+    crate::audio_mode::set(state);
+}
+
+/// The mode this launch asks for, from the command line
+/// (`--audio engine|remote|cue`, `--reaper [socket]`), the environment
+/// (`FTS_AUDIO_MODE`, `SESSION_DAW_REAPER` + `FTS_SOCKET`,
+/// `FTS_AUDIO_TARGET`), whether a project was named
+/// (`FTS_SESSION_PROJECT` / `FTS_SESSION_SETLIST` / `SESSION_DAW_PROJECT`
+/// or a path argument — Engine), and what the picker last chose — in that
+/// order (see [`crate::audio_mode::from_launch`]). Does not install it.
+#[must_use]
+pub fn launch_mode() -> ModeState {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let env = |key: &str| std::env::var(key).ok();
+    let named = ["FTS_SESSION_PROJECT", "FTS_SESSION_SETLIST", "SESSION_DAW_PROJECT"]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty()))
+        || args
+            .first()
+            .is_some_and(|a| !a.starts_with("--") && Path::new(a).exists());
+    crate::audio_mode::from_launch(&args, &env, named, remembered_mode())
+}
+
+/// Where the picker's choice is kept between launches.
+fn mode_memory() -> Option<PathBuf> {
+    Some(dirs::data_dir()?.join("Session").join("audio-mode"))
+}
+
+fn remembered_mode() -> Option<AudioMode> {
+    AudioMode::parse(&std::fs::read_to_string(mode_memory()?).ok()?)
+}
+
+/// Keep `mode` as the one the next launch opens in (when the launch does
+/// not name one — see [`launch_mode`]).
+pub fn remember_mode(mode: AudioMode) {
+    let Some(file) = mode_memory() else { return };
+    let written = file
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&file, mode.name().to_ascii_lowercase()));
+    if let Err(e) = written {
+        tracing::warn!(error = %e, audio.requested = mode.name(), "the audio mode could not be remembered");
+    }
+}
+
+/// Change the mode while the window runs, as far as it can be changed
+/// without re-pointing the facade: Remote and Cue drive the same backend,
+/// so either becomes the other at once. Engine and Remote are different
+/// backends — the window's projects live in one or the other — so that
+/// change is remembered for the next launch and `false` comes back.
+pub fn request_mode(to: AudioMode) -> bool {
+    remember_mode(to);
+    let state = mode();
+    if state.requested == to {
+        return true;
+    }
+    let live = !state.owns_project() && to != AudioMode::Engine;
+    if live {
+        crate::audio_mode::update_requested(to);
+    }
+    live
+}
+
+/// Attach to the system `target` names — the Remote and Cue way in.
+///
+/// # Errors
+///
+/// As [`attach_to_reaper`]; a Session engine target is not wired yet
+/// (#142 follow-up) and says so rather than attaching to something else.
+pub fn attach(target: &RemoteTarget) -> eyre::Result<Attached> {
+    match target {
+        RemoteTarget::Reaper { socket } => attach_to_reaper(socket.clone()),
+        RemoteTarget::Session { address } => eyre::bail!(
+            "driving another Session engine ({address}) is not wired yet — attach to REAPER, or open in Engine mode"
+        ),
+    }
+}
 
 /// Attach again, to whatever REAPER is there now.
 ///

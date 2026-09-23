@@ -11,6 +11,7 @@ pub mod animate;
 pub mod arrange_edit;
 pub mod arrangement;
 pub mod art;
+pub mod audio_mode;
 pub mod balance;
 pub mod chart_panel;
 #[cfg(feature = "native")]

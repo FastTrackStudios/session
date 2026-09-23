@@ -439,10 +439,28 @@ pub fn PeerDots(project: String) -> Element {
 
 /// Open the song the shared transport asks for — playing together, someone
 /// else picked another song of the set.
+///
+/// Remote or Cue, it also follows the driven system: a tab picked in REAPER
+/// itself becomes the song on screen here (it is already current there, so
+/// nothing is selected back).
 pub fn use_follow_song(mut setlist: Signal<crate::setlist::Setlist>) {
     use_future(move || async move {
         loop {
             futures_timer::Delay::new(Duration::from_millis(100)).await;
+            if !crate::audio_mode::owns_project()
+                && let Some(remote) = crate::open::current_song()
+            {
+                let index = {
+                    let list = setlist.peek();
+                    (list.current().is_some_and(|s| s.project != remote))
+                        .then(|| list.songs.iter().position(|s| s.project == remote))
+                        .flatten()
+                };
+                if let Some(index) = index {
+                    let at = crate::engine::Transport::shared().map_or(0.0, |t| t.read().0);
+                    setlist.write().pick(index, at);
+                }
+            }
             let Some(project) = crate::collab::take_song_request() else { continue };
             let index = setlist.peek().songs.iter().position(|s| s.project == project);
             let at = crate::engine::Transport::shared().map_or(0.0, |t| t.read().0);

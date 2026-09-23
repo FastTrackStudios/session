@@ -7,6 +7,15 @@
 //! the top bar are that colour, filling as the song plays
 //! ([`crate::shell::SongTabs`]).
 //!
+//! In **Remote** and **Cue** (`crate::audio_mode`) the songs are the
+//! projects the driven system has open — REAPER's project tabs, in tab
+//! order, the one it has current current ([`Setlist::attach`]). A song's
+//! `project` is then the remote's guid, picking a tab selects that project
+//! on the remote (`crate::open::switch_song`), and a tab picked in REAPER
+//! itself is followed here (`crate::collab_bar::use_follow_song`). The set
+//! is what REAPER has open, not a `.setlist` file: to play a set remotely,
+//! open its songs as tabs in REAPER.
+//!
 //! A song's SPAN is the SONG region the chart stamps (`prepare`), which is
 //! the part that is the song rather than the count-in before it; without
 //! one it is everything the project holds. The span is what a progress
@@ -64,7 +73,8 @@ fn hsl_hex(hue: f64, saturation: f64, lightness: f64) -> String {
 #[derive(Clone)]
 pub struct Song {
     pub name: String,
-    /// The project's guid in the engine — what `set_current_project` takes.
+    /// The project's guid in the engine — what `set_current_project` takes
+    /// — or, in Remote and Cue, on the system this window drives.
     pub project: String,
     pub session: StudioSession,
     /// The song's own span in project seconds: the SONG region, or
@@ -274,6 +284,71 @@ impl Setlist {
         Ok(Self::of(songs))
     }
 
+    /// The set a Remote or Cue window drives: attach to `target`, and make
+    /// a song of every project it has open, in its order, its current one
+    /// current.
+    ///
+    /// Each project is read the way an opened song is
+    /// (`StudioSession::read_current`) — which reads the CURRENT project, so
+    /// the remote's projects are selected one at a time while they are read
+    /// and the one that was current is selected again at the end. A project
+    /// saved on this machine gets its track kinds and chart from beside it;
+    /// one that is not (another machine's, or never saved) opens without.
+    ///
+    /// # Errors
+    ///
+    /// The attach failed, the remote's projects could not be listed, or
+    /// none could be read.
+    pub fn attach(target: &crate::open::RemoteTarget) -> eyre::Result<Self> {
+        let attached = crate::open::attach(target)?;
+        let listed = crate::open::facade_blocking("list projects", |daw| async move {
+            let mut out = Vec::new();
+            for project in daw.projects().await? {
+                let info = project.info().await?;
+                out.push(RemoteProject {
+                    guid: info.guid,
+                    name: info.name,
+                    path: Some(std::path::PathBuf::from(info.path)).filter(|p| !p.as_os_str().is_empty()),
+                });
+            }
+            Ok(out)
+        })?;
+        let (projects, _) = remote_songs(listed, &attached.project_guid);
+        let mut selected = attached.project_guid.clone();
+        let mut songs = Vec::new();
+        for project in projects {
+            if project.guid != selected {
+                let guid = project.guid.clone();
+                if let Err(e) = crate::open::facade_blocking("select project", |daw| async move {
+                    daw.select_project(guid).await.map(|_| ())
+                }) {
+                    tracing::error!(error = %e, "a remote project could not be selected to read; the set goes on without it");
+                    continue;
+                }
+                selected.clone_from(&project.guid);
+            }
+            let chart = project.path.as_deref().and_then(crate::prepare::chart_beside);
+            match StudioSession::read_current(project.path.as_deref(), chart) {
+                Ok(session) => songs.push(Song::of(project.song_name(), project.guid, session)),
+                Err(e) => tracing::error!(error = %e, "a remote project could not be read; the set goes on without it"),
+            }
+        }
+        if selected != attached.project_guid {
+            let guid = attached.project_guid.clone();
+            if let Err(e) = crate::open::facade_blocking("select project", |daw| async move {
+                daw.select_project(guid).await.map(|_| ())
+            }) {
+                tracing::warn!(error = %e, "the remote's current project could not be selected again");
+            }
+        }
+        if songs.is_empty() {
+            eyre::bail!("none of the remote's projects could be read");
+        }
+        let at = songs.iter().position(|s| s.project == attached.project_guid).unwrap_or(0);
+        crate::open::switch_song(&songs[at].project);
+        Ok(Self { songs, at })
+    }
+
     /// Give `index` a colour by hand — or, with `None`, give it back the
     /// colour its title makes. Set on its SONG region, where REAPER shows
     /// it too, and saved into its `.session`, so it is the song's colour
@@ -286,6 +361,42 @@ impl Setlist {
         song.color = color.filter(|_| rgb.is_some()).unwrap_or_else(|| title_color(&song.name));
         crate::open::set_song_color(&song.project, rgb.unwrap_or(0), song.saved.as_deref());
     }
+}
+
+/// A project the driven system has open, as a Remote setlist sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteProject {
+    pub guid: String,
+    /// The remote's name for it (REAPER's: the file name, or empty).
+    pub name: String,
+    /// Where it is saved, when it is.
+    pub path: Option<std::path::PathBuf>,
+}
+
+impl RemoteProject {
+    /// The song's name: the file's stem (`Washed`, the name every machine
+    /// knows the song by — `crate::collab` keys songs by it), else the
+    /// remote's own name without an extension, else `Untitled`.
+    #[must_use]
+    pub fn song_name(&self) -> String {
+        let stem = |p: &std::path::Path| p.file_stem().map(|s| s.to_string_lossy().into_owned());
+        self.path
+            .as_deref()
+            .and_then(stem)
+            .or_else(|| stem(std::path::Path::new(self.name.trim())))
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| "Untitled".to_owned())
+    }
+}
+
+/// The remote's projects as a set: all of them, in the remote's order
+/// (REAPER's tabs), and the index of `current` — `0` when it is not among
+/// them. Every tab is a song, saved or not: an empty tab on stage is
+/// still what REAPER will play if it is picked.
+#[must_use]
+pub fn remote_songs(projects: Vec<RemoteProject>, current: &str) -> (Vec<RemoteProject>, usize) {
+    let at = projects.iter().position(|p| p.guid == current).unwrap_or(0);
+    (projects, at)
 }
 
 /// `#rrggbb` as `0xRRGGBB`.
@@ -426,6 +537,30 @@ mod tests {
         assert_eq!(setlist.progress_of(0, 99.0), 0.5, "left halfway, whatever is playing now");
         assert_eq!(setlist.progress_of(1, 4.0), 0.0, "the current one reads the playhead");
         assert!(setlist.pick(1, 0.0).is_none(), "already current");
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn a_remote_set_is_the_remotes_tabs_in_order_its_current_current() {
+        let project = |guid: &str, name: &str, path: Option<&str>| RemoteProject {
+            guid: guid.into(),
+            name: name.into(),
+            path: path.map(Into::into),
+        };
+        let (songs, at) = remote_songs(
+            vec![
+                project("a", "Washed.RPP", Some("/set/Washed/Washed.RPP")),
+                project("b", "", None),
+                project("c", "Who Else.rpp", None),
+            ],
+            "c",
+        );
+        assert_eq!(songs.iter().map(|p| p.guid.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+        assert_eq!(at, 2);
+        assert_eq!(songs[0].song_name(), "Washed", "the file's stem");
+        assert_eq!(songs[1].song_name(), "Untitled", "a tab never saved");
+        assert_eq!(songs[2].song_name(), "Who Else", "the remote's name, less its extension");
+        assert_eq!(remote_songs(songs, "gone").1, 0, "a current not in the list starts at the top");
     }
 
     #[cfg(feature = "native")]

@@ -18,6 +18,13 @@
 //! keeps its own, so each press hands the arrangement's over first
 //! ([`crate::cursor::current`]). Then the guide is regenerated — its cues
 //! follow the sections — and the arrangement reads the session back.
+//!
+//! In Remote and Cue (`crate::audio_mode`) the same press goes through
+//! the facade to the system this window drives: the cursor and selection
+//! by its transport, the marker or section by running the session's own
+//! REAPER action (`FTS_SESSION_INSERT_*`, the ids the FTS extension
+//! registers — [`command_id`]), the time signature on its tempo map, and
+//! the guide by `FTS_SESSION_GUIDE_GENERATE_GUIDE_TRACKS`.
 
 use dioxus::prelude::*;
 use session::section_kinds::{KeyflowAction, MarkerKind, SectionKind};
@@ -110,39 +117,192 @@ fn ToolButton(button: Button, label: String) -> Element {
 /// Run a button's action on the engine, as the arrangement has the cursor
 /// and selection, then bring the guide and the arrangement up to date.
 fn press(button: Button, shift: bool) {
+    if let Some(daw) = crate::open::local_engine() {
+        press_local(daw, button, shift);
+    } else if let Err(e) = press_remote(button, shift) {
+        tracing::warn!(error = %e, ?button, "organize: the remote refused the insert");
+    }
+    crate::studio::request_resync();
+}
+
+fn press_local(daw: &daw::standalone::Standalone, button: Button, shift: bool) {
     use daw::service::transport::service::Transport as _;
     use daw::service::ProjectContext;
-    crate::open::with_engine(|daw| {
-        let project = ProjectContext::Current;
-        if let Some(edit) = crate::cursor::current() {
-            let handed = match edit.selection {
-                Some(span) => daw.set_time_selection(project.clone(), span.start, span.end),
-                None => daw.clear_time_selection(project.clone()),
-            };
-            if let Err(e) = handed.and_then(|()| daw.set_position(project.clone(), edit.at)) {
-                tracing::warn!(error = %e, "organize: the edit cursor could not be handed to the engine");
+    let project = ProjectContext::Current;
+    if let Some(edit) = crate::cursor::current() {
+        let handed = match edit.selection {
+            Some(span) => daw.set_time_selection(project.clone(), span.start, span.end),
+            None => daw.clear_time_selection(project.clone()),
+        };
+        if let Err(e) = handed.and_then(|()| daw.set_position(project.clone(), edit.at)) {
+            tracing::warn!(error = %e, "organize: the edit cursor could not be handed to the engine");
+        }
+    }
+    match button {
+        Button::Marker(kind) => {
+            session::keyflow::actions::dispatch(daw, KeyflowAction::InsertMarker(kind));
+        }
+        Button::Section(kind) => {
+            session::keyflow::actions::dispatch(daw, KeyflowAction::InsertSection(kind));
+        }
+        Button::TimeSig(num, den) => {
+            if let Err(e) = session::keyflow::time_signature::insert_time_signature(daw, num, den, shift) {
+                tracing::warn!(error = %e, num, den, "organize: the time signature was refused");
             }
         }
+    }
+    // The cues follow the sections; the click follows the meter.
+    if let Err(e) = session::guide::Guide::new(daw.clone())
+        .with_instrument(crate::prepare::GUIDE_INSTRUMENT)
+        .generate(session::guide::GuideScope::All)
+    {
+        tracing::debug!(error = %e, "organize: no guide to regenerate yet");
+    }
+}
+
+/// The session's guide action as REAPER knows it
+/// (`session_proto::guide::GuideActions::generate_guide_tracks`).
+const GENERATE_GUIDE: &str = "FTS_SESSION_GUIDE_GENERATE_GUIDE_TRACKS";
+
+/// The REAPER command id of a marker or section button — the session's own
+/// action (`session_proto::keyflow_actions::KeyflowActions`), which runs
+/// the same `dispatch` the local press does. `None` for a time signature
+/// (there is no action for one; the remote press writes it itself) and
+/// for the sections with no action.
+#[must_use]
+fn command_id(button: Button) -> Option<&'static str> {
+    Some(match button {
+        Button::Marker(kind) => match kind {
+            MarkerKind::CountIn => "FTS_SESSION_INSERT_COUNT_IN_MARKER",
+            MarkerKind::Start => "FTS_SESSION_INSERT_START_MARKER",
+            MarkerKind::End => "FTS_SESSION_INSERT_END_MARKER",
+            MarkerKind::SongStart => "FTS_SESSION_INSERT_SONGSTART_MARKER",
+            MarkerKind::SongEnd => "FTS_SESSION_INSERT_SONGEND_MARKER",
+        },
+        Button::Section(kind) => match kind {
+            SectionKind::Intro => "FTS_SESSION_INSERT_INTRO_REGION",
+            SectionKind::Verse => "FTS_SESSION_INSERT_VERSE_REGION",
+            SectionKind::PreChorus => "FTS_SESSION_INSERT_PRE_CHORUS_REGION",
+            SectionKind::Chorus => "FTS_SESSION_INSERT_CHORUS_REGION",
+            SectionKind::Bridge => "FTS_SESSION_INSERT_BRIDGE_REGION",
+            SectionKind::Outro => "FTS_SESSION_INSERT_OUTRO_REGION",
+            SectionKind::Instrumental => "FTS_SESSION_INSERT_INSTRUMENTAL_REGION",
+            SectionKind::Solo => "FTS_SESSION_INSERT_SOLO_REGION",
+            SectionKind::Hits => "FTS_SESSION_INSERT_HITS_REGION",
+            SectionKind::Interlude => "FTS_SESSION_INSERT_INTERLUDE_REGION",
+            SectionKind::Breakdown => "FTS_SESSION_INSERT_BREAKDOWN_REGION",
+            SectionKind::Vamp => "FTS_SESSION_INSERT_VAMP_REGION",
+            SectionKind::CountIn => "FTS_SESSION_INSERT_COUNT_IN_REGION",
+            SectionKind::End => "FTS_SESSION_INSERT_END_REGION",
+            SectionKind::Refrain | SectionKind::Tag | SectionKind::Turnaround => return None,
+        },
+        Button::TimeSig(..) => return None,
+    })
+}
+
+/// The press, through the facade, on the system this window drives.
+fn press_remote(button: Button, shift: bool) -> eyre::Result<()> {
+    let daw = daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
+    let edit = crate::cursor::current();
+    crate::open::block_on_engine(async move {
+        let project = daw.current_project().await?;
+        let transport = project.transport();
+        if let Some(edit) = edit {
+            match edit.selection {
+                Some(span) => transport.set_time_selection(span.start, span.end).await?,
+                None => transport.clear_time_selection().await?,
+            }
+            transport.set_position(edit.at).await?;
+        }
         match button {
-            Button::Marker(kind) => {
-                session::keyflow::actions::dispatch(daw, KeyflowAction::InsertMarker(kind));
-            }
-            Button::Section(kind) => {
-                session::keyflow::actions::dispatch(daw, KeyflowAction::InsertSection(kind));
-            }
-            Button::TimeSig(num, den) => {
-                if let Err(e) = session::keyflow::time_signature::insert_time_signature(daw, num, den, shift) {
-                    tracing::warn!(error = %e, num, den, "organize: the time signature was refused");
+            Button::TimeSig(num, den) => insert_time_signature_remote(&project, num, den, shift).await?,
+            _ => {
+                let id = command_id(button).ok_or_else(|| eyre::eyre!("{button:?} has no session action"))?;
+                if !project.run_command(id).await? {
+                    eyre::bail!("the remote does not know {id} — is the FTS session extension loaded?");
                 }
             }
         }
         // The cues follow the sections; the click follows the meter.
-        if let Err(e) = session::guide::Guide::new(daw.clone())
-            .with_instrument(crate::prepare::GUIDE_INSTRUMENT)
-            .generate(session::guide::GuideScope::All)
-        {
-            tracing::debug!(error = %e, "organize: no guide to regenerate yet");
+        if !project.run_command(GENERATE_GUIDE).await.unwrap_or(false) {
+            tracing::debug!("organize: the remote regenerated no guide");
         }
-    });
-    crate::studio::request_resync();
+        Ok(())
+    })
+    .ok_or_else(|| eyre::eyre!("the engine runtime is not up"))?
+}
+
+/// [`session::keyflow::time_signature::insert_time_signature`], through
+/// the facade: `num/den` from the measure holding the edit cursor — for
+/// that one measure with `single_measure`, the signature before it coming
+/// back on the next downbeat unless the project already changes there.
+async fn insert_time_signature_remote(
+    project: &daw_control::Project,
+    num: i32,
+    den: i32,
+    single_measure: bool,
+) -> eyre::Result<()> {
+    let tempo = project.tempo_map();
+    let transport = project.transport();
+    let position = match transport.get_state().await?.edit_position.time {
+        Some(at) => at.as_seconds(),
+        None => transport.get_position().await?,
+    };
+    let (measure, ..) = tempo.time_to_musical(position).await?;
+    let before = tempo.time_signature_at(position).await?;
+    let start = tempo.musical_to_time(measure, 0, 0.0).await?;
+    upsert_signature_remote(&tempo, start, num, den).await?;
+    if single_measure && before != (num, den) {
+        let next = tempo.musical_to_time(measure.saturating_add(1), 0, 0.0).await?;
+        let already = tempo.points().await?.iter().any(|p| {
+            p.time_signature.is_some() && p.position.seconds().is_some_and(|s| (s - next).abs() < 1e-6)
+        });
+        if !already {
+            upsert_signature_remote(&tempo, next, before.0, before.1).await?;
+        }
+    }
+    Ok(())
+}
+
+/// A signature on the tempo point at `seconds`, making one (at the tempo
+/// there) when there is none.
+async fn upsert_signature_remote(
+    tempo: &daw_control::TempoMap,
+    seconds: f64,
+    num: i32,
+    den: i32,
+) -> eyre::Result<()> {
+    let points = tempo.points().await?;
+    let existing = points
+        .iter()
+        .position(|p| p.position.seconds().is_some_and(|s| (s - seconds).abs() < 1e-6));
+    let index = match existing {
+        Some(index) => u32::try_from(index)?,
+        None => {
+            let bpm = tempo.tempo_at(seconds).await?;
+            tempo.add_point(seconds, bpm).await?
+        }
+    };
+    tempo.set_time_signature_at(index, num, den).await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every button a remote press runs by id names an action the session
+    /// actually registers with REAPER.
+    #[test]
+    fn every_structure_button_is_a_registered_session_action() {
+        let registered: Vec<&str> = session::keyflow_actions::KeyflowActionsActions::all()
+            .iter()
+            .map(|m| m.id)
+            .collect();
+        for (button, label) in STRUCTURE {
+            let id = command_id(button).unwrap_or_else(|| panic!("{label} has no command id"));
+            assert!(registered.contains(&id), "{label}: {id} is not a registered session action");
+        }
+        assert_eq!(command_id(Button::TimeSig(4, 4)), None, "a signature is written, not run");
+    }
 }

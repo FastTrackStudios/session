@@ -198,6 +198,8 @@ pub fn TopBar(
                 onmousedown: move |event| event.stop_propagation(),
                 {transport}
             }
+            // Where the sound comes from: Engine / Cue / Remote.
+            AudioBadge { density }
             // The mode, visible in every view.
             div {
                 style: "position:relative; flex:none;",
@@ -233,6 +235,122 @@ pub fn TopBar(
             }
         }
     }
+}
+
+/// The audio mode, in the bar: a dot in the colour of what is possible now
+/// (Engine green, Cue amber, Remote blue) and as many words as the bar has
+/// room for — `Remote · REAPER`, `Engine · loading 12/38` — and, pressed, a
+/// menu that says what was asked for, what is driven, how far loading has
+/// got, and offers the three modes (see [`crate::audio_mode`]).
+#[component]
+pub fn AudioBadge(density: Density) -> Element {
+    let mut open = use_signal(|| false);
+    // A note under the picker: a mode that needs another launch.
+    let mut note = use_signal(|| None::<String>);
+    // The mode changes off the UI thread (a loader, the attach), so it is
+    // polled — cheaply, by revision.
+    let revision = use_signal(crate::audio_mode::revision);
+    #[cfg(feature = "native")]
+    use_future(move || async move {
+        let mut revision = revision;
+        loop {
+            futures_timer::Delay::new(std::time::Duration::from_millis(250)).await;
+            let now = crate::audio_mode::revision();
+            if *revision.peek() != now {
+                revision.set(now);
+            }
+        }
+    });
+    let _ = revision();
+    let state = crate::audio_mode::state();
+    let effective = state.effective();
+    let loading = state.requested == crate::audio_mode::AudioMode::Engine && !state.assets.complete();
+    let label = match density {
+        Density::Full => state.label(2),
+        Density::Compact if loading => format!("{} {}/{}", effective.name(), state.assets.loaded, state.assets.total),
+        Density::Compact => state.label(1),
+        Density::Narrow if loading => format!("{}/{}", state.assets.loaded, state.assets.total),
+        Density::Narrow => String::new(),
+    };
+    let dot = effective.color();
+    let target = state.target.as_ref().map(crate::audio_mode::RemoteTarget::describe);
+    let title = match &target {
+        Some(target) => format!("Audio: {} — driving {target}", state.label(2)),
+        None => format!("Audio: {}", state.label(2)),
+    };
+    rsx! {
+        div {
+            style: "position:relative; flex:none;",
+            onmousedown: move |event| event.stop_propagation(),
+            button {
+                title: "{title}",
+                style: "display:flex; align-items:center; gap:6px; height:26px; \
+                        padding:0 9px; border-radius:6px; border:1px solid {RULE}; \
+                        background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer; \
+                        white-space:nowrap;",
+                onclick: move |_| open.toggle(),
+                span { style: "flex:none; width:8px; height:8px; border-radius:4px; background:{dot};" }
+                if !label.is_empty() {
+                    span { style: "font-weight:600;", "{label}" }
+                }
+            }
+            if open() {
+                div {
+                    style: "position:absolute; right:0; top:30px; z-index:40; \
+                            width:260px; padding:6px; background:{BAR_BG}; \
+                            border:1px solid {RULE}; border-radius:8px; \
+                            box-shadow:0 8px 24px rgba(0,0,0,0.5); font-size:12px;",
+                    div {
+                        style: "padding:4px 10px 6px; color:{DIM}; display:flex; flex-direction:column; gap:3px;",
+                        div {
+                            "Now "
+                            span { style: "color:{TEXT}; font-weight:600;", "{effective.name()}" }
+                            if effective != state.requested {
+                                " — asked for {state.requested.name()}"
+                            }
+                        }
+                        if let Some(target) = target.clone() {
+                            div { "Driving " span { style: "color:{TEXT};", "{target}" } }
+                        }
+                        if loading {
+                            div { "Loading media {state.assets.loaded} of {state.assets.total} — silent until each lands" }
+                        }
+                        if state.requested == crate::audio_mode::AudioMode::Cue && !state.cue_ready {
+                            div { "No cue engine yet: Cue plays as Remote" }
+                        }
+                    }
+                    div { style: "height:1px; margin:2px 4px 4px; background:{RULE};" }
+                    for each in crate::audio_mode::AudioMode::ALL {
+                        div {
+                            style: option(state.requested == each),
+                            onclick: move |_| {
+                                let applied = pick_audio_mode(each);
+                                note.set((!applied).then(|| format!("{} applies on the next launch", each.name())));
+                            },
+                            div { style: "font-weight:600;", "{each.name()}" }
+                            div { style: "font-size:11px; color:{DIM};", "{each.blurb()}" }
+                        }
+                    }
+                    if let Some(text) = note() {
+                        div { style: "padding:6px 10px 2px; color:#e3b341; font-size:11px;", "{text}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Ask for `mode`: at once when it drives the same backend (Remote ⇄ Cue),
+/// else remembered for the next launch (`false`).
+#[cfg(feature = "native")]
+fn pick_audio_mode(mode: crate::audio_mode::AudioMode) -> bool {
+    crate::open::request_mode(mode)
+}
+
+/// A page cannot change what it is: it is shown, not picked.
+#[cfg(not(feature = "native"))]
+fn pick_audio_mode(mode: crate::audio_mode::AudioMode) -> bool {
+    crate::audio_mode::state().requested == mode
 }
 
 /// A small down chevron, for a button that opens a menu.

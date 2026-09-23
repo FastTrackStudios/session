@@ -35,6 +35,10 @@ enum Outcome {
     Applied { sections: usize, bpm: f64 },
     /// Did not parse, or the song refused it — the song is as it was.
     Refused(String),
+    /// Parsed and saved to its `.kf`, and the chart panel shows it — but
+    /// the song is not rebuilt: this window drives another system, and the
+    /// rebuild runs only on the local engine (see `crate::audio_mode`).
+    ChartOnly,
 }
 
 /// The editor pane.
@@ -104,7 +108,7 @@ pub fn ChartEditor() -> Element {
     let status = match outcome() {
         None => ("", DIM.to_owned()),
         Some(Outcome::Applied { .. }) => ("", "#4ac26b".to_owned()),
-        Some(Outcome::Refused(_)) => ("", "#e3b341".to_owned()),
+        Some(Outcome::Refused(_) | Outcome::ChartOnly) => ("", "#e3b341".to_owned()),
     };
     let message = match outcome() {
         None => file
@@ -113,6 +117,7 @@ pub fn ChartEditor() -> Element {
             .map_or_else(|| "no chart file".to_owned(), |n| n.to_string_lossy().into_owned()),
         Some(Outcome::Applied { sections, bpm }) => format!("laid over the song — {sections} sections, {bpm} bpm"),
         Some(Outcome::Refused(why)) => format!("not applied: {why}"),
+        Some(Outcome::ChartOnly) => "chart saved — the song is rebuilt only in Engine mode".to_owned(),
     };
     let css = keyflow_editor_lang::highlight_css(&keyflow_editor_lang::HighlightTheme::default_dark());
     rsx! {
@@ -317,7 +322,7 @@ fn apply(project: &str, file: Option<&std::path::Path>, text: &str) -> Outcome {
     if crate::open::current_song().as_deref() != Some(project) {
         return Outcome::Refused("another song is up".to_owned());
     }
-    let applied = crate::open::with_engine(|daw| {
+    let applied = crate::open::with_local_engine(crate::open::LocalOnly::ChartRebuild, |daw| {
         let rebuilt = crate::prepare::apply_chart(daw, project, text, true)?;
         // Saved where the song was opened from, when that is a `.session`.
         let saved = daw
@@ -330,6 +335,18 @@ fn apply(project: &str, file: Option<&std::path::Path>, text: &str) -> Outcome {
         }
         Ok::<_, eyre::Report>(rebuilt)
     });
+    // Remote: nothing to lay it over here. The chart is still the song's
+    // chart — saved, and shown — and its tempo and sections stay the
+    // remote's until it is opened in Engine mode.
+    let Some(applied) = applied else {
+        if let Some(path) = file
+            && let Err(e) = std::fs::write(path, text)
+        {
+            tracing::warn!(error = %e, "chart editor: the chart could not be saved");
+        }
+        crate::chart_panel::publish_live(project, std::sync::Arc::new(chart), None);
+        return Outcome::ChartOnly;
+    };
     match applied {
         Ok(rebuilt) => {
             if let Some(path) = file

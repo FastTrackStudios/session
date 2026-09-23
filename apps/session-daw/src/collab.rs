@@ -863,8 +863,12 @@ fn sync_backend(project: &str) -> Option<Arc<dyn daw_transport_sync::TransportBa
     if let Some(backend) = backends.get(project) {
         return Some(Arc::clone(backend));
     }
-    let backend: Arc<dyn daw_transport_sync::TransportBackend + Send + Sync> =
-        Arc::new(crate::open::with_engine(|daw| daw.sync_backend(project))?);
+    // Remote: None — the per-buffer backend is the local engine's; locking a
+    // follower to a remote transport over the facade is its own issue.
+    let backend: Arc<dyn daw_transport_sync::TransportBackend + Send + Sync> = Arc::new(
+        crate::open::with_local_engine(crate::open::LocalOnly::TransportSync, |daw| daw.sync_backend(project))
+            .flatten()?,
+    );
     backends.insert(project.to_owned(), Arc::clone(&backend));
     Some(backend)
 }
