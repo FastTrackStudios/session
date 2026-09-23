@@ -134,13 +134,15 @@ pub fn voicings(chart: &Chart, octave: i32) -> Vec<Voicing> {
                     // The last chord in a bar holds to the bar line
                     // rather than to its written length: what a chart
                     // writes is where a chord STARTS, and the harmony
-                    // sounds until the next one.
-                    let beats = if std::ptr::eq(chord, last) {
-                        (beats_per_bar - beat).max(beats)
-                    } else {
-                        beats
-                    };
-                    if let Some(pitches) = voice(chord, key.as_ref(), octave) {
+                    // sounds until the next one. Not past it, either — a
+                    // lone chord is written a whole note, which in a bar
+                    // of 2/4 would run into the next bar's chord.
+                    let room = beats_per_bar - beat;
+                    let beats = if std::ptr::eq(chord, last) && room > 0.0 { room } else { beats };
+                    // A rest or a spacer (`r`, `s` — a bar of N.C.) takes
+                    // its time and sounds nothing.
+                    let silent = matches!(chord.full_symbol.as_str(), "r" | "s");
+                    if !silent && let Some(pitches) = voice(chord, key.as_ref(), octave) {
                         out.push(Voicing {
                             measure,
                             beat,
@@ -335,6 +337,24 @@ mod holding_tests {
     /// sounding while the harmony is still going, and the analyser
     /// reading this track back would report a gap in a progression
     /// that has none.
+    /// A bar of 2/4 holds two beats of chord, however the chord is
+    /// written — not a whole 4/4 bar running into the next one.
+    #[test]
+    fn a_chord_in_a_short_bar_ends_at_its_bar_line() {
+        let voiced = voicings(&chart("My Song\n72bpm 4/4 #D\n\nVS 2\n!T2/4 2m7\n6m7\n"), 3);
+        assert_eq!(voiced.len(), 2, "{voiced:?}");
+        assert!((voiced[0].beats - 2.0).abs() < 1e-9, "the 2/4 bar: {voiced:?}");
+        assert!((voiced[1].beats - 4.0).abs() < 1e-9, "the 4/4 bar: {voiced:?}");
+    }
+
+    /// A bar of rests is no chord: nothing on the chord track.
+    #[test]
+    fn rests_are_no_chord() {
+        let voiced = voicings(&chart("My Song\n72bpm 4/4 #D\n\nVS 4\n1 1maj7 r r\n"), 3);
+        let symbols: Vec<_> = voiced.iter().map(|v| (v.measure, v.symbol.as_str())).collect();
+        assert_eq!(symbols, vec![(0, "1"), (1, "1maj7")]);
+    }
+
     #[test]
     fn a_chord_holds_until_the_next() {
         let voiced = voicings(&chart("My Song\n4/4 #C\n\nVS 1: | C | F |\n"), 3);
