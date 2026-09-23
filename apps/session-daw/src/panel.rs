@@ -673,7 +673,12 @@ impl ArrangementPanel {
         let (zoom_x, zoom_y) = *self.zoom.peek();
         let pps = PPS * zoom_x;
         let (width, _) = self.frame(r);
-        if let Some(to) = page_to(play_at * pps, *self.scroll.peek(), width, self.extent(r, zoom_x, zoom_y).0) {
+        // Read into a local first: a `peek()` in the `if let` below would
+        // hold its borrow for the whole block, and `set` inside it then
+        // panics with the signal already borrowed.
+        let across = *self.scroll.peek();
+        let travel = self.extent(r, zoom_x, zoom_y).0;
+        if let Some(to) = page_to(play_at * pps, across, width, travel) {
             let mut scroll = self.scroll;
             scroll.set(to);
         }
