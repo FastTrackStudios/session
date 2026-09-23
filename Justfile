@@ -1377,9 +1377,10 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
 #   just studio "" 2560x1440       at another size
 #   FPS=1 just studio              with the frame-time graph over it
 #
-# Wheel scrolls; shift makes it sideways. Hold `z` and scroll to zoom the
-# rows, shift-`z` for time; `z` and drag is the zoom tool. Middle-drag is
-# the hand. The corner says what a frame cost — the shell's own
+# The app's own panels (DawPanels), with the app's hands: wheel scrolls,
+# shift makes it sideways; hold `z` and scroll to zoom time, shift-`z` for
+# the rows; `z` and drag is the zoom tool; middle-drag is the hand; `x`
+# docks the mixer. `FPS=1` draws what a frame cost — the shell's own
 # resolve-encode-present, not the gap between redraws.
 #
 # `FPS=1` puts a hundred-frame bar graph in the bottom right, with the
@@ -1449,7 +1450,6 @@ studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
     set -euo pipefail
     cargo build --release -p session-daw --bin blitz_shot
     env ${DUMP:+FTS_BLITZ_DUMP="{{DUMP}}"} ${FPS:+FTS_BLITZ_FPS=1} \
-    FTS_BLITZ_PART=all \
     FTS_BLITZ_SCENE=drum-mixing \
     FTS_BLITZ_SIZE="{{SIZE}}" \
     FTS_BLITZ_GESTURE="{{GESTURE}}" \

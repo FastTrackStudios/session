@@ -9,8 +9,8 @@
 //! of that and pays dearly for all of it.
 //!
 //! Measured on the golden session at 5120x1440, the same picture drawn
-//! both ways, gated pixel-for-pixel against each other by
-//! `tests/component_lanes.rs`:
+//! both ways and gated pixel-for-pixel against each other (by a test
+//! that went with the component lanes once they lost):
 //!
 //! | gesture | painted | as a component tree |
 //! |---|---|---|
@@ -193,11 +193,8 @@ pub struct ArrangementWidget {
     drawn: Rc<RefCell<Drawn>>,
     /// The frame-time graph, when the window asked for one.
     ///
-    /// A window asks; a comparison shot does not, and that is not a
-    /// taste: `tests/component_lanes.rs` holds this widget to the
-    /// painted window pixel for pixel, and an overlay is a difference.
-    /// A readout that made the gate looser would be measuring the thing
-    /// it broke.
+    /// A window asks; a picture or a benchmark does not, because an
+    /// overlay is a difference in the one and a cost in the other.
     stats: Option<crate::fps::Stats>,
     /// The size the last paint was given, so a hit arriving between
     /// two paints is measured against the frame the picture was drawn

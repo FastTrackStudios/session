@@ -159,6 +159,19 @@ impl PartialEq for ArrangementPanel {
     }
 }
 
+/// A handle on the panel for a host that drives its view itself — a
+/// benchmark sweeping a gesture, a window animating one — rather than
+/// through input. Provided above the panel; [`use_arrangement_panel`]
+/// fills it with the panel it builds. The app provides none.
+#[derive(Clone, Default)]
+pub struct Slot(pub Rc<RefCell<Option<ArrangementPanel>>>);
+
+impl PartialEq for Slot {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// Build the panel and its widget, once. `host` wraps the widget the way
 /// the host mounts it (dioxus-native's `CustomWidgetAttr`, or the web
 /// canvas's handle), and what it returns comes back with the panel.
@@ -271,7 +284,59 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         measured,
         click,
     };
+    let slot: Option<Slot> = try_use_context();
+    if let Some(slot) = slot
+        && slot.0.borrow().is_none()
+    {
+        *slot.0.borrow_mut() = Some(panel.clone());
+    }
     (panel, hosted)
+}
+
+/// The arrangement panel's tree on dioxus-native: the widget's node, and
+/// the chrome over it, filling the positioned tile it is in.
+///
+/// What `studio::Arrangement` renders around the widget once it has
+/// wired winit's events to the panel — and what a document with no winit
+/// window renders (`bin/blitz_shot`'s pictures and its benchmark), which
+/// has no events to wire. One tree, whoever hosts it.
+#[cfg(feature = "native")]
+#[component]
+pub fn NativeTree(panel: ArrangementPanel, widget: dioxus_native_dom::CustomWidgetAttr) -> Element {
+    let colors = daw_ui::studio::lanes::Colors::from_theme(&daw_ui::theming::Theme::dark());
+    let surface = colors.surface.clone();
+    let mounted = Rc::clone(&panel.mounted);
+    let focus_node = Rc::clone(&panel.focus_node);
+    rsx! {
+        div {
+            // Filling the positioned tile it is in. Absolute rather than
+            // `height:100%`: a percentage of a flex item's height does not
+            // resolve in Blitz, and the panel came out zero tall.
+            style: "position:absolute; top:0; left:0; right:0; bottom:0; overflow:hidden; \
+                    background:{surface};",
+            onmounted: move |event| {
+                *mounted.borrow_mut() = Some(event.data());
+            },
+            object {
+                style: "position:absolute; left:0; top:0; width:100%; height:100%;",
+                // `<object>` is not in Blitz's default-focusable list, and
+                // the arrangement takes the keyboard (a rename is a field
+                // inside it).
+                tabindex: "0",
+                data: widget.clone(),
+                // The keyboard is the arrangement's from the start: with
+                // nothing focused, every shortcut waited for a first click.
+                onmounted: move |event| {
+                    let node = event.data();
+                    *focus_node.borrow_mut() = Some(Rc::clone(&node));
+                    async move {
+                        let _ = node.set_focus(true).await;
+                    }
+                },
+            }
+            PanelChrome { panel: panel.clone() }
+        }
+    }
 }
 
 impl ArrangementPanel {
