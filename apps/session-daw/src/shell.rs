@@ -291,8 +291,20 @@ fn ColorMenu(left: String, on_pick: EventHandler<Option<String>>) -> Element {
 /// where are we in the song, what is coming, and what is playing — which
 /// is why it is the first of the docked views rather than a fourth panel
 /// in a stack.
+///
+/// `editor`, when a host passes one, is the chart as text: a column left of
+/// the chart, which then gives up some of its width. `chart_corner` sits
+/// over the chart's top-left corner — the desktop's button that opens and
+/// closes that editor.
 #[component]
-pub fn OverviewLayout(progress: Element, chart: Element, panels: Element) -> Element {
+pub fn OverviewLayout(
+    progress: Element,
+    chart: Element,
+    panels: Element,
+    #[props(default)] editor: Option<Element>,
+    #[props(default)] chart_corner: Option<Element>,
+) -> Element {
+    let chart_w = if editor.is_some() { "width:30%; min-width:240px;" } else { "width:38%; min-width:280px;" };
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; \
@@ -300,10 +312,22 @@ pub fn OverviewLayout(progress: Element, chart: Element, panels: Element) -> Ele
             div { style: "flex:none;", {progress} }
             div {
                 style: "flex:1; min-height:0; display:flex; gap:10px;",
+                if let Some(editor) = editor {
+                    // A chart's lines are short: the editor needs a column,
+                    // not a share of the window.
+                    div {
+                        style: "position:relative; flex:none; width:380px; border-radius:8px; \
+                                overflow:hidden; border:1px solid {RULE};",
+                        {editor}
+                    }
+                }
                 div {
-                    style: "position:relative; width:38%; min-width:280px; border-radius:8px; \
+                    style: "position:relative; {chart_w} border-radius:8px; \
                             overflow:hidden; border:1px solid {RULE};",
                     {chart}
+                    if let Some(corner) = chart_corner {
+                        div { style: "position:absolute; top:8px; left:8px;", {corner} }
+                    }
                 }
                 div {
                     style: "position:relative; flex:1; min-width:0; border-radius:8px; \

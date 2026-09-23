@@ -120,6 +120,27 @@ pub fn ChartEditor() -> Element {
     }
 }
 
+/// The small button over the chart's corner that opens and closes the
+/// editor beside it — in any mode; Organize opens it on the way in.
+#[component]
+pub fn EditorToggle(open: Signal<bool>) -> Element {
+    let (bg, fg, border) = if open() {
+        (crate::shell::ACCENT, "#0b0c0e", crate::shell::ACCENT)
+    } else {
+        ("rgba(16,17,20,0.85)", TEXT, RULE)
+    };
+    let title = if open() { "Hide the chart's text" } else { "Edit the chart as text" };
+    rsx! {
+        button {
+            title,
+            style: "height:22px; padding:0 9px; border-radius:5px; border:1px solid {border}; \
+                    background:{bg}; color:{fg}; font-size:11px; font-weight:600; cursor:pointer;",
+            onclick: move |_| open.toggle(),
+            "Edit"
+        }
+    }
+}
+
 /// The editor's own palette tokens, dark, for the stylesheet's variables.
 const EDITOR_THEME: &str = "
 :root {

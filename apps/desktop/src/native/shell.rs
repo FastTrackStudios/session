@@ -51,6 +51,12 @@ pub fn Shell() -> Element {
     // The mode, for the panels that change with it (the mixer's strips
     // are live-mode strips in Live).
     use_context_provider(|| mode);
+    // The chart's text editor, beside the chart in the Overview: open in
+    // Organize, closed in the other modes, and the button on the chart's
+    // corner opens or closes it in any of them. Out here, not per song, so
+    // picking another song keeps it as it was.
+    let mut editor_open = use_signal(|| *mode.peek() == Mode::Organize);
+    use_effect(move || editor_open.set(mode() == Mode::Organize));
     // The songs, as the launch opened them — a signal from here on, which
     // the tabs read and a pick or a recolour writes.
     let opened: session_daw::setlist::Setlist = use_context();
@@ -108,7 +114,7 @@ pub fn Shell() -> Element {
             if let Some(song) = current {
                 // Keyed by the song: picking another remounts every panel
                 // on that song's session rather than patching the last one's.
-                SongViews { key: "{song.project}", session: song.session.clone(), view }
+                SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
             }
         }
     }
@@ -123,23 +129,28 @@ fn WithSong(session: session_daw::studio::StudioSession, children: Element) -> E
 
 /// The views, over one song: its session is what every panel below reads.
 #[component]
-fn SongViews(session: session_daw::studio::StudioSession, view: Signal<session_daw::shell::View>) -> Element {
+fn SongViews(
+    session: session_daw::studio::StudioSession,
+    view: Signal<session_daw::shell::View>,
+    editor_open: Signal<bool>,
+) -> Element {
+    use session_daw::chart_editor::{ChartEditor, EditorToggle};
     use session_daw::shell::{OverviewLayout, View};
     use_context_provider(|| session);
-    let mode: Signal<Mode> = use_context();
     rsx! {
         div {
             style: "position:relative; flex:1; min-height:0;",
             match view() {
                 View::Setup => rsx! { session_daw::setup::SetupView {} },
-                View::Daw if mode() == Mode::Organize => rsx! { OrganizeView {} },
-                View::Daw => rsx! { DawView {} },
+                View::Daw => rsx! { Arrangement {} },
                 View::Performance => rsx! { PerformanceView {} },
                 View::Overview => rsx! {
                     OverviewLayout {
                         progress: rsx! { session_daw::progress::ProgressBar {} },
+                        editor: editor_open().then(|| rsx! { ChartEditor {} }),
                         chart: rsx! { session_daw::chart_panel::Chart { paged: true } },
-                        panels: rsx! { session_daw::mixer_panel::DawPanels { docked: true } },
+                        chart_corner: rsx! { EditorToggle { open: editor_open } },
+                        panels: rsx! { Arrangement { docked: true } },
                     }
                 },
             }
@@ -176,49 +187,24 @@ fn use_live_advance(mut setlist: Signal<session_daw::setlist::Setlist>, mode: Si
     });
 }
 
-/// The DAW view in Organize mode: the song's chart as text on the left,
-/// edited live — every pause in typing lays it over the song — the chart
-/// it makes in the middle, and the arrangement on the right under the
-/// Organize toolbar (markers, sections, time signatures).
+/// The arrangement, with the mixer docked under it on `x` (or from the
+/// start, `docked`, in the Overview). In Organize the Organize toolbar sits
+/// over it — markers, sections, time signatures — in whichever view it is.
+/// The transport is in the top bar.
 #[component]
-fn OrganizeView() -> Element {
+fn Arrangement(#[props(default)] docked: bool) -> Element {
+    let mode: Signal<Mode> = use_context();
     rsx! {
         div {
-            style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex;",
-            // A chart's lines are short: the editor needs a column, not a
-            // quarter of the window.
-            div {
-                style: "position:relative; flex:none; width:380px; border-right:1px solid {RULE};",
-                session_daw::chart_editor::ChartEditor {}
-            }
-            // A whole page, scaled to fit (paged): a preview of the edit, not
-            // the place to read the chart from.
-            div {
-                style: "position:relative; flex:none; width:30%; max-width:760px; \
-                        border-right:1px solid {RULE};",
-                // A whole page at a time, fitted to the pane, following the
-                // song — the edit's effect is seen without scrolling to it.
-                session_daw::chart_panel::Chart { paged: true }
-            }
-            div {
-                style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
+            style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; flex-direction:column;",
+            if mode() == Mode::Organize {
                 session_daw::organize::OrganizeToolbar {}
-                div {
-                    style: "position:relative; flex:1; min-height:0;",
-                    session_daw::mixer_panel::DawPanels {}
-                }
+            }
+            div {
+                style: "position:relative; flex:1; min-height:0;",
+                session_daw::mixer_panel::DawPanels { docked }
             }
         }
-    }
-}
-
-/// The DAW view: the arrangement, with the mixer docked under it on `x`.
-/// The transport is in the top bar; the editor joins as a panel once the
-/// dock is in (phase 3).
-#[component]
-fn DawView() -> Element {
-    rsx! {
-        session_daw::mixer_panel::DawPanels {}
     }
 }
 
