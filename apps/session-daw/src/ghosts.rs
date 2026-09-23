@@ -115,6 +115,29 @@ static OVER_LANES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 
 /// The mouse moved over the arrangement: a time and a track over the
 /// lanes, `None` off them (the window overlay reports it from there).
+/// The panel id of the arrangement's track panel: a pointer over it is
+/// anchored to a track row there, and the arrangement paints it (a DOM
+/// overlay would draw under the arrangement's canvas).
+pub const TCP: &str = "tcp";
+
+/// The arrangement's own rectangle, as a panel: a pointer over it (lanes
+/// or track panel) is the arrangement's to publish.
+pub const ARRANGEMENT: &str = "arrangement";
+
+/// The pointer is over the arrangement's track panel: on `track` (`None`:
+/// its header, above the rows), `u` across the panel, `v` down the row.
+pub fn local_tcp_pointer(track: Option<String>, u: f64, v: f64) {
+    OVER_LANES.store(true, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut local) = LOCAL.lock() {
+        local.pointer = Some(Pointer::Anchor {
+            panel: TCP.into(),
+            key: track.unwrap_or_default(),
+            u: u.clamp(0.0, 1.0),
+            v,
+        });
+    }
+}
+
 pub fn local_pointer(pointer: Option<(f64, Option<String>, f64)>) {
     OVER_LANES.store(pointer.is_some(), std::sync::atomic::Ordering::Relaxed);
     if let Some((at, track, y)) = pointer
@@ -197,12 +220,21 @@ pub fn region_rect(id: &str) -> Option<PanelRect> {
 /// over and where in it, or where in the window. Over the lanes the
 /// arrangement's own report wins.
 pub fn local_window_pointer(x: f64, y: f64, window: (f64, f64)) {
-    if OVER_LANES.load(std::sync::atomic::Ordering::Relaxed) {
-        return;
+    // Over the arrangement, the arrangement publishes the pointer (its
+    // lanes and its track panel both). Off it, the window does — which is
+    // how leaving it for the mixer below lets go of the lane it was on.
+    let inside = |(rx, ry, rw, rh): PanelRect| x >= rx && y >= ry && x < rx + rw && y < ry + rh;
+    match region_rect(ARRANGEMENT).map(inside) {
+        Some(true) => return,
+        Some(false) => OVER_LANES.store(false, std::sync::atomic::Ordering::Relaxed),
+        // Not measured yet: trust the arrangement's own word.
+        None if OVER_LANES.load(std::sync::atomic::Ordering::Relaxed) => return,
+        None => {}
     }
     let hit = REGION_RECTS.with(|m| {
         m.borrow()
             .iter()
+            .filter(|(id, _)| id.as_str() != ARRANGEMENT)
             .filter(|(_, (rx, ry, rw, rh))| x >= *rx && y >= *ry && x < rx + rw && y < ry + rh)
             // The smallest panel under the point is the one it is in.
             .min_by(|a, b| (a.1.2 * a.1.3).total_cmp(&(b.1.2 * b.1.3)))
@@ -249,8 +281,8 @@ pub fn window_pointers(window: (f64, f64)) -> Vec<(f64, f64, String, u32)> {
         .values()
         .filter_map(|peer| {
             let state = peer.state.as_ref()?;
-            // Over the lanes, the arrangement draws it.
-            if matches!(peer.trail.latest()?, Pointer::Timeline { .. }) {
+            // Over the lanes or the track panel, the arrangement draws it.
+            if drawn_by_arrangement(peer.trail.latest()?) {
                 return None;
             }
             let (x, y) = peer.trail.screen_at(now, |p| match p {
@@ -277,6 +309,16 @@ pub fn window_pointers(window: (f64, f64)) -> Vec<(f64, f64, String, u32)> {
             Some((x, y, state.name.clone(), state.color))
         })
         .collect()
+}
+
+/// A pointer the arrangement paints itself: over its lanes, or over its
+/// track panel.
+fn drawn_by_arrangement(pointer: &Pointer) -> bool {
+    match pointer {
+        Pointer::Timeline { .. } => true,
+        Pointer::Anchor { panel, .. } => panel == TCP,
+        _ => false,
+    }
 }
 
 /// The selection, as drawn this frame.
@@ -474,8 +516,20 @@ pub fn paint(
         }
         // Their mouse, with their name: exactly where it is in the row,
         // interpolated on this screen so it glides from row to row.
-        if matches!(peer.trail.latest(), Some(Pointer::Timeline { .. }))
+        if peer.trail.latest().is_some_and(drawn_by_arrangement)
             && let Some((x, y)) = peer.trail.screen_at(local_now, |p| match p {
+                // Over the track panel: across it, and down the row.
+                Pointer::Anchor { panel, key, u, v } if panel == TCP => {
+                    let y = if key.is_empty() {
+                        v * crate::ruler::ruler_h()
+                    } else {
+                        let (top, h) = row_of.get(key.as_str()).and_then(|r| band(*r))?;
+                        v.mul_add(h, top)
+                    };
+                    let lanes_top = if key.is_empty() { 0.0 } else { oy };
+                    let x = u * left;
+                    ((0.0..=left).contains(&x) && (lanes_top..=height).contains(&y)).then_some((x, y))
+                }
                 Pointer::Timeline { at, track, y } => {
                     let (x, y) = match track {
                         // Over a track: in its row, if this view shows the

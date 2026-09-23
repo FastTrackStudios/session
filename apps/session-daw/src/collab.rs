@@ -312,6 +312,18 @@ pub fn transport_pressed() {
     }
 }
 
+/// Whether this window is following someone else's transport (playing
+/// together, and not the one who pressed last). A follower does nothing
+/// to its transport on its own — not even rolling into the next song at
+/// the end of one: the leader does, and the follower follows.
+#[must_use]
+pub fn following() -> bool {
+    let Ok(live) = LIVE.lock() else { return false };
+    let Some(l) = live.as_ref() else { return false };
+    let Ok(sync) = l.sync.lock() else { return false };
+    sync.mode() == TransportMode::Shared && sync.current().is_some_and(|c| c.by != l.me)
+}
+
 /// The song the shared transport wants this window on (its project here),
 /// once — for the setlist to open.
 static SONG_REQUEST: Mutex<Option<String>> = Mutex::new(None);
@@ -841,11 +853,20 @@ impl Lock {
     }
 }
 
-/// The engine's sync backend for a song's project (daw-transport-sync),
-/// if the engine offers one.
+/// A song's sync backend (daw-transport-sync), by project — made once:
+/// making one stands up the project's transport engine.
 fn sync_backend(project: &str) -> Option<Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>> {
-    let _ = project;
-    None
+    type Backends = HashMap<String, Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>>;
+    static BACKENDS: Mutex<Option<Backends>> = Mutex::new(None);
+    let mut cache = BACKENDS.lock().ok()?;
+    let backends = cache.get_or_insert_with(HashMap::new);
+    if let Some(backend) = backends.get(project) {
+        return Some(Arc::clone(backend));
+    }
+    let backend: Arc<dyn daw_transport_sync::TransportBackend + Send + Sync> =
+        Arc::new(crate::open::with_engine(|daw| daw.sync_backend(project))?);
+    backends.insert(project.to_owned(), Arc::clone(&backend));
+    Some(backend)
 }
 
 /// Do what the shared transport asks of this engine — quietly: it is not

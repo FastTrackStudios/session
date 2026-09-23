@@ -1402,9 +1402,13 @@ impl ArrangementWidget {
                             .or_else(past_last)
                             .unwrap_or((None, 1.0))
                     };
-                    crate::ghosts::local_pointer(
-                        over_lanes.then(|| (self.seconds_at(x, view), track, fy)),
-                    );
+                    if over_lanes {
+                        crate::ghosts::local_pointer(Some((self.seconds_at(x, view), track, fy)));
+                    } else {
+                        // Over the track panel: the row, and how far across.
+                        let panel = self.scene.tcp.width().max(1.0);
+                        crate::ghosts::local_tcp_pointer(track, x / panel, fy);
+                    }
                 }
                 // The editor owns the gesture once it has taken a
                 // press: an item being dragged follows the pointer off

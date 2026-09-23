@@ -209,6 +209,11 @@ fn use_live_advance(mut setlist: Signal<session_daw::setlist::Setlist>, mode: Si
         if !matches!(event, winit::event::WindowEvent::RedrawRequested) || mode() != Mode::Live {
             return;
         }
+        // Playing together, only the leader rolls on; this window follows
+        // it into the next song.
+        if session_daw::collab::following() {
+            return;
+        }
         let Some((at, playing)) = session_daw::engine::Transport::shared().map(|t| t.read()) else {
             return;
         };

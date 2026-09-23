@@ -327,6 +327,9 @@ pub fn NativeTree(panel: ArrangementPanel, widget: dioxus_native_dom::CustomWidg
             style: "position:absolute; top:0; left:0; right:0; bottom:0; overflow:hidden; \
                     background:{surface};",
             onmounted: move |event| {
+                // Where the arrangement is in the window: the pointer is
+                // its own to publish (and to draw) while it is over it.
+                crate::ghosts::region_mounted(crate::ghosts::ARRANGEMENT, event.data());
                 *mounted.borrow_mut() = Some(event.data());
             },
             object {
