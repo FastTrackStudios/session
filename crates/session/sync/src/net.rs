@@ -32,6 +32,145 @@ pub fn session_id(song: &str) -> Uuid {
     Uuid::new_v5(&NAMESPACE, song.as_bytes())
 }
 
+/// The doc a song of a shared setlist is synced under: every machine with
+/// that setlist and that song meets in it.
+#[must_use]
+pub fn song_id(set: &str, song: &str) -> Uuid {
+    session_id(&format!("{set}/{song}"))
+}
+
+/// A whole setlist, shared: every song's doc under its own id
+/// ([`song_id`]), and one presence channel for the set under the set's
+/// id — so people can be on different songs and still see where
+/// everyone is. Built on architect's `DocRegistry`, whose factory hands
+/// out the songs' live docs (history and all).
+#[derive(Clone)]
+pub struct SetHost {
+    id: Uuid,
+    registry: crdt::DocRegistry,
+    docs: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, loro::LoroDoc>>>,
+}
+
+impl SetHost {
+    /// A set shared under `id` (see [`session_id`]).
+    #[must_use]
+    pub fn new(id: Uuid) -> Self {
+        let docs: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, loro::LoroDoc>>> =
+            std::sync::Arc::default();
+        let lookup = std::sync::Arc::clone(&docs);
+        let registry = crdt::DocRegistry::new(move |doc_id| {
+            let doc = lookup.lock().ok().and_then(|d| d.get(&doc_id).cloned());
+            // The set's own id has no doc — it is the presence channel —
+            // and a song this host does not have is an empty one.
+            Box::pin(async move { Ok(doc.map_or_else(CrdtDoc::ephemeral, CrdtDoc::from_loro)) })
+        })
+        .with_presence_timeout(PRESENCE_TIMEOUT_MS);
+        Self { id, registry, docs }
+    }
+
+    /// Share a song's doc under `doc_id`. Before anyone syncs it.
+    pub fn add(&self, doc_id: Uuid, doc: &SessionDoc) {
+        if let Ok(mut docs) = self.docs.lock() {
+            docs.insert(doc_id, doc.loro().clone());
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> Uuid {
+        self.id
+    }
+
+    /// Add the set's services to `router`.
+    #[must_use]
+    pub fn mount(&self, router: LayerRouter) -> LayerRouter {
+        router
+            .with(
+                doc_sync_service_descriptor(),
+                DocSyncDispatcher::new(self.registry.clone()),
+            )
+            .with(
+                doc_presence_service_descriptor(),
+                DocPresenceDispatcher::new(self.registry.clone()),
+            )
+    }
+
+    /// This host's own presence, as a peer of its own set — over an
+    /// in-process link, the same path every joiner takes.
+    ///
+    /// # Errors
+    /// When the in-process link cannot be established.
+    pub async fn own_presence(&self) -> eyre::Result<PresencePeer> {
+        let server =
+            architect::LocalServer::serve(self.mount(LayerRouter::new()), architect::Scope::new());
+        let client: DocPresenceClient = server
+            .establish()
+            .await
+            .map_err(|e| eyre::eyre!("in-process presence: {e:?}"))?;
+        let (peer, mut driver) = PresencePeer::new(self.id, PRESENCE_TIMEOUT_MS);
+        tokio::spawn(async move {
+            let _server = server;
+            if let Err(e) = driver.run(&client).await {
+                tracing::warn!(collab.error = %e, "collab: the host's own presence ended");
+            }
+        });
+        Ok(peer)
+    }
+}
+
+/// A joiner's replicas of a shared set: one doc per song, each synced by
+/// its own held-open call, and the set's presence.
+pub struct SetPeer {
+    id: Uuid,
+    presence: PresencePeer,
+    driver: Option<PresenceDriver>,
+}
+
+impl SetPeer {
+    #[must_use]
+    pub fn new(id: Uuid) -> Self {
+        let (presence, driver) = PresencePeer::new(id, PRESENCE_TIMEOUT_MS);
+        Self {
+            id,
+            presence,
+            driver: Some(driver),
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> Uuid {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn presence(&self) -> &PresencePeer {
+        &self.presence
+    }
+
+    /// Start the set's presence session.
+    pub fn run_presence(&mut self, client: DocPresenceClient) {
+        if let Some(mut driver) = self.driver.take() {
+            tokio::spawn(async move {
+                if let Err(e) = driver.run(&client).await {
+                    tracing::warn!(collab.error = %e, "collab: presence ended");
+                }
+            });
+        }
+    }
+
+    /// Replicate one song's doc: an empty replica, filled from the host.
+    #[must_use]
+    pub fn sync_song(doc_id: Uuid, client: DocSyncClient) -> SessionDoc {
+        let doc = SessionDoc::new();
+        let mut synced = SyncedDoc::new(doc_id, CrdtDoc::from_loro(doc.loro().clone()));
+        tokio::spawn(async move {
+            if let Err(e) = synced.run(&client).await {
+                tracing::warn!(collab.error = %e, "collab: a song's sync ended");
+            }
+        });
+        doc
+    }
+}
+
 /// Something that can be asked to tell everyone about this peer.
 pub trait PresenceSink: Send + Sync {
     fn set(&self, key: &str, value: loro::LoroValue);

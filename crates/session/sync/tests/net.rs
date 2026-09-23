@@ -121,3 +121,64 @@ async fn a_joiner_gets_the_session_and_edits_flow_both_ways() {
     })
     .await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_whole_set_is_shared_and_people_can_be_on_different_songs() {
+    use session_sync::net::{SetHost, SetPeer, song_id};
+    let set = "Worship Set";
+    let (washed, praise) = (SessionDoc::new(), SessionDoc::new());
+    washed.write(&song(), ORIGIN_LOCAL).unwrap();
+    let mut p = song();
+    p.chart = "Praise\n".into();
+    praise.write(&p, ORIGIN_LOCAL).unwrap();
+
+    let host = SetHost::new(session_id(set));
+    host.add(song_id(set, "Washed"), &washed);
+    host.add(song_id(set, "Praise"), &praise);
+    let server = architect::LocalServer::serve(
+        host.mount(architect::LayerRouter::new()),
+        architect::Scope::new(),
+    );
+
+    // The joiner replicates both songs over one link each.
+    let sync = || async {
+        server
+            .establish::<crdt::sync::DocSyncClient>()
+            .await
+            .unwrap()
+    };
+    let peer_washed = SetPeer::sync_song(song_id(set, "Washed"), sync().await);
+    let peer_praise = SetPeer::sync_song(song_id(set, "Praise"), sync().await);
+    until(|| peer_washed.read() == song()).await;
+    until(|| peer_praise.read().chart == "Praise\n").await;
+
+    // An edit on one song reaches the host's doc for that song only.
+    let mut m = peer_praise.read();
+    m.items.get_mut("i1").unwrap().position = 9.0;
+    peer_praise.write(&m, ORIGIN_LOCAL).unwrap();
+    until(|| praise.read().items["i1"].position == 9.0).await;
+    assert_eq!(washed.read().items["i1"].position, 1.0);
+
+    // One presence channel for the set: the host (as its own peer) sees
+    // the joiner, who is on another song.
+    let mut joiner = SetPeer::new(host.id());
+    joiner.run_presence(server.establish().await.unwrap());
+    let me = PeerState {
+        name: "Alice".into(),
+        song: Some("Praise".into()),
+        ..PeerState::default()
+    };
+    PresenceSink::set(
+        joiner.presence(),
+        &presence::key("alice", presence::STATE),
+        me.encode(),
+    );
+    let host_view = host.own_presence().await.unwrap();
+    until(|| {
+        PresenceSink::states(&host_view)
+            .get(&presence::key("alice", presence::STATE))
+            .and_then(PeerState::decode)
+            .is_some_and(|s| s.song.as_deref() == Some("Praise"))
+    })
+    .await;
+}
