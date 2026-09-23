@@ -103,7 +103,7 @@ pub fn key_spans(chart: &Chart) -> Vec<KeySpan> {
 /// that uses them without naming one has not said enough yet.
 #[must_use]
 pub fn voicings(chart: &Chart, octave: i32) -> Vec<Voicing> {
-    let mut out = Vec::new();
+    let mut out: Vec<Voicing> = Vec::new();
     let mut measure = 0usize;
     let mut key = chart.initial_key.clone();
     for section in &chart.sections {
@@ -142,11 +142,24 @@ pub fn voicings(chart: &Chart, octave: i32) -> Vec<Voicing> {
                     // A rest or a spacer (`r`, `s` — a bar of N.C.) takes
                     // its time and sounds nothing.
                     let silent = matches!(chord.full_symbol.as_str(), "r" | "s");
+                    // A push sounds early (`'4`, an eighth before its beat,
+                    // across the bar line if it is on the one) and a pull
+                    // late; it still ends where it would have, and the
+                    // chord before it gives up (or takes) the difference.
+                    let shift = chord
+                        .push_pull
+                        .as_ref()
+                        .map_or(0.0, |(push, amount)| if *push { -amount.to_beats() } else { amount.to_beats() });
                     if !silent && let Some(pitches) = voice(chord, key.as_ref(), octave) {
+                        if shift != 0.0
+                            && let Some(before) = out.last_mut()
+                        {
+                            before.beats = (before.beats + shift).max(0.0);
+                        }
                         out.push(Voicing {
                             measure,
-                            beat,
-                            beats,
+                            beat: beat + shift,
+                            beats: beats - shift,
                             pitches,
                             symbol: chord.full_symbol.clone(),
                         });
@@ -353,6 +366,19 @@ mod holding_tests {
         let voiced = voicings(&chart("My Song\n72bpm 4/4 #D\n\nVS 4\n1 1maj7 r r\n"), 3);
         let symbols: Vec<_> = voiced.iter().map(|v| (v.measure, v.symbol.as_str())).collect();
         assert_eq!(symbols, vec![(0, "1"), (1, "1maj7")]);
+    }
+
+    /// `'4` is pushed an eighth: it sounds on the "and" of four of the
+    /// bar before, holds to its own bar's end, and the chord before it
+    /// stops where it starts.
+    #[test]
+    fn a_pushed_chord_sounds_an_eighth_early() {
+        let voiced = voicings(&chart("My Song\n120bpm 4/4 #C\n\nVS 2\n1 '4\n"), 3);
+        assert_eq!(voiced.len(), 2, "{voiced:?}");
+        assert!((voiced[0].beats - 3.5).abs() < 1e-9, "{voiced:?}");
+        assert_eq!(voiced[1].measure, 1);
+        assert!((voiced[1].beat + 0.5).abs() < 1e-9, "{voiced:?}");
+        assert!((voiced[1].beats - 4.5).abs() < 1e-9, "{voiced:?}");
     }
 
     #[test]
