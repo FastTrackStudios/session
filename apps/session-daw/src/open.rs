@@ -179,6 +179,10 @@ pub fn set_song_color(project_guid: &str, rgb: u32, saved: Option<&Path>) {
 /// open — a session with one missing take is still a session worth
 /// looking at.
 fn load(path: &Path) -> eyre::Result<Opened> {
+    // Absolute from here on: the project's path is what a later save
+    // writes its media relative to, and a path relative to wherever the
+    // app was started from means nothing once it is saved.
+    let path = &std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let ProjectText { text, media_dir } = project_text(path)?;
     let daw = engine().clone();
     daw.media_bay().set_file_resolver(Box::new(
