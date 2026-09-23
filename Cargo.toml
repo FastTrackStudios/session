@@ -1244,3 +1244,36 @@ fts-plug-ui = { path = "../processor/libs/ui/fts-plug-ui" }
 # Clear native DOM mappings before Blitz recycles removed node slots.
 [patch."https://github.com/DioxusLabs/dioxus"]
 dioxus-native-dom = { path = "libs/vendor/dioxus-native-dom" }
+
+[patch."https://github.com/FastTrackStudios/architect"]
+# Sibling checkout, branch `fleet` (v0.8.2 + "an argless subscription can
+# introduce itself"): ONE architect for session, daw, keyflow and task while
+# the fleet is updated together. Replace with a tag pin before pushing.
+architect-action-derive = { path = "../architect/crates/architect-action-derive" }
+architect-derive = { path = "../architect/crates/architect-derive" }
+architect-rpc-derive = { path = "../architect/crates/architect-rpc-derive" }
+architect = { path = "../architect/crates/architect" }
+architect-atom = { path = "../architect/features/atom" }
+architect-auth = { path = "../architect/features/auth/architect-auth" }
+auth-client = { path = "../architect/features/auth/auth-client" }
+auth-db = { path = "../architect/features/auth/auth-db" }
+auth-http = { path = "../architect/features/auth/auth-http" }
+auth-proto = { path = "../architect/features/auth/auth-proto" }
+auth = { path = "../architect/features/auth/auth" }
+crdt-derive = { path = "../architect/features/crdt/crdt-derive" }
+crdt-seaorm = { path = "../architect/features/crdt/crdt-seaorm" }
+crdt = { path = "../architect/features/crdt/crdt" }
+architect-form = { path = "../architect/features/form" }
+architect-launcher-core = { path = "../architect/features/launcher/architect-launcher-core" }
+architect-launcher-providers = { path = "../architect/features/launcher/architect-launcher-providers" }
+architect-launcher-ui = { path = "../architect/features/launcher/architect-launcher-ui" }
+architect-permissions = { path = "../architect/features/permissions" }
+architect-permissions-proto = { path = "../architect/features/permissions/proto" }
+architect-story-core = { path = "../architect/features/story/architect-story-core" }
+architect-story-macros = { path = "../architect/features/story/architect-story-macros" }
+architect-story-parity = { path = "../architect/features/story/architect-story-parity" }
+architect-story-runtime = { path = "../architect/features/story/architect-story-runtime" }
+architect-story-shell = { path = "../architect/features/story/architect-story-shell" }
+architect-story-snapshots = { path = "../architect/features/story/architect-story-snapshots" }
+architect-telemetry = { path = "../architect/features/telemetry" }
+architect-ui = { path = "../architect/features/ui/architect-ui" }
