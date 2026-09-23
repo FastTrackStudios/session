@@ -30,7 +30,7 @@ use std::time::Duration;
 use session::sync::engine::MediaRoot;
 use session::sync::net::{PresenceSink, SetHost, SetPeer, session_id, song_id};
 use session::sync::presence::{self, PeerState, PlayState, Pointer, Roster, Throttle};
-use session::sync::transport::{self, Command, Follower, LocalTransport, SharedTransport, TransportMode};
+use session::sync::transport::{self, Command, LocalTransport, SharedTransport, TransportMode, TransportSync};
 use session::sync::{Bridge, Change, ORIGIN_LOCAL, SessionDoc};
 use uuid::Uuid;
 
@@ -43,6 +43,11 @@ pub struct Status {
     /// How many others are here.
     pub peers: usize,
     pub shared_transport: bool,
+    /// The set being shared (`Worship Set`, or a lone song's name).
+    pub set: String,
+    /// This person, as the others see them: name and colour.
+    pub name: String,
+    pub color: u32,
 }
 
 /// One song of the set, as the session keeps it.
@@ -58,7 +63,8 @@ struct Song {
 struct Live {
     status: Status,
     stop: tokio::sync::watch::Sender<bool>,
-    mode: Arc<Mutex<TransportMode>>,
+    /// This peer's end of the shared transport.
+    sync: Arc<Mutex<TransportSync>>,
     /// Charts the others changed, by project, since the editor looked.
     remote_chart: Arc<Mutex<HashMap<String, String>>>,
     songs: Vec<Song>,
@@ -227,7 +233,7 @@ fn open_local_with(mut docs: HashMap<String, SessionDoc>) -> eyre::Result<()> {
             bridges.push((Song { project: guid, key, doc: bridge.doc().clone() }, bridge));
         }
         let presence: Arc<dyn PresenceSink> = Arc::new(Alone);
-        let started = start(bridges, Arc::clone(&presence), "local".into(), String::new(), None, None);
+        let started = start(bridges, Arc::clone(&presence), String::new(), "local".into(), String::new(), None, None);
         let mut live = started.into_live(String::new(), false, presence);
         live.shared = false;
         Ok::<_, eyre::Report>(Some(live))
@@ -278,28 +284,47 @@ pub fn local_chart(text: &str) {
     }
 }
 
-/// Switch between everyone playing on their own and one transport.
+/// Switch between everyone playing on their own and one transport — for
+/// everyone, from where this engine is.
 pub fn set_shared_transport(shared: bool) {
     let Ok(mut live) = LIVE.lock() else { return };
     let Some(l) = live.as_mut() else { return };
     let mode = if shared { TransportMode::Shared } else { TransportMode::Independent };
-    if let Ok(mut m) = l.mode.lock() {
-        *m = mode;
-    }
+    let local = local_transport(&l.songs);
+    let Ok(mut sync) = l.sync.lock() else { return };
+    let entry = sync.set_mode(mode, &local, crate::ghosts::now_ms());
     l.status.shared_transport = shared;
-    let (at, playing) = crate::engine::Transport::shared().map_or((0.0, false), |t| t.read());
+    l.presence.set(transport::KEY, entry.encode());
+}
+
+/// Someone pressed something on this transport — play, stop, a seek, home,
+/// end, another song. Playing together, it becomes everyone's once it has
+/// landed.
+pub fn transport_pressed() {
+    let Ok(live) = LIVE.lock() else { return };
+    if let Some(l) = live.as_ref()
+        && let Ok(mut sync) = l.sync.lock()
+    {
+        sync.pressed(crate::ghosts::now_ms());
+    }
+}
+
+/// The song the shared transport wants this window on (its project here),
+/// once — for the setlist to open.
+static SONG_REQUEST: Mutex<Option<String>> = Mutex::new(None);
+
+/// The song the shared transport asked for, if it asked since last time.
+#[must_use]
+pub fn take_song_request() -> Option<String> {
+    SONG_REQUEST.lock().ok()?.take()
+}
+
+/// What this engine is doing: playing, where, on which song (by name).
+fn local_transport(songs: &[Song]) -> LocalTransport {
+    let (position, playing) = crate::engine::Transport::shared().map_or((0.0, false), |t| t.read());
     let song = crate::open::current_song()
-        .and_then(|p| l.songs.iter().find(|s| s.project == p).map(|s| s.key.clone()));
-    let state = SharedTransport {
-        mode,
-        playing,
-        position: at,
-        at_ms: crate::ghosts::now_ms(),
-        song,
-        seq: next_seq(),
-        by: l.me.clone(),
-    };
-    l.presence.set(transport::KEY, state.encode());
+        .and_then(|p| songs.iter().find(|s| s.project == p).map(|s| s.key.clone()));
+    LocalTransport { playing, position, song }
 }
 
 /// Leave the session (or stop hosting it). The songs keep their docs —
@@ -374,7 +399,7 @@ fn host_inner(name: String) -> eyre::Result<String> {
 
         let me = format!("host-{}", &endpoint.id().to_string()[..8]);
         let presence: Arc<dyn PresenceSink> = Arc::new(host.own_presence().await?);
-        let started = start(bridges, Arc::clone(&presence), me, name, Some(host), Some(endpoint));
+        let started = start(bridges, Arc::clone(&presence), set, me, name, Some(host), Some(endpoint));
         Ok::<_, eyre::Report>((ticket.clone(), started.into_live(ticket, true, presence)))
     })?;
     if let Ok(mut slot) = LIVE.lock() {
@@ -450,7 +475,7 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
         }
         crate::studio::request_resync();
         let me = format!("peer-{}", &endpoint.id().to_string()[..8]);
-        let started = start(bridges, Arc::clone(&presence), me, name, None, Some(endpoint));
+        let started = start(bridges, Arc::clone(&presence), set, me, name, None, Some(endpoint));
         let _keep = peer;
         Ok::<_, eyre::Report>(started.into_live(ticket.to_string(), false, presence))
     })?;
@@ -476,18 +501,28 @@ fn parse_ticket(ticket: &str) -> eyre::Result<(architect::iroh_link::iroh::Endpo
 /// The half-built `Live` [`start`] returns; finished by the caller.
 struct Started {
     stop: tokio::sync::watch::Sender<bool>,
-    mode: Arc<Mutex<TransportMode>>,
+    sync: Arc<Mutex<TransportSync>>,
     remote_chart: Arc<Mutex<HashMap<String, String>>>,
     songs: Vec<Song>,
     me: String,
+    name: String,
+    set: String,
 }
 
 impl Started {
     fn into_live(self, ticket: String, hosting: bool, presence: Arc<dyn PresenceSink>) -> Live {
         Live {
-            status: Status { hosting, ticket, peers: 0, shared_transport: false },
+            status: Status {
+                hosting,
+                ticket,
+                peers: 0,
+                shared_transport: false,
+                set: self.set,
+                color: presence::color_for(&self.me),
+                name: self.name,
+            },
             stop: self.stop,
-            mode: self.mode,
+            sync: self.sync,
             remote_chart: self.remote_chart,
             songs: self.songs,
             presence,
@@ -501,21 +536,24 @@ impl Started {
 fn start(
     bridges: Vec<(Song, Bridge)>,
     presence: Arc<dyn PresenceSink>,
+    set: String,
     me: String,
     name: String,
     host: Option<SetHost>,
     endpoint: Option<architect::iroh_link::iroh::Endpoint>,
 ) -> Started {
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
-    let mode = Arc::new(Mutex::new(TransportMode::Independent));
+    let sync = Arc::new(Mutex::new(TransportSync::new(me.clone())));
     let remote_chart = Arc::new(Mutex::new(HashMap::new()));
     let songs: Vec<Song> = bridges.iter().map(|(s, _)| s.clone()).collect();
     let started = Started {
         stop,
-        mode: Arc::clone(&mode),
+        sync: Arc::clone(&sync),
         remote_chart: Arc::clone(&remote_chart),
         songs: songs.clone(),
         me: me.clone(),
+        name: name.clone(),
+        set,
     };
     let mut bridges: Vec<Bridge> = bridges.into_iter().map(|(_, b)| b).collect();
 
@@ -566,8 +604,6 @@ fn start(
         let mut out = Outbox::new(me.clone(), name);
         let mut roster = Roster::default();
         let mut seen: HashMap<String, session::sync::loro::LoroValue> = HashMap::default();
-        let mut follower = Follower::default();
-        let mut pressed = Pressed::default();
         let key_of = |project: Option<String>| {
             project.and_then(|p| songs.iter().find(|s| s.project == p).map(|s| s.key.clone()))
         };
@@ -642,7 +678,12 @@ fn start(
                             .filter_map(|p| p.state.as_ref())
                             .filter_map(|s| {
                                 let song = songs.iter().find(|x| s.song.as_ref() == Some(&x.key))?;
-                                Some((song.project.clone(), s.name.clone(), s.color))
+                                Some(crate::ghosts::Person {
+                                    project: song.project.clone(),
+                                    song: song.key.clone(),
+                                    name: s.name.clone(),
+                                    color: s.color,
+                                })
                             })
                             .collect(),
                     );
@@ -650,27 +691,29 @@ fn start(
                     on_this_song.peers.retain(|_, p| {
                         p.state.as_ref().is_some_and(|s| s.song.is_none() || s.song == here)
                     });
-                    let current = mode.lock().map_or(TransportMode::Independent, |m| *m);
+                    // The shared transport: whoever wrote it last, unless
+                    // a press here is newer — then keep this engine on it.
+                    let local = local_transport(&songs);
+                    let (current, tick) = {
+                        let Ok(mut sync) = sync.lock() else { continue };
+                        if let Some(entry) = seen.get(transport::KEY).and_then(SharedTransport::decode) {
+                            sync.remote(entry);
+                        }
+                        let tick = sync.tick(&local, now);
+                        (sync.mode(), tick)
+                    };
+                    if let Some(entry) = tick.publish {
+                        presence.set(transport::KEY, entry.encode());
+                    }
+                    for command in tick.commands {
+                        obey(command, &songs);
+                    }
                     crate::ghosts::publish(Some(on_this_song), 0.0, current == TransportMode::Independent);
                     if let Ok(mut live) = LIVE.lock()
                         && let Some(l) = live.as_mut()
                     {
                         l.status.peers = roster.peers.len();
-                    }
-                    // The mode is the session's, not this peer's: whoever
-                    // switched it last switched it for everyone.
-                    if let Some(shared) = seen.get(transport::KEY).and_then(SharedTransport::decode) {
-                        if let Ok(mut m) = mode.lock() {
-                            *m = shared.mode;
-                        }
-                        if let Ok(mut live) = LIVE.lock()
-                            && let Some(l) = live.as_mut()
-                        {
-                            l.status.shared_transport = shared.mode == TransportMode::Shared;
-                        }
-                        if shared.mode == TransportMode::Shared {
-                            follow(&mut follower, &mut pressed, &shared, presence.as_ref(), &me, now);
-                        }
+                        l.status.shared_transport = current == TransportMode::Shared;
                     }
                 }
             }
@@ -682,58 +725,24 @@ fn start(
     started
 }
 
-/// What this peer's transport did last, to tell a press here from the
-/// follower's own doing.
-#[derive(Default)]
-struct Pressed {
-    /// Playing, as last seen here.
-    playing: Option<bool>,
-    /// When the follower last moved this transport (local ms).
-    commanded_ms: f64,
-}
-
-/// Keep this engine on the shared transport — and when someone presses
-/// play or stop HERE, that press becomes the shared transport.
-fn follow(
-    follower: &mut Follower,
-    pressed: &mut Pressed,
-    shared: &SharedTransport,
-    sink: &dyn PresenceSink,
-    me: &str,
-    now_ms: f64,
-) {
-    let Some(transport) = crate::engine::Transport::shared() else { return };
-    let (at, playing) = transport.read();
-    let changed_here = pressed.playing.is_some_and(|was| was != playing);
-    pressed.playing = Some(playing);
-    // A change the follower did not ask for, in the last half second, was
-    // a press here: everyone follows it.
-    if changed_here && now_ms - pressed.commanded_ms > 500.0 && playing != shared.playing {
-        let press = SharedTransport {
-            mode: TransportMode::Shared,
-            playing,
-            position: at,
-            at_ms: now_ms,
-            song: None,
-            seq: next_seq(),
-            by: me.to_owned(),
-        };
-        sink.set(transport::KEY, press.encode());
-        return;
-    }
-    let local = LocalTransport { playing, position: at, song: None };
-    for command in follower.step(shared, &local, now_ms) {
-        pressed.commanded_ms = now_ms;
-        match command {
-            // Switching songs is the setlist's job; a lone song ignores it.
-            Command::SwitchSong(_) => {}
-            Command::Play { from } => crate::engine::transport(crate::engine::Move::PlayFrom, from),
-            Command::Stop { at } => {
-                crate::engine::transport(crate::engine::Move::Stop, at);
-                crate::engine::transport(crate::engine::Move::Seek, at);
+/// Do what the shared transport asks of this engine — quietly: it is not
+/// a press here, so it is not published back.
+fn obey(command: Command, songs: &[Song]) {
+    use crate::engine::{Move, transport_following};
+    match command {
+        Command::SwitchSong(key) => {
+            if let Some(song) = songs.iter().find(|s| s.key == key)
+                && let Ok(mut slot) = SONG_REQUEST.lock()
+            {
+                *slot = Some(song.project.clone());
             }
-            Command::Seek { to } => crate::engine::transport(crate::engine::Move::Seek, to),
         }
+        Command::Play { from } => transport_following(Move::PlayFrom, from),
+        Command::Stop { at } => {
+            transport_following(Move::Stop, at);
+            transport_following(Move::Seek, at);
+        }
+        Command::Seek { to } => transport_following(Move::Seek, to),
     }
 }
 

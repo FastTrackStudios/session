@@ -15,6 +15,23 @@
 //! the right place — [`ClockSync`] maps this machine's clock onto it.
 //! Each peer's [`Follower`] turns the entry into what its own engine must
 //! do, and keeps it there: a peer that drifts is nudged back.
+//!
+//! [`TransportSync`] is the whole of it for one peer — what an app drives:
+//! it is told when someone pressed something HERE ([`TransportSync::pressed`])
+//! and what the presence holds ([`TransportSync::remote`]), and each tick
+//! says what to publish and what the engine must do. What it guarantees:
+//!
+//! - **A press here wins until a newer one arrives.** Entries are ordered
+//!   by `(seq, by)`; an older one — including the entry this peer's own
+//!   press replaced, still in the presence until its write comes back — is
+//!   never adopted, so it cannot undo the press.
+//! - **A press is what it did.** The entry published is the engine's state
+//!   once the press has landed (a moment later), not a guess at what the
+//!   button meant — play, stop, a seek, a jump home, another song.
+//! - **Commands settle.** After the engine is told something, it is given
+//!   a moment to do it before it is judged again — no second Play while
+//!   the first is still starting, and a song switch (which moves the audio
+//!   device) is asked for once, not every tick.
 
 use loro::LoroValue;
 
@@ -222,5 +239,154 @@ impl ClockSync {
     #[must_use]
     pub fn round_trip(&self) -> Option<f64> {
         self.best.map(|(rtt, _)| rtt)
+    }
+}
+
+/// How long a press here, or a command to the engine, is given to land
+/// before the engine's state is read as settled, milliseconds.
+pub const SETTLE_MS: f64 = 150.0;
+
+/// How long a song switch the follower asked for is given before it is
+/// asked for again, milliseconds (switching moves the audio device).
+pub const SWITCH_MS: f64 = 3000.0;
+
+/// One peer's end of the shared transport.
+#[derive(Debug, Clone)]
+pub struct TransportSync {
+    me: String,
+    current: Option<SharedTransport>,
+    follower: Follower,
+    /// A press here, not yet published: when it happened.
+    pressed_at: Option<f64>,
+    /// The engine was just told something: leave it alone until then.
+    quiet_until: f64,
+    /// The song switch asked for, and when.
+    switching: Option<(String, f64)>,
+}
+
+/// What one tick asks of the app.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Tick {
+    /// Write this under [`KEY`].
+    pub publish: Option<SharedTransport>,
+    /// Do these to the engine, in order.
+    pub commands: Vec<Command>,
+}
+
+impl TransportSync {
+    #[must_use]
+    pub fn new(me: impl Into<String>) -> Self {
+        Self {
+            me: me.into(),
+            current: None,
+            follower: Follower::default(),
+            pressed_at: None,
+            quiet_until: f64::NEG_INFINITY,
+            switching: None,
+        }
+    }
+
+    /// The session's mode, as last set by anyone.
+    #[must_use]
+    pub fn mode(&self) -> TransportMode {
+        self.current.as_ref().map_or(TransportMode::Independent, |c| c.mode)
+    }
+
+    /// The entry in force.
+    #[must_use]
+    pub const fn current(&self) -> Option<&SharedTransport> {
+        self.current.as_ref()
+    }
+
+    /// Someone pressed something on this transport (play, stop, a seek,
+    /// home, end, another song). Published once it has landed.
+    pub fn pressed(&mut self, now_ms: f64) {
+        if self.mode() == TransportMode::Shared {
+            self.pressed_at = Some(now_ms);
+        }
+    }
+
+    /// What the presence holds under [`KEY`]. Adopted only when newer than
+    /// what is in force; returns whether it was.
+    pub fn remote(&mut self, entry: SharedTransport) -> bool {
+        let newer = self
+            .current
+            .as_ref()
+            .is_none_or(|c| (entry.seq, entry.by.as_str()) > (c.seq, c.by.as_str()));
+        if newer {
+            self.current = Some(entry);
+        }
+        newer
+    }
+
+    /// Switch everyone between playing apart and together, from where this
+    /// engine is. Returns the entry to publish.
+    pub fn set_mode(&mut self, mode: TransportMode, local: &LocalTransport, now_ms: f64) -> SharedTransport {
+        let entry = self.entry(mode, local, now_ms);
+        self.pressed_at = None;
+        entry
+    }
+
+    /// Once per tick, with this engine's state.
+    pub fn tick(&mut self, local: &LocalTransport, now_ms: f64) -> Tick {
+        if self.mode() != TransportMode::Shared {
+            self.pressed_at = None;
+            return Tick::default();
+        }
+        // A press here, landed: it is the transport now.
+        if let Some(at) = self.pressed_at {
+            if now_ms - at < SETTLE_MS {
+                return Tick::default();
+            }
+            self.pressed_at = None;
+            let entry = self.entry(TransportMode::Shared, local, now_ms);
+            self.switching = None;
+            return Tick { publish: Some(entry), commands: Vec::new() };
+        }
+        if now_ms < self.quiet_until {
+            return Tick::default();
+        }
+        let Some(current) = self.current.clone() else { return Tick::default() };
+        let mut commands = self.follower.step(&current, local, now_ms);
+        // A switch already asked for is not asked for again (until it has
+        // had its time); the rest waits for the song to be there.
+        if let Some(Command::SwitchSong(song)) = commands.first() {
+            let asked = self
+                .switching
+                .as_ref()
+                .is_some_and(|(s, at)| s == song && now_ms - at < SWITCH_MS);
+            if asked {
+                return Tick::default();
+            }
+            self.switching = Some((song.clone(), now_ms));
+            commands.truncate(1);
+        } else {
+            self.switching = None;
+        }
+        if !commands.is_empty() {
+            self.quiet_until = now_ms + SETTLE_MS;
+        }
+        Tick { publish: None, commands }
+    }
+
+    /// A new entry from this engine's state, in force from now.
+    fn entry(&mut self, mode: TransportMode, local: &LocalTransport, now_ms: f64) -> SharedTransport {
+        let floor = self.current.as_ref().map_or(0, |c| c.seq.saturating_add(1));
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let clock = (now_ms.max(0.0) as u64).saturating_mul(1000);
+        let entry = SharedTransport {
+            mode,
+            playing: local.playing,
+            position: local.position,
+            at_ms: now_ms,
+            song: local.song.clone(),
+            seq: floor.max(clock),
+            by: self.me.clone(),
+        };
+        // Its own press is not news to this engine.
+        self.follower.seen = Some(entry.seq);
+        self.quiet_until = now_ms + SETTLE_MS;
+        self.current = Some(entry.clone());
+        entry
     }
 }

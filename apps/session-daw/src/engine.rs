@@ -665,6 +665,17 @@ pub enum Move {
 /// tells the window what happened, so waiting for the call to return
 /// would be waiting for news the window is already subscribed to.
 pub fn transport(command: Move, seconds: f64) {
+    // A press by a person: playing together, everyone's.
+    #[cfg(feature = "native")]
+    if !matches!(command, Move::ToggleLoop | Move::ToggleRecord) {
+        crate::collab::transport_pressed();
+    }
+    transport_following(command, seconds);
+}
+
+/// [`transport`], for the shared transport moving this engine: not a press
+/// here, so not sent back to the others.
+pub fn transport_following(command: Move, seconds: f64) {
     #[cfg(not(feature = "native"))]
     wasm_bindgen_futures::spawn_local(run_transport(command, seconds));
     #[cfg(feature = "native")]
