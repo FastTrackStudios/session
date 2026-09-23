@@ -40,6 +40,31 @@ impl View {
     }
 }
 
+/// What the panel shows — Audience or Performer, and the Audience's
+/// layer. A host provides one above the songs so the choice holds from
+/// song to song; without one each panel keeps its own.
+#[derive(Clone, Copy, PartialEq)]
+pub struct LyricsChoice {
+    pub view: Signal<View>,
+    pub layer: Signal<Layer>,
+}
+
+impl LyricsChoice {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            view: Signal::new(View::Performer),
+            layer: Signal::new(Layer::Slide),
+        }
+    }
+}
+
+impl Default for LyricsChoice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The song's lyrics as the panel shows them: lines, sections (with the
 /// colour of the region each came from), slides.
 #[derive(Clone, PartialEq)]
@@ -123,8 +148,8 @@ pub fn LyricsPanel() -> Element {
     let session: StudioSession = use_context();
     let words = use_hook(|| Words::of(&session));
     let reading = crate::progress::use_reading();
-    let mut view = use_signal(|| View::Performer);
-    let mut layer = use_signal(|| Layer::Slide);
+    let own = use_hook(LyricsChoice::new);
+    let LyricsChoice { mut view, mut layer } = try_use_context::<LyricsChoice>().unwrap_or(own);
     let at = reading().at;
     let has = words.lyrics.layers();
     rsx! {

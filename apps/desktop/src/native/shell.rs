@@ -60,6 +60,8 @@ pub fn Shell() -> Element {
     // Whether the mixer is open, per mode (Organize starts closed) — above
     // the songs, so it holds across them.
     use_context_provider(session_daw::mixer_panel::MixerMemory::new);
+    // The lyrics' Audience / Performer and layer, held across songs.
+    use_context_provider(session_daw::lyrics_panel::LyricsChoice::new);
     // The songs, as the launch opened them — a signal from here on, which
     // the tabs read and a pick or a recolour writes.
     let opened: session_daw::setlist::Setlist = use_context();

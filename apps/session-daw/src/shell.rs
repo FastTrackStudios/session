@@ -305,10 +305,9 @@ pub fn OverviewLayout(
     #[props(default)] chart_corner: Option<Element>,
     #[props(default)] under_chart: Option<Element>,
 ) -> Element {
-    // Width over height, for `aspect-ratio`; the chart fills its column
-    // when nothing goes under it.
-    let chart_ratio = 1.0 / crate::chart_panel::FITTED_ASPECT;
-    let chart_max = if under_chart.is_some() { "72%" } else { "100%" };
+    // The chart takes the column's full width, and — with something under
+    // it — the larger share of its height; the rest goes under it.
+    let chart_h = if under_chart.is_some() { "68%" } else { "100%" };
     let chart_w = if editor.is_some() { "width:30%; min-width:240px;" } else { "width:38%; min-width:280px;" };
     rsx! {
         div {
@@ -331,16 +330,14 @@ pub fn OverviewLayout(
                         {editor}
                     }
                 }
-                // The chart, sized to the shape a fitted page (and the start
-                // of the next) takes, and under it — the room a 16:9 screen
-                // leaves — whatever the host puts there: the lyrics.
+                // The chart over whatever the host puts under it — the
+                // lyrics, in the room a 16:9 screen leaves below a page.
                 div {
                     style: "position:relative; {chart_w} height:100%; display:flex; \
                             flex-direction:column; gap:10px;",
                     div {
-                        style: "position:relative; flex:none; width:100%; aspect-ratio:{chart_ratio}; \
-                                max-height:{chart_max}; border-radius:8px; overflow:hidden; \
-                                border:1px solid {RULE};",
+                        style: "position:relative; flex:none; width:100%; height:{chart_h}; \
+                                border-radius:8px; overflow:hidden; border:1px solid {RULE};",
                         {chart}
                         if let Some(corner) = chart_corner {
                             div { style: "position:absolute; top:8px; left:8px;", {corner} }

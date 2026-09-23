@@ -83,11 +83,6 @@ type Shared = Rc<RefCell<Live>>;
 /// first measure.
 pub const NEXT_PAGE_PEEK: f64 = 0.3;
 
-/// The shape of a fitted chart, height over width: a Letter page and
-/// [`NEXT_PAGE_PEEK`] of the next across, the page's height down — what
-/// a host sizes the chart's pane to so nothing is left over around it.
-pub const FITTED_ASPECT: f64 = 792.0 / (612.0 * (1.0 + NEXT_PAGE_PEEK) + 24.0);
-
 /// The widget: owns the layout cache; the pan and zoom live in [`Live`].
 struct ChartWidget {
     chart: std::sync::Arc<keyflow::Chart>,
@@ -154,9 +149,8 @@ impl ChartWidget {
     ///
     /// The zoom fits the page and [`NEXT_PAGE_PEEK`] of the next one
     /// across the width — or the page alone down the height, whichever
-    /// runs out first — and the scroll is the page's own corner. The
-    /// Overview sizes the chart's pane to that shape, so the room left
-    /// under it goes to the lyrics.
+    /// runs out first — and the scroll is the page's own corner. A pane
+    /// wider than that shows more of the next page.
     ///
     /// Before the downbeat (the count-in, or stopped at zero) that is the
     /// first page; past the chart's end, the page it ended on stays up.

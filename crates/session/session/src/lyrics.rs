@@ -267,6 +267,96 @@ impl Lyrics {
     }
 }
 
+/// Where a song's lyrics are pinned to it: a line of the lyrics (the
+/// first that begins with `line`) starts `beats` after the downbeat of
+/// the section named `section` (negative: before it — a pickup). Every
+/// line moves with it; with `drop_before`, the lines ahead of it go (a
+/// recording's opening the song's version does not have).
+///
+/// A synced `.lrc` is timed to its recording, and a multitrack's song is
+/// rarely laid out the same from its first beat — the anchor is what
+/// places one on the other. It is kept in the `.lrc` itself, as a
+/// comment the lyrics' own readers skip:
+///
+/// ```text
+/// [#anchor: VS 1 | -1 | And I'm clean | drop-before]
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub struct Anchor {
+    pub section: String,
+    pub beats: f64,
+    pub line: String,
+    pub drop_before: bool,
+}
+
+impl Anchor {
+    /// Whether a section region named `name` is the anchor's: its name
+    /// exactly, or one of its lettered parts — `VS 1` is `VS 1A` when a
+    /// song's first verse comes in two.
+    #[must_use]
+    pub fn names(&self, name: &str) -> bool {
+        let (name, wanted) = (name.trim(), self.section.trim());
+        name.eq_ignore_ascii_case(wanted)
+            || (name.len() == wanted.len() + 1
+                && name.is_char_boundary(wanted.len())
+                && name[..wanted.len()].eq_ignore_ascii_case(wanted)
+                && name[wanted.len()..].chars().all(|c| c.is_ascii_alphabetic()))
+    }
+
+    /// The anchor a `.lrc` carries, if it has one.
+    #[must_use]
+    pub fn in_lrc(text: &str) -> Option<Self> {
+        text.lines().find_map(|line| {
+            let body = line.trim().strip_prefix("[#anchor:")?.strip_suffix(']')?;
+            let mut parts = body.split('|').map(str::trim);
+            let section = parts.next().filter(|s| !s.is_empty())?.to_owned();
+            let beats = parts.next()?.parse().ok()?;
+            let line = parts.next().filter(|s| !s.is_empty())?.to_owned();
+            let drop_before = parts.any(|flag| flag.eq_ignore_ascii_case("drop-before"));
+            Some(Self {
+                section,
+                beats,
+                line,
+                drop_before,
+            })
+        })
+    }
+}
+
+/// Text as a line is matched: lower case, curly apostrophes straight.
+fn matchable(text: &str) -> String {
+    text.trim().to_lowercase().replace(['\u{2019}', '\u{2018}'], "'")
+}
+
+impl Lyrics {
+    /// Move every line so the first that begins with `line` starts at
+    /// `at`, dropping the lines ahead of it when `drop_before`; the last
+    /// line is held to `end`. `false`, and nothing moved, when no line
+    /// begins that way.
+    pub fn align(&mut self, line: &str, at: f64, drop_before: bool, end: f64) -> bool {
+        let wanted = matchable(line);
+        let Some(index) = self.lines.iter().position(|l| matchable(&l.text).starts_with(&wanted)) else {
+            return false;
+        };
+        let shift = at - self.lines[index].start;
+        if drop_before {
+            self.lines.drain(..index);
+        }
+        for line in &mut self.lines {
+            line.start += shift;
+            line.end += shift;
+            for word in &mut line.words {
+                word.start += shift;
+                word.end += shift;
+            }
+        }
+        if let Some(last) = self.lines.last_mut() {
+            last.end = end.max(last.start);
+        }
+        true
+    }
+}
+
 /// The Keyflow folder's track the lyrics are kept on: one empty item a
 /// line, spanning it, labelled with its text — so the lines are part of
 /// the song (saved in its `.session`, moved and trimmed in the
@@ -349,6 +439,33 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An anchor pins a line to a spot in the song: everything moves with
+    /// it, and what comes before it can go.
+    #[test]
+    fn an_anchor_places_the_lyrics() {
+        let text = "[#anchor: VS 1 | -1 | And I\u{2019}m clean | drop-before]\n\
+                    [00:00.50]Washed in the water\n[00:21.11]And I'm clean\n[00:22.67]Sin was stained on me\n";
+        let anchor = Anchor::in_lrc(text).expect("an anchor");
+        assert_eq!(
+            anchor,
+            Anchor {
+                section: "VS 1".into(),
+                beats: -1.0,
+                line: "And I\u{2019}m clean".into(),
+                drop_before: true
+            }
+        );
+        let mut lyrics = Lyrics::from_lrc(text, 0.0, 60.0);
+        assert!(lyrics.align(&anchor.line, 10.0, anchor.drop_before, 60.0));
+        let got: Vec<(f64, &str)> = lyrics.lines.iter().map(|l| (l.start, l.text.as_str())).collect();
+        assert_eq!(got.len(), 2);
+        assert!((got[0].0 - 10.0).abs() < 1e-6 && got[0].1 == "And I'm clean");
+        assert!((got[1].0 - 11.56).abs() < 1e-6);
+        assert!((lyrics.lines[1].end - 60.0).abs() < 1e-9);
+        assert!(!lyrics.align("Not a line", 0.0, false, 60.0));
+        assert!(anchor.names("VS 1") && anchor.names("vs 1a") && !anchor.names("VS 10") && !anchor.names("VS 2A"));
+    }
 
     /// A track's labelled items read back as the lines they were.
     #[test]

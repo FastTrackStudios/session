@@ -105,8 +105,31 @@ pub fn stamp_lyrics(
     let layout = session::setlist::chart_import::chart_to_layout(chart)
         .map_err(|e| eyre::eyre!("chart: {e:?}"))?;
     let text = std::fs::read_to_string(lrc).map_err(|e| eyre::eyre!("lyrics {}: {e}", lrc.display()))?;
-    let lyrics = session::lyrics::Lyrics::from_lrc(&text, layout.song_start_seconds, layout.song_end_seconds);
+    let mut lyrics = session::lyrics::Lyrics::from_lrc(&text, layout.song_start_seconds, layout.song_end_seconds);
     let project = ProjectContext::Project(project_guid.to_owned());
+    // Pinned to the song where the `.lrc` says (see `lyrics::Anchor`): its
+    // section's downbeat, from the regions the chart just laid out, and
+    // the beats from there at the song's tempo.
+    if let Some(anchor) = session::lyrics::Anchor::in_lrc(&text) {
+        use daw::service::Regions as _;
+        let downbeat = daw
+            .all(project.clone())
+            .into_iter()
+            .filter(|r| anchor.names(&r.name))
+            .map(|r| r.time_range.start_seconds())
+            .reduce(f64::min);
+        let placed = downbeat.is_some_and(|downbeat| {
+            let at = anchor.beats.mul_add(60.0 / layout.tempo_bpm.max(1.0), downbeat);
+            lyrics.align(&anchor.line, at, anchor.drop_before, layout.song_end_seconds)
+        });
+        if !placed {
+            tracing::warn!(
+                lyrics.anchor_section = %anchor.section,
+                lyrics.anchor_found = downbeat.is_some(),
+                "prepare: the lyrics' anchor matched nothing; they stay where the recording has them"
+            );
+        }
+    }
     session::lyrics::stamp_lines(daw, project, &lyrics).map_err(|e| eyre::eyre!("lyrics: {e}"))
 }
 
