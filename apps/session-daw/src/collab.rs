@@ -472,12 +472,13 @@ struct Outbox {
     pointer: Throttle<Option<(f64, Option<String>)>>,
     pointer_sent: Option<Option<(f64, Option<String>)>>,
     play: Option<PlayState>,
+    puppet_beat: Option<u64>,
 }
 
 impl Outbox {
     fn new(me: String, name: String) -> Self {
         let color = presence::color_for(&me);
-        Self { me, name, color, state: None, pointer: Throttle::new(33.0), pointer_sent: None, play: None }
+        Self { me, name, color, state: None, pointer: Throttle::new(33.0), pointer_sent: None, play: None, puppet_beat: None }
     }
 
     fn publish(&mut self, sink: &dyn PresenceSink, now: f64) {
@@ -560,6 +561,25 @@ impl Outbox {
             self.state = Some(state);
             let play = PlayState { playing: true, position: 10.0, at_ms: now, rate: 1.0 };
             sink.set(&presence::key(&self.me, presence::PLAY), play.encode());
+        }
+        // And an edit, through this engine like any other: every few
+        // seconds the drums are muted or unmuted, which the others see
+        // arrive through the doc.
+        let beat = (now / 3000.0) as u64;
+        if self.puppet_beat != Some(beat) {
+            self.puppet_beat = Some(beat);
+            if let Some(guid) = tracks.iter().find(|g| {
+                crate::ghosts::local_track_name(g).is_some_and(|n| n.starts_with("Drums"))
+            }) {
+                let guid = guid.clone();
+                tokio::spawn(async move {
+                    let Some(daw) = daw::rpc::Daw::try_get() else { return };
+                    let Ok(project) = daw.current_project().await else { return };
+                    if let Ok(Some(track)) = project.tracks().by_guid(&guid).await {
+                        let _ = track.toggle_mute().await;
+                    }
+                });
+            }
         }
         if let Some(pointer) = self.pointer.offer(Some((at, track)), now)
             && let Some((at, track)) = pointer

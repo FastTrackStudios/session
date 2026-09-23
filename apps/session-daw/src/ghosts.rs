@@ -95,7 +95,8 @@ pub fn local_selection(items: &std::collections::HashSet<String>, rows: &[(daw_p
 
 /// The arrangement's track guids and item guids as last drawn (the
 /// collaboration puppet points at real ones).
-static SHOWN: Mutex<(Vec<String>, Vec<String>)> = Mutex::new((Vec::new(), Vec::new()));
+static SHOWN: Mutex<(Vec<String>, Vec<String>, Vec<String>)> =
+    Mutex::new((Vec::new(), Vec::new(), Vec::new()));
 
 pub(crate) fn local_shown(rows: &[(daw_proto::Track, u32)], scene: &Arrangement) {
     if let Ok(mut shown) = SHOWN.lock()
@@ -103,12 +104,21 @@ pub(crate) fn local_shown(rows: &[(daw_proto::Track, u32)], scene: &Arrangement)
     {
         shown.0 = rows.iter().map(|(t, _)| t.guid.clone()).collect();
         shown.1 = scene.item_boxes().iter().map(|i| i.guid.clone()).collect();
+        shown.2 = rows.iter().map(|(t, _)| t.name.clone()).collect();
     }
 }
 
 #[must_use]
 pub fn local_rows() -> Vec<String> {
     SHOWN.lock().map(|s| s.0.clone()).unwrap_or_default()
+}
+
+/// A shown track's name, by guid.
+#[must_use]
+pub fn local_track_name(guid: &str) -> Option<String> {
+    let shown = SHOWN.lock().ok()?;
+    let i = shown.0.iter().position(|g| g == guid)?;
+    shown.2.get(i).cloned()
 }
 
 #[must_use]
