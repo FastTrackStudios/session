@@ -145,6 +145,12 @@ pub struct ArrangementPanel {
     /// The same, as a signal: what re-renders the chrome over the panel
     /// (the toolbar's width, the scrollbar's left end) when it changes.
     pub shape: Signal<bool>,
+    /// Whether the view follows the play cursor (the toolbar's toggle),
+    /// and where the cursor was last frame — following acts on the
+    /// cursor MOVING, so a view scrolled away from a stopped song stays
+    /// where it was put.
+    pub follow: Rc<Cell<bool>>,
+    followed_at: Rc<Cell<f64>>,
     /// The panel's outer node (measured) and the widget's (focused).
     pub mounted: Rc<RefCell<Option<Rc<MountedData>>>>,
     pub focus_node: Rc<RefCell<Option<Rc<MountedData>>>>,
@@ -204,6 +210,10 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     let docked = mixer.as_ref().is_some_and(|links| links.docked);
     let compact = use_hook(|| Rc::new(Cell::new(docked)));
     let shape = use_signal(|| compact.get());
+    // On by default: in a service the view should always show where the
+    // song is.
+    let follow = use_hook(|| Rc::new(Cell::new(true)));
+    let followed_at = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let history = use_hook(|| Rc::new(RefCell::new(crate::zoom::History::default())));
     let which_shown = use_signal(|| None::<crate::which_key::WhichKey>);
     let focus_node = use_hook(|| {
@@ -279,6 +289,8 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         mixer,
         compact,
         shape,
+        follow,
+        followed_at,
         mounted,
         focus_node,
         measured,
@@ -522,6 +534,7 @@ impl ArrangementPanel {
     fn frame_tick(&self, play_at: f64) {
         let r = *self.rect.peek();
         let (mut scroll, mut down, mut zoom) = (self.scroll, self.down, self.zoom);
+        self.follow_cursor(r, play_at);
         // Four numbers, written every time because a missed write is a
         // frame drawn in the wrong place.
         *self.view.borrow_mut() = crate::widget::View {
@@ -645,6 +658,27 @@ impl ArrangementPanel {
         crate::tcp::Tcp { compact: self.compact.get() }
     }
 
+    /// Page the view to the play cursor when following and the cursor has
+    /// moved out of it: played past the right edge, or jumped (a click on
+    /// the progress bar, a marker, a song picked) to somewhere off screen.
+    ///
+    /// A page, not a scroll: the cursor lands near the left edge and the
+    /// view holds still while it crosses the page, which is readable at any
+    /// zoom where a view sliding under the cursor is not.
+    fn follow_cursor(&self, r: (f64, f64, f64, f64), play_at: f64) {
+        let moved = (self.followed_at.replace(play_at) - play_at).abs() > 1e-6;
+        if !self.follow.get() || !moved {
+            return;
+        }
+        let (zoom_x, zoom_y) = *self.zoom.peek();
+        let pps = PPS * zoom_x;
+        let (width, _) = self.frame(r);
+        if let Some(to) = page_to(play_at * pps, *self.scroll.peek(), width, self.extent(r, zoom_x, zoom_y).0) {
+            let mut scroll = self.scroll;
+            scroll.set(to);
+        }
+    }
+
     /// The toolbar's edits: the same queue the widget's go on.
     #[must_use]
     pub fn edits(&self) -> crate::studio::Edits {
@@ -677,6 +711,7 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             width: tcp_w - crate::ruler::LABEL_W,
             compact: Rc::clone(&panel.compact),
             shape: panel.shape,
+            follow: Rc::clone(&panel.follow),
         }
         crate::which_key::Panel { showing: (panel.which_shown)(), colors: colors.clone() }
         crate::studio::ScrollBar {
@@ -724,5 +759,33 @@ mod tests {
     #[test]
     fn at_the_origin_it_zooms_about_the_corner() {
         assert!((zoom_about(0.0, 100.0, 1.0, 3.0) - 300.0).abs() < 1e-9);
+    }
+}
+
+/// Where to page the view to keep `x` (the play cursor, in lane pixels)
+/// in sight, or `None` while it is. The cursor lands a twentieth of the
+/// view in from the left; the view turns just before the cursor reaches
+/// the right edge, and at once when it is behind the left one.
+fn page_to(x: f64, scroll: f64, width: f64, travel: f64) -> Option<f64> {
+    let lead = width * 0.05;
+    let visible = x >= scroll && x <= scroll + width - lead;
+    (!visible).then(|| (x - lead).clamp(0.0, travel.max(0.0)))
+}
+
+#[cfg(test)]
+mod follow_tests {
+    use super::page_to;
+
+    #[test]
+    fn the_view_pages_rather_than_slides() {
+        // In view: nothing.
+        assert_eq!(page_to(500.0, 0.0, 1000.0, 10_000.0), None);
+        // At the right edge: a page on, the cursor near the left.
+        assert_eq!(page_to(960.0, 0.0, 1000.0, 10_000.0), Some(910.0));
+        // Jumped behind the view: back to it.
+        assert_eq!(page_to(100.0, 5000.0, 1000.0, 10_000.0), Some(50.0));
+        // Never past the end, never before the start.
+        assert_eq!(page_to(9_990.0, 0.0, 1000.0, 9_500.0), Some(9_500.0));
+        assert_eq!(page_to(10.0, 500.0, 1000.0, 10_000.0), Some(0.0));
     }
 }

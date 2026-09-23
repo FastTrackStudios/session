@@ -23,6 +23,7 @@ const HOVER_RULE: &str = "#3a3f47";
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Toggle {
     Compact,
+    Follow,
     Metronome,
     AutoCrossfade,
     Grouping,
@@ -35,7 +36,7 @@ enum Toggle {
 impl Toggle {
     const ROWS: [&'static [Self]; 2] = [
         &[Self::Metronome, Self::AutoCrossfade, Self::Grouping, Self::Ripple],
-        &[Self::Grid, Self::Snap, Self::Lock, Self::Compact],
+        &[Self::Grid, Self::Snap, Self::Lock, Self::Follow, Self::Compact],
     ];
 
     const fn title(self) -> &'static str {
@@ -48,13 +49,14 @@ impl Toggle {
             Self::Snap => "Snapping",
             Self::Lock => "Locking",
             Self::Compact => "Compact track panel — more room for the arrangement",
+            Self::Follow => "Follow the play cursor — page the view to wherever it goes",
         }
     }
 
     const fn option(self) -> Option<&'static options::Option> {
         match self {
-            // Both of these are the window's, not the session's.
-            Self::Compact | Self::Metronome => None,
+            // These are the window's, not the session's.
+            Self::Compact | Self::Follow | Self::Metronome => None,
             Self::AutoCrossfade => Some(&options::AUTO_CROSSFADE),
             Self::Grouping => Some(&options::GROUPING),
             Self::Ripple => Some(&options::RIPPLE),
@@ -94,6 +96,9 @@ impl Toggle {
             ],
             // A padlock.
             Self::Lock => &["M6 11 H18 V20 H6 Z", "M8.5 11 V8 A3.5 3.5 0 0 1 15.5 8 V11"],
+            // The play cursor, and the page turning to keep it in view:
+            // the line, and an arrow along to the right of it.
+            Self::Follow => &["M7 4 V20", "M11 12 H19", "M15.5 8.5 L19 12 L15.5 15.5"],
             // A panel squeezed from the right: its edge, and an arrow
             // pushing into it.
             Self::Compact => &[
@@ -118,6 +123,9 @@ pub fn MainToolbar(
     compact: std::rc::Rc<std::cell::Cell<bool>>,
     /// The same, as the signal the chrome over the panel re-renders on.
     shape: Signal<bool>,
+    /// Whether the view follows the play cursor, shared with the panel
+    /// that pages it (see `panel::ArrangementPanel::frame_tick`).
+    follow: std::rc::Rc<std::cell::Cell<bool>>,
 ) -> Element {
     // Each option's state as last set here; the options themselves are the
     // truth, this is what re-renders the button.
@@ -129,9 +137,11 @@ pub fn MainToolbar(
             .collect::<Vec<_>>()
     });
     let mut metronome = use_signal(|| !click_muted);
+    let mut following = use_signal(|| follow.get());
     let is_on = move |t: Toggle| match t {
         Toggle::Metronome => metronome(),
         Toggle::Compact => shape(),
+        Toggle::Follow => following(),
         other => shown.read().iter().any(|(each, on)| *each == other && *on),
     };
     rsx! {
@@ -150,12 +160,18 @@ pub fn MainToolbar(
                                 let edits = edits.clone();
                                 let click = click.clone();
                                 let compact = std::rc::Rc::clone(&compact);
+                                let follow = std::rc::Rc::clone(&follow);
                                 move |_| match toggle {
                                     Toggle::Metronome => {
                                         if let Some(guid) = click.clone() {
                                             edits.0.borrow_mut().push(crate::engine::Edit::ToggleMute(guid));
                                             metronome.toggle();
                                         }
+                                    }
+                                    Toggle::Follow => {
+                                        let now = !follow.get();
+                                        follow.set(now);
+                                        following.set(now);
                                     }
                                     Toggle::Compact => {
                                         let now = !compact.get();
@@ -207,7 +223,7 @@ fn Icon(toggle: Toggle, on: bool) -> Element {
 fn button_style(on: bool) -> String {
     let (bg, rule) = if on { (ON_BG, ON_BG) } else { ("transparent", HOVER_RULE) };
     format!(
-        "width:30px; height:26px; padding:0; display:flex; align-items:center; \
+        "flex:0 1 30px; min-width:0; height:26px; padding:0; display:flex; align-items:center; \
          justify-content:center; border-radius:4px; border:1px solid {rule}; background:{bg};"
     )
 }
