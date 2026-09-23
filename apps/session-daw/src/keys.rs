@@ -510,3 +510,95 @@ mod tests {
         );
     }
 }
+
+/// Whether a text field has the keyboard — a rename open in the
+/// arrangement, the chart editor. While it does, the window's own keys
+/// (the transport's) stand aside, so a space typed into a name is a space.
+static TYPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// See [`TYPING`]. Set by whatever holds a text field, every frame it is
+/// drawn — so a field that closes without saying so frees the keyboard a
+/// frame later rather than never.
+pub fn set_typing(on: bool) {
+    TYPING.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn typing() -> bool {
+    TYPING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether the window acts on the transport's keys itself
+/// ([`use_window_transport_keys`]) — when it does, a panel must not act
+/// on the ones that toggle (play/stop, record), or one press is two.
+static WINDOW_TRANSPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[must_use]
+pub fn window_has_transport() -> bool {
+    WINDOW_TRANSPORT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The transport's keys, for the WINDOW rather than any one panel.
+///
+/// Space plays and stops whatever has the focus — the arrangement, the
+/// mixer, the progress bar just clicked, nothing at all. A panel that keeps
+/// the keymap to itself hears keys only while it has the focus, which is
+/// how a click on the progress bar took the space bar away. Read through
+/// the same FTS keymap as everything else, so the bindings are the
+/// profile's; only play/stop and go-to-start are acted on here, and the
+/// arrangement leaves those to the window (see `ArrangeEditor`'s actions)
+/// so a key is not acted on twice.
+#[cfg(feature = "native")]
+pub fn use_window_transport_keys() {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    use winit::event::{ElementState, WindowEvent};
+    // Space is `Key::Character(" ")` in winit 0.31, not a named key.
+    use winit::keyboard::Key;
+
+    let keys = dioxus::prelude::use_hook(|| {
+        WINDOW_TRANSPORT.store(true, std::sync::atomic::Ordering::Relaxed);
+        Rc::new(RefCell::new(Keys::load()))
+    });
+    let held = dioxus::prelude::use_hook(|| Rc::new(Cell::new(Modifiers::NONE)));
+    dioxus_native::use_window_event(move |event, _| match event {
+        WindowEvent::ModifiersChanged(modifiers) => {
+            let state = modifiers.state();
+            held.set(Modifiers {
+                ctrl: state.control_key(),
+                alt: state.alt_key(),
+                shift: state.shift_key(),
+                meta: state.meta_key(),
+            });
+        }
+        WindowEvent::KeyboardInput { event, .. } => {
+            let (named, text): (Option<String>, Option<String>) = match &event.logical_key {
+                Key::Named(named) => (Some(format!("{named:?}")), None),
+                Key::Character(c) => (None, Some(c.to_string())),
+                _ => (None, None),
+            };
+            let Some(code) = key_code(named.as_deref(), text.as_deref()) else {
+                return;
+            };
+            if event.state == ElementState::Released {
+                keys.borrow_mut().release(code, held.get());
+                return;
+            }
+            if event.repeat || typing() {
+                return;
+            }
+            for action in keys.borrow_mut().press(code, held.get()) {
+                use crate::engine::{Move, transport};
+                match action {
+                    Action::PlayStop | Action::PlayPause => transport(Move::PlayStop, 0.0),
+                    // Idempotent, so the arrangement also acting on it (it
+                    // moves its edit cursor home too) does no harm. Record
+                    // is not on a key yet — see `ArrangeEditor`.
+                    Action::GoToStart => transport(Move::Home, 0.0),
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    });
+}

@@ -1438,6 +1438,9 @@ impl ArrangementWidget {
 
     fn draw(&mut self, width: u32, height: u32, _scale: f64) -> Scene {
         self.echoes();
+        // A rename open is a text field holding the keyboard: the window's
+        // transport keys stand aside while it is (a space in a name).
+        crate::keys::set_typing(self.renaming.is_some());
         // The panel's shape, if the toolbar has changed it: the rows are
         // RECORDED to it, so this re-cuts rather than re-scales.
         if self.scene.tcp.compact != self.compact.get() {

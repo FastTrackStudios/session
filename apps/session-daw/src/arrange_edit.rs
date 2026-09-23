@@ -1197,6 +1197,10 @@ impl Editor {
         effects: &mut Vec<Effect>,
     ) -> bool {
         match action {
+            // The window has these when it can (`keys::use_window_transport_keys`),
+            // so the space bar works whatever has the focus; acting on it
+            // here too would play and stop in one press.
+            Action::PlayStop | Action::PlayPause if crate::keys::window_has_transport() => {}
             Action::PlayStop | Action::PlayPause => {
                 effects.push(Effect::Transport(Move::PlayStop, 0.0))
             }

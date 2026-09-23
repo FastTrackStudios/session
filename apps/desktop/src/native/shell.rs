@@ -50,6 +50,8 @@ pub fn Shell() -> Element {
     let opened: session_daw::setlist::Setlist = use_context();
     let mut setlist = use_context_provider(|| Signal::new(opened));
     use_live_advance(setlist, mode);
+    // Space plays and stops whatever has the focus.
+    session_daw::keys::use_window_transport_keys();
     let window = dioxus_native::use_window();
     let (dragging, zooming) = (window.clone(), window);
     let current = setlist.read().current().cloned();
