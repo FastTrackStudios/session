@@ -217,13 +217,27 @@ impl RenderedElementBacking for NodeHandle {
         self
     }
 
+    // FTS: like `get_client_rect` — a handle can outlive its node (a panel
+    // unmounted since it was mounted) and the document can be busy; both
+    // are an error to report, never a panic.
     fn get_scroll_offset(&self) -> Pin<Box<dyn Future<Output = MountedResult<PixelsVector2D>>>> {
-        let scroll_offset = self.node().scroll_offset;
+        let Ok(doc) = self.doc.try_borrow() else {
+            return self.doc_busy_err();
+        };
+        let Some(node) = doc.get_node(self.node_id) else {
+            return self.node_not_exist_err();
+        };
+        let scroll_offset = node.scroll_offset;
         Box::pin(async move { Ok(PixelsVector2D::new(scroll_offset.x, scroll_offset.y)) })
     }
 
     fn get_scroll_size(&self) -> Pin<Box<dyn Future<Output = MountedResult<PixelsSize>>>> {
-        let node = self.node();
+        let Ok(doc) = self.doc.try_borrow() else {
+            return self.doc_busy_err();
+        };
+        let Some(node) = doc.get_node(self.node_id) else {
+            return self.node_not_exist_err();
+        };
         let scroll_width = node.final_layout.scroll_width() as f64;
         let scroll_height = node.final_layout.scroll_height() as f64;
         Box::pin(async move { Ok(PixelsSize::new(scroll_width, scroll_height)) })
