@@ -428,7 +428,9 @@ impl Roster {
         let Some((peer, part)) = split_key(key) else {
             return;
         };
-        if peer == me {
+        // Only a peer's own three parts make a peer: session-wide entries
+        // (the shared transport, `session/transport`) are not somebody.
+        if peer == me || ![STATE, POINTER, PLAY].contains(&part) {
             return;
         }
         let Some(value) = value else {

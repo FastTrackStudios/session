@@ -144,3 +144,19 @@ fn colours_are_stable_and_differ() {
     assert_eq!(color_for("alice"), color_for("alice"));
     assert_ne!(color_for("alice"), color_for("bob"));
 }
+
+#[test]
+fn a_session_wide_entry_is_not_a_peer() {
+    let mut roster = Roster::default();
+    let t = session_sync::transport::SharedTransport {
+        mode: session_sync::transport::TransportMode::Shared,
+        playing: true,
+        position: 0.0,
+        at_ms: 0.0,
+        song: None,
+        seq: 1,
+        by: "alice".into(),
+    };
+    roster.apply("me", session_sync::transport::KEY, Some(&t.encode()), 0.0);
+    assert!(roster.peers.is_empty());
+}

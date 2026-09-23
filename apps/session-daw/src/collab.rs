@@ -208,7 +208,7 @@ pub fn set_shared_transport(shared: bool) {
         playing,
         position: at,
         at_ms: crate::ghosts::now_ms(),
-        song: crate::open::current_song(),
+        song: None,
         seq: next_seq(),
         by: l.me.clone(),
     };
@@ -478,6 +478,7 @@ fn start(
         let mut roster = Roster::default();
         let mut seen: std::collections::HashMap<String, session::sync::loro::LoroValue> = Default::default();
         let mut follower = Follower::default();
+        let mut pressed = Pressed::default();
         loop {
             tokio::select! {
                 _ = stopped.changed() => break,
@@ -520,17 +521,27 @@ fn start(
                         roster.apply(&me, key, None, now);
                     }
                     seen = states;
-                    let mode = mode.lock().map_or(TransportMode::Independent, |m| *m);
-                    crate::ghosts::publish(Some(roster.clone()), 0.0, mode == TransportMode::Independent);
+                    let current = mode.lock().map_or(TransportMode::Independent, |m| *m);
+                    crate::ghosts::publish(Some(roster.clone()), 0.0, current == TransportMode::Independent);
                     if let Ok(mut live) = LIVE.lock()
                         && let Some(l) = live.as_mut()
                     {
                         l.status.peers = roster.peers.len();
                     }
-                    if mode == TransportMode::Shared
-                        && let Some(shared) = seen.get(transport::KEY).and_then(SharedTransport::decode)
-                    {
-                        follow(&mut follower, &shared, now);
+                    // The mode is the session's, not this peer's: whoever
+                    // switched it last switched it for everyone.
+                    if let Some(shared) = seen.get(transport::KEY).and_then(SharedTransport::decode) {
+                        if let Ok(mut m) = mode.lock() {
+                            *m = shared.mode;
+                        }
+                        if let Ok(mut live) = LIVE.lock()
+                            && let Some(l) = live.as_mut()
+                        {
+                            l.status.shared_transport = shared.mode == TransportMode::Shared;
+                        }
+                        if shared.mode == TransportMode::Shared {
+                            follow(&mut follower, &mut pressed, &shared, presence.as_ref(), &me, now);
+                        }
                     }
                 }
             }
@@ -542,12 +553,48 @@ fn start(
     started
 }
 
-/// Keep this engine on the shared transport.
-fn follow(follower: &mut Follower, shared: &SharedTransport, now_ms: f64) {
+/// What this peer's transport did last, to tell a press here from the
+/// follower's own doing.
+#[derive(Default)]
+struct Pressed {
+    /// Playing, as last seen here.
+    playing: Option<bool>,
+    /// When the follower last moved this transport (local ms).
+    commanded_ms: f64,
+}
+
+/// Keep this engine on the shared transport — and when someone presses
+/// play or stop HERE, that press becomes the shared transport.
+fn follow(
+    follower: &mut Follower,
+    pressed: &mut Pressed,
+    shared: &SharedTransport,
+    sink: &dyn PresenceSink,
+    me: &str,
+    now_ms: f64,
+) {
     let Some(transport) = crate::engine::Transport::shared() else { return };
     let (at, playing) = transport.read();
-    let local = LocalTransport { playing, position: at, song: crate::open::current_song() };
+    let changed_here = pressed.playing.is_some_and(|was| was != playing);
+    pressed.playing = Some(playing);
+    // A change the follower did not ask for, in the last half second, was
+    // a press here: everyone follows it.
+    if changed_here && now_ms - pressed.commanded_ms > 500.0 && playing != shared.playing {
+        let press = SharedTransport {
+            mode: TransportMode::Shared,
+            playing,
+            position: at,
+            at_ms: now_ms,
+            song: None,
+            seq: next_seq(),
+            by: me.to_owned(),
+        };
+        sink.set(transport::KEY, press.encode());
+        return;
+    }
+    let local = LocalTransport { playing, position: at, song: None };
     for command in follower.step(shared, &local, now_ms) {
+        pressed.commanded_ms = now_ms;
         match command {
             // Switching songs is the setlist's job; a lone song ignores it.
             Command::SwitchSong(_) => {}
@@ -669,6 +716,23 @@ impl Outbox {
         // arrive through the doc.
         let beat = (now / 3000.0) as u64;
         if self.puppet_beat != Some(beat) {
+            // Every fourth beat, everyone plays together from 20 s; the
+            // beat after, apart again.
+            if self.puppet_beat.is_some() && std::env::var_os("FTS_COLLAB_PUPPET_TRANSPORT").is_some() {
+                let together = beat % 4 == 0;
+                let press = SharedTransport {
+                    mode: if together { TransportMode::Shared } else { TransportMode::Independent },
+                    playing: together,
+                    position: 20.0,
+                    at_ms: now,
+                    song: None,
+                    seq: next_seq(),
+                    by: self.me.clone(),
+                };
+                if together || beat % 4 == 1 {
+                    sink.set(transport::KEY, press.encode());
+                }
+            }
             self.puppet_beat = Some(beat);
             // A caret in the chart, a line further down each time, as a
             // stable position the others resolve against their own copy.

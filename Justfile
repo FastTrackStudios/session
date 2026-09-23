@@ -1568,7 +1568,7 @@ app PROJECT="" CHART="" MODE="":
     # Collaboration (collab_bar.rs): share on open, or join a ticket / the
     # file a host writes one to. A joining copy is a SECOND window beside
     # the host, so it neither kills the running one nor shares its log.
-    for var in FTS_COLLAB_HOST FTS_COLLAB_JOIN FTS_COLLAB_NAME FTS_COLLAB_TICKET FTS_COLLAB_PUPPET; do
+    for var in FTS_COLLAB_HOST FTS_COLLAB_JOIN FTS_COLLAB_NAME FTS_COLLAB_TICKET FTS_COLLAB_PUPPET FTS_COLLAB_PUPPET_TRANSPORT; do
         if [[ -n "${!var:-}" ]]; then envs+=(--env "$var=${!var}"); fi
     done
     if [[ -n "${FTS_COLLAB_JOIN:-}" ]]; then
