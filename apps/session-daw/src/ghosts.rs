@@ -122,6 +122,33 @@ pub async fn measure_regions() {
     }
 }
 
+/// A panel that anchors pointers to its content: what is under a point
+/// of it, and where that thing is now. Coordinates are logical pixels
+/// relative to the panel's own rectangle (see [`region_mounted`], under
+/// the same name).
+pub trait Anchor {
+    /// The content under `(x, y)`: a key and a place on it (`None` over
+    /// nothing in particular — the pointer is then placed in the panel).
+    /// `size` is the panel's width and height.
+    fn anchor(&self, x: f64, y: f64, size: (f64, f64)) -> Option<(String, f64, f64)>;
+    /// Where that content is in this view now (`None`: not shown).
+    fn place(&self, key: &str, u: f64, v: f64, size: (f64, f64)) -> Option<(f64, f64)>;
+}
+
+thread_local! {
+    static ANCHORS: std::cell::RefCell<HashMap<String, std::rc::Rc<dyn Anchor>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// A panel's content anchoring, under its region name.
+pub fn register_anchor(panel: &str, anchor: std::rc::Rc<dyn Anchor>) {
+    ANCHORS.with(|a| a.borrow_mut().insert(panel.to_owned(), anchor));
+}
+
+fn anchor_for(panel: &str) -> Option<std::rc::Rc<dyn Anchor>> {
+    ANCHORS.with(|a| a.borrow().get(panel).cloned())
+}
+
 /// Where a named panel is in this window.
 #[must_use]
 pub fn region_rect(id: &str) -> Option<PanelRect> {
@@ -141,11 +168,17 @@ pub fn local_window_pointer(x: f64, y: f64, window: (f64, f64)) {
             .filter(|(_, (rx, ry, rw, rh))| x >= *rx && y >= *ry && x < rx + rw && y < ry + rh)
             // The smallest panel under the point is the one it is in.
             .min_by(|a, b| (a.1.2 * a.1.3).total_cmp(&(b.1.2 * b.1.3)))
-            .map(|(id, (rx, ry, rw, rh))| Pointer::Region {
-                region: id.clone(),
-                x: (x - rx) / rw,
-                y: (y - ry) / rh,
-            })
+            .map(|(id, rect)| (id.clone(), *rect))
+    })
+    .map(|(id, (rx, ry, rw, rh))| {
+        // Anchored to the content when the panel can say what is there;
+        // else a place in the panel.
+        anchor_for(&id)
+            .and_then(|a| a.anchor(x - rx, y - ry, (rw, rh)))
+            .map_or_else(
+                || Pointer::Region { region: id.clone(), x: (x - rx) / rw, y: (y - ry) / rh },
+                |(key, u, v)| Pointer::Anchor { panel: id.clone(), key, u, v },
+            )
     });
     let pointer = hit.unwrap_or_else(|| Pointer::Region {
         region: "window".into(),
@@ -179,18 +212,25 @@ pub fn window_pointers(window: (f64, f64)) -> Vec<(f64, f64, String, u32)> {
         .filter_map(|peer| {
             let state = peer.state.as_ref()?;
             // Over the lanes, the arrangement draws it.
-            if !matches!(peer.trail.latest()?, Pointer::Region { .. }) {
+            if matches!(peer.trail.latest()?, Pointer::Timeline { .. }) {
                 return None;
             }
-            let (x, y) = peer.trail.screen_at(now, |p| {
-                let Pointer::Region { region, x, y } = p else { return None };
-                let (rx, ry, rw, rh) = if region == "window" {
-                    (0.0, 0.0, window.0, window.1)
-                } else {
-                    // A panel this window is not showing: nowhere to put it.
-                    region_rect(region)?
-                };
-                Some((x.mul_add(rw, rx), y.mul_add(rh, ry)))
+            let (x, y) = peer.trail.screen_at(now, |p| match p {
+                Pointer::Region { region, x, y } => {
+                    let (rx, ry, rw, rh) = if region == "window" {
+                        (0.0, 0.0, window.0, window.1)
+                    } else {
+                        // A panel this window is not showing: nowhere.
+                        region_rect(region)?
+                    };
+                    Some((x.mul_add(rw, rx), y.mul_add(rh, ry)))
+                }
+                Pointer::Anchor { panel, key, u, v } => {
+                    let (rx, ry, rw, rh) = region_rect(panel)?;
+                    let (px, py) = anchor_for(panel)?.place(key, *u, *v, (rw, rh))?;
+                    Some((rx + px, ry + py))
+                }
+                _ => None,
             })?;
             Some((x, y, state.name.clone(), state.color))
         })

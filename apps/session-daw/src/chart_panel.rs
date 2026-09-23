@@ -71,6 +71,10 @@ struct Live {
     /// `cursor_y_pt` makes.
     content_pt: (f64, f64),
     px_per_pt: f64,
+    /// The device scale the last paint used, and the laid-out measures —
+    /// what a collaborator's pointer is anchored to (see [`ChartAnchor`]).
+    scale: f64,
+    boxes: Vec<keyflow::engraver::renderer::view::MeasureBox>,
     /// The view was moved by hand (a pan or a zoom): a paged panel stops
     /// fitting the page and following the song until a double-click hands
     /// it back.
@@ -112,6 +116,61 @@ struct ChartWidget {
     page: u32,
     /// The last live chart taken ([`publish_live`]).
     live_seen: u64,
+    /// The chart the measure boxes in [`Live`] were taken from.
+    boxes_key: u64,
+}
+
+/// A collaborator's pointer over the chart, anchored to the music: the
+/// measure under it, how far through that measure's box (0 at the left
+/// barline, 1 at the right) and how high against its staff (0 the top
+/// line, 1 the bottom) — so it lands on measure 40, beat 4 in every
+/// window, whatever each has zoomed, panned or paged to.
+struct ChartAnchor {
+    live: Shared,
+}
+
+impl ChartAnchor {
+    /// Logical pixels per chart point, and the pan.
+    fn view(&self) -> Option<(f64, (f64, f64))> {
+        let live = self.live.borrow();
+        let k = live.px_per_pt / live.scale.max(f64::EPSILON);
+        (k > 0.0).then_some((k, live.scroll_pt))
+    }
+}
+
+impl crate::ghosts::Anchor for ChartAnchor {
+    fn anchor(&self, x: f64, y: f64, _size: (f64, f64)) -> Option<(String, f64, f64)> {
+        let (k, scroll) = self.view()?;
+        let (px, py) = (scroll.0 + x / k, scroll.1 + y / k);
+        let live = self.live.borrow();
+        // The measure across the point whose staff is nearest it — within
+        // a staff's height or so of the system, not over the page margin.
+        let hit = live
+            .boxes
+            .iter()
+            .filter(|b| px >= b.x0 && px <= b.x1)
+            .filter(|b| py >= b.staff_y - 1.5 * b.staff_height && py <= b.staff_y + 2.5 * b.staff_height)
+            .min_by(|a, b| {
+                let centre = |m: &keyflow::engraver::renderer::view::MeasureBox| {
+                    (py - (m.staff_y + m.staff_height / 2.0)).abs()
+                };
+                centre(a).total_cmp(&centre(b))
+            })?;
+        Some((
+            hit.measure.to_string(),
+            (px - hit.x0) / (hit.x1 - hit.x0).max(f64::EPSILON),
+            (py - hit.staff_y) / hit.staff_height.max(f64::EPSILON),
+        ))
+    }
+
+    fn place(&self, key: &str, u: f64, v: f64, _size: (f64, f64)) -> Option<(f64, f64)> {
+        let measure: usize = key.parse().ok()?;
+        let (k, scroll) = self.view()?;
+        let live = self.live.borrow();
+        let b = live.boxes.iter().find(|b| b.measure == measure)?;
+        let (px, py) = (u.mul_add(b.x1 - b.x0, b.x0), v.mul_add(b.staff_height, b.staff_y));
+        Some(((px - scroll.0) * k, (py - scroll.1) * k))
+    }
 }
 
 impl ChartWidget {
@@ -147,6 +206,13 @@ impl ChartWidget {
         let mut live = self.live.borrow_mut();
         live.content_pt = content_pt;
         live.px_per_pt = points_to_px(scale) * zoom;
+        live.scale = scale;
+        // The measures move only with a new layout: refreshed when the
+        // chart does (or before there are any).
+        if live.boxes.is_empty() || self.boxes_key != self.key {
+            live.boxes = self.view.measure_boxes();
+            self.boxes_key = self.key;
+        }
         out
     }
 
@@ -227,7 +293,14 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         content_pt: (1.0, 1.0),
         px_per_pt: 1.0,
         manual: false,
+        scale: 1.0,
+        boxes: Vec::new(),
     }));
+    // The Overview's chart (the paged one) is the `chart` pane others'
+    // pointers are placed in.
+    if paged {
+        crate::ghosts::register_anchor("chart", Rc::new(ChartAnchor { live: Rc::clone(&live) }));
+    }
     let widget = ChartWidget {
         chart,
         key,
@@ -237,6 +310,7 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         paged,
         page: 1,
         live_seen: 0,
+        boxes_key: 0,
     };
     Some((widget, live))
 }

@@ -181,3 +181,11 @@ fn a_pointer_is_free_in_xy_and_glides_between_tracks_on_screen() {
     let (x, y) = trail.screen_at(50.0 + INTERPOLATION_DELAY_MS, place).unwrap();
     assert!((x - 25.0).abs() < 1e-9 && (y - 120.0).abs() < 1e-9, "{x},{y}");
 }
+
+#[test]
+fn a_pointer_can_be_anchored_to_what_it_is_over() {
+    // Measure 40, three quarters through (beat 4 of 4), a little above
+    // the staff — the same wherever each person's chart has scrolled to.
+    let p = Pointer::Anchor { panel: "chart".into(), key: "39".into(), u: 0.75, v: -0.2 };
+    assert_eq!(Pointer::decode(&p.encode(1.0)), Some((p, 1.0)));
+}

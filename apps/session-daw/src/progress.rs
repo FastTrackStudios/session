@@ -118,6 +118,13 @@ pub fn ProgressBar() -> Element {
         };
     };
     let starts: Vec<f64> = song.sections.iter().map(|(from, _)| *from).collect();
+    // Others' pointers over the bar are a time in the song, placed on this
+    // bar wherever it is and however wide.
+    #[cfg(feature = "native")]
+    use_hook({
+        let span = (song.start, song.end);
+        move || crate::ghosts::register_anchor("progress", std::rc::Rc::new(SongAnchor { span }))
+    });
     rsx! {
         SongProgressBar {
             progress: song.progress(reading().at),
@@ -176,5 +183,26 @@ pub fn TransportButtons() -> Element {
                 },
             }
         }
+    }
+}
+
+/// A pointer over the progress bar, anchored to the song: `u` is a time,
+/// in project seconds; `v` how far down the bar.
+#[cfg(feature = "native")]
+struct SongAnchor {
+    span: (f64, f64),
+}
+
+#[cfg(feature = "native")]
+impl crate::ghosts::Anchor for SongAnchor {
+    fn anchor(&self, x: f64, y: f64, (w, h): (f64, f64)) -> Option<(String, f64, f64)> {
+        let (start, end) = self.span;
+        let at = (x / w.max(1.0)).mul_add(end - start, start);
+        Some(("song".to_owned(), at, y / h.max(1.0)))
+    }
+
+    fn place(&self, key: &str, u: f64, v: f64, (w, h): (f64, f64)) -> Option<(f64, f64)> {
+        let (start, end) = self.span;
+        (key == "song").then(|| ((u - start) / (end - start).max(f64::EPSILON) * w, v * h))
     }
 }

@@ -79,6 +79,13 @@ pub enum Pointer {
     /// position within it, 0..1 each way — so it lands on the same place
     /// of the same panel whatever size each person's window is.
     Region { region: String, x: f64, y: f64 },
+    /// Over a panel's CONTENT: anchored to what is under it rather than to
+    /// where it is on screen, so it lands on the same thing in a view
+    /// laid out, zoomed or scrolled differently. The panel decides what
+    /// `key`, `u` and `v` mean — the chart: a measure, how far through it
+    /// and how high against its staff; the mixer: a track's strip and
+    /// where on it; the progress bar: the song, and a time.
+    Anchor { panel: String, key: String, u: f64, v: f64 },
 }
 
 /// A peer's transport, at a moment.
@@ -254,6 +261,14 @@ impl Pointer {
                 ("x", LoroValue::Double(*x)),
                 ("y", LoroValue::Double(*y)),
             ]),
+            Self::Anchor { panel, key, u, v } => map(vec![
+                ("kind", LoroValue::from("anchor")),
+                ("t", LoroValue::Double(t_ms)),
+                ("panel", LoroValue::from(panel.as_str())),
+                ("key", LoroValue::from(key.as_str())),
+                ("u", LoroValue::Double(*u)),
+                ("v", LoroValue::Double(*v)),
+            ]),
         }
     }
 
@@ -276,6 +291,12 @@ impl Pointer {
                 region: f.string("region")?,
                 x: f.f64("x")?,
                 y: f.f64("y")?,
+            },
+            "anchor" => Self::Anchor {
+                panel: f.string("panel")?,
+                key: f.string("key")?,
+                u: f.f64("u")?,
+                v: f.f64("v")?,
             },
             _ => return None,
         };
@@ -462,6 +483,15 @@ fn lerp(a: &Pointer, b: &Pointer, k: f64) -> Pointer {
         (Pointer::Chart { x: ax, y: ay }, Pointer::Chart { x: bx, y: by }) => Pointer::Chart {
             x: mix(*ax, *bx),
             y: mix(*ay, *by),
+        },
+        (
+            Pointer::Anchor { panel: pa, key: ka, u: ua, v: va },
+            Pointer::Anchor { panel: pb, key: kb, u: ub, v: vb },
+        ) if pa == pb && ka == kb => Pointer::Anchor {
+            panel: pb.clone(),
+            key: kb.clone(),
+            u: mix(*ua, *ub),
+            v: mix(*va, *vb),
         },
         // Across panels it jumps: halfway between two is on neither.
         (

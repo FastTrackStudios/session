@@ -188,6 +188,8 @@ pub fn DawPanels(
         div {
             style: "display:{mixer_display}; position:absolute; left:0; right:0; bottom:0; \
                     height:{HEIGHT}px; border-top:1px solid #000;",
+            // Where others' pointers over the mixer are placed.
+            onmounted: move |e| crate::ghosts::region_mounted("mixer", e.data()),
             Mixer {}
         }
     }
@@ -206,13 +208,23 @@ pub fn Mixer() -> Element {
     live.set(live_mode);
     let scroll = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let content_w = use_hook(|| Rc::new(Cell::new(0.0_f64)));
+    let strips = use_hook(|| {
+        let strips: Rc<RefCell<Strips>> = Rc::default();
+        crate::ghosts::register_anchor(
+            "mixer",
+            Rc::new(MixerAnchor { strips: Rc::clone(&strips), scroll: Rc::clone(&scroll) }),
+        );
+        strips
+    });
     let widget = use_hook(|| {
-        dioxus_native_dom::CustomWidgetAttr::new(MixerWidget::new(
+        let mut widget = MixerWidget::new(
             links.clone(),
             Rc::clone(&scroll),
             Rc::clone(&content_w),
             Rc::clone(&live),
-        ))
+        );
+        widget.strips = Rc::clone(&strips);
+        dioxus_native_dom::CustomWidgetAttr::new(widget)
     });
 
     // The wheel, which Blitz does not send to the DOM: read at the window
@@ -440,6 +452,34 @@ struct MixerWidget {
     live: Rc<Cell<bool>>,
     built_live: bool,
     dirty: Cell<bool>,
+    /// Each strip as last laid out, for anchoring others' pointers.
+    strips: Rc<RefCell<Strips>>,
+}
+
+/// Each strip's track, left edge and width, in content pixels.
+type Strips = Vec<(String, f64, f64)>;
+
+/// A pointer over the mixer, anchored to a strip: the track's guid, how
+/// far across the strip, how far down — the same fader on the same track
+/// in every window, whatever each has scrolled to.
+struct MixerAnchor {
+    strips: Rc<RefCell<Strips>>,
+    scroll: Rc<Cell<f64>>,
+}
+
+impl crate::ghosts::Anchor for MixerAnchor {
+    fn anchor(&self, x: f64, y: f64, (_, h): (f64, f64)) -> Option<(String, f64, f64)> {
+        let cx = x + self.scroll.get();
+        let strips = self.strips.borrow();
+        let (guid, left, width) = strips.iter().find(|(_, l, w)| cx >= *l && cx < l + w)?;
+        Some((guid.clone(), (cx - left) / width.max(1.0), y / h.max(1.0)))
+    }
+
+    fn place(&self, key: &str, u: f64, v: f64, (_, h): (f64, f64)) -> Option<(f64, f64)> {
+        let strips = self.strips.borrow();
+        let (_, left, width) = strips.iter().find(|(g, _, _)| g == key)?;
+        Some((u.mul_add(*width, *left) - self.scroll.get(), v * h))
+    }
 }
 
 impl MixerWidget {
@@ -468,6 +508,7 @@ impl MixerWidget {
             clips: crate::overlay::Clips::default(),
             meters: crate::engine::Meters::start(),
             live,
+            strips: Rc::default(),
             built_live: false,
             dirty: Cell::new(false),
         }
@@ -687,6 +728,15 @@ impl MixerWidget {
             return out;
         };
         self.content_w.set(mixer.content_width());
+        {
+            let mut strips = self.strips.borrow_mut();
+            strips.clear();
+            for (row, (track, _)) in self.rows.iter().enumerate() {
+                if let Some((left, width, _)) = mixer.strip_box(row) {
+                    strips.push((track.guid.clone(), left, width));
+                }
+            }
+        }
         let most = (mixer.content_width() - w).max(0.0);
         let scroll = self.scroll.get().clamp(0.0, most);
         self.scroll.set(scroll);

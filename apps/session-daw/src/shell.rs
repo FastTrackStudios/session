@@ -319,7 +319,7 @@ pub fn OverviewLayout(
         div {
             style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; \
                     flex-direction:column; gap:10px; padding:10px;",
-            div { style: "flex:none;", {progress} }
+            div { style: "flex:none;", onmounted: move |e| region("progress", &e), {progress} }
             div {
                 style: "flex:1; min-height:0; display:flex; gap:10px;",
                 if let Some(editor) = editor {
