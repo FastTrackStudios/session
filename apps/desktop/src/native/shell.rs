@@ -80,6 +80,8 @@ pub fn Shell() -> Element {
             // A press anywhere but the chart editor (which stops it) gives
             // the keyboard back to the transport.
             onmousedown: move |_| session_daw::keys::set_editing(false),
+            // Everyone else's mouse, over everything (collab_pointers).
+            session_daw::collab_pointers::CollabPointers {}
             TopBar {
                 view,
                 mode,

@@ -624,8 +624,8 @@ struct Outbox {
     name: String,
     color: u32,
     state: Option<PeerState>,
-    pointer: Throttle<Option<(f64, Option<String>)>>,
-    pointer_sent: Option<Option<(f64, Option<String>)>>,
+    pointer: Throttle<Option<Pointer>>,
+    pointer_sent: Option<Option<Pointer>>,
     play: Option<PlayState>,
     puppet_beat: Option<u64>,
 }
@@ -665,10 +665,7 @@ impl Outbox {
         {
             let key = presence::key(&self.me, presence::POINTER);
             match &pointer {
-                Some((at, track)) => sink.set(
-                    &key,
-                    Pointer::Timeline { at: *at, track: track.clone() }.encode(now),
-                ),
+                Some(pointer) => sink.set(&key, pointer.encode(now)),
                 None => sink.delete(&key),
             }
             self.pointer_sent = Some(pointer);
@@ -768,13 +765,15 @@ impl Outbox {
                 });
             }
         }
-        if let Some(pointer) = self.pointer.offer(Some((at, track)), now)
-            && let Some((at, track)) = pointer
-        {
-            sink.set(
-                &presence::key(&self.me, presence::POINTER),
-                Pointer::Timeline { at, track }.encode(now),
-            );
+        // Three seconds on the lanes, three over the chart's page, three
+        // over the lyrics: every kind of place a pointer can be.
+        let place = match (now / 3000.0) as u64 % 3 {
+            0 => Pointer::Timeline { at, track },
+            1 => Pointer::Region { region: "chart".into(), x: 0.2 + 0.6 * (t % 1.0), y: 0.3 + 0.05 * t },
+            _ => Pointer::Region { region: "lyrics".into(), x: 0.15 + 0.7 * (t % 1.0), y: 0.5 },
+        };
+        if let Some(Some(pointer)) = self.pointer.offer(Some(place), now) {
+            sink.set(&presence::key(&self.me, presence::POINTER), pointer.encode(now));
         }
     }
 }

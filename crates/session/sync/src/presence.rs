@@ -70,6 +70,11 @@ pub enum Pointer {
     Timeline { at: f64, track: Option<String> },
     /// Over the chart: a position on its page, 0..1 each way.
     Chart { x: f64, y: f64 },
+    /// Anywhere else in the window: a named part of it (`chart`,
+    /// `lyrics`, `panels`, `editor`, … or `window` for the whole) and the
+    /// position within it, 0..1 each way — so it lands on the same place
+    /// of the same panel whatever size each person's window is.
+    Region { region: String, x: f64, y: f64 },
 }
 
 /// A peer's transport, at a moment.
@@ -237,6 +242,13 @@ impl Pointer {
                 ("x", LoroValue::Double(*x)),
                 ("y", LoroValue::Double(*y)),
             ]),
+            Self::Region { region, x, y } => map(vec![
+                ("kind", LoroValue::from("region")),
+                ("t", LoroValue::Double(t_ms)),
+                ("region", LoroValue::from(region.as_str())),
+                ("x", LoroValue::Double(*x)),
+                ("y", LoroValue::Double(*y)),
+            ]),
         }
     }
 
@@ -251,6 +263,11 @@ impl Pointer {
                 track: f.string("track"),
             },
             "chart" => Self::Chart {
+                x: f.f64("x")?,
+                y: f.f64("y")?,
+            },
+            "region" => Self::Region {
+                region: f.string("region")?,
                 x: f.f64("x")?,
                 y: f.f64("y")?,
             },
@@ -397,6 +414,15 @@ fn lerp(a: &Pointer, b: &Pointer, k: f64) -> Pointer {
             }
         }
         (Pointer::Chart { x: ax, y: ay }, Pointer::Chart { x: bx, y: by }) => Pointer::Chart {
+            x: mix(*ax, *bx),
+            y: mix(*ay, *by),
+        },
+        // Across panels it jumps: halfway between two is on neither.
+        (
+            Pointer::Region { region: ra, x: ax, y: ay },
+            Pointer::Region { region: rb, x: bx, y: by },
+        ) if ra == rb => Pointer::Region {
+            region: rb.clone(),
             x: mix(*ax, *bx),
             y: mix(*ay, *by),
         },

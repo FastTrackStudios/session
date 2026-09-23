@@ -333,6 +333,7 @@ pub fn OverviewLayout(
                     div {
                         style: "position:relative; flex:none; width:380px; height:100%; \
                                 border-radius:8px; overflow:hidden; border:1px solid {RULE};",
+                        onmounted: move |e| region("editor", &e),
                         {editor}
                     }
                 }
@@ -346,6 +347,7 @@ pub fn OverviewLayout(
                             border:1px solid {RULE};",
                     div {
                         style: "position:relative; flex:none; width:100%; {chart_h}",
+                        onmounted: move |e| region("chart", &e),
                         {chart}
                         if let Some(corner) = chart_corner {
                             div { style: "position:absolute; top:8px; left:8px;", {corner} }
@@ -355,6 +357,7 @@ pub fn OverviewLayout(
                         div {
                             style: "position:relative; flex:1; min-height:0; width:100%; \
                                     border-top:1px solid {RULE};",
+                            onmounted: move |e| region("lyrics", &e),
                             {under}
                         }
                     }
@@ -362,11 +365,22 @@ pub fn OverviewLayout(
                 div {
                     style: "position:relative; flex:1; min-width:0; height:100%; border-radius:8px; \
                             overflow:hidden; border:1px solid {RULE};",
+                    onmounted: move |e| region("panels", &e),
                     {panels}
                 }
             }
         }
     }
+}
+
+/// A pane of the Overview is a place others' pointers can be shown in
+/// (see `collab_pointers`).
+#[allow(clippy::needless_pass_by_value)]
+fn region(id: &str, event: &Event<MountedData>) {
+    #[cfg(feature = "native")]
+    crate::ghosts::region_mounted(id, event.data());
+    #[cfg(not(feature = "native"))]
+    let _ = (id, event);
 }
 
 /// A view button, on or off.

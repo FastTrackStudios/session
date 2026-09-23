@@ -160,3 +160,23 @@ fn a_session_wide_entry_is_not_a_peer() {
     roster.apply("me", session_sync::transport::KEY, Some(&t.encode()), 0.0);
     assert!(roster.peers.is_empty());
 }
+
+#[test]
+fn a_pointer_over_a_panel_is_where_in_that_panel() {
+    let p = Pointer::Region { region: "lyrics".into(), x: 0.25, y: 0.75 };
+    assert_eq!(Pointer::decode(&p.encode(9.0)), Some((p, 9.0)));
+    let mut trail = PointerTrail::default();
+    trail.push(Pointer::Region { region: "chart".into(), x: 0.0, y: 0.0 }, 0.0, 0.0);
+    trail.push(Pointer::Region { region: "chart".into(), x: 1.0, y: 0.5 }, 100.0, 100.0);
+    assert_eq!(
+        trail.at(50.0 + INTERPOLATION_DELAY_MS),
+        Some(Pointer::Region { region: "chart".into(), x: 0.5, y: 0.25 })
+    );
+    // Across panels it jumps: halfway between the chart and the mixer is
+    // on neither.
+    trail.push(Pointer::Region { region: "panels".into(), x: 0.9, y: 0.9 }, 200.0, 200.0);
+    assert_eq!(
+        trail.at(150.0 + INTERPOLATION_DELAY_MS),
+        Some(Pointer::Region { region: "panels".into(), x: 0.9, y: 0.9 })
+    );
+}

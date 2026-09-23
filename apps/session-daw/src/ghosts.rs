@@ -58,8 +58,9 @@ pub fn active() -> bool {
 /// collaboration driver, which decides what to tell the others and when.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Local {
-    /// The mouse over the lanes: seconds, and the track under it.
-    pub pointer: Option<(f64, Option<String>)>,
+    /// The mouse: over the lanes a time and a track, anywhere else a
+    /// place in a named panel ([`local_window_pointer`]).
+    pub pointer: Option<Pointer>,
     pub selected_items: Vec<String>,
     pub selected_tracks: Vec<String>,
 }
@@ -70,11 +71,123 @@ static LOCAL: Mutex<Local> = Mutex::new(Local {
     selected_tracks: Vec::new(),
 });
 
-/// The mouse moved over the arrangement (`None`: it left the lanes).
+/// Whether the mouse is over the lanes, where the arrangement reports it
+/// as a time and a track — finer than any panel position.
+static OVER_LANES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The mouse moved over the arrangement: a time and a track over the
+/// lanes, `None` off them (the window overlay reports it from there).
 pub fn local_pointer(pointer: Option<(f64, Option<String>)>) {
-    if let Ok(mut local) = LOCAL.lock() {
-        local.pointer = pointer;
+    OVER_LANES.store(pointer.is_some(), std::sync::atomic::Ordering::Relaxed);
+    if let Some((at, track)) = pointer
+        && let Ok(mut local) = LOCAL.lock()
+    {
+        local.pointer = Some(Pointer::Timeline { at, track });
     }
+}
+
+// ── panels: where each named part of the window is ──────────────────────
+
+/// A panel's rectangle in the window, logical pixels: x, y, width, height.
+pub type PanelRect = (f64, f64, f64, f64);
+
+thread_local! {
+    static REGION_NODES: std::cell::RefCell<HashMap<String, std::rc::Rc<dioxus::prelude::MountedData>>> =
+        std::cell::RefCell::new(HashMap::new());
+    static REGION_RECTS: std::cell::RefCell<HashMap<String, PanelRect>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// A panel mounted: remember its node, measured by [`measure_regions`].
+/// For `onmounted` on the panel's outermost element.
+pub fn region_mounted(id: &str, node: std::rc::Rc<dioxus::prelude::MountedData>) {
+    REGION_NODES.with(|n| n.borrow_mut().insert(id.to_owned(), node));
+}
+
+/// Re-measure every panel (they move with the window and the layout).
+pub async fn measure_regions() {
+    let nodes: Vec<(String, std::rc::Rc<dioxus::prelude::MountedData>)> =
+        REGION_NODES.with(|n| n.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+    for (id, node) in nodes {
+        match node.get_client_rect().await {
+            Ok(r) if r.size.width > 0.0 && r.size.height > 0.0 => {
+                REGION_RECTS.with(|m| {
+                    m.borrow_mut().insert(id, (r.origin.x, r.origin.y, r.size.width, r.size.height))
+                });
+            }
+            // Unmounted, or laid out to nothing: not somewhere to point.
+            _ => {
+                REGION_RECTS.with(|m| m.borrow_mut().remove(&id));
+            }
+        }
+    }
+}
+
+/// Where a named panel is in this window.
+#[must_use]
+pub fn region_rect(id: &str) -> Option<PanelRect> {
+    REGION_RECTS.with(|m| m.borrow().get(id).copied())
+}
+
+/// The mouse moved in the window (logical pixels): which panel it is
+/// over and where in it, or where in the window. Over the lanes the
+/// arrangement's own report wins.
+pub fn local_window_pointer(x: f64, y: f64, window: (f64, f64)) {
+    if OVER_LANES.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let hit = REGION_RECTS.with(|m| {
+        m.borrow()
+            .iter()
+            .filter(|(_, (rx, ry, rw, rh))| x >= *rx && y >= *ry && x < rx + rw && y < ry + rh)
+            // The smallest panel under the point is the one it is in.
+            .min_by(|a, b| (a.1.2 * a.1.3).total_cmp(&(b.1.2 * b.1.3)))
+            .map(|(id, (rx, ry, rw, rh))| Pointer::Region {
+                region: id.clone(),
+                x: (x - rx) / rw,
+                y: (y - ry) / rh,
+            })
+    });
+    let pointer = hit.unwrap_or_else(|| Pointer::Region {
+        region: "window".into(),
+        x: x / window.0.max(1.0),
+        y: y / window.1.max(1.0),
+    });
+    if let Ok(mut local) = LOCAL.lock() {
+        local.pointer = Some(pointer);
+    }
+}
+
+/// The mouse left the window.
+pub fn local_window_left() {
+    OVER_LANES.store(false, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut local) = LOCAL.lock() {
+        local.pointer = None;
+    }
+}
+
+/// Everyone else's pointer that is not over the lanes (those the
+/// arrangement draws), placed in this window: (x, y, name, colour).
+#[must_use]
+pub fn window_pointers(window: (f64, f64)) -> Vec<(f64, f64, String, u32)> {
+    let Ok(slot) = ROSTER.lock() else { return Vec::new() };
+    let Some(published) = slot.as_ref() else { return Vec::new() };
+    let now = now_ms();
+    published
+        .roster
+        .peers
+        .values()
+        .filter_map(|peer| {
+            let state = peer.state.as_ref()?;
+            let Pointer::Region { region, x, y } = peer.trail.at(now)? else { return None };
+            let (rx, ry, rw, rh) = if region == "window" {
+                (0.0, 0.0, window.0, window.1)
+            } else {
+                // A panel this window is not showing: nowhere to put it.
+                region_rect(&region)?
+            };
+            Some((rx + x * rw, ry + y * rh, state.name.clone(), state.color))
+        })
+        .collect()
 }
 
 /// The selection, as drawn this frame.
