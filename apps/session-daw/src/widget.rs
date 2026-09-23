@@ -158,6 +158,10 @@ pub struct ArrangementWidget {
     /// Zooms the keys asked for, for the panel (which owns the view) to
     /// carry out.
     zooms: crate::zoom::Requests,
+    /// A song opens fitted: every track top to bottom (`z v`), then the
+    /// whole song across (`z x`) — asked once, on the first paint, when
+    /// the rows have their places.
+    fit_on_open: bool,
     /// How to plan the rows again, and the project as the engine has it
     /// (with the visibility this window has changed since): what a track
     /// shown or hidden re-plans from. `None` in a widget built without
@@ -374,6 +378,7 @@ impl ArrangementWidget {
             pointing: crate::tool::Pointing::shared(None),
             which: crate::which_key::Shared::default(),
             zooms: crate::zoom::Requests::default(),
+            fit_on_open: true,
             replan: None,
             mixer: None,
             content_h: Rc::new(std::cell::Cell::new(
@@ -1273,7 +1278,15 @@ impl ArrangementWidget {
     /// returns, and what the web host draws into its canvas.
     pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         self.dirty.set(false);
-        self.draw(width, height, scale)
+        let scene = self.draw(width, height, scale);
+        if std::mem::take(&mut self.fit_on_open) {
+            for command in [crate::zoom::Command::FitTracks, crate::zoom::Command::Project] {
+                if let Some(request) = self.zoom_request(command) {
+                    self.zooms.borrow_mut().push(request);
+                }
+            }
+        }
+        scene
     }
 
     /// Whether this event is not the arrangement's to act on.

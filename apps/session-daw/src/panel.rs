@@ -545,8 +545,14 @@ impl ArrangementPanel {
             play_at,
         };
         // The zooms the keys asked for: the widget has no way to set a
-        // signal, so it leaves them here.
-        let asked: Vec<_> = self.zooms.borrow_mut().drain(..).collect();
+        // signal, so it leaves them here. Held until the panel has been
+        // measured — a frame fitted to a zero-sized rectangle is no fit
+        // (the fit a song opens with is asked on its first paint).
+        let asked: Vec<_> = if r.2 > 0.0 && r.3 > 0.0 {
+            self.zooms.borrow_mut().drain(..).collect()
+        } else {
+            Vec::new()
+        };
         for request in asked {
             let (zx, zy) = *zoom.peek();
             let now = crate::zoom::Target {
