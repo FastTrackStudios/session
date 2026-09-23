@@ -59,8 +59,8 @@ impl<T> ChartDaw for T where
 /// Build the chart's structure into `project`.
 ///
 /// Refuses a project that already has a `Keyflow` track: a second run
-/// would stamp every marker and region twice, and there is no way to tell
-/// the chart's regions from ones a person drew by hand to undo that.
+/// would stamp every marker and region twice. [`rebuild_from_chart`] is the
+/// way to lay a changed chart over a built one.
 ///
 /// The edit cursor is put back where it was — the marker inserts move it.
 ///
@@ -74,13 +74,110 @@ pub fn build_from_chart<D: ChartDaw>(
     chart_text: &str,
 ) -> eyre::Result<ChartBuilt> {
     let layout: ChartLayout = chart_to_layout(chart_text)?;
-    let already = Tracks::all(daw, project.clone())
-        .iter()
-        .any(|t| t.name.trim().eq_ignore_ascii_case("Keyflow"));
-    if already {
+    if keyflow_folder(daw, project).is_some() {
         eyre::bail!("this project already has a Keyflow folder; its chart structure is built");
     }
+    stamp_chart(daw, project, chart_text, &layout, "Build song from chart")
+}
 
+/// What [`rebuild_from_chart`] did: the new structure, and the span the
+/// old one covered — so whatever was generated against the old song (the
+/// click and guide) can be cleared past the new one's end.
+#[derive(Debug, Clone)]
+pub struct ChartRebuilt {
+    pub built: ChartBuilt,
+    /// From the old count-in to the old `=END`, when there was a song.
+    pub replaced: Option<(f64, f64)>,
+}
+
+/// Lay the chart over the project again, replacing what a previous build
+/// put there — the live half of editing a chart: every change to the text
+/// re-runs this.
+///
+/// The chart OWNS, and so replaces: the SONG-lane region, the SECTIONS-lane
+/// regions, the COUNT-IN / SONGSTART / SONGEND / =END markers, the project
+/// tempo and meter, and the items on the Keyflow folder's KEY and CHORD
+/// tracks. Everything else is left as it is — markers someone placed by
+/// hand, the LINES and HITS tracks, every audio track. The Keyflow folder is
+/// built if it is missing, so this also does a first build.
+///
+/// The chart is parsed before anything is touched: text that does not parse
+/// (half-typed, mid-edit) changes nothing, and the session keeps the last
+/// chart that did.
+///
+/// # Errors
+///
+/// The chart does not parse, or a backend call fails.
+pub fn rebuild_from_chart<D: ChartDaw>(
+    daw: &D,
+    project: &ProjectContext,
+    chart_text: &str,
+) -> eyre::Result<ChartRebuilt> {
+    let layout: ChartLayout = chart_to_layout(chart_text)?;
+    keyflow::text::chart::parse_chart(chart_text).map_err(|e| eyre::eyre!("chart: {e}"))?;
+    let replaced = clear_chart_structure(daw, project)?;
+    let built = stamp_chart(daw, project, chart_text, &layout, "Rebuild song from chart")?;
+    Ok(ChartRebuilt { built, replaced })
+}
+
+/// The markers a chart build places, by name.
+fn structural_marker(name: &str) -> bool {
+    use crate::section_kinds::MarkerKind as K;
+    [K::CountIn, K::SongStart, K::SongEnd, K::End]
+        .iter()
+        .any(|kind| name.trim().eq_ignore_ascii_case(kind.name()))
+}
+
+/// Remove what a chart build owns (see [`rebuild_from_chart`]). Returns the
+/// span the removed song covered.
+fn clear_chart_structure<D: ChartDaw>(
+    daw: &D,
+    project: &ProjectContext,
+) -> eyre::Result<Option<(f64, f64)>> {
+    use session_proto::ruler_lanes::CoreLane;
+    let owned_lanes = [CoreLane::Song.lane_index(), CoreLane::Sections.lane_index()];
+    let mut span: Option<(f64, f64)> = None;
+    let mut cover = |start: f64, end: f64| {
+        span = Some(span.map_or((start, end), |(a, b)| (a.min(start), b.max(end))));
+    };
+
+    for marker in Markers::all(daw, project.clone()) {
+        if structural_marker(&marker.name)
+            && let Some(id) = marker.id
+        {
+            let at = marker.position.seconds().unwrap_or(0.0);
+            cover(at, at);
+            Markers::remove(daw, project.clone(), id)?;
+        }
+    }
+    for region in Regions::all(daw, project.clone()) {
+        if region.lane.is_some_and(|lane| owned_lanes.contains(&lane))
+            && let Some(id) = region.id
+        {
+            cover(region.time_range.start_seconds(), region.time_range.end_seconds());
+            Regions::remove(daw, project.clone(), id)?;
+        }
+    }
+    for name in ["KEY", "CHORD"] {
+        let Some(track) = keyflow_child(daw, project, name) else {
+            continue;
+        };
+        for item in daw.get_items(project.clone(), TrackRef::Guid(track)) {
+            daw.delete_item(project.clone(), ItemRef::Guid(item.guid.clone()))?;
+        }
+    }
+    Ok(span)
+}
+
+/// Stamp tempo, markers, regions and the Keyflow folder's content, as one
+/// undo step, putting the edit cursor back afterwards.
+fn stamp_chart<D: ChartDaw>(
+    daw: &D,
+    project: &ProjectContext,
+    chart_text: &str,
+    layout: &ChartLayout,
+    undo: &str,
+) -> eyre::Result<ChartBuilt> {
     let title = layout
         .title
         .clone()
@@ -90,19 +187,22 @@ pub fn build_from_chart<D: ChartDaw>(
     // fixtures). One short string per chart built is a leak worth not
     // widening that type for.
     let name: &'static str = Box::leak(title.clone().into_boxed_str());
-    let song = chart_layout_to_demo_song(name, &layout);
+    let song = chart_layout_to_demo_song(name, layout);
 
     let cursor = TransportService::get_position(daw, project.clone());
-    daw.begin_undo_block(project.clone(), "Build song from chart");
+    daw.begin_undo_block(project.clone(), undo);
     // SONG / SECTIONS / MARKS, named and flagged, before anything lands
     // on them — what the insert actions do in REAPER.
     super::actions::ensure_core_lanes(daw);
     let stamped = stamp_song_with_default_tempo_native(daw, project, &song)
         .map_err(|e| eyre::eyre!("{e}"));
     let folder = stamped
-        .and_then(|_| super::scaffold::build_keyflow_folder(daw, project))
-        .and_then(|()| stamp_keyflow_tracks(daw, project, chart_text, &layout));
-    daw.end_undo_block(project.clone(), "Build song from chart", None);
+        .and_then(|_| match keyflow_folder(daw, project) {
+            Some(_) => Ok(()),
+            None => super::scaffold::build_keyflow_folder(daw, project),
+        })
+        .and_then(|()| stamp_keyflow_tracks(daw, project, chart_text, layout));
+    daw.end_undo_block(project.clone(), undo, None);
     let _ = TransportService::set_position(daw, project.clone(), cursor);
     folder?;
 
@@ -114,6 +214,23 @@ pub fn build_from_chart<D: ChartDaw>(
         song_start_seconds: layout.song_start_seconds,
         song_end_seconds: layout.song_end_seconds,
     })
+}
+
+/// The `Keyflow` folder track's GUID, when the project has one.
+fn keyflow_folder<D: ChartDaw>(daw: &D, project: &ProjectContext) -> Option<String> {
+    Tracks::all(daw, project.clone())
+        .into_iter()
+        .find(|t| t.name.trim().eq_ignore_ascii_case("Keyflow"))
+        .map(|t| t.guid)
+}
+
+/// A track named `name` inside the Keyflow folder (KEY, CHORD, …).
+fn keyflow_child<D: ChartDaw>(daw: &D, project: &ProjectContext, name: &str) -> Option<String> {
+    let folder = keyflow_folder(daw, project)?;
+    Tracks::all(daw, project.clone())
+        .into_iter()
+        .find(|t| t.parent_guid.as_deref() == Some(folder.as_str()) && t.name.trim().eq_ignore_ascii_case(name))
+        .map(|t| t.guid)
 }
 
 /// The Keyflow folder's content from the chart: the KEY track gets one

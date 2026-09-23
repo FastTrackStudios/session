@@ -985,7 +985,7 @@ impl SectionKind {
 }
 
 impl MarkerKind {
-    const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::CountIn => "COUNT-IN",
             Self::Start => "=START",
