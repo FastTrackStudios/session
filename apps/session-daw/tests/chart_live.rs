@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use daw::service::{Markers, ProjectContext, Regions, TempoMap, Tracks};
-use session::keyflow::from_chart::build_from_chart;
+use session::keyflow::from_chart::{build_from_chart, rebuild_from_chart};
 
 /// A project with nothing in it yet — the state a chart is built into.
 const EMPTY: &str = "<REAPER_PROJECT 0.1 \"7.0/test\" 0\n  TEMPO 120 4 4\n>\n";
@@ -120,6 +120,72 @@ fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
     assert!(again.is_err(), "a project with its structure built refuses a rebuild");
 }
 
+/// The same song, edited: faster, in G, a longer chorus, different chords.
+const EDITED: &str = "\
+Test Song - Nobody
+100bpm 4/4 #G
+Count 2
+In 4
+1 5 6 4
+vs 8
+1 5 6 4 x2
+ch 16
+4 1 5 6 x4
+";
+
+/// A changed chart replaces what the chart owns — tempo, the structural
+/// markers, the song and section regions, the key and the chords — in
+/// place, once each; leaves what a person put there; and says what span
+/// the old song covered. Text that does not parse changes nothing.
+#[test]
+fn a_changed_chart_rebuilds_in_place() {
+    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("empty.rpp");
+    std::fs::write(&file, EMPTY).expect("write project");
+    let (daw, project, first) = build(&file, CHART);
+    // A marker someone placed by hand.
+    Markers::add(&daw, project.clone(), 3.0, "Lyrics").expect("hand marker");
+
+    let rebuilt = rebuild_from_chart(&daw, &project, EDITED).expect("rebuild");
+    let (old_start, old_end) = rebuilt.replaced.expect("there was a song to replace");
+    assert!(old_start.abs() < 1e-6, "the old song began at its count-in, at zero");
+    assert!(old_end >= first.song_end_seconds - 1e-6, "{old_end} covers the old song");
+
+    assert!((TempoMap::get_tempo_at(&daw, project.clone(), 0.0) - 100.0).abs() < 1e-6);
+    let markers: Vec<String> = Markers::all(&daw, project.clone()).into_iter().map(|m| m.name).collect();
+    for want in ["COUNT-IN", "SONGSTART", "SONGEND", "=END"] {
+        let n = markers.iter().filter(|m| m.eq_ignore_ascii_case(want)).count();
+        assert_eq!(n, 1, "{want} once, not stamped twice: {markers:?}");
+    }
+    assert!(markers.iter().any(|m| m == "Lyrics"), "the hand-placed marker stays");
+    let songs = Regions::all(&daw, project.clone())
+        .into_iter()
+        .filter(|r| r.name == "Test Song")
+        .count();
+    assert_eq!(songs, 1, "one SONG-lane region");
+
+    let tracks = Tracks::all(&daw, project.clone());
+    assert_eq!(tracks.iter().filter(|t| t.name == "Keyflow").count(), 1, "one Keyflow folder");
+    let changes = session::key::key_changes(&daw, &project);
+    assert_eq!(changes.len(), 1, "one key item: {changes:?}");
+    assert!(session::key::format_key(&changes[0].key).starts_with('G'), "now in G");
+    let chord_track = tracks.iter().find(|t| t.name == "CHORD").expect("CHORD");
+    let items = daw::service::Items::get_items(
+        &daw,
+        project.clone(),
+        daw::service::TrackRef::Guid(chord_track.guid.clone()),
+    );
+    // intro 4 + verse 8 + chorus 16, one chord a bar.
+    assert_eq!(items.len(), 28, "the new chords, and none of the old");
+
+    // Half-typed: nothing moves.
+    let regions_before = Regions::all(&daw, project.clone()).len();
+    assert!(rebuild_from_chart(&daw, &project, "Test Song\n100bpm 4/4 #G\nvs 8\n1 5 6 4 x9\n").is_err());
+    assert_eq!(Regions::all(&daw, project.clone()).len(), regions_before);
+    assert!((TempoMap::get_tempo_at(&daw, project.clone(), 0.0) - 100.0).abs() < 1e-6);
+}
+
 /// The real song, when a path to it is given — for looking at the result,
 /// not for CI: `FTS_CHART_PROJECT=song.rpp FTS_CHART=song.kf`.
 #[test]
@@ -144,4 +210,55 @@ fn a_real_chart_when_one_is_given() {
     for m in markers {
         eprintln!("  marker {:>8.3}  {}", m.position_seconds(), m.name);
     }
+}
+
+/// Editing the chart live: each change rebuilds the song and regenerates
+/// the click, count and cues to match — one item per role, the new song's,
+/// with nothing of a longer earlier version left behind.
+#[test]
+fn an_edited_chart_regenerates_the_guide_to_match() {
+    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("empty.rpp");
+    std::fs::write(&file, EMPTY).expect("write project");
+    let opened = session_daw::open::open_silent(&file).expect("open");
+    let _runtime = session_daw::open::runtime().expect("engine runtime").enter();
+    let guid = opened.project_guid.clone();
+    let project = ProjectContext::Project(guid.clone());
+
+    // (role, start, end) of every generated item.
+    let generated = |daw: &daw::standalone::Standalone| -> Vec<(String, f64, f64)> {
+        Tracks::all(daw, project.clone())
+            .into_iter()
+            .filter(|t| ["Click", "Count", "Guide"].contains(&t.name.as_str()) && t.folder_depth <= 0)
+            .flat_map(|t| {
+                let name = t.name.clone();
+                daw::service::Items::get_items(daw, project.clone(), daw::service::TrackRef::Guid(t.guid))
+                    .into_iter()
+                    .map(move |i| {
+                        let at = i.position.as_seconds();
+                        (name.clone(), at, at + i.length.as_seconds())
+                    })
+            })
+            .collect()
+    };
+
+    let long = session_daw::prepare::apply_chart(&opened.daw, &guid, EDITED, true).expect("the long chart");
+    let items = generated(&opened.daw);
+    assert_eq!(items.len(), 3, "one item each for click, count and cues: {items:?}");
+    assert!(items.iter().all(|(_, _, end)| *end >= long.built.song_end_seconds - 1e-3));
+    let long_end = items.iter().map(|(_, _, end)| *end).fold(0.0_f64, f64::max);
+
+    let short = session_daw::prepare::apply_chart(&opened.daw, &guid, CHART, true).expect("the short chart");
+    assert!(short.built.song_end_seconds < long.built.song_end_seconds);
+    let items = generated(&opened.daw);
+    assert_eq!(items.len(), 3, "the long song's items are gone: {items:?}");
+    // The shorter song's items, which end with it — not the long song's.
+    assert!(
+        items
+            .iter()
+            .all(|(_, _, end)| *end >= short.built.song_end_seconds - 1e-3 && *end < long_end - 1.0),
+        "the shorter song's guide: {items:?} (the long one ran to {long_end})"
+    );
+    assert!((TempoMap::get_tempo_at(&opened.daw, project.clone(), 0.0) - 90.0).abs() < 1e-6);
 }

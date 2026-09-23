@@ -27,7 +27,7 @@
 //! and the UI waits for the facade to appear
 //! (`daw_ui::studio::project::fetch_when_ready`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use daw::standalone::Standalone;
@@ -93,17 +93,15 @@ fn open_with_audio(path: &Path, audio: bool) -> eyre::Result<Opened> {
 /// open — a session with one missing take is still a session worth
 /// looking at.
 fn parse(path: &Path) -> eyre::Result<Opened> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| eyre::eyre!("could not read {}: {e}", path.display()))?;
+    let ProjectText { text, media_dir } = project_text(path)?;
     let daw = Standalone::new();
     // The instrument the Click / Count / Guide MIDI tracks play through.
     crate::guide_instrument::install(
         &daw,
         crate::guide_instrument::Library::Folder(crate::guide_instrument::samples_dir()),
     );
-    let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
     daw.media_bay().set_file_resolver(Box::new(
-        daw::standalone::media_bay::ProjectRelativeResolver::new(dir),
+        daw::standalone::media_bay::ProjectRelativeResolver::new(media_dir),
     ));
     let name = path
         .file_stem()
@@ -132,6 +130,42 @@ fn parse(path: &Path) -> eyre::Result<Opened> {
         project_guid: summary.project_guid.clone(),
         track_count,
     })
+}
+
+/// A project's text as the loader reads it, and the folder its media
+/// paths are relative to.
+pub struct ProjectText {
+    pub text: String,
+    pub media_dir: PathBuf,
+}
+
+/// Whether `path` is a saved session — a `Song.session` project directory,
+/// the native format — rather than a REAPER project.
+#[must_use]
+pub fn is_session(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("session"))
+}
+
+/// Read a project for the loader: a `.RPP` as it is, a `.session` through
+/// the format's own `.rpp` export (the round trip it is proven lossless
+/// on). Media resolves against the folder either one sits in — a session
+/// is saved beside the `.RPP` it was prepared from, so `Media/Bass.wav`
+/// means the same file to both.
+///
+/// # Errors
+///
+/// The file could not be read, or the session could not be exported.
+pub fn project_text(path: &Path) -> eyre::Result<ProjectText> {
+    let text = if is_session(path) {
+        crate::session_file::session_rpp_text(path)
+            .map_err(|e| eyre::eyre!("could not read the session {}: {e}", path.display()))?
+    } else {
+        std::fs::read_to_string(path)
+            .map_err(|e| eyre::eyre!("could not read {}: {e}", path.display()))?
+    };
+    let media_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    Ok(ProjectText { text, media_dir })
 }
 
 /// Step two: serve the backend and install the facade.

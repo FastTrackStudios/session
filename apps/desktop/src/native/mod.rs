@@ -37,7 +37,7 @@ fn choose() -> Option<(PathBuf, Option<PathBuf>)> {
     let chart = match std::env::var_os("FTS_SESSION_CHART") {
         Some(path) if path.is_empty() => None,
         Some(path) => Some(PathBuf::from(path)),
-        None => chart_beside(&project),
+        None => session_daw::prepare::chart_beside(&project),
     };
     Some((project, chart))
 }
@@ -48,18 +48,6 @@ fn pick() -> Option<PathBuf> {
         .set_title("Open a session")
         .add_filter("REAPER project", &["RPP", "rpp"])
         .pick_file()
-}
-
-/// The one `.kf` chart in the project's folder, if there is exactly one.
-/// Two would be a guess, and a wrong chart is worse than none.
-fn chart_beside(project: &Path) -> Option<PathBuf> {
-    let mut charts = std::fs::read_dir(project.parent()?)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("kf")));
-    let chart = charts.next()?;
-    charts.next().is_none().then_some(chart)
 }
 
 /// Where the last session's path is kept.
@@ -119,7 +107,7 @@ pub fn launch() {
                     return;
                 }
                 chosen = pick().map(|project| {
-                    let chart = chart_beside(&project);
+                    let chart = session_daw::prepare::chart_beside(&project);
                     (project, chart)
                 });
             }
@@ -154,26 +142,4 @@ fn window_attributes() -> winit::window::WindowAttributes {
             .with_title_hidden(true),
     ));
     attributes
-}
-
-#[cfg(test)]
-mod tests {
-    use super::chart_beside;
-
-    /// The chart beside a project is used only when it is the only one.
-    #[test]
-    fn a_session_folder_s_one_chart_is_its_chart() {
-        let dir = std::env::temp_dir().join(format!("session-chart-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let project = dir.join("Song.RPP");
-        std::fs::write(&project, "").unwrap();
-        assert_eq!(chart_beside(&project), None, "no chart at all");
-
-        std::fs::write(dir.join("Song.kf"), "").unwrap();
-        assert_eq!(chart_beside(&project), Some(dir.join("Song.kf")));
-
-        std::fs::write(dir.join("Other.KF"), "").unwrap();
-        assert_eq!(chart_beside(&project), None, "two charts is a guess");
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
 }

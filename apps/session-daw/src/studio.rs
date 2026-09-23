@@ -82,6 +82,55 @@ impl Planner {
     }
 }
 
+/// What [`StudioSession::open`] actually opens, whether it prepares it,
+/// and where it saves the result.
+///
+/// Preparing (organize, build from the chart, generate the guide) is done
+/// ONCE: the result is saved as `Song.session` beside `Song.RPP`, and from
+/// then on the saved session is what opens — the `.RPP` is only the
+/// multitrack it started from. A `.session` opened directly is never
+/// prepared again. `FTS_SESSION_REPREPARE=1` prepares the `.RPP` afresh and
+/// saves over the old session; nothing else overwrites one.
+#[cfg(feature = "native")]
+#[derive(Debug, PartialEq)]
+struct Source {
+    open: std::path::PathBuf,
+    prepare: bool,
+    save_to: Option<std::path::PathBuf>,
+}
+
+#[cfg(feature = "native")]
+impl Source {
+    fn choose(path: &std::path::Path, prepare: &crate::prepare::Prepare) -> Self {
+        let reprepare = std::env::var("FTS_SESSION_REPREPARE").is_ok_and(|v| v == "1");
+        Self::choose_with(path, prepare, reprepare)
+    }
+
+    fn choose_with(path: &std::path::Path, prepare: &crate::prepare::Prepare, reprepare: bool) -> Self {
+        if crate::open::is_session(path) {
+            return Self {
+                open: path.to_path_buf(),
+                prepare: false,
+                save_to: None,
+            };
+        }
+        let saved = path.with_extension("session");
+        if saved.is_dir() && !reprepare {
+            return Self {
+                open: saved,
+                prepare: false,
+                save_to: None,
+            };
+        }
+        let prepare = !prepare.is_empty();
+        Self {
+            open: path.to_path_buf(),
+            prepare,
+            save_to: prepare.then_some(saved),
+        }
+    }
+}
+
 impl PartialEq for StudioSession {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.project.0, &other.project.0) && Arc::ptr_eq(&self.rows.0, &other.rows.0)
@@ -99,18 +148,42 @@ impl StudioSession {
     /// The project could not be opened or read back. A prepare step that
     /// fails is logged and the session opens as it was.
     pub fn open(path: &std::path::Path, prepare: &crate::prepare::Prepare) -> eyre::Result<Self> {
-        let opened = crate::open::open_and_serve(path)?;
-        if !prepare.is_empty()
+        let plan = Source::choose(path, prepare);
+        let opened = crate::open::open_and_serve(&plan.open)?;
+        let mut save_to = plan.save_to;
+        if plan.prepare
             && let Err(e) = prepare.run(&opened)
         {
+            // A half-prepared session saved would be opened as prepared
+            // next time; open this one as it was and save nothing.
             tracing::error!(error = %e, "preparing the session failed; opening it as it was");
+            save_to = None;
+        }
+        if let Some(dir) = &save_to {
+            match crate::session_file::save_session(&opened.daw, &opened.project_guid, dir)
+            {
+                Ok(at) => tracing::info!(
+                    session.saved = %at.display(),
+                    session.from = %plan.open.display(),
+                    "prepared once; saved as a session"
+                ),
+                Err(e) => tracing::warn!(
+                    session.save_error = %e,
+                    "the prepared session could not be saved; it will be prepared again next time"
+                ),
+            }
         }
         const SCENE: &str = "drum-mixing";
+        let path = plan.open.as_path();
         let raw = fetch().ok_or_else(|| eyre::eyre!("could not read {} back", path.display()))?;
         let planner = Planner {
             raw: Arc::new(raw),
             scene: Some(SCENE),
-            kinds: Arc::new(crate::plan::Kinds::read(path)),
+            kinds: Arc::new(
+                crate::open::project_text(path)
+                    .map(|read| crate::plan::Kinds::from_text(&read.text))
+                    .unwrap_or_default(),
+            ),
         };
         let (project, rows) = planner.plan(&planner.raw);
         let previews = previews_of(&project);
@@ -426,5 +499,81 @@ pub fn ScrollBar(
                 style: "position:absolute; {place} background:{colors.text_dim}; border-radius:2px;",
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "native"))]
+mod source_tests {
+    use super::Source;
+    use crate::prepare::Prepare;
+
+    fn prepared() -> Prepare {
+        Prepare {
+            organize: true,
+            chart: None,
+            guide: true,
+        }
+    }
+
+    fn song() -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "session-source-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("a folder");
+        let rpp = dir.join("Song.RPP");
+        std::fs::write(&rpp, "<REAPER_PROJECT\n>\n").expect("an rpp");
+        (dir, rpp)
+    }
+
+    /// The first open prepares the multitrack and saves it beside itself.
+    #[test]
+    fn an_unprepared_song_is_prepared_once_and_saved_beside_it() {
+        let (dir, rpp) = song();
+        let _ = std::fs::remove_dir_all(dir.join("Song.session"));
+        assert_eq!(
+            Source::choose_with(&rpp, &prepared(), false),
+            Source {
+                open: rpp.clone(),
+                prepare: true,
+                save_to: Some(dir.join("Song.session")),
+            }
+        );
+        // Nothing to prepare is nothing to save.
+        assert_eq!(
+            Source::choose_with(&rpp, &Prepare::default(), false),
+            Source {
+                open: rpp,
+                prepare: false,
+                save_to: None,
+            }
+        );
+    }
+
+    /// Once saved, the session is what opens — asked for by its `.RPP` or
+    /// by itself — and it is not prepared again unless asked.
+    #[test]
+    fn a_saved_session_opens_instead_of_its_multitrack() {
+        let (dir, rpp) = song();
+        let saved = dir.join("Song.session");
+        std::fs::create_dir_all(&saved).expect("a session");
+        let as_saved = Source {
+            open: saved.clone(),
+            prepare: false,
+            save_to: None,
+        };
+        assert_eq!(Source::choose_with(&rpp, &prepared(), false), as_saved);
+        assert_eq!(Source::choose_with(&saved, &prepared(), false), as_saved);
+        // Asked to, the multitrack is prepared afresh over it.
+        assert_eq!(
+            Source::choose_with(&rpp, &prepared(), true),
+            Source {
+                open: rpp,
+                prepare: true,
+                save_to: Some(saved),
+            }
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

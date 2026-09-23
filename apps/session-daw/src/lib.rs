@@ -78,6 +78,8 @@ pub mod prepare;
 pub mod pointer;
 pub mod profile;
 pub mod rails;
+#[cfg(feature = "native")]
+pub mod session_file;
 pub mod rename;
 pub mod repeat;
 pub mod routes;

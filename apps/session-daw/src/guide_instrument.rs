@@ -299,6 +299,12 @@ impl FxFactory for GuideFxFactory {
         Vec::new()
     }
 
+    /// Cheaply, without loading the samples: a saved session names the FX
+    /// (`fts.guide:click`, …) and the loader asks before it adds one.
+    fn provides(&self, name: &str) -> bool {
+        Role::of(name).is_some()
+    }
+
     fn create(&self, name_or_ident: &str, sample_rate: f64) -> Option<Box<dyn PluginInstance>> {
         let role = Role::of(name_or_ident)?;
         // Prepared here, on the thread adding the FX — loading ~20 MB of
