@@ -188,15 +188,14 @@ fn OrganizeView() -> Element {
             // A chart's lines are short: the editor needs a column, not a
             // quarter of the window.
             div {
-                style: "position:relative; flex:none; width:300px; border-right:1px solid {RULE};",
+                style: "position:relative; flex:none; width:380px; border-right:1px solid {RULE};",
                 session_daw::chart_editor::ChartEditor {}
             }
-            // Exactly one page wide at the pane's height — the chart is laid
-            // out on Letter (612 x 792 pt), so the whole page shows, no
-            // more and no less.
+            // A whole page, scaled to fit (paged): a preview of the edit, not
+            // the place to read the chart from.
             div {
-                style: "position:relative; flex:none; height:100%; aspect-ratio:612 / 792; \
-                        max-width:45%; border-right:1px solid {RULE};",
+                style: "position:relative; flex:none; width:30%; max-width:760px; \
+                        border-right:1px solid {RULE};",
                 // A whole page at a time, fitted to the pane, following the
                 // song — the edit's effect is seen without scrolling to it.
                 session_daw::chart_panel::Chart { paged: true }
