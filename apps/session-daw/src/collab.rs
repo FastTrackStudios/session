@@ -768,7 +768,7 @@ impl Outbox {
         // Three seconds on the lanes, three over the chart's page, three
         // over the lyrics: every kind of place a pointer can be.
         let place = match (now / 3000.0) as u64 % 3 {
-            0 => Pointer::Timeline { at, track },
+            0 => Pointer::Timeline { at, track, y: 0.5 },
             1 => Pointer::Region { region: "chart".into(), x: 0.2 + 0.6 * (t % 1.0), y: 0.3 + 0.05 * t },
             _ => Pointer::Region { region: "lyrics".into(), x: 0.15 + 0.7 * (t % 1.0), y: 0.5 },
         };

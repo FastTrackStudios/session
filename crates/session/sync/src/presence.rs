@@ -67,7 +67,11 @@ pub struct PeerState {
 pub enum Pointer {
     /// Over the arrangement: a time, and the track row under it (none
     /// over the ruler).
-    Timeline { at: f64, track: Option<String> },
+    ///
+    /// `y` is where in that track's row, 0 (top) to 1 (bottom) — the
+    /// pointer is wherever the hand is, not snapped to the row's middle —
+    /// or, with no track (over the ruler), 0..1 down the ruler.
+    Timeline { at: f64, track: Option<String>, y: f64 },
     /// Over the chart: a position on its page, 0..1 each way.
     Chart { x: f64, y: f64 },
     /// Anywhere else in the window: a named part of it (`chart`,
@@ -227,10 +231,11 @@ impl Pointer {
     #[must_use]
     pub fn encode(&self, t_ms: f64) -> LoroValue {
         match self {
-            Self::Timeline { at, track } => map(vec![
+            Self::Timeline { at, track, y } => map(vec![
                 ("kind", LoroValue::from("timeline")),
                 ("t", LoroValue::Double(t_ms)),
                 ("at", LoroValue::Double(*at)),
+                ("y", LoroValue::Double(*y)),
                 (
                     "track",
                     track.as_deref().map_or(LoroValue::Null, LoroValue::from),
@@ -261,6 +266,7 @@ impl Pointer {
             "timeline" => Self::Timeline {
                 at: f.f64("at")?,
                 track: f.string("track"),
+                y: f.f64("y").unwrap_or(0.5),
             },
             "chart" => Self::Chart {
                 x: f.f64("x")?,
@@ -384,6 +390,43 @@ impl PointerTrail {
         }
     }
 
+    /// Where to draw the pointer at `local_ms`, in THIS window's pixels:
+    /// each of the two samples around the moment is placed with `place`,
+    /// then the pixels are interpolated — so a pointer moving from one
+    /// track to the next, or from the chart to the mixer, glides across
+    /// the screen instead of jumping. `place` answers `None` for a place
+    /// this window does not show; then the other sample is used alone.
+    #[must_use]
+    pub fn screen_at(
+        &self,
+        local_ms: f64,
+        place: impl Fn(&Pointer) -> Option<(f64, f64)>,
+    ) -> Option<(f64, f64)> {
+        let t = local_ms - self.offset_ms - INTERPOLATION_DELAY_MS;
+        let mut before: Option<&(f64, Pointer)> = None;
+        for sample in &self.samples {
+            if sample.0 <= t {
+                before = Some(sample);
+                continue;
+            }
+            let Some(prev) = before else {
+                return place(&sample.1);
+            };
+            let k = (t - prev.0) / (sample.0 - prev.0);
+            return match (place(&prev.1), place(&sample.1)) {
+                (Some(a), Some(b)) => Some(((b.0 - a.0).mul_add(k, a.0), (b.1 - a.1).mul_add(k, a.1))),
+                (a, b) => b.or(a),
+            };
+        }
+        before.and_then(|s| place(&s.1))
+    }
+
+    /// The latest pointer (what kind of place it is in now).
+    #[must_use]
+    pub fn latest(&self) -> Option<&Pointer> {
+        self.samples.back().map(|s| &s.1)
+    }
+
     /// Where to draw the pointer at `local_ms`.
     #[must_use]
     pub fn at(&self, local_ms: f64) -> Option<Pointer> {
@@ -406,13 +449,16 @@ impl PointerTrail {
 fn lerp(a: &Pointer, b: &Pointer, k: f64) -> Pointer {
     let mix = |x: f64, y: f64| (y - x).mul_add(k, x);
     match (a, b) {
-        (Pointer::Timeline { at: a_at, .. }, Pointer::Timeline { at: b_at, track }) => {
-            // The row snaps: halfway between two tracks is on neither.
-            Pointer::Timeline {
-                at: mix(*a_at, *b_at),
-                track: track.clone(),
-            }
-        }
+        // Within one track, both ways; across tracks the screen-space
+        // path ([`PointerTrail::screen_at`]) is what glides.
+        (
+            Pointer::Timeline { at: a_at, track: ta, y: ay },
+            Pointer::Timeline { at: b_at, track, y: by },
+        ) => Pointer::Timeline {
+            at: mix(*a_at, *b_at),
+            track: track.clone(),
+            y: if ta == track { mix(*ay, *by) } else { *by },
+        },
         (Pointer::Chart { x: ax, y: ay }, Pointer::Chart { x: bx, y: by }) => Pointer::Chart {
             x: mix(*ax, *bx),
             y: mix(*ay, *by),

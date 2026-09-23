@@ -1374,13 +1374,24 @@ impl ArrangementWidget {
                 {
                     let view = self.viewport(self.size.0, self.size.1);
                     let over_lanes = x >= self.scene.tcp.width();
-                    let track = self
-                        .scene
-                        .row_at_screen(y - ruler::ruler_h() + view.scroll_y, view)
-                        .and_then(|row| self.rows.get(row))
-                        .map(|(t, _)| t.guid.clone());
+                    let ruler = ruler::ruler_h();
+                    let content_y = y - ruler + view.scroll_y;
+                    // Exactly where in the row, not the row: a pointer is
+                    // wherever the hand is.
+                    let (track, fy) = if y < ruler {
+                        (None, (y / ruler.max(1.0)).clamp(0.0, 1.0))
+                    } else {
+                        self.scene
+                            .row_at_screen(content_y, view)
+                            .and_then(|row| {
+                                let (top, h) = self.scene.row_band(row, view)?;
+                                let guid = self.rows.get(row)?.0.guid.clone();
+                                Some((Some(guid), ((content_y - top) / h.max(1.0)).clamp(0.0, 1.0)))
+                            })
+                            .unwrap_or((None, 1.0))
+                    };
                     crate::ghosts::local_pointer(
-                        over_lanes.then(|| (self.seconds_at(x, view), track)),
+                        over_lanes.then(|| (self.seconds_at(x, view), track, fy)),
                     );
                 }
                 // The editor owns the gesture once it has taken a

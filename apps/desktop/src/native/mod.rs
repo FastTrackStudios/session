@@ -133,13 +133,26 @@ pub fn launch() {
 /// transparent and the content runs up under it, so the traffic lights sit
 /// inside the app's own bar, as in the Claude app.
 fn window_attributes() -> winit::window::WindowAttributes {
-    let attributes = winit::window::WindowAttributes::default()
+    // `FTS_WINDOW_POS="x,y"` / `FTS_WINDOW_SIZE="WxH"` (logical pixels)
+    // place the window instead of maximizing it — what `just duo` uses to
+    // put two collaborating windows side by side.
+    fn pair(var: &str, sep: char) -> Option<(f64, f64)> {
+        let raw = std::env::var(var).ok()?;
+        let (a, b) = raw.split_once(sep)?;
+        Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+    }
+    let (pos, size) = (pair("FTS_WINDOW_POS", ','), pair("FTS_WINDOW_SIZE", 'x'));
+    let (w, h) = size.unwrap_or((1600.0, 1000.0));
+    let mut attributes = winit::window::WindowAttributes::default()
         .with_title("Session")
-        // Opens filling the screen; this is the size it restores to when
-        // un-maximized.
-        .with_maximized(true)
-        .with_surface_size(winit::dpi::LogicalSize::new(1600.0, 1000.0))
+        // Opens filling the screen unless placed; this is the size it
+        // restores to when un-maximized.
+        .with_maximized(pos.is_none() && size.is_none())
+        .with_surface_size(winit::dpi::LogicalSize::new(w, h))
         .with_min_surface_size(winit::dpi::LogicalSize::new(720.0, 480.0));
+    if let Some((x, y)) = pos {
+        attributes = attributes.with_position(winit::dpi::LogicalPosition::new(x, y));
+    }
     #[cfg(target_os = "macos")]
     let attributes = attributes.with_platform_attributes(Box::new(
         winit::platform::macos::WindowAttributesMacOS::default()

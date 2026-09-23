@@ -77,12 +77,12 @@ static OVER_LANES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 
 /// The mouse moved over the arrangement: a time and a track over the
 /// lanes, `None` off them (the window overlay reports it from there).
-pub fn local_pointer(pointer: Option<(f64, Option<String>)>) {
+pub fn local_pointer(pointer: Option<(f64, Option<String>, f64)>) {
     OVER_LANES.store(pointer.is_some(), std::sync::atomic::Ordering::Relaxed);
-    if let Some((at, track)) = pointer
+    if let Some((at, track, y)) = pointer
         && let Ok(mut local) = LOCAL.lock()
     {
-        local.pointer = Some(Pointer::Timeline { at, track });
+        local.pointer = Some(Pointer::Timeline { at, track, y });
     }
 }
 
@@ -178,14 +178,21 @@ pub fn window_pointers(window: (f64, f64)) -> Vec<(f64, f64, String, u32)> {
         .values()
         .filter_map(|peer| {
             let state = peer.state.as_ref()?;
-            let Pointer::Region { region, x, y } = peer.trail.at(now)? else { return None };
-            let (rx, ry, rw, rh) = if region == "window" {
-                (0.0, 0.0, window.0, window.1)
-            } else {
-                // A panel this window is not showing: nowhere to put it.
-                region_rect(&region)?
-            };
-            Some((rx + x * rw, ry + y * rh, state.name.clone(), state.color))
+            // Over the lanes, the arrangement draws it.
+            if !matches!(peer.trail.latest()?, Pointer::Region { .. }) {
+                return None;
+            }
+            let (x, y) = peer.trail.screen_at(now, |p| {
+                let Pointer::Region { region, x, y } = p else { return None };
+                let (rx, ry, rw, rh) = if region == "window" {
+                    (0.0, 0.0, window.0, window.1)
+                } else {
+                    // A panel this window is not showing: nowhere to put it.
+                    region_rect(region)?
+                };
+                Some((x.mul_add(rw, rx), y.mul_add(rh, ry)))
+            })?;
+            Some((x, y, state.name.clone(), state.color))
         })
         .collect()
 }
@@ -383,17 +390,22 @@ pub fn paint(
                 );
             }
         }
-        // Their mouse, with their name.
-        if let Some(Pointer::Timeline { at, track }) = peer.trail.at(local_now) {
-            let x = x_of(at);
-            let y = track
-                .as_deref()
-                .and_then(|g| row_of.get(g))
-                .and_then(|r| band(*r))
-                .map_or(8.0, |(top, h)| top + h / 2.0);
-            if x >= left {
-                paint_pointer(painter, palette, font, &state.name, color, Point::new(x, y));
-            }
+        // Their mouse, with their name: exactly where it is in the row,
+        // interpolated on this screen so it glides from row to row.
+        if matches!(peer.trail.latest(), Some(Pointer::Timeline { .. }))
+            && let Some((x, y)) = peer.trail.screen_at(local_now, |p| match p {
+                Pointer::Timeline { at, track, y } => {
+                    let y = match track.as_deref().and_then(|g| row_of.get(g)).and_then(|r| band(*r)) {
+                        Some((top, h)) => y.mul_add(h, top),
+                        None => y * crate::ruler::ruler_h(),
+                    };
+                    Some((x_of(*at), y))
+                }
+                _ => None,
+            })
+            && x >= left
+        {
+            paint_pointer(painter, palette, font, &state.name, color, Point::new(x, y));
         }
     }
 }
