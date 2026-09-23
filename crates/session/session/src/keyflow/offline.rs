@@ -81,6 +81,17 @@ impl OfflineDaw {
             .map_or(0, |max| max.saturating_add(1))
     }
 
+    /// Whether a marker or region already carries `guid` — they share one
+    /// `MARKER` list, and a save matches entries by it.
+    fn guid_taken(&self, guid: &str) -> bool {
+        self.project
+            .borrow()
+            .markers_regions
+            .all
+            .iter()
+            .any(|m| m.guid == guid)
+    }
+
     fn with_entry_mut<T>(&self, id: u32, f: impl FnOnce(&mut MarkerRegion) -> T) -> DawResult<T> {
         let id = id.cast_signed();
         let mut project = self.project.borrow_mut();
@@ -182,7 +193,20 @@ impl Markers for OfflineDaw {
         u32::try_from(self.project.borrow().markers_regions.markers.len()).unwrap_or(u32::MAX)
     }
 
-    fn add(&self, _project: ProjectContext, position: f64, name: &str) -> DawResult<u32> {
+    fn add(&self, project: ProjectContext, position: f64, name: &str) -> DawResult<u32> {
+        Markers::add_with_guid(self, project, &new_guid(), position, name)
+    }
+
+    fn add_with_guid(
+        &self,
+        _project: ProjectContext,
+        guid: &str,
+        position: f64,
+        name: &str,
+    ) -> DawResult<u32> {
+        if self.guid_taken(guid) {
+            return Err(DawError::already_exists("Marker", guid));
+        }
         let id = self.next_id();
         self.project.borrow_mut().markers_regions.add(MarkerRegion {
             id,
@@ -191,7 +215,7 @@ impl Markers for OfflineDaw {
             color: 0,
             flags: 0,
             locked: 0,
-            guid: new_guid(),
+            guid: guid.to_string(),
             additional: 0,
             end_position: None,
             lane: None,
@@ -252,7 +276,27 @@ impl Regions for OfflineDaw {
         u32::try_from(self.project.borrow().markers_regions.regions.len()).unwrap_or(u32::MAX)
     }
 
-    fn add(&self, _project: ProjectContext, start: f64, end: f64, name: &str) -> DawResult<u32> {
+    fn add(&self, project: ProjectContext, start: f64, end: f64, name: &str) -> DawResult<u32> {
+        Regions::add_with_guid(
+            self,
+            project,
+            &new_guid(),
+            daw::service::TimeRange::from_seconds(start, end),
+            name,
+        )
+    }
+
+    fn add_with_guid(
+        &self,
+        _project: ProjectContext,
+        guid: &str,
+        range: daw::service::TimeRange,
+        name: &str,
+    ) -> DawResult<u32> {
+        if self.guid_taken(guid) {
+            return Err(DawError::already_exists("Region", guid));
+        }
+        let (start, end) = (range.start_seconds(), range.end_seconds());
         let id = self.next_id();
         self.project.borrow_mut().markers_regions.add(MarkerRegion {
             id,
@@ -268,7 +312,7 @@ impl Regions for OfflineDaw {
             // it and add another one every time.
             flags: 1,
             locked: 0,
-            guid: new_guid(),
+            guid: guid.to_string(),
             additional: 0,
             end_position: Some(end),
             lane: None,
