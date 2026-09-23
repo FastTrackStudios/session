@@ -262,3 +262,39 @@ fn an_edited_chart_regenerates_the_guide_to_match() {
     );
     assert!((TempoMap::get_tempo_at(&opened.daw, project.clone(), 0.0) - 90.0).abs() < 1e-6);
 }
+
+/// A one-bar meter change in the chart is one in the song: the tempo map
+/// changes to 2/4 at the bar and back to 4/4 after it — once, however many
+/// times the chart is laid over the song again.
+#[test]
+fn a_bar_of_two_four_reaches_the_tempo_map() {
+    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("empty.rpp");
+    std::fs::write(&file, EMPTY).expect("write project");
+    let opened = session_daw::open::open_silent(&file).expect("open");
+    let _runtime = session_daw::open::runtime().expect("engine runtime").enter();
+    let project = ProjectContext::Project(opened.project_guid.clone());
+    let chart = "Song\n60bpm 4/4 #D\n\nCount 1\nCH 2\nBreakdown 1\n!T2/4\nVS 2\n";
+
+    for _ in 0..2 {
+        session::keyflow::from_chart::rebuild_from_chart(&opened.daw, &project, chart).expect("rebuild");
+    }
+    let meters: Vec<(i64, Option<(u32, u32)>)> = TempoMap::get_tempo_points(&opened.daw, project.clone())
+        .into_iter()
+        .map(|p| {
+            (
+                (p.position.seconds().unwrap_or(-1.0) * 1000.0).round() as i64,
+                p.time_signature.map(|ts| (ts.numerator(), ts.denominator())),
+            )
+        })
+        .collect();
+    assert_eq!(meters, vec![(12_000, Some((2, 4))), (14_000, Some((4, 4)))], "{meters:?}");
+
+    // The verse after the breakdown starts two beats earlier than 4/4 would.
+    let verse = Regions::all(&opened.daw, project.clone())
+        .into_iter()
+        .find(|r| r.name.starts_with("VS"))
+        .expect("a verse region");
+    assert!((verse.time_range.start_seconds() - 14.0).abs() < 1e-6, "{verse:?}");
+}

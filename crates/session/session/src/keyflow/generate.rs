@@ -107,13 +107,16 @@ pub fn voicings(chart: &Chart, octave: i32) -> Vec<Voicing> {
     let mut measure = 0usize;
     let mut key = chart.initial_key.clone();
     for section in &chart.sections {
-        for track in &section.tracks {
-            for bar in &track.measures {
+        // The chord track's bars — the same bars, counted the same way, as
+        // the layout places (`chart_to_layout`'s `measure_starts`).
+        {
+            for bar in section.measures() {
                 // Chords divide the bar by their written durations, and
                 // a bar whose durations say nothing divides evenly —
                 // four chords in a bar of four is one a beat, which is
                 // what a chart means when it writes them side by side.
-                let beats_per_bar = f64::from(bar_beats(chart));
+                // The bar's own meter: a bar of 2/4 holds two.
+                let beats_per_bar = crate::setlist::chart_import::quarters_in(bar.time_signature);
                 let written: f64 = bar.chords.iter().map(|c| beats_of(c, chart)).sum();
                 let even = beats_per_bar / bar.chords.len().max(1) as f64;
                 let mut beat = 0.0;

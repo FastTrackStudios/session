@@ -71,6 +71,21 @@ pub struct ChartLayout {
     pub song_end_seconds: f64,
     /// All sections in order, count-in first (if present).
     pub sections: Vec<LaidSection>,
+    /// Where each measure starts, in seconds, in order through the whole
+    /// chart — the chord track's measures, each at its own meter. What a
+    /// chord's `(measure, beat)` is placed by.
+    pub measure_starts: Vec<f64>,
+    /// Where the meter changes, as `(seconds, numerator, denominator)`: a bar
+    /// of 2/4 in a song of 4/4 is a change to 2/4 at its start and back to
+    /// 4/4 after it. The header's meter at 0 is not listed.
+    pub meter_changes: Vec<(f64, u32, u32)>,
+}
+
+/// A bar of `(numerator, denominator)`, in quarter notes — what the tempo
+/// counts. Six-eight is three.
+#[must_use]
+pub fn quarters_in(meter: (u8, u8)) -> f64 {
+    f64::from(meter.0.max(1)) * 4.0 / f64::from(meter.1.max(1))
 }
 
 const DEFAULT_TEMPO_BPM: f64 = 120.0;
@@ -102,13 +117,19 @@ pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError
     let (num, den) = chart
         .time_signature
         .map_or((4, 4), |ts| (ts.numerator, ts.denominator));
-    // Beat = 60/bpm; a measure is `num` beats (beat unit assumed quarter, i.e.
-    // den == 4 — true for these worship charts).
-    let measure_secs = f64::from(num.max(1)) * 60.0 / tempo_bpm;
+    // A quarter note is 60/bpm. Each measure lasts its OWN meter — a chart
+    // that writes one bar of 2/4 (`!T2/4`) in a song of 4/4 has a bar half
+    // as long there, and everything after it lands two beats earlier than
+    // a single meter would put it.
+    let quarter = 60.0 / tempo_bpm;
+    let header = (u8::try_from(num).unwrap_or(4), u8::try_from(den).unwrap_or(4));
     let key = chart.initial_key.as_ref().map(|k| k.root.name.clone());
 
     let mut sections: Vec<LaidSection> = Vec::with_capacity(chart.sections.len());
-    let mut cursor_measures: u32 = 0;
+    let mut measure_starts: Vec<f64> = Vec::new();
+    let mut meter_changes: Vec<(f64, u32, u32)> = Vec::new();
+    let mut meter = header;
+    let mut at = 0.0_f64;
     for cs in &chart.sections {
         let s = &cs.section;
         let kind = SectionKind::from_section_type(&s.section_type);
@@ -117,15 +138,30 @@ pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError
             .and_then(|m| u32::try_from(m).ok())
             .filter(|m| *m > 0)
             .unwrap_or_else(|| kind.default_measure_count());
-        let start_seconds = f64::from(cursor_measures) * measure_secs;
-        cursor_measures = cursor_measures.saturating_add(measures);
-        let end_seconds = f64::from(cursor_measures) * measure_secs;
+        // The parsed bars carry their meters; a section whose bars do not
+        // add up to its count (the parser did not expand it) is its count
+        // at the prevailing meter.
+        let bars: Vec<(u8, u8)> = cs.measures().iter().map(|m| m.time_signature).collect();
+        let bars = if bars.len() == measures as usize {
+            bars
+        } else {
+            vec![meter; measures as usize]
+        };
+        let start_seconds = at;
+        for bar in bars {
+            if bar != meter {
+                meter_changes.push((at, u32::from(bar.0), u32::from(bar.1)));
+                meter = bar;
+            }
+            measure_starts.push(at);
+            at += quarters_in(bar) * quarter;
+        }
         sections.push(LaidSection {
             kind,
             label: s.comment.clone(),
             number: s.number,
             start_seconds,
-            end_seconds,
+            end_seconds: at,
             measures,
         });
     }
@@ -149,5 +185,38 @@ pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError
         song_start_seconds: count_in_seconds,
         song_end_seconds,
         sections,
+        measure_starts,
+        meter_changes,
     })
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::chart_to_layout;
+
+    /// One bar of 2/4 in a song of 4/4: half a bar long, everything after
+    /// it two beats earlier than one meter would put it, and the change to
+    /// 2/4 and back is listed where it happens.
+    #[test]
+    fn a_bar_of_two_four_is_half_a_bar() {
+        let layout = chart_to_layout(
+            "Song\n60bpm 4/4 #D\n\nCount 1\nCH 2\nBreakdown 1\n!T2/4\nVS 2\n",
+        )
+        .expect("lays out");
+        // At 60 bpm a quarter is a second: 4 + 8 = 12 s to the breakdown,
+        // which lasts 2 s, so the verse starts at 14 and ends at 22.
+        let starts: Vec<(f64, f64)> = layout.sections.iter().map(|s| (s.start_seconds, s.end_seconds)).collect();
+        assert_eq!(starts, vec![(0.0, 4.0), (4.0, 12.0), (12.0, 14.0), (14.0, 22.0)]);
+        assert_eq!(layout.meter_changes, vec![(12.0, 2, 4), (14.0, 4, 4)]);
+        assert_eq!(layout.measure_starts, vec![0.0, 4.0, 8.0, 12.0, 14.0, 18.0]);
+        assert!((layout.song_end_seconds - 22.0).abs() < 1e-9);
+    }
+
+    /// A chart with no meter change lists none.
+    #[test]
+    fn one_meter_throughout_lists_no_changes() {
+        let layout = chart_to_layout("Song\n120bpm 4/4 #C\n\nVS 4\nCH 4\n").expect("lays out");
+        assert!(layout.meter_changes.is_empty());
+        assert_eq!(layout.measure_starts.len(), 8);
+    }
 }

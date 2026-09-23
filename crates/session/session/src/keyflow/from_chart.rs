@@ -158,6 +158,13 @@ fn clear_chart_structure<D: ChartDaw>(
             Regions::remove(daw, project.clone(), id)?;
         }
     }
+    // The tempo map is the chart's too: its meter changes, and whatever
+    // tempo points a multitrack arrived with.
+    let points = TempoMap::get_tempo_points(daw, project.clone()).len();
+    for index in (0..points).rev() {
+        let index = u32::try_from(index).unwrap_or(u32::MAX);
+        TempoMap::remove_tempo_point(daw, project.clone(), index)?;
+    }
     for name in ["KEY", "CHORD"] {
         let Some(track) = keyflow_child(daw, project, name) else {
             continue;
@@ -195,7 +202,8 @@ fn stamp_chart<D: ChartDaw>(
     // on them — what the insert actions do in REAPER.
     super::actions::ensure_core_lanes(daw);
     let stamped = stamp_song_with_default_tempo_native(daw, project, &song)
-        .map_err(|e| eyre::eyre!("{e}"));
+        .map_err(|e| eyre::eyre!("{e}"))
+        .and_then(|_| stamp_meter_changes(daw, project, layout));
     let folder = stamped
         .and_then(|_| match keyflow_folder(daw, project) {
             Some(_) => Ok(()),
@@ -214,6 +222,27 @@ fn stamp_chart<D: ChartDaw>(
         song_start_seconds: layout.song_start_seconds,
         song_end_seconds: layout.song_end_seconds,
     })
+}
+
+/// The chart's meter changes, as time-signature points on the tempo map —
+/// at the chart's one tempo, so the tempo is unchanged and only the meter
+/// moves: a bar of 2/4, and 4/4 again after it. The grid, the ruler and the
+/// click all read the meter from here.
+fn stamp_meter_changes<D: ChartDaw>(
+    daw: &D,
+    project: &ProjectContext,
+    layout: &ChartLayout,
+) -> eyre::Result<()> {
+    for &(seconds, num, den) in &layout.meter_changes {
+        let index = daw.add_tempo_point(project.clone(), seconds, layout.tempo_bpm)?;
+        daw.set_time_signature_at_point(
+            project.clone(),
+            index,
+            i32::try_from(num).unwrap_or(4),
+            i32::try_from(den).unwrap_or(4),
+        )?;
+    }
+    Ok(())
 }
 
 /// The `Keyflow` folder track's GUID, when the project has one.
@@ -255,10 +284,10 @@ fn stamp_keyflow_tracks<D: ChartDaw>(
     else {
         return Ok(());
     };
-    // The chart is laid out from zero at one tempo (`chart_to_layout`):
-    // a beat is a quarter at `tempo_bpm`, a bar is `time_sig_num` of them.
+    // The chart is laid out from zero at one tempo (`chart_to_layout`): a
+    // beat is a quarter at `tempo_bpm`, and each measure starts where the
+    // layout put it — its meter, not the header's, decides how long it is.
     let beat = 60.0 / layout.tempo_bpm.max(1.0);
-    let bar = beat * f64::from(layout.time_sig_num.max(1));
     let qn = |seconds: f64| {
         daw.time_to_quarter_notes(project.clone(), PositionInSeconds::from_seconds(seconds))
             .quarter_notes
@@ -266,7 +295,14 @@ fn stamp_keyflow_tracks<D: ChartDaw>(
     };
     for chord in super::generate::voicings(&chart, CHORD_OCTAVE) {
         #[expect(clippy::cast_precision_loss, reason = "a bar count")]
-        let start = (chord.measure as f64).mul_add(bar, chord.beat * beat);
+        // Every chord's bar is one the layout placed; past them would be a
+        // chord after the song, which lands at its end.
+        let bar_start = layout
+            .measure_starts
+            .get(chord.measure)
+            .copied()
+            .unwrap_or(layout.song_end_seconds);
+        let start = chord.beat.mul_add(beat, bar_start);
         let end = start + chord.beats * beat;
         let Some(location) = daw.create_midi_item(
             project.clone(),
