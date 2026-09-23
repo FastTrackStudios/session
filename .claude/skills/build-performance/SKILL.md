@@ -105,6 +105,26 @@ to 3 wholesale. Regenerate the list with `cargo tree` over the audio
 crates; note `package."*"` matches dependencies only, never workspace
 members.
 
+## `release-fast` — the profile for running the app while you work
+
+The app, `blitz_shot` and `prepare` are run from release builds (a dev
+build renders and plays too slowly to use). The default release profile
+is non-incremental with 16 codegen units, so a one-line edit recompiles
+the changed crate whole at O3 and everything above it. `release-fast`
+(root `Cargo.toml`) inherits release and sets `incremental = true`,
+`codegen-units = 256`. Measured 2026-09-22 on the same edits, back to
+back, box under load (so trust the CPU column):
+
+| edit in | `--release` | `release-fast` |
+|---|---|---|
+| `session-daw` | 60.6 s wall / 303 s CPU | 14.8 s / 6.5 s |
+| `daw-standalone` (via `../daw` path patch) | 90.6 s / 472 s | 21.3 s / 12 s |
+
+Cold build of `release-fast` once: ~8 min. `just app`, `just prepare`,
+`studio`, `drive`, `studio-song` use it; benchmarks, fixtures and
+shipping stay on `--release` (256 units inline a little less — measure
+performance on what ships).
+
 ## sccache — removed, and why it stays removed
 
 There is **no `RUSTC_WRAPPER`** in this tree. sccache was wired into the
