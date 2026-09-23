@@ -4,10 +4,14 @@
 //!   panel lets them be, centred on a dark field lit by the section's
 //!   colour, a slide (or a line, or a section) at a time. A title card
 //!   before the first line; nothing through an instrumental.
-//! - **Performer** — what the stage reads: the song as a strip of its
-//!   sections, the one it is in and how far through, the line being sung
-//!   large with the next under it and the rest of the section after, and
-//!   what comes next, counting down.
+//! - **Performer** — what the band reads: where the song is (the
+//!   section, how far through, what is next and when) over the lyrics as
+//!   a teleprompter that runs itself — the line being sung large, the
+//!   ones after it following, the sections labelled as they come.
+//! - **Confidence Monitor** — what a singer glances at, as ProPresenter's
+//!   stage display has it: the slide on screen now, large, over a rule,
+//!   and the next slide under it in its section's colour (yellow when
+//!   that is too pale to tell from white).
 //!
 //! Which view (and the Audience's layer) is a small switch in the panel's
 //! top-right corner; everything else is the view.
@@ -41,20 +45,22 @@ const SWITCH_EARLY: f64 = 1.0;
 /// into, not so much that it runs ahead of the singer.
 const LINE_EARLY: f64 = 0.4;
 
-/// The two ways the panel shows the words.
+/// The three ways the panel shows the words.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     Audience,
     Performer,
+    Confidence,
 }
 
 impl View {
-    const ALL: [Self; 2] = [Self::Audience, Self::Performer];
+    const ALL: [Self; 3] = [Self::Audience, Self::Performer, Self::Confidence];
 
     const fn name(self) -> &'static str {
         match self {
             Self::Audience => "Audience",
             Self::Performer => "Performer",
+            Self::Confidence => "Confidence Monitor",
         }
     }
 }
@@ -69,10 +75,17 @@ pub struct LyricsChoice {
 }
 
 impl LyricsChoice {
+    /// The Confidence Monitor, unless `FTS_LYRICS_VIEW` names another
+    /// (`audience`, `performer`) — a screen set up for one view opens on it.
     #[must_use]
     pub fn new() -> Self {
+        let view = match std::env::var("FTS_LYRICS_VIEW").as_deref() {
+            Ok("audience") => View::Audience,
+            Ok("performer") => View::Performer,
+            _ => View::Confidence,
+        };
         Self {
-            view: Signal::new(View::Performer),
+            view: Signal::new(view),
             layer: Signal::new(Layer::Slide),
         }
     }
@@ -181,6 +194,61 @@ impl Words {
     }
 }
 
+impl Words {
+    /// The slide on screen at `at`, as a room sees it: up early, held
+    /// through a breath, gone in an instrumental; `None` before the words.
+    fn slide_on_screen(&self, at: f64) -> Option<usize> {
+        let section = self.section_at(at);
+        self.slide_at(at).filter(|&i| Some(self.slides[i].section) == section)
+    }
+
+    /// The slide after `at`'s: the next to go up.
+    fn slide_next(&self, at: f64) -> Option<usize> {
+        let next = self.slide_at(at).map_or(0, |i| i + 1);
+        (next < self.slides.len()).then_some(next)
+    }
+
+    /// A slide's lines' texts.
+    fn texts(&self, slide: Option<usize>) -> Vec<String> {
+        slide.map_or_else(Vec::new, |i| {
+            self.slides[i].lines.clone().map(|k| self.lyrics.lines[k].text.clone()).collect()
+        })
+    }
+}
+
+/// The largest font that sets `lines` in a `w` × `h` box: the height
+/// shared by the lines, the width by the longest of them (a character is
+/// about half an em of this face).
+fn fit(lines: &[String], w: f64, h: f64, max: f64) -> f64 {
+    let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1).max(8) as f64;
+    let count = lines.len().max(1) as f64;
+    ((h * 0.82) / (count * 1.18)).min((w * 0.9) / (longest * 0.52)).clamp(14.0, max)
+}
+
+/// The Confidence Monitor's yellow: ProPresenter's for the next slide,
+/// and what a section's colour gives way to when it is too pale to tell
+/// from the white slide above it.
+const NEXT_YELLOW: &str = "#f5c542";
+
+/// A section's colour as the next slide's text: itself, unless it is
+/// whitish (bright and barely tinted) or not a `#rrggbb` — then yellow.
+fn next_color(color: &str) -> String {
+    let channel = |at: usize| color.get(at..at + 2).and_then(|h| u8::from_str_radix(h, 16).ok());
+    let rgb = (color.len() == 7 && color.starts_with('#'))
+        .then(|| Some((channel(1)?, channel(3)?, channel(5)?)))
+        .flatten();
+    let Some((r, g, b)) = rgb else { return NEXT_YELLOW.to_owned() };
+    let (r, g, b) = (f64::from(r) / 255.0, f64::from(g) / 255.0, f64::from(b) / 255.0);
+    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let (hi, lo) = (r.max(g).max(b), r.min(g).min(b));
+    let saturation = if hi > 0.0 { (hi - lo) / hi } else { 0.0 };
+    if luminance > 0.72 && saturation < 0.3 {
+        NEXT_YELLOW.to_owned()
+    } else {
+        color.to_owned()
+    }
+}
+
 /// A section colour at `alpha` (0–255), for washes: `#rrggbb` gains an
 /// alpha byte; anything else is used as it is.
 fn tint(color: &str, alpha: u8) -> String {
@@ -242,10 +310,12 @@ pub fn LyricsPanel() -> Element {
                     "No lyrics for this song yet — put a synced .lrc beside its chart \
                      (session lyrics fetch) and prepare the song again."
                 }
-            } else if view() == View::Audience {
-                Audience { words: words.clone(), layer: layer(), at, size: size() }
             } else {
-                Performer { words: words.clone(), at, size: size() }
+                match view() {
+                    View::Audience => rsx! { Audience { words: words.clone(), layer: layer(), at, size: size() } },
+                    View::Performer => rsx! { Performer { words: words.clone(), at, size: size() } },
+                    View::Confidence => rsx! { Confidence { words: words.clone(), at, size: size() } },
+                }
             }
             // The switch, out of the way in the corner.
             div {
@@ -364,30 +434,54 @@ fn Audience(words: Words, layer: Layer, at: f64, size: (f64, f64)) -> Element {
     }
 }
 
-/// The stage's view: where the song is, what is being sung, what is next.
+/// One row of the Performer's teleprompter.
+#[derive(Clone, Copy, PartialEq)]
+enum Row {
+    /// A section's label, where it begins.
+    Heading(usize),
+    /// A section with nothing sung in it.
+    Instrumental(usize),
+    Line(usize),
+}
+
+/// The band's view: where the song is, over the lyrics as a teleprompter
+/// that runs itself.
 #[component]
 fn Performer(words: Words, at: f64, size: (f64, f64)) -> Element {
     let lines = &words.lyrics.lines;
     let Some(i) = words.section_at(at) else { return rsx! {} };
     let section = &words.sections[i];
     let color = words.color(i);
-    let wash = tint(&color, 0x1c);
     let through = ((at - section.start) / (section.end - section.start).max(1e-6)).clamp(0.0, 1.0) * 100.0;
     let lit = words.line_lit(at);
-    // The line in focus — lit, or else the next to come in this section.
-    let focus = lit
-        .or_else(|| section.lines.clone().find(|&k| lines[k].start > at))
-        .or_else(|| section.lines.clone().last());
+    // The line the prompter is on: the one lit, or else the next to come.
+    let focus = lit.or_else(|| lines.iter().position(|l| l.start > at + LINE_EARLY));
+    // The whole song as one list: each section's label, then its lines.
+    let rows: Vec<Row> = words
+        .sections
+        .iter()
+        .enumerate()
+        .flat_map(|(k, s)| {
+            let body: Vec<Row> = if s.lines.is_empty() {
+                vec![Row::Instrumental(k)]
+            } else {
+                s.lines.clone().map(Row::Line).collect()
+            };
+            std::iter::once(Row::Heading(k)).chain(body)
+        })
+        .collect();
+    // Scrolled to the focus: one row of what has gone above it, and the
+    // section's label kept when the focus is its first line.
+    let at_row = focus
+        .and_then(|f| rows.iter().position(|r| *r == Row::Line(f)))
+        .or_else(|| rows.iter().position(|r| *r == Row::Heading(i)))
+        .unwrap_or(0);
+    let from = at_row.saturating_sub(if matches!(rows.get(at_row.wrapping_sub(1)), Some(Row::Heading(_))) { 2 } else { 1 });
     let w = size.0.max(1.0);
-    let big = (w / 17.0).clamp(22.0, 44.0);
-    let mid = (big * 0.62).max(16.0);
-    let small = (big * 0.48).max(13.0);
-    let upcoming = words.sections.get(i + 1).map(|s| {
-        let first = (!s.lines.is_empty()).then(|| lines[s.lines.start].text.clone());
-        let due = (words.shows_from(s) - at).max(0.0);
-        let span = (words.shows_from(s) - section.start).max(1.0);
-        (s.name.clone(), due, (1.0 - due / span).clamp(0.0, 1.0) * 100.0, first, words.color(i + 1))
-    });
+    let big = (w / 19.0).clamp(20.0, 40.0);
+    let mid = (big * 0.66).max(15.0);
+    let small = (big * 0.52).max(13.0);
+    let next = words.sections.get(i + 1).map(|s| (s.name.clone(), (words.shows_from(s) - at).max(0.0), words.color(i + 1)));
     let (song_start, song_end) = words.song;
     let song_span = (song_end - song_start).max(1e-6);
     let strip: Vec<(f64, String, f64)> = words
@@ -395,95 +489,169 @@ fn Performer(words: Words, at: f64, size: (f64, f64)) -> Element {
         .iter()
         .enumerate()
         .map(|(k, s)| {
-            let opacity = if k == i {
-                1.0
-            } else if k < i {
-                0.28
-            } else {
-                0.5
-            };
+            let opacity = if k == i { 1.0 } else if k < i { 0.25 } else { 0.5 };
             ((s.end - s.start) / song_span * 100.0, words.color(k), opacity)
         })
         .collect();
-    let line_style = |k: usize| match focus {
-        Some(f) if k == f => format!(
-            "font-size:{big}px; line-height:1.18; font-weight:800; color:{}; margin:4px 0 10px 0; \
-             padding-left:12px; border-left:4px solid {color};",
-            if lit == Some(k) { "#ffffff" } else { "#d9dce2" }
-        ),
-        Some(f) if k == f + 1 => format!(
-            "font-size:{mid}px; line-height:1.25; font-weight:700; color:#aab0bb; margin:0 0 8px 0; padding-left:16px;"
-        ),
-        Some(f) if k < f => format!(
-            "font-size:{small}px; line-height:1.3; font-weight:500; color:#4a4f58; margin:0 0 6px 0; padding-left:16px;"
-        ),
-        _ => format!(
-            "font-size:{small}px; line-height:1.3; font-weight:600; color:#7d838e; margin:0 0 6px 0; padding-left:16px;"
-        ),
+    let row = |r: Row, n: usize| -> Element {
+        match r {
+            Row::Heading(k) => {
+                let c = words.color(k);
+                let name = &words.sections[k].name;
+                let above = if n == 0 { 2 } else { 12 };
+                rsx! {
+                    div {
+                        key: "h{k}",
+                        style: "display:flex; align-items:center; gap:8px; margin:{above}px 0 6px 0;",
+                        div { style: "width:3px; height:12px; border-radius:1px; background:{c};" }
+                        div { style: "font-size:11px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; color:{c};", "{name}" }
+                        div { style: "flex:1; height:1px; background:#1d2027;" }
+                    }
+                }
+            }
+            Row::Instrumental(k) => rsx! {
+                div { key: "i{k}", style: "font-size:{small}px; color:#5a5f69; font-style:italic; margin:0 0 6px 11px;", "Instrumental" }
+            },
+            Row::Line(k) => {
+                let style = match focus {
+                    Some(f) if k == f => format!(
+                        "font-size:{big}px; line-height:1.16; font-weight:800; color:{}; margin:2px 0 8px 0; \
+                         padding-left:8px; border-left:3px solid {};",
+                        if lit == Some(k) { "#ffffff" } else { "#cfd3da" },
+                        words.color(words.sections.iter().position(|s| s.lines.contains(&k)).unwrap_or(i)),
+                    ),
+                    Some(f) if k == f + 1 => format!(
+                        "font-size:{mid}px; line-height:1.22; font-weight:700; color:#a9afba; margin:0 0 7px 0; padding-left:11px;"
+                    ),
+                    Some(f) if k < f => format!(
+                        "font-size:{small}px; line-height:1.28; font-weight:500; color:#474c55; margin:0 0 6px 0; padding-left:11px;"
+                    ),
+                    _ => format!(
+                        "font-size:{small}px; line-height:1.28; font-weight:600; color:#767c87; margin:0 0 6px 0; padding-left:11px;"
+                    ),
+                };
+                rsx! { div { key: "l{k}", style: style, "{lines[k].text}" } }
+            }
+        }
     };
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; \
-                    background:linear-gradient(180deg, {wash} 0%, #07080b 38%);",
-            // The song as a strip of its sections, the one it is in lit.
+                    background:#07080b;",
+            // Where the song is — the section, how far through, and what
+            // is next and when — in one line under the switch's corner.
             div {
-                style: "flex:none; display:flex; gap:2px; height:6px; margin:12px 190px 0 16px;",
-                for (k, (width, fill, opacity)) in strip.into_iter().enumerate() {
-                    div {
-                        key: "{k}",
-                        style: "flex:none; width:{width}%; height:6px; border-radius:2px; background:{fill}; opacity:{opacity};",
-                    }
-                }
-            }
-            // Where it is: the section, and how far through.
-            div {
-                style: "flex:none; display:flex; align-items:center; gap:10px; padding:12px 16px 0 16px;",
+                style: "flex:none; display:flex; align-items:center; gap:10px; height:36px; padding:0 16px; \
+                        margin-right:270px;",
                 div {
-                    style: "padding:3px 10px; border-radius:6px; background:{color}; color:#0b0c0e; \
-                            font-size:13px; font-weight:800; letter-spacing:1px; text-transform:uppercase;",
+                    style: "flex:none; padding:2px 9px; border-radius:5px; background:{color}; color:#0b0c0e; \
+                            font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase;",
                     "{section.name}"
                 }
-                div { style: "font-size:11px; color:{DIM};", "{i + 1} / {words.sections.len()}" }
-            }
-            div {
-                style: "flex:none; height:3px; margin:10px 16px 0 16px; background:#1b1d23; border-radius:2px;",
-                div { style: "height:3px; width:{through}%; background:{color}; border-radius:2px;" }
-            }
-            // What is sung: the line in focus large, the next under it,
-            // the rest of the section after; what has gone, faint.
-            div {
-                style: "flex:1; min-height:0; overflow:hidden; padding:14px 16px 0 16px;",
-                if section.lines.is_empty() {
-                    div { style: "font-size:{mid}px; color:{DIM}; font-style:italic; margin-top:6px;", "Instrumental" }
-                }
-                for k in section.lines.clone() {
-                    div { key: "{k}", style: line_style(k), "{lines[k].text}" }
-                }
-            }
-            // What comes next, counting down.
-            if let Some((name, due, closing, first, next_color)) = upcoming {
                 div {
-                    style: "flex:none; margin:8px 12px 12px 12px; padding:10px 12px; border-radius:8px; \
-                            background:#101217; border:1px solid {RULE};",
+                    style: "flex:1; min-width:30px; height:3px; background:#1b1d23; border-radius:2px;",
+                    div { style: "height:3px; width:{through}%; background:{color}; border-radius:2px;" }
+                }
+                if let Some((name, due, c)) = next {
                     div {
-                        style: "display:flex; align-items:center; gap:8px;",
-                        div { style: "width:8px; height:8px; border-radius:2px; background:{next_color};" }
-                        div {
-                            style: "font-size:11px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; color:{next_color};",
-                            "Next · {name}"
-                        }
-                        div { style: "flex:1;" }
-                        div { style: "font-size:12px; font-weight:700; color:#c7cad1;", "{due:.0}s" }
+                        style: "flex:none; font-size:11px; font-weight:700; color:#8b9099; white-space:nowrap;",
+                        span { style: "color:{c}; letter-spacing:1px; text-transform:uppercase;", "{name}" }
+                        " in {due:.0}s"
                     }
+                }
+            }
+            // The song as a strip of its sections.
+            div {
+                style: "flex:none; display:flex; gap:2px; height:3px; margin:0 16px;",
+                for (k, (width, fill, opacity)) in strip.into_iter().enumerate() {
+                    div { key: "{k}", style: "flex:none; width:{width}%; height:3px; border-radius:1px; background:{fill}; opacity:{opacity};" }
+                }
+            }
+            // The prompter: from just above the line being sung, on.
+            div {
+                style: "flex:1; min-height:0; overflow:hidden; padding:12px 16px 0 16px;",
+                for (n, r) in rows[from..].iter().copied().take(40).enumerate() {
+                    {row(r, n)}
+                }
+            }
+        }
+    }
+}
+
+/// The singer's glance, as ProPresenter's stage display has it: the
+/// slide on screen now over a rule, the next slide under it — in its
+/// section's colour, so a change of section is seen coming, and named on
+/// the rule when it is one.
+#[component]
+fn Confidence(words: Words, at: f64, size: (f64, f64)) -> Element {
+    let now = words.texts(words.slide_on_screen(at));
+    let next_slide = words.slide_next(at);
+    let next = words.texts(next_slide);
+    let next_color = next_slide.map_or_else(
+        || NEXT_YELLOW.to_owned(),
+        |n| next_color(&words.color(words.slides[n].section)),
+    );
+    // The next slide's section, when it is a new one: said on the rule.
+    let next_section = next_slide
+        .map(|n| words.slides[n].section)
+        .filter(|s| Some(*s) != words.section_at(at))
+        .map(|s| words.sections[s].name.clone());
+    let (w, h) = (size.0.max(1.0), size.1.max(1.0));
+    let half = (h - 2.0) / 2.0;
+    let now_font = fit(&now, w * 0.92, half, 110.0);
+    let next_font = fit(&next, w * 0.92, half, 90.0);
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; \
+                    background:#000000;",
+            div {
+                style: "flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; \
+                        justify-content:center; padding:0 4%; text-align:center;",
+                for (k, text) in now.iter().enumerate() {
                     div {
-                        style: "height:2px; margin-top:7px; background:#1f2229; border-radius:1px;",
-                        div { style: "height:2px; width:{closing}%; background:{next_color}; border-radius:1px;" }
+                        key: "{k}",
+                        style: "font-size:{now_font}px; line-height:1.12; font-weight:800; color:#ffffff;",
+                        "{text}"
                     }
-                    if let Some(first) = first {
-                        div { style: "font-size:{small}px; color:{DIM}; margin-top:7px;", "{first}" }
+                }
+            }
+            div {
+                style: "flex:none; position:relative; height:2px; background:#3a3d44;",
+                if let Some(name) = next_section {
+                    div {
+                        style: "position:absolute; left:12px; top:-8px; padding:0 6px; background:#000000; \
+                                font-size:11px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; \
+                                color:{next_color};",
+                        "{name}"
+                    }
+                }
+            }
+            div {
+                style: "flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; \
+                        justify-content:center; padding:0 4%; text-align:center;",
+                for (k, text) in next.iter().enumerate() {
+                    div {
+                        key: "{k}",
+                        style: "font-size:{next_font}px; line-height:1.12; font-weight:800; color:{next_color};",
+                        "{text}"
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The next slide wears its section's colour unless that is whitish.
+    #[test]
+    fn a_pale_section_colour_gives_way_to_yellow() {
+        assert_eq!(next_color("#3aa0ff"), "#3aa0ff");
+        assert_eq!(next_color("#e84a5f"), "#e84a5f");
+        assert_eq!(next_color("#f2f2f2"), NEXT_YELLOW);
+        assert_eq!(next_color("#dde3ea"), NEXT_YELLOW);
+        assert_eq!(next_color("rgb(1,2,3)"), NEXT_YELLOW);
     }
 }

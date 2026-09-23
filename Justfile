@@ -1563,6 +1563,8 @@ app PROJECT="" CHART="" MODE="":
     if [[ -n "$mode" ]]; then envs+=(--env "FTS_SESSION_MODE=$mode"); fi
     # The view to open on (overview, performance, setup), from the caller's env.
     if [[ -n "${FTS_SESSION_VIEW:-}" ]]; then envs+=(--env "FTS_SESSION_VIEW=$FTS_SESSION_VIEW"); fi
+    # The lyrics panel's view (audience, performer, confidence), likewise.
+    if [[ -n "${FTS_LYRICS_VIEW:-}" ]]; then envs+=(--env "FTS_LYRICS_VIEW=$FTS_LYRICS_VIEW"); fi
     pkill -f 'Session Dev.app/Contents/MacOS/session-desktop' || true
     # Let a killed copy go before its bundle is opened again.
     sleep 1
