@@ -1660,10 +1660,23 @@ fn waveform(
     // A pixel short of the lane at full scale, and never thinner than a
     // hair either side of the middle.
     const HAIR: f64 = 0.6;
-    let reach = half - 1.0;
+    // Normalized for display: the take's loudest peak reaches the lane's
+    // edge, so a stem mixed at -20 dB draws as a waveform and not a line.
+    // What is drawn changes, never what plays. Capped, so a stem that is
+    // near-silent all through shows as near-silent rather than as its
+    // noise floor blown up to full height.
+    const MOST_GAIN: f64 = 24.0; // ≈ +27.6 dB
+    let loudest = wave
+        .points
+        .iter()
+        .map(|&(max, min)| f64::from(max.abs().max(min.abs())))
+        .fold(0.0_f64, f64::max);
+    let gain = if loudest > 0.0 { (1.0 / loudest).min(MOST_GAIN) } else { 1.0 };
+    let reach = (half - 1.0) * gain;
     let mut path = BezPath::new();
+    let edge = half - 1.0;
     for (i, &(max, _)) in span.iter().enumerate() {
-        let y = mid - (f64::from(max.max(0.0)) * reach).max(HAIR);
+        let y = mid - (f64::from(max.max(0.0)) * reach).clamp(HAIR, edge.max(HAIR));
         if i == 0 {
             path.move_to((x_of(i), y));
         } else {
@@ -1671,7 +1684,7 @@ fn waveform(
         }
     }
     for (i, &(_, min)) in span.iter().enumerate().rev() {
-        path.line_to((x_of(i), mid + (-f64::from(min.min(0.0)) * reach).max(HAIR)));
+        path.line_to((x_of(i), mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR))));
     }
     path.close_path();
     Some(path)
@@ -2188,6 +2201,26 @@ mod waveform_tests {
         let b = path.bounding_box();
         assert!((b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9, "{b:?}");
         assert!(b.x0 >= 10.0 && b.x1 <= 12.0, "{b:?}");
+    }
+
+    /// A quiet take is drawn normalized: its loudest peak reaches the lane
+    /// edge as a full-scale one does — and the gain is capped, so a take of
+    /// nothing but noise stays small.
+    #[test]
+    fn a_quiet_take_fills_its_lane() {
+        use vello::kurbo::Shape as _;
+        let quiet = Wave {
+            step: 0.5,
+            points: vec![(0.1, -0.1), (0.05, -0.02), (0.1, -0.1)],
+        };
+        let b = waveform(&quiet, 0.0, 1.5, 0.0, 20.0, 0.0).expect("a path").bounding_box();
+        assert!((b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9, "{b:?}");
+        let noise = Wave {
+            step: 0.5,
+            points: vec![(0.001, -0.001), (0.001, -0.001)],
+        };
+        let b = waveform(&noise, 0.0, 1.0, 0.0, 20.0, 0.0).expect("a path").bounding_box();
+        assert!(b.height() < 4.0, "noise stays small: {b:?}");
     }
 
     /// A slip moves the audio, not the item: shifted a whole second, the
