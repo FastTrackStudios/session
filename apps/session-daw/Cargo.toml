@@ -142,6 +142,14 @@ web-time = "1"
 
 eyre = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"], optional = true }
+# Collaboration (collab.rs, native): hosting/joining over iroh, and the
+# chart editor's remote edits and carets.
+architect = { workspace = true, optional = true, features = ["vox", "iroh"] }
+crdt = { workspace = true, optional = true, features = ["vox"] }
+vox-core = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+editor-crdt = { workspace = true, optional = true }
+futures-timer = { workspace = true, optional = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }
 
@@ -204,6 +212,13 @@ native = [
     "dep:keyflow-editor-lang",
     "dep:futures-channel",
     "dep:futures-util",
+    "session/collab",
+    "dep:architect",
+    "dep:crdt",
+    "dep:vox-core",
+    "dep:uuid",
+    "dep:editor-crdt",
+    "dep:futures-timer",
 ]
 # The browser: the same widgets, hosted in <canvas> elements under
 # dioxus-web and drawn with vello_hybrid's WebGL renderer (keyflow-ui's

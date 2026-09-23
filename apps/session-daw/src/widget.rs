@@ -1369,6 +1369,20 @@ impl ArrangementWidget {
         match event {
             UiEvent::PointerMove(e) => {
                 let (x, y) = at(e);
+                // Where this peer's mouse is, for everyone else in the
+                // session — in time and track, not pixels.
+                {
+                    let view = self.viewport(self.size.0, self.size.1);
+                    let over_lanes = x >= self.scene.tcp.width();
+                    let track = self
+                        .scene
+                        .row_at_screen(y - ruler::ruler_h() + view.scroll_y, view)
+                        .and_then(|row| self.rows.get(row))
+                        .map(|(t, _)| t.guid.clone());
+                    crate::ghosts::local_pointer(
+                        over_lanes.then(|| (self.seconds_at(x, view), track)),
+                    );
+                }
                 // The editor owns the gesture once it has taken a
                 // press: an item being dragged follows the pointer off
                 // the lane it started on, which is what dragging is.
@@ -1495,6 +1509,8 @@ impl ArrangementWidget {
         crate::keys::set_typing(self.renaming.is_some());
         // Where the edit cursor and selection are, for the toolbar's inserts.
         crate::cursor::publish(self.editor.cursor);
+        crate::ghosts::local_selection(&self.editor.selected, &self.rows);
+        crate::ghosts::local_shown(&self.rows, &self.scene);
         // The engine changed the session under us (a toolbar insert, an
         // edited chart): read it back before drawing it.
         #[cfg(feature = "native")]

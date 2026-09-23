@@ -303,3 +303,21 @@ fn two_who_opened_their_own_copy_converge_on_one_set_of_tracks() {
     assert_eq!(ma.items, song().items);
     assert_eq!(ma, mb);
 }
+
+#[test]
+fn a_chart_caret_stays_on_its_character_while_others_type() {
+    let (a, b) = two_peers();
+    // B's caret on the "4" of "1 4 6m 5".
+    let at = song().chart.find("4 6m").unwrap();
+    let caret = b.chart_cursor(at).unwrap();
+    // A types a line above it.
+    let mut m = a.read();
+    m.chart = m.chart.replace("VS 4\n", "IN 2\n1 5\n\nVS 4\n");
+    a.write(&m, ORIGIN_LOCAL).unwrap();
+    sync(&a, &b);
+    let now = b.resolve_chart_cursor(&caret).unwrap();
+    let chart = b.read().chart;
+    assert_eq!(&chart[now..now + 4], "4 6m", "{chart}");
+    assert!(b.has_session());
+    assert!(!SessionDoc::new().has_session());
+}

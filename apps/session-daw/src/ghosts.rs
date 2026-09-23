@@ -54,6 +54,74 @@ pub fn active() -> bool {
         .is_some_and(|slot| slot.as_ref().is_some_and(|p| !p.roster.peers.is_empty()))
 }
 
+/// What this peer is doing, as the arrangement last saw it — read by the
+/// collaboration driver, which decides what to tell the others and when.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Local {
+    /// The mouse over the lanes: seconds, and the track under it.
+    pub pointer: Option<(f64, Option<String>)>,
+    pub selected_items: Vec<String>,
+    pub selected_tracks: Vec<String>,
+}
+
+static LOCAL: Mutex<Local> = Mutex::new(Local {
+    pointer: None,
+    selected_items: Vec::new(),
+    selected_tracks: Vec::new(),
+});
+
+/// The mouse moved over the arrangement (`None`: it left the lanes).
+pub fn local_pointer(pointer: Option<(f64, Option<String>)>) {
+    if let Ok(mut local) = LOCAL.lock() {
+        local.pointer = pointer;
+    }
+}
+
+/// The selection, as drawn this frame.
+pub fn local_selection(items: &std::collections::HashSet<String>, rows: &[(daw_proto::Track, u32)]) {
+    if let Ok(mut local) = LOCAL.lock() {
+        let mut items: Vec<String> = items.iter().cloned().collect();
+        items.sort();
+        let tracks: Vec<String> =
+            rows.iter().filter(|(t, _)| t.selected).map(|(t, _)| t.guid.clone()).collect();
+        if local.selected_items != items {
+            local.selected_items = items;
+        }
+        if local.selected_tracks != tracks {
+            local.selected_tracks = tracks;
+        }
+    }
+}
+
+/// The arrangement's track guids and item guids as last drawn (the
+/// collaboration puppet points at real ones).
+static SHOWN: Mutex<(Vec<String>, Vec<String>)> = Mutex::new((Vec::new(), Vec::new()));
+
+pub(crate) fn local_shown(rows: &[(daw_proto::Track, u32)], scene: &Arrangement) {
+    if let Ok(mut shown) = SHOWN.lock()
+        && shown.0.len() != rows.len()
+    {
+        shown.0 = rows.iter().map(|(t, _)| t.guid.clone()).collect();
+        shown.1 = scene.item_boxes().iter().map(|i| i.guid.clone()).collect();
+    }
+}
+
+#[must_use]
+pub fn local_rows() -> Vec<String> {
+    SHOWN.lock().map(|s| s.0.clone()).unwrap_or_default()
+}
+
+#[must_use]
+pub fn local_item_guids() -> Vec<String> {
+    SHOWN.lock().map(|s| s.1.clone()).unwrap_or_default()
+}
+
+/// This peer's presence as the arrangement last saw it.
+#[must_use]
+pub fn local() -> Local {
+    LOCAL.lock().map(|l| l.clone()).unwrap_or_default()
+}
+
 /// Milliseconds on this machine's clock, for presence timing.
 #[must_use]
 pub fn now_ms() -> f64 {

@@ -52,7 +52,10 @@ const CHART: &str = "chart";
 pub const ORIGIN_LOCAL: &str = "local";
 
 /// One song's live session as a Loro document.
-#[derive(Debug)]
+///
+/// Cloning shares the document (Loro docs are handles), which is how the
+/// sync driver and the bridge work on one replica.
+#[derive(Debug, Clone)]
 pub struct SessionDoc {
     doc: LoroDoc,
 }
@@ -136,6 +139,32 @@ impl SessionDoc {
         self.doc.set_next_commit_origin(origin);
         self.doc.commit();
         Ok(())
+    }
+
+    /// Whether anything has been written or received yet — a joiner
+    /// waits for this before letting its bridge at the doc.
+    #[must_use]
+    pub fn has_session(&self) -> bool {
+        matches!(
+            self.doc.get_map(META).get("schema"),
+            Some(ValueOrContainer::Value(LoroValue::I64(_)))
+        )
+    }
+
+    /// A stable position in the chart text (Unicode offset) that stays put
+    /// while others type, encoded for presence.
+    #[must_use]
+    pub fn chart_cursor(&self, pos: usize) -> Option<Vec<u8>> {
+        let text = self.doc.get_text(CHART);
+        text.get_cursor(pos.min(text.len_unicode()), loro::cursor::Side::Left)
+            .map(|c| c.encode())
+    }
+
+    /// Where an encoded chart cursor (from [`Self::chart_cursor`]) is now.
+    #[must_use]
+    pub fn resolve_chart_cursor(&self, bytes: &[u8]) -> Option<usize> {
+        let cursor = loro::cursor::Cursor::decode(bytes).ok()?;
+        self.doc.get_cursor_pos(&cursor).ok().map(|p| p.current.pos)
     }
 
     /// The model the doc currently holds.

@@ -23,11 +23,13 @@ use crate::doc::SessionDoc;
 pub const PRESENCE_TIMEOUT_MS: i64 = 30_000;
 
 /// The id a song's session is shared under: the same on every machine
-/// that has the song, so everyone who opens it meets in one doc.
+/// that has the song, so everyone who opens it meets in one doc. `song`
+/// must be stable across machines and opens — a library song id, or the
+/// song's name — never an engine project guid, which is minted per open.
 #[must_use]
-pub fn session_id(project_guid: &str) -> Uuid {
+pub fn session_id(song: &str) -> Uuid {
     const NAMESPACE: Uuid = Uuid::from_u128(0x6a1f_0c3e_8d2b_4f5a_9e7c_1b3d_5f7a_9c2e);
-    Uuid::new_v5(&NAMESPACE, project_guid.as_bytes())
+    Uuid::new_v5(&NAMESPACE, song.as_bytes())
 }
 
 /// Something that can be asked to tell everyone about this peer.
@@ -135,6 +137,12 @@ impl CollabPeer {
         &self.doc
     }
 
+    /// This peer's presence handle (cheap to clone).
+    #[must_use]
+    pub const fn presence(&self) -> &PresencePeer {
+        &self.presence
+    }
+
     /// Split into what the UI keeps (doc, presence) and the two session
     /// drivers, each to be run on a connection until it drops.
     #[must_use]
@@ -142,14 +150,18 @@ impl CollabPeer {
         (self.doc, self.presence, self.synced, self.driver)
     }
 
-    /// Run both sessions on `caller` until the connection drops.
+    /// Run both sessions until the connection drops. Two clients, each
+    /// established on its own link: a vox caller is bound to one service
+    /// once constructed.
     ///
     /// # Errors
     /// When either session fails to attach.
-    pub async fn run(&mut self, caller: vox::Caller) -> eyre::Result<()> {
-        let sync = DocSyncClient::new(caller.clone());
-        let presence = DocPresenceClient::new(caller);
-        let (a, b) = tokio::join!(self.synced.run(&sync), self.driver.run(&presence));
+    pub async fn run(
+        &mut self,
+        sync: &DocSyncClient,
+        presence: &DocPresenceClient,
+    ) -> eyre::Result<()> {
+        let (a, b) = tokio::join!(self.synced.run(sync), self.driver.run(presence));
         a.map_err(|e| eyre::eyre!("session sync: {e}"))?;
         b.map_err(|e| eyre::eyre!("session presence: {e}"))?;
         Ok(())

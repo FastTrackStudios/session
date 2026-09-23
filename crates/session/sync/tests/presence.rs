@@ -18,6 +18,7 @@ fn state_round_trips() {
         time_selection: Some((8.0, 16.0)),
         selected_tracks: vec!["kick".into()],
         selected_items: vec!["i1".into(), "i2".into()],
+        chart_caret: Some((vec![1, 2, 3], vec![4, 5])),
     };
     assert_eq!(PeerState::decode(&s.encode()), Some(s));
 }

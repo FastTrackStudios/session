@@ -56,6 +56,10 @@ pub struct PeerState {
     pub time_selection: Option<(f64, f64)>,
     pub selected_tracks: Vec<String>,
     pub selected_items: Vec<String>,
+    /// Their caret in the chart editor: anchor and head, as encoded Loro
+    /// cursors (`SessionDoc::chart_cursor`), so they stay on the right
+    /// character while others type.
+    pub chart_caret: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 /// Where the mouse is.
@@ -143,6 +147,12 @@ impl Fields {
             _ => None,
         }
     }
+    fn binary(&self, k: &str) -> Option<Vec<u8>> {
+        match self.0.get(k)? {
+            LoroValue::Binary(b) => Some(b.to_vec()),
+            _ => None,
+        }
+    }
     fn strings(&self, k: &str) -> Vec<String> {
         match self.0.get(k) {
             Some(LoroValue::List(l)) => l
@@ -175,6 +185,14 @@ impl PeerState {
             ("sel_end", opt_f64(self.time_selection.map(|s| s.1))),
             ("tracks", strings(&self.selected_tracks)),
             ("items", strings(&self.selected_items)),
+            (
+                "caret_anchor",
+                self.chart_caret.as_ref().map_or(LoroValue::Null, |c| LoroValue::from(c.0.clone())),
+            ),
+            (
+                "caret_head",
+                self.chart_caret.as_ref().map_or(LoroValue::Null, |c| LoroValue::from(c.1.clone())),
+            ),
         ])
     }
 
@@ -194,6 +212,7 @@ impl PeerState {
             time_selection: f.f64("sel_start").zip(f.f64("sel_end")),
             selected_tracks: f.strings("tracks"),
             selected_items: f.strings("items"),
+            chart_caret: f.binary("caret_anchor").zip(f.binary("caret_head")),
         })
     }
 }

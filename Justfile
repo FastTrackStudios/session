@@ -1565,6 +1565,18 @@ app PROJECT="" CHART="" MODE="":
     if [[ -n "${FTS_SESSION_VIEW:-}" ]]; then envs+=(--env "FTS_SESSION_VIEW=$FTS_SESSION_VIEW"); fi
     # The lyrics panel's view (audience, performer, confidence), likewise.
     if [[ -n "${FTS_LYRICS_VIEW:-}" ]]; then envs+=(--env "FTS_LYRICS_VIEW=$FTS_LYRICS_VIEW"); fi
+    # Collaboration (collab_bar.rs): share on open, or join a ticket / the
+    # file a host writes one to. A joining copy is a SECOND window beside
+    # the host, so it neither kills the running one nor shares its log.
+    for var in FTS_COLLAB_HOST FTS_COLLAB_JOIN FTS_COLLAB_NAME FTS_COLLAB_TICKET FTS_COLLAB_PUPPET; do
+        if [[ -n "${!var:-}" ]]; then envs+=(--env "$var=${!var}"); fi
+    done
+    if [[ -n "${FTS_COLLAB_JOIN:-}" ]]; then
+        log="$HOME/Library/Logs/Session Dev/session-dev-joined.log"
+        open -n --stdout "$log" --stderr "$log" "${envs[@]}" "$bundle"
+        echo "log: $log"
+        exit 0
+    fi
     pkill -f 'Session Dev.app/Contents/MacOS/session-desktop' || true
     # Let a killed copy go before its bundle is opened again.
     sleep 1

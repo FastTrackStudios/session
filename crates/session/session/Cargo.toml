@@ -125,6 +125,9 @@ serde_json = { workspace = true }
 workspace = true
 
 [features]
+# Sharing a session: the doc bridge to the engine, and hosting/joining
+# over vox (FastTrackStudios/session#139).
+collab = ["session-sync/engine", "session-sync/net"]
 # Real REAPER integration: window-layout modes (screensets), auto-colour
 # action registration, the DawModule extension glue, take-ranking, live
 # cross-window DAW sync. Off by default. A REAPER-hosted binary (the

@@ -651,6 +651,7 @@ helgoboss-midi = "0.4"
 # ── Utilities ─────────────────────────────────────────────────────────
 eyre = "0.6"
 uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
+futures-timer = "3"
 clap = { version = "4", features = ["derive"] }
 memmap2 = "0.9"
 camino = "1.2"
@@ -692,6 +693,8 @@ editor = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 # no Typst / Mermaid fence renderers (`default-features = false`).
 editor-view = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.9", default-features = false }
 editor-state = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.9", default-features = false }
+# Remote edits into the editor as changes (the caret stays put).
+editor-crdt = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.20" }
 # Keyflow's language support for it (syntax colours, live diagnostics) —
 # keyflow's own copy, which moved there from task at keyflow v0.2.0.
 # Renamed because task's older `editor-keyflow-lang` (above, for the site)
@@ -1219,6 +1222,7 @@ editor-view = { path = "../editor/features/ui" }
 editor-state = { path = "../editor/crates/editor-state" }
 editor-vim = { path = "../editor/features/vim" }
 editor-syntax = { path = "../editor/features/syntax" }
+editor-crdt = { path = "../editor/features/crdt" }
 
 [patch."https://github.com/FastTrackStudios/processor"]
 # baseview lives in the processor repo's own `vendor/`, which is why it

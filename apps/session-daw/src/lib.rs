@@ -13,6 +13,10 @@ pub mod arrangement;
 pub mod art;
 pub mod balance;
 pub mod chart_panel;
+#[cfg(feature = "native")]
+pub mod collab;
+#[cfg(feature = "native")]
+pub mod collab_bar;
 pub mod cursor;
 pub mod ghosts;
 pub mod engine;

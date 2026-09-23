@@ -92,6 +92,7 @@ pub fn Shell() -> Element {
                             key: "{song.project}",
                             session: song.session.clone(),
                             session_daw::transport_bar::TransportBar {}
+                            session_daw::collab_bar::CollabBar {}
                         }
                     }
                 },

@@ -106,8 +106,10 @@ pub fn TopBar(
             }
             // The setlist, filling whatever the bar has left.
             SongTabs { on_pick, on_color }
+            // A row: the transport, and anything the host puts beside it
+            // (the collaboration bar).
             div {
-                style: "flex:none;",
+                style: "flex:none; display:flex; align-items:center;",
                 onmousedown: move |event| event.stop_propagation(),
                 {transport}
             }

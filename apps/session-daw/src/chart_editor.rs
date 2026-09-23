@@ -60,15 +60,46 @@ pub fn ChartEditor() -> Element {
         let project = crate::open::current_song().unwrap_or_default();
         start(project, file.clone(), replies.tx())
     });
-    // Every change of text goes to the worker, which waits for the pause.
+    // Every change of text goes to the worker, which waits for the pause —
+    // and, in a shared session, to the others.
     let mut last = use_signal(|| initial.clone());
     use_effect(move || {
-        let text = state.read().doc.to_string();
+        let current = state.read();
+        publish_caret(&current);
+        let text = current.doc.to_string();
+        drop(current);
         if *last.peek() != text {
             last.set(text.clone());
+            crate::collab::local_chart(&text);
             let _ = worker.send(text);
         }
     });
+    // Someone else's edit: into the editor as a remote change (the caret
+    // stays put), and into the chart panel. NOT through the worker: the
+    // song's rebuild was done by whoever typed it, and its tracks and
+    // items arrive through the session doc — rebuilding here would make a
+    // second copy of everything under this machine's own guids.
+    let mut carets = use_signal(|| 0_u64);
+    use_future(move || async move {
+        loop {
+            futures_timer::Delay::new(Duration::from_millis(100)).await;
+            if let Some(text) = crate::collab::take_remote_chart() {
+                last.set(text.clone());
+                apply_remote(state, &text);
+                if let (Some(project), Ok(chart)) =
+                    (crate::open::current_song(), keyflow::parse(&text))
+                {
+                    crate::chart_panel::publish_live(&project, std::sync::Arc::new(chart), None);
+                }
+            }
+            // Other people's carets move with nothing typed here.
+            let rev = caret_revision();
+            if *carets.peek() != rev {
+                carets.set(rev);
+            }
+        }
+    });
+    let _ = carets();
 
     let status = match outcome() {
         None => ("", DIM.to_owned()),
@@ -111,9 +142,11 @@ pub fn ChartEditor() -> Element {
                         font-family: ui-monospace, Menlo, monospace; font-size:13px;",
                 editor_view::Editor {
                     state,
-                    decorations: Some(editor_view::DecorationSource::ptr(
-                        keyflow_editor_lang::keyflow_decorations,
-                    )),
+                    decorations: Some(editor_view::DecorationSource::new(|st| {
+                        let mut out = keyflow_editor_lang::keyflow_decorations(st);
+                        out.extend(remote_carets(st));
+                        out
+                    })),
                 }
             }
         }
@@ -139,6 +172,102 @@ pub fn EditorToggle(open: Signal<bool>) -> Element {
             "Edit"
         }
     }
+}
+
+/// This peer's caret, as char offsets (anchor, head).
+static CARET: std::sync::Mutex<Option<(usize, usize)>> = std::sync::Mutex::new(None);
+
+fn publish_caret(state: &editor_state::EditorState) {
+    let primary = state.selection.primary();
+    let rope = state.doc.rope();
+    let char_at = |byte: usize| rope.byte_to_char(byte.min(rope.len_bytes()));
+    if let Ok(mut slot) = CARET.lock() {
+        *slot = Some((char_at(primary.anchor), char_at(primary.head)));
+    }
+}
+
+/// This peer's caret as stable positions in the shared chart, for
+/// presence — `None` outside a session or before the editor opened.
+#[must_use]
+pub fn local_caret() -> Option<(Vec<u8>, Vec<u8>)> {
+    let (anchor, head) = (*CARET.lock().ok()?)?;
+    let (doc, _, _) = crate::collab::chart_context()?;
+    Some((doc.chart_cursor(anchor)?, doc.chart_cursor(head)?))
+}
+
+/// A number that changes when anyone's caret does.
+fn caret_revision() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let Some((_, presence, me)) = crate::collab::chart_context() else {
+        return 0;
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut entries: Vec<(String, Vec<u8>)> = presence
+        .states()
+        .into_iter()
+        .filter(|(k, _)| !k.starts_with(&me) && k.ends_with(session::sync::presence::STATE))
+        .filter_map(|(k, v)| {
+            let state = session::sync::presence::PeerState::decode(&v)?;
+            let (a, h) = state.chart_caret?;
+            Some((k, [a, h].concat()))
+        })
+        .collect();
+    entries.sort();
+    entries.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Everyone else's caret and selection in the chart, in their colour.
+fn remote_carets(state: &editor_state::EditorState) -> Vec<editor_state::DecoratedRange> {
+    let Some((doc, presence, me)) = crate::collab::chart_context() else {
+        return Vec::new();
+    };
+    let rope = state.doc.rope();
+    let max = rope.len_chars();
+    let mut out = Vec::new();
+    for (key, value) in presence.states() {
+        if key.starts_with(&me) || !key.ends_with(session::sync::presence::STATE) {
+            continue;
+        }
+        let Some(peer) = session::sync::presence::PeerState::decode(&value) else { continue };
+        let Some((anchor, head)) = peer.chart_caret.as_ref() else { continue };
+        let (Some(a), Some(h)) = (doc.resolve_chart_cursor(anchor), doc.resolve_chart_cursor(head))
+        else {
+            continue;
+        };
+        let (a, h) = (rope.char_to_byte(a.min(max)), rope.char_to_byte(h.min(max)));
+        let color = format!("#{:06x}", peer.color & 0x00ff_ffff);
+        if a != h {
+            out.push(editor_state::DecoratedRange::mark_with_attrs(
+                a.min(h)..a.max(h),
+                "collab-selection",
+                vec![("style".to_owned(), format!("background-color: {color}38;"))],
+            ));
+        }
+        let name = peer.name.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        out.push(editor_state::DecoratedRange::widget(
+            h,
+            format!(
+                "<span class=\"collab-caret\" style=\"border-left:2px solid {color}; margin-left:-1px; \
+                 position:relative;\"><span style=\"position:absolute; top:-15px; left:-1px; \
+                 background:{color}; color:#101114; font-size:10px; padding:0 3px; \
+                 border-radius:3px; white-space:nowrap;\">{name}</span></span>"
+            ),
+        ));
+    }
+    out
+}
+
+/// Bring the editor to `text` as a change tagged `"remote"`, so this
+/// peer's caret stays where it was.
+fn apply_remote(state: Signal<editor_state::EditorState>, text: &str) {
+    let current = state.peek().clone();
+    let changes = editor_crdt::remote_text_to_changes(current.doc.rope(), text);
+    if changes.is_empty() {
+        return;
+    }
+    let mut state = state;
+    state.set(current.update(editor_state::TransactionSpec::new().changes(changes).user_event("remote")));
 }
 
 /// The editor's own palette tokens, dark, for the stylesheet's variables.

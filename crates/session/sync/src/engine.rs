@@ -199,14 +199,18 @@ pub async fn apply(
                 let handle = project
                     .items()
                     .add_with_guid(
-                        TrackRef::Guid(item.track.clone()),
+                        &item.track,
                         guid,
                         PositionInSeconds::from_seconds(item.position),
                         Duration::from_seconds(item.length),
                     )
                     .await?;
+                // A new item has no take; the one it plays is added here
+                // (take guids are each engine's own — the doc keeps the
+                // active take's fields on the item).
+                let take = handle.takes().add().await?;
                 if let Some(source) = &item.take.source {
-                    handle.active_take().set_source_file(&media.to_local(source)).await?;
+                    take.set_source_file(&media.to_local(source)).await?;
                 }
                 set_item_fields(project, media, guid, item, ALL_ITEM_FIELDS).await?;
             }
