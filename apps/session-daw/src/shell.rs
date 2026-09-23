@@ -315,14 +315,19 @@ pub fn OverviewLayout(
                 if let Some(editor) = editor {
                     // A chart's lines are short: the editor needs a column,
                     // not a share of the window.
+                    // Every column is `height:100%`, not the row's stretch:
+                    // what is inside is placed absolutely, and Blitz laid it
+                    // out against the column's height BEFORE the stretch —
+                    // 2px, the editor a one-line sliver — until something
+                    // (a click) laid the pane out again.
                     div {
-                        style: "position:relative; flex:none; width:380px; border-radius:8px; \
-                                overflow:hidden; border:1px solid {RULE};",
+                        style: "position:relative; flex:none; width:380px; height:100%; \
+                                border-radius:8px; overflow:hidden; border:1px solid {RULE};",
                         {editor}
                     }
                 }
                 div {
-                    style: "position:relative; {chart_w} border-radius:8px; \
+                    style: "position:relative; {chart_w} height:100%; border-radius:8px; \
                             overflow:hidden; border:1px solid {RULE};",
                     {chart}
                     if let Some(corner) = chart_corner {
@@ -330,7 +335,7 @@ pub fn OverviewLayout(
                     }
                 }
                 div {
-                    style: "position:relative; flex:1; min-width:0; border-radius:8px; \
+                    style: "position:relative; flex:1; min-width:0; height:100%; border-radius:8px; \
                             overflow:hidden; border:1px solid {RULE};",
                     {panels}
                 }
