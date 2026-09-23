@@ -102,6 +102,18 @@ pub struct View {
     pub play_at: f64,
 }
 
+impl View {
+    /// Where a freshly opened session is looked at from: the start, at
+    /// zoom one, the playhead at zero.
+    pub const OPENING: Self = Self {
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        zoom_x: 1.0,
+        zoom_y: 1.0,
+        play_at: 0.0,
+    };
+}
+
 /// Blitz's modifier set, as the mouse map's.
 fn mods(from: Modifiers) -> crate::mousemap::Mods {
     crate::mousemap::Mods {
@@ -407,6 +419,66 @@ impl ArrangementWidget {
             stats: readout.then(crate::fps::Stats::new),
             spent: Passes::default(),
         }
+    }
+
+    /// The widget over an opened session, built the way every host builds
+    /// it: the dark theme's palette, the embedded font, the row layout
+    /// the environment asks for, and the recording cut in the panel's
+    /// shape (`compact`).
+    ///
+    /// The app's panel ([`crate::panel::use_arrangement_panel`]) and the
+    /// headless benchmark (`bin/bench`) both start here, so a number the
+    /// bench prints is the cost of the recording the window draws.
+    ///
+    /// # Panics
+    ///
+    /// If the embedded font does not load — a build defect, not a
+    /// runtime condition.
+    #[must_use]
+    pub fn for_session(
+        project: &daw_ui::studio::ProjectRef,
+        rows: &daw_ui::studio::RowsRef,
+        previews: &crate::midi::Previews,
+        compact: bool,
+        view: Shared,
+        readout: bool,
+    ) -> Self {
+        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = crate::text::Font::embedded().expect("the embedded font");
+        let layout = crate::layout::Layout::from_env();
+        let scene = Arrangement::build(
+            &palette,
+            &font,
+            project,
+            rows,
+            layout,
+            previews,
+            crate::tcp::Tcp { compact },
+        );
+        let bpm = scene.bpm;
+        Self::new(
+            scene,
+            palette,
+            font,
+            bpm,
+            crate::studio::PPS,
+            rows.as_slice().to_vec(),
+            layout,
+            // The widget's own copy, which its editor moves before the
+            // engine has — see `ArrangementWidget::project`.
+            (*project.0).clone(),
+            previews.clone(),
+            view,
+            readout,
+        )
+        .with_compact(Rc::new(Cell::new(compact)))
+    }
+
+    /// The recording the widget replays — for a caller that has to aim a
+    /// gesture at something in it (the benchmark's slip drag).
+    #[must_use]
+    pub const fn scene(&self) -> &Arrangement {
+        &self.scene
     }
 
     /// Share the panel's shape with whoever toggles it.

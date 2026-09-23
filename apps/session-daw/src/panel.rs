@@ -108,8 +108,10 @@ pub fn zoom_about(at: f64, scroll: f64, was: f64, to: f64) -> f64 {
     (scroll + at) / was * to - at
 }
 
-/// A wheel or drag distance as a zoom factor.
-fn factor(pixels: f64) -> f64 {
+/// A wheel or drag distance as a zoom factor: the zoom tool's own, so a
+/// benchmark that sweeps a drag zooms by what a hand would.
+#[must_use]
+pub fn factor(pixels: f64) -> f64 {
     (pixels / 200.0).exp()
 }
 
@@ -202,38 +204,13 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     // cursor is — is a plain cell it reads every paint, because the paint
     // runs outside the Dioxus runtime.
     let (hosted, view, edits) = use_hook(|| {
-        let theme = daw_ui::theming::Theme::dark();
-        let palette = crate::arrangement::Palette::from_theme(&theme);
-        let font = crate::text::Font::embedded().expect("the embedded font");
-        let layout = crate::layout::Layout::from_env();
-        let tcp = crate::tcp::Tcp { compact: compact.get() };
-        let scene = crate::arrangement::Arrangement::build(
-            &palette,
-            &font,
+        let view: crate::widget::Shared =
+            Rc::new(RefCell::new(crate::widget::View::OPENING));
+        let built = crate::widget::ArrangementWidget::for_session(
             &session.project,
             &session.rows,
-            layout,
             &session.previews,
-            tcp,
-        );
-        let bpm = scene.bpm;
-        let view: crate::widget::Shared = Rc::new(RefCell::new(crate::widget::View {
-            scroll_x: 0.0,
-            scroll_y: 0.0,
-            zoom_x: 1.0,
-            zoom_y: 1.0,
-            play_at: 0.0,
-        }));
-        let built = crate::widget::ArrangementWidget::new(
-            scene,
-            palette,
-            font,
-            bpm,
-            PPS,
-            session.rows.as_slice().to_vec(),
-            layout,
-            (*session.project.0).clone(),
-            session.previews.clone(),
+            compact.get(),
             Rc::clone(&view),
             std::env::var("FTS_BLITZ_FPS").is_ok_and(|v| v != "0"),
         )

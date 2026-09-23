@@ -20,6 +20,13 @@
 //! It is not a substitute for the windowed number. There is no
 //! compositor here and no present, so this is the upper bound on drawing
 //! alone. Quote it as that.
+//!
+//! The arrangement is drawn through `ArrangementWidget` — the painter the
+//! window mounts — over the session as the window reads it (see
+//! `Session`). There used to be a second painter here, hand-assembled
+//! from the same passes, and a number from a copy is a number about the
+//! copy. `FTS_BENCH_VERIFY` is the exception on purpose: it checks the
+//! recording's culling against replaying all of it, below any painter.
 
 use std::time::Instant;
 
@@ -30,12 +37,13 @@ use vello::kurbo::Affine;
 use session_daw::arrangement::{Arrangement, Palette, TCP_WIDTH, Viewport};
 use session_daw::headless::{BATCH, Headless};
 use session_daw::mcp::Mixer;
+use session_daw::widget::{ArrangementWidget, Shared, View};
 
 /// The phase these measurements are taken in — the one the rack was
 /// built for, and the one every reference image was shot in.
 const TONE: session::mix_phases::MixPhase = session::mix_phases::MixPhase::Tone;
 use session_daw::profile::{Counts, Stages, Summary};
-use session_daw::ruler::{self, Bars, ruler_h};
+use session_daw::ruler::ruler_h;
 
 /// One phase's motion over `0..1`, as (`scroll_x`, `scroll_y`,
 /// `zoom_x`, `zoom_y`) fractions.
@@ -124,7 +132,6 @@ fn main() {
     // working sound server — which is how three render tests came to
     // time out at ten minutes each on a box whose audio was fine.
     let opened = session_daw::open::open_silent(&path).expect("open project");
-    let scene = build_scene(&palette, layout).expect("read project back");
     if let Ok(out) = std::env::var("FTS_BENCH_FOLDER_ITEMS") {
         // The folder items of the open session, folded from the
         // children's REAL peaks — see `folder_items_shot`.
@@ -135,6 +142,22 @@ fn main() {
         depths();
         return;
     }
+    if let Ok(out) = std::env::var("FTS_BENCH_MIXER") {
+        mixer_shot(
+            &palette,
+            &font,
+            layout,
+            &std::path::PathBuf::from(out),
+            &path,
+            width,
+            height,
+        );
+        return;
+    }
+    // The session as the window reads it: the same rows, the same
+    // previews, the same recording — see `Session`.
+    let session = Session::read(&path).expect("read project back");
+    let scene = session.scene(&palette, &font, layout);
     tracing::info!(
         project.tracks = opened.track_count,
         scene.rows = scene.rows,
@@ -142,33 +165,21 @@ fn main() {
     );
 
     if std::env::var_os("FTS_BENCH_STUDIO").is_some() {
-        studio(&scene, &palette, &font, layout, width, height);
+        studio(&session, &scene, &palette, &font, layout, width, height);
         return;
     }
     if let Ok(out) = std::env::var("FTS_BENCH_DOCK") {
         // The arrangement with the editor docked under it, as the
         // studio benchmark draws its first frame.
-        dock_shot(
-            &scene,
-            &palette,
-            &font,
-            &std::path::PathBuf::from(out),
-            width,
-            height,
-        );
+        dock_shot(&session, &palette, &std::path::PathBuf::from(out), width, height);
         return;
     }
 
-    let mut renderer = Headless::new(width, height).expect("open a gpu device");
-    // The bar grid, and the adaptive division that follows the zoom.
-    let bars = Bars::at(scene.bpm);
-    let grid = adaptive_grid::Adaptive::default();
-    /// The finest the grid ever gets: sixteenths, as a fraction of a
-    /// whole note. The zoom only ever coarsens away from it.
-    const FINEST: f64 = 1.0 / 16.0;
-
-    let span_y = (scene.content_height() - f64::from(height)).max(1.0);
-    let span_x = (scene.length_secs * PPS - f64::from(width)).max(1.0);
+    // The same spans the window's scrollbars travel: the session less
+    // the lanes' share of the widget, which is the widget less the
+    // track panel across and less the ruler down.
+    let span_y = (scene.content_height() - (f64::from(height) - ruler_h())).max(1.0);
+    let span_x = (scene.length_secs * PPS - (f64::from(width) - TCP_WIDTH)).max(1.0);
 
     // One phase per GESTURE, because they are different work and a
     // blended average hides which one hurts. Scrolling down changes
@@ -239,6 +250,24 @@ fn main() {
         ),
     ];
 
+    if std::env::var("FTS_BENCH_VERIFY").is_ok() {
+        // Verification is the one place a readback is the POINT: it
+        // compares pixels, so it uses the image renderer rather than the
+        // texture-only one the timings use.
+        let mut image = VelloImageRenderer::new(width, height);
+        verify(&mut image, &scene, &phases, span_x, span_y, width, height);
+        return;
+    }
+
+    if let Ok(out) = std::env::var("FTS_BENCH_SHOT") {
+        // Look at a frame instead of arguing about one. Renders the
+        // window's opening view and writes it to a PNG, which is the
+        // fastest way to tell a culling bug (geometry missing) from a
+        // palette bug (geometry there, wrong colour).
+        shot(&session, &scene, &palette, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
+
     println!();
     println!(
         "  scene         {} rows, {} items",
@@ -250,6 +279,10 @@ fn main() {
         f64::from(width) * f64::from(height) / 1_000_000.0
     );
     println!("  frames        {FRAMES} per phase");
+    println!(
+        "  drawn         through ArrangementWidget, the window's own painter — \n\
+         \x20               lanes, titles, panel, ruler, controls, cursors\n"
+    );
     println!(
         "  measured      frames rendered to a texture in batches of {BATCH}, waited on once\n\
          \x20               per batch — no readback, because the app never does one\n"
@@ -265,44 +298,11 @@ fn main() {
         return;
     }
 
-    if let Ok(out) = std::env::var("FTS_BENCH_MIXER") {
-        mixer_shot(
-            &palette,
-            &font,
-            layout,
-            &std::path::PathBuf::from(out),
-            &path,
-            width,
-            height,
-        );
-        return;
-    }
-
-    if let Ok(out) = std::env::var("FTS_BENCH_SHOT") {
-        // Look at a frame instead of arguing about one. Renders the
-        // window's opening view and writes it to a PNG, which is the
-        // fastest way to tell a culling bug (geometry missing) from a
-        // palette bug (geometry there, wrong colour).
-        shot(
-            &scene,
-            &palette,
-            &font,
-            &std::path::PathBuf::from(out),
-            width,
-            height,
-        );
-        return;
-    }
-
-    if std::env::var("FTS_BENCH_VERIFY").is_ok() {
-        // Verification is the one place a readback is the POINT: it
-        // compares pixels, so it uses the image renderer rather than the
-        // texture-only one the timings use.
-        let mut image = VelloImageRenderer::new(width, height);
-        verify(&mut image, &scene, &phases, span_x, span_y, width, height);
-        return;
-    }
-
+    let mut renderer = Headless::new(width, height).expect("open a gpu device");
+    // One widget for every phase, as one window is: what it caches
+    // between frames (the controls, cut once the zoom settles) is part
+    // of what a gesture costs.
+    let (mut widget, view) = session.widget();
     let mut all: Vec<(&str, Summary, Summary, Counts)> = Vec::new();
     for (name, gesture) in phases.iter() {
         let mut stages = Stages::with_capacity(FRAMES);
@@ -318,43 +318,19 @@ fn main() {
                 let frame = batch * BATCH + step;
                 let t = frame as f64 / FRAMES as f64;
                 let (fx, fy, zx, zy) = gesture(t);
-                let (scroll_x, scroll_y) = (span_x * fx, span_y * fy);
-                // The viewport and the transform are the same fact
-                // stated twice — one culls, one draws — so they are
-                // built next to each other and from the same values.
-                let view = Viewport {
-                    scroll_x,
-                    scroll_y,
-                    pps: PPS * zx,
+                *view.borrow_mut() = View {
+                    scroll_x: span_x * fx,
+                    scroll_y: span_y * fy,
+                    zoom_x: zx,
                     zoom_y: zy,
-                    width: f64::from(width),
-                    height: f64::from(height),
-                    panel_w: TCP_WIDTH,
+                    play_at: 0.0,
                 };
-                let mut drawn = Counts::default();
                 painted += renderer
                     .frame(|painter| {
-                        let a = scene.replay_lanes(
-                            painter,
-                            view,
-                            Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
-                                * Affine::scale_non_uniform(PPS * zx, zy),
-                        );
-                        // Translate only: the cut already carries the
-                        // zoom — see `Arrangement::repanel`.
-                        let b =
-                            scene.replay_panel(painter, view, Affine::translate((0.0, -scroll_y)));
-                        // After the lanes, not before: the lane
-                        // backgrounds are opaque and painted the grid
-                        // straight out of the frame.
-                        ruler::grid(painter, &palette, view, bars, &grid, FINEST, (0.0, 0.0));
-                        ruler::ruler(painter, &palette, &font, view, scene.tempo(), (0.0, 0.0));
-                        ruler::tempo(painter, &palette, &font, view, (0.0, 0.0), scene.tempo());
-                        drawn.replayed = a.replayed + b.replayed;
-                        drawn.submitted = a.submitted + b.submitted;
+                        painter.append_scene(widget.paint_scene(width, height, 1.0), Affine::IDENTITY);
                     })
                     .expect("render a frame");
-                counts = drawn;
+                counts = drawn(&widget);
             }
             renderer.wait().expect("the gpu to finish the batch");
             // Per-frame, so a batch is comparable to a frame budget.
@@ -1124,11 +1100,14 @@ fn verify(
 ///
 /// `FTS_BENCH_SHOT=/tmp/frame.png`, with `FTS_BENCH_SCROLL=x,y` and
 /// `FTS_BENCH_ZOOM=x,y` to move it. The view defaults to the window's
-/// opening one so the image is directly comparable to what is on screen.
+/// opening one, and the frame is the widget's — the arrangement exactly
+/// as the window paints it, without the DOM chrome (toolbar, scrollbars)
+/// the window lays over it. `bin/blitz_shot` is the picture WITH that
+/// chrome.
 fn shot(
+    session: &Session,
     scene: &Arrangement,
     palette: &Palette,
-    font: &session_daw::text::Font,
     out: &std::path::Path,
     width: u32,
     height: u32,
@@ -1144,236 +1123,64 @@ fn shot(
     };
     let (scroll_x, scroll_y) = pair("FTS_BENCH_SCROLL", (0.0, 0.0));
     let (zoom_x, zoom_y) = pair("FTS_BENCH_ZOOM", (1.0, 1.0));
-
-    // The arrangement is laid out inside the rails, the same as the
-    // mixer — the panel has to know what it has or it draws rows under
-    // the right rail and pays for every one.
-    let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
     // `FTS_BENCH_SECTION=<n>` frames the review's window on that
     // section instead — the arrangement scrolled and zoomed to one
     // section with its run-up and tail, which is what a tablet shows
     // while a take is being judged. Same renderer, one viewport apart.
-    let view = match std::env::var("FTS_BENCH_SECTION")
+    let at = match std::env::var("FTS_BENCH_SECTION")
         .ok()
         .and_then(|n| n.trim().parse::<usize>().ok())
         .and_then(|n| scene.sections().get(n).cloned())
     {
-        Some(section) => session_daw::take_window::viewport(
-            (section.start, section.end),
-            scene.tempo(),
-            frame.content_width(),
-            frame.content_height(),
-            zoom_y,
-        ),
-        None => Viewport {
+        Some(section) => {
+            let framed = session_daw::take_window::viewport(
+                (section.start, section.end),
+                scene.tempo(),
+                f64::from(width),
+                f64::from(height),
+                zoom_y,
+            );
+            View {
+                scroll_x: framed.scroll_x,
+                scroll_y: framed.scroll_y,
+                zoom_x: framed.pps / PPS,
+                zoom_y: framed.zoom_y,
+                play_at: 0.0,
+            }
+        }
+        None => View {
             scroll_x,
             scroll_y,
-            pps: PPS * zoom_x,
+            zoom_x,
             zoom_y,
-            width: frame.content_width(),
-            height: frame.content_height(),
-            panel_w: TCP_WIDTH,
+            play_at: 0.0,
         },
     };
-    let rail_x = session_daw::rails::SIDE;
-    let rail_y = session_daw::rails::TOP;
+    let (mut widget, view) = session.widget();
+    *view.borrow_mut() = at;
+    // The buffer starts zeroed, so a pixel nothing covers reads as
+    // transparent; the window's ground is the theme's surface, and the
+    // shot puts that under the widget the way the panel's `div` does.
+    // `FTS_BENCH_SHOT_GAPS=1` paints it a colour the theme never uses
+    // instead, so an uncovered pixel cannot hide.
+    let ground = if std::env::var_os("FTS_BENCH_SHOT_GAPS").is_some() {
+        vello::peniko::color::palette::css::MAGENTA
+    } else {
+        palette.surface
+    };
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
-    let mut counts = Counts::default();
-    // The window renderer clears to WHITE, while this buffer starts
-    // zeroed and therefore hides an uncovered pixel as black. Painting
-    // the gaps a colour the theme never uses makes them impossible to
-    // miss, and makes this image show the same defect the window does.
-    let gaps = std::env::var_os("FTS_BENCH_SHOT_GAPS").is_some();
-    // The panel's live values need the rows they belong to.
-    let (rows_for_panel, tracks_for_panel) = panel_rows();
-    let panel_map = session_daw::plan::Rows::of(&rows_for_panel, &tracks_for_panel);
     image.render_to_vec(
         |painter| {
             painter.reset();
-            // The theme's surface under everything.
-            //
-            // This buffer starts zeroed, so any pixel nothing covers
-            // reads as transparent — which is why laying the panel
-            // inside the rails put a white band across the top the
-            // moment the ruler stopped starting at y=0. The mixer shot
-            // has always painted one; this one relied on the lanes
-            // covering the frame, which was true only by accident.
             painter.fill(
                 vello::peniko::Fill::NonZero,
                 Affine::IDENTITY,
-                palette.surface,
+                ground,
                 None,
                 &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
             );
-            if gaps {
-                painter.fill(
-                    vello::peniko::Fill::NonZero,
-                    Affine::IDENTITY,
-                    vello::peniko::color::palette::css::MAGENTA,
-                    None,
-                    &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
-                );
-            }
-            let a = scene.replay_lanes(
-                painter,
-                view,
-                Affine::translate((rail_x + TCP_WIDTH - scroll_x, rail_y + ruler_h() - scroll_y))
-                    * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
-            );
-            session_daw::arrangement::titles(
-                painter,
-                palette,
-                font,
-                scene,
-                view,
-                (rail_x + TCP_WIDTH - scroll_x, rail_y + ruler_h() - scroll_y),
-            );
-            let b = scene.replay_panel(
-                painter,
-                view,
-                Affine::translate((rail_x, rail_y + ruler_h() - scroll_y)),
-            );
-            ruler::grid(
-                painter,
-                palette,
-                view,
-                Bars::at(scene.bpm),
-                &adaptive_grid::Adaptive::default(),
-                1.0 / 16.0,
-                (rail_x, rail_y),
-            );
-            let c = session_daw::overlay::panel_controls(
-                painter,
-                palette,
-                font,
-                scene,
-                &rows_for_panel,
-                &tracks_for_panel,
-                &panel_map,
-                view,
-                // At rest: this is the reference shot every viewport in
-                // the sweep is compared against, and a hover in it
-                // would be a difference nobody asked for.
-                &session_daw::pointer::Pointer::default(),
-                Affine::translate((rail_x, rail_y + ruler_h() - scroll_y)),
-            );
-            ruler::ruler(
-                painter,
-                palette,
-                font,
-                view,
-                scene.tempo(),
-                (rail_x, rail_y),
-            );
-            ruler::tempo(
-                painter,
-                palette,
-                font,
-                view,
-                (rail_x, rail_y),
-                scene.tempo(),
-            );
-            ruler::lanes(
-                painter,
-                palette,
-                font,
-                view,
-                (rail_x, rail_y),
-                scene.sections(),
-                scene.markers(),
-            );
-            ruler::lane_lines(
-                painter,
-                palette,
-                view,
-                (rail_x, rail_y),
-                scene.sections(),
-                scene.markers(),
-                rail_y + view.height,
-            );
-            // The edit cursor and the playhead, as the window draws
-            // them. At rest — time zero, no selection — which is where
-            // a freshly opened session has them, and the only place a
-            // reference shot can honestly put them.
-            session_daw::cursor::paint_edit(
-                painter,
-                palette,
-                &session_daw::cursor::Edit::default(),
-                view,
-                (rail_x, rail_y),
-                rail_y,
-                rail_y + view.height,
-            );
-            session_daw::cursor::paint(
-                painter,
-                session_daw::cursor::Look::default(),
-                rail_x + TCP_WIDTH - scroll_x,
-                rail_y,
-                rail_y + view.height,
-                rail_x + TCP_WIDTH,
-            );
-            // The scrollbars, as the window draws them: the shot is
-            // compared to the screen.
-            let lanes = vello::kurbo::Rect::new(
-                rail_x + TCP_WIDTH,
-                rail_y + ruler_h(),
-                rail_x + view.width,
-                rail_y + view.height,
-            );
-            let spans = (
-                (scene.length_secs * view.pps - (view.width - TCP_WIDTH)).max(1.0),
-                (scene.content_height() - (view.height - ruler_h())).max(1.0),
-            );
-            session_daw::scrollbar::draw(
-                painter,
-                palette,
-                session_daw::scrollbar::bars(lanes, (scroll_x, scroll_y), spans),
-                None,
-            );
-            // The arrangement's left rail carries the same visual
-            // presets the mixer's does — they are layouts of the
-            // SESSION, not of one panel, so switching one switches
-            // both. Its right rail carries the settings that ARE the
-            // arrangement's own: so far, what a shut folder shows.
-            let profile = session_daw::rails::profile(
-                session_daw::rails::Surface::Arrange,
-                session::modes::Mode::Mix,
-                session::mix_phases::MixPhase::Tone,
-                Some("drum-mixing"),
-                session_daw::settings::Settings::default(),
-                dynamic_template::scenes::Audience::Engineer,
-                // The bench draws the kit's rails.
-                "drums",
-            );
-            session_daw::rails::draw(
-                painter,
-                palette,
-                font,
-                // Deliberately none: the shot is the reference the
-                // sweep compares against, and it must not depend on
-                // whether this machine has REAPER's resources on disk.
-                &mut session_daw::icons::Icons::none(),
-                // At rest, like every other control in the shot.
-                (None, None),
-                frame,
-                &profile.left,
-                &profile.right,
-                &profile.top,
-            );
-            // The mode selector sits in the corner the ruler leaves
-            // above the track panel — the one piece of chrome the mode
-            // does not re-populate.
-            session_daw::rails::main_toolbar(
-                painter,
-                palette,
-                font,
-                &mut session_daw::icons::Icons::none(),
-                (None, None),
-                session::modes::Mode::Mix,
-            );
-            counts.replayed = a.replayed + b.replayed + c.replayed;
-            counts.submitted = a.submitted + b.submitted + c.submitted;
+            painter.append_scene(widget.paint_scene(width, height, 1.0), Affine::IDENTITY);
         },
         &mut buffer,
     );
@@ -1381,10 +1188,13 @@ fn shot(
     image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
         .expect("write the frame");
     println!(
-        "  wrote {} — scroll ({scroll_x:.0}, {scroll_y:.0}) zoom ({zoom_x:.2}, {zoom_y:.2}), \
-         {} commands submitted",
+        "  wrote {} — scroll ({:.0}, {:.0}) zoom ({:.2}, {:.2}), {} commands submitted",
         out.display(),
-        counts.submitted,
+        at.scroll_x,
+        at.scroll_y,
+        at.zoom_x,
+        at.zoom_y,
+        drawn(&widget).submitted,
     );
 }
 
@@ -1409,40 +1219,78 @@ fn depths() {
     }
 }
 
-fn build_scene(palette: &Palette, layout: session_daw::layout::Layout) -> Option<Arrangement> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok()?;
-    let project = rt.block_on(daw_ui::studio::project::fetch())?;
-    let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
-    let (visible, depths) =
-        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
-    let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
-        visible.into_iter().zip(depths).collect(),
-    ));
-    // Read the notes before recording, not after: a renderer draws one
-    // frame and exits, so there is no later for them to arrive in.
-    let previews = session_daw::midi::Previews::default();
-    previews.fill_blocking(
-        project
-            .0
-            .items
-            .values()
-            .flatten()
-            .filter(|item| project.0.is_midi(&item.guid))
-            .map(|item| (item.guid.clone(), item.length.as_seconds()))
-            .collect(),
-    );
-    Some(Arrangement::build(
-        palette,
-        &session_daw::text::Font::embedded().ok()?,
-        &project,
-        &rows,
-        layout,
-        &previews,
+/// The open session, read the way the window reads it.
+///
+/// The rows are planned by the studio's own planner
+/// (`session_daw::studio::plan_rows` — `FTS_BENCH_SCENE` picks a visual
+/// scene, none by default so every track is on screen), the previews are
+/// the studio's (`previews_of`: every MIDI item's notes and every audio
+/// item's peaks), and the arrangement is drawn through the widget the
+/// window mounts. There is no second painter here to drift from it.
+struct Session {
+    project: daw_ui::studio::ProjectRef,
+    rows: daw_ui::studio::RowsRef,
+    previews: session_daw::midi::Previews,
+}
+
+impl Session {
+    fn read(path: &std::path::Path) -> Option<Self> {
+        let raw = session_daw::studio::fetch()?;
+        let scene = std::env::var("FTS_BENCH_SCENE").ok();
+        let (project, rows) = session_daw::studio::plan_rows(&raw, scene.as_deref(), path);
+        // Read before anything is recorded, not after: a renderer draws
+        // and exits, so there is no later for them to arrive in.
+        let previews = session_daw::studio::previews_of(&project);
+        Some(Self {
+            project,
+            rows,
+            previews,
+        })
+    }
+
+    /// The recording on its own, for the culling check and the counts —
+    /// the same one the widget builds.
+    fn scene(
+        &self,
+        palette: &Palette,
+        font: &session_daw::text::Font,
+        layout: session_daw::layout::Layout,
+    ) -> Arrangement {
+        Arrangement::build(
+            palette,
+            font,
+            &self.project,
+            &self.rows,
+            layout,
+            &self.previews,
             session_daw::tcp::Tcp::FULL,
-        ))
+        )
+    }
+
+    /// The window's arrangement, and the view it reads each paint.
+    fn widget(&self) -> (ArrangementWidget, Shared) {
+        let view: Shared = std::rc::Rc::new(std::cell::RefCell::new(View::OPENING));
+        let widget = ArrangementWidget::for_session(
+            &self.project,
+            &self.rows,
+            &self.previews,
+            false,
+            std::rc::Rc::clone(&view),
+            // No frame-time graph: it is an overlay, and a benchmark
+            // that drew one would be measuring it.
+            false,
+        );
+        (widget, view)
+    }
+}
+
+/// What the widget's last paint walked and submitted.
+fn drawn(widget: &ArrangementWidget) -> Counts {
+    let drawn = *widget.drawn().borrow();
+    Counts {
+        replayed: drawn.replayed,
+        submitted: drawn.submitted,
+    }
 }
 
 /// The mixer window as the stress tests drive it: the recorded chrome,
@@ -1682,41 +1530,84 @@ fn animate(
     println!("  fader, pan and meter on every visible strip changing on every frame.");
 }
 
+/// The dock under the arrangement: its box in the frame, and the
+/// arrangement's height above it. Forty percent of the frame, never less
+/// than a usable editor.
+fn dock_split(width: u32, height: u32) -> (vello::kurbo::Rect, u32) {
+    let (w, h) = (f64::from(width), f64::from(height));
+    let dock = (h * 0.4).max(160.0).min(h - 1.0);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a height inside a frame of u32 pixels"
+    )]
+    let above = (h - dock).floor() as u32;
+    (
+        vello::kurbo::Rect::new(0.0, f64::from(above), w, h),
+        above,
+    )
+}
+
+/// The docked editor, in its box: the ground, the editor, and the rule
+/// along its top edge that is also the grip that resizes it.
+fn paint_dock(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    editor: &mut session_daw::expression::Expression,
+    dock: vello::kurbo::Rect,
+) {
+    editor.layout((dock.x0, dock.y0), (dock.width(), dock.height()));
+    painter.fill(
+        vello::peniko::Fill::NonZero,
+        Affine::IDENTITY,
+        palette.surface,
+        None,
+        &dock,
+    );
+    editor.paint(painter);
+    painter.fill(
+        vello::peniko::Fill::NonZero,
+        Affine::IDENTITY,
+        palette.tcp_rule,
+        None,
+        &vello::kurbo::Rect::new(dock.x0, dock.y0 - 1.0, dock.x1, dock.y0 + 1.0),
+    );
+}
+
 /// One frame of the arrangement with the editor docked, to a PNG.
 ///
-/// `FTS_BENCH_DOCK=/tmp/dock.png`. The window's own painter, with what
-/// a headless run has no pointer for left at rest.
+/// `FTS_BENCH_DOCK=/tmp/dock.png`. The arrangement is the widget the
+/// window mounts, at rest; the editor is the demo groove in the dock
+/// under it.
 fn dock_shot(
-    scene: &Arrangement,
+    session: &Session,
     palette: &Palette,
-    font: &session_daw::text::Font,
     out: &std::path::Path,
     width: u32,
     height: u32,
 ) {
-    let (w, h) = (f64::from(width), f64::from(height));
-    let dock = (h * 0.4).max(160.0);
-    let frame = session_daw::rails::Frame::docked(w, h, dock);
-    let dock_box = frame.dock_box().expect("a dock");
+    let (dock_box, above) = dock_split(width, height);
     let mut editor = session_daw::expression::Expression::demo(
         (dock_box.x0, dock_box.y0),
         (dock_box.width(), dock_box.height()),
     );
     editor.set_look(session_daw::expression::look_of(palette));
     editor.editor.playhead = Some(editor.editor.doc.end * 0.3);
+    let (mut widget, _view) = session.widget();
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
     image.render_to_vec(
         |painter| {
-            let mut at_rest = AtRest::new(frame, palette);
-            at_rest
-                .arrange(
-                    scene,
-                    font,
-                    session_daw::frame::viewport(frame, (0.0, 0.0), PPS, 1.0),
-                    Some(&mut editor),
-                )
-                .paint(painter);
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+            );
+            painter.append_scene(widget.paint_scene(width, above, 1.0), Affine::IDENTITY);
+            paint_dock(painter, palette, &mut editor, dock_box);
         },
         &mut buffer,
     );
@@ -1725,120 +1616,87 @@ fn dock_shot(
     println!("  wrote {}", out.display());
 }
 
-/// What a headless frame has instead of a window's state: no pointer,
-/// no rename, no selection, no icons — every input at rest, so the
-/// frame is the window's frame with nothing happening in it.
-struct AtRest {
-    frame: session_daw::rails::Frame,
-    grid: adaptive_grid::Adaptive,
-    rows: Vec<(daw_proto::Track, u32)>,
-    tracks: Vec<daw_proto::Track>,
-    map: session_daw::plan::Rows,
-    panel: session_daw::pointer::Pointer<session_daw::pointer::RowSpot>,
-    profile: session_daw::rails::Profile,
-    icons: session_daw::icons::Icons,
-    selected: std::collections::HashSet<String>,
-    palette: Palette,
-    /// An item being slipped, for the phase that measures what the live
-    /// pass costs. `None` everywhere else — the bench draws the picture
-    /// the window draws at rest.
-    slip: Option<(usize, f64)>,
+/// A pointer event at a point in the widget's own coordinates, with the
+/// main button and these modifiers — what Blitz hands the widget.
+fn pointer_at(x: f64, y: f64, mods: blitz_traits::events::Modifiers) -> blitz_traits::events::BlitzPointerEvent {
+    use blitz_traits::events::{
+        BlitzPointerEvent, BlitzPointerId, MouseEventButton, MouseEventButtons, Point,
+        PointerCoords, PointerDetails,
+    };
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a coordinate inside a benchmark frame"
+    )]
+    let (x, y) = (x as f32, y as f32);
+    BlitzPointerEvent {
+        id: BlitzPointerId::Mouse,
+        is_primary: true,
+        coords: PointerCoords {
+            page_x: x,
+            page_y: y,
+            screen_x: x,
+            screen_y: y,
+            client_x: x,
+            client_y: y,
+        },
+        button: MouseEventButton::Main,
+        buttons: MouseEventButtons::Primary,
+        mods,
+        details: PointerDetails::default(),
+        element: Point { x, y },
+        active_pointers: std::sync::Arc::default(),
+    }
 }
 
-/// No razor areas, for the bench.
-///
-/// The bench measures the picture the window draws at rest; a razor is
-/// something a hand puts there. A static rather than a field because
-/// there is nothing to vary.
-static EMPTY_RAZOR: razor::RazorSet = razor::RazorSet { areas: Vec::new() };
-
-impl AtRest {
-    fn new(frame: session_daw::rails::Frame, palette: &Palette) -> Self {
-        let (rows, tracks) = panel_rows();
-        let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
-        Self {
-            frame,
-            grid: adaptive_grid::Adaptive::default(),
-            rows,
-            tracks,
-            map,
-            panel: session_daw::pointer::Pointer::default(),
-            profile: session_daw::rails::profile(
-                session_daw::rails::Surface::Arrange,
-                session::modes::Mode::Mix,
-                TONE,
-                Some("drum-mixing"),
-                session_daw::settings::Settings::default(),
-                dynamic_template::scenes::Audience::Engineer,
-                // The bench draws the kit's rails.
-                "drums",
-            ),
-            icons: session_daw::icons::Icons::none(),
-            selected: std::collections::HashSet::new(),
-            palette: palette.clone(),
-            slip: None,
-        }
-    }
-
-    fn arrange<'a>(
-        &'a mut self,
-        scene: &'a Arrangement,
-        font: &'a session_daw::text::Font,
-        view: Viewport,
-        dock: Option<&'a mut session_daw::expression::Expression>,
-    ) -> session_daw::frame::Arrange<'a> {
-        session_daw::frame::Arrange {
-            scene,
-            palette: &self.palette,
-            font,
-            frame: self.frame,
-            view,
-            bars: Bars::at(scene.bpm),
-            grid: &self.grid,
-            rows: &self.rows,
-            tracks: &self.tracks,
-            map: &self.map,
-            panel: &self.panel,
-            rename: None,
-            profile: &self.profile,
-            rail_at: (None, None),
-            icons: &mut self.icons,
-            mode: session::modes::Mode::Mix,
-            play_at: 0.0,
-            edit: session_daw::cursor::Edit::default(),
-            hovered_item: None,
-            in_flight: None,
-            selected: &self.selected,
-            ghost: None,
-            razor: (&EMPTY_RAZOR, None),
-            slip: self.slip,
-            scroll_bars: None,
-            bar_held: None,
-            dock,
-            zoom_box: None,
-            // The bench measures the picture, and a notice is a reply
-            // to a gesture it never makes.
-            notice: None,
-        }
-    }
+/// Where a slip drag takes hold of the first item: a view with the item
+/// on screen, and the point on its lower half a press lands on — in the
+/// widget's own coordinates, which are the ones its events arrive in.
+fn slip_grip(scene: &Arrangement, span: (f64, f64)) -> Option<(View, (f64, f64))> {
+    let item = scene.item_boxes().first()?;
+    let (top, band) = scene.row_band(item.row, Viewport {
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        pps: PPS,
+        zoom_y: 1.0,
+        width: 0.0,
+        height: 0.0,
+        panel_w: TCP_WIDTH,
+    })?;
+    let at = View {
+        scroll_x: (item.x0 * PPS - 200.0).clamp(0.0, span.0),
+        scroll_y: (top - 100.0).clamp(0.0, span.1),
+        zoom_x: 1.0,
+        zoom_y: 1.0,
+        play_at: 0.0,
+    };
+    let x = ((item.x0 + item.x1) / 2.0).mul_add(PPS, TCP_WIDTH - at.scroll_x);
+    let y = band.mul_add(0.75, ruler_h() + top - at.scroll_y);
+    Some((at, (x, y)))
 }
 
 /// The studio: the arrangement with the expression editor docked under
 /// it on one display, the mixer on a second, every frame drawing both.
 ///
-/// `FTS_BENCH_STUDIO=1`. The arrangement is `FTS_BENCH_SIZE` (5120x1440
-/// by default) and the mixer `FTS_BENCH_MIXER_SIZE` (2560x1440). The
+/// `FTS_BENCH_STUDIO=1`. The frame is `FTS_BENCH_SIZE` (5120x1440 by
+/// default) and the mixer `FTS_BENCH_MIXER_SIZE` (2560x1440). The
 /// target is 240 frames a second for the pair — a budget of 4.17 ms
 /// for both windows together, since one GPU draws them in turn — and
 /// the verdict is printed against it.
 ///
-/// What moves: the arrangement scrolls and zooms as the single-window
-/// phases do; the editor's playhead runs and its camera pans, which is
-/// the frame every drum edit is made on; the mixer has every control
-/// changing and every rack lit. Nothing is cached across frames that
-/// the window does not cache.
+/// The arrangement is drawn through `ArrangementWidget`, the painter the
+/// window mounts, so the verdict is about the window's picture and not a
+/// copy of it. What moves: the arrangement scrolls and zooms as the
+/// single-window phases do; the editor's playhead runs and its camera
+/// pans, which is the frame every drum edit is made on; the mixer has
+/// every control changing and every rack lit. Nothing is cached across
+/// frames that the window does not cache.
+///
+/// Not drawn: the chrome the window builds as DOM over the widget (the
+/// toolbar, the scrollbars) and the rails around it — `bin/blitz_shot`'s
+/// `FTS_BLITZ_FRAMES` measures the frame with the DOM in it.
 // r[verify flow.verify.frame-rate]
 fn studio(
+    session: &Session,
     scene: &Arrangement,
     palette: &Palette,
     font: &session_daw::text::Font,
@@ -1865,10 +1723,8 @@ fn studio(
 
     // The dock: forty percent of the window, the editor over the demo
     // groove inside it.
-    let (w, h) = (f64::from(width), f64::from(height));
-    let dock = (h * 0.4).max(160.0);
-    let frame = session_daw::rails::Frame::docked(w, h, dock);
-    let dock_box = frame.dock_box().expect("a dock");
+    let (dock_box, above) = dock_split(width, height);
+    let dock = dock_box.height();
     // The audio drum workflow in the dock: the kit's mics as role
     // lanes, a song's worth of hits, framed four bars at a time the way
     // drums get edited — and paged through as the frames go by.
@@ -1881,10 +1737,16 @@ fn studio(
     editor.set_look(session_daw::expression::look_of(palette));
     editor.editor.frame_bars(4);
     let doc_end = editor.editor.doc.end;
-    let mut at_rest = AtRest::new(frame, palette);
-    let span_y = (scene.content_height() - frame.content_height()).max(1.0);
-    let span_x = (scene.length_secs * PPS - frame.content_width()).max(1.0);
-    let fit = frame.content_height() / scene.content_height().max(1.0);
+    let (mut widget, view) = session.widget();
+    // The lanes' share of the arrangement: less the panel across, less
+    // the ruler down.
+    let lanes = (
+        (f64::from(width) - TCP_WIDTH).max(1.0),
+        (f64::from(above) - ruler_h()).max(1.0),
+    );
+    let span_y = (scene.content_height() - lanes.1).max(1.0);
+    let span_x = (scene.length_secs * PPS - lanes.0).max(1.0);
+    let fit = lanes.1 / scene.content_height().max(1.0);
 
     fn tri(t: f64) -> f64 {
         let t = (t * 6.0) % 1.0;
@@ -1908,26 +1770,29 @@ fn studio(
             Box::new(move |t| (0.0, 0.0, 1.0, fit + slow(t) * (0.25 - fit))),
         ),
         // The zoom tool: `z` held, a press in the lanes, and the
-        // pointer drawn sideways and up in a slow figure — through the
-        // same gesture code the window runs, on the arrangement and on
-        // the docked kit at once. The gesture's own outputs are the
-        // view; this closure only says where the pointer is.
-        ("zoom tool drag", Box::new(|t| (0.0, 0.3, 1.0, 1.0))),
+        // pointer drawn sideways and up in a slow figure. The
+        // arrangement zooms about the press by the panel's own factor
+        // (`panel::factor`, `panel::zoom_about`) and the docked kit
+        // through its own zoom tool, at once. The closure only places
+        // the start; the drag decides the view.
+        ("zoom tool drag", Box::new(|_| (0.2, 0.3, 1.0, 1.0))),
         // A slip drag: the view is still and one item's waveform is
         // redrawn live at a moving offset. Measured because #130 says
         // to measure it rather than assume one more item's worth of
-        // path a frame is free.
+        // path a frame is free. Driven through the widget's own events
+        // — a ctrl+alt press on the item and the pointer moving — so it
+        // is the window's slip, not a flag set from outside.
         ("slip drag", Box::new(|_| (0.0, 0.3, 1.0, 1.0))),
     ];
-    let lanes_origin = (
-        session_daw::rails::SIDE + TCP_WIDTH,
-        session_daw::rails::TOP + ruler_h(),
-    );
-    let press_at = (lanes_origin.0 + 600.0, lanes_origin.1 + 300.0);
-    let mut zoom_editor = session_daw::arrange_edit::Editor::default();
+    // Where the zoom tool is pressed, from the lanes' own origin.
+    let press = (600.0, 300.0);
+    let slip = slip_grip(scene, (span_x, span_y));
+    if slip.is_none() {
+        tracing::warn!("the session has no item to slip; the slip phase measures a still view");
+    }
 
     println!();
-    println!("  studio        arrangement {width}x{height} with the editor docked ({dock:.0}px),");
+    println!("  studio        arrangement {width}x{above} with the editor docked ({dock:.0}px) under it,");
     println!("                mixer {mixer_w}x{mixer_h} on a second display, both every frame");
     println!(
         "  scene         {} rows, {} items; {} strips; a {bars}-bar kit in the dock",
@@ -1935,6 +1800,7 @@ fn studio(
         scene.items(),
         mixer.mixer.count
     );
+    println!("  drawn         the arrangement through ArrangementWidget, the window's painter");
     println!("  frames        {FRAMES} per phase, batches of {BATCH}, waited on once per batch");
     println!("  target        240 Hz — {BUDGET_MS:.2} ms for both windows together\n");
     println!(
@@ -1954,20 +1820,37 @@ fn studio(
                 let frame_index = batch * BATCH + step;
                 let t = frame_index as f64 / FRAMES as f64;
                 let (fx, fy, zx, zy) = gesture(t);
-                let (scroll_x, scroll_y) = (span_x * fx, span_y * fy);
-                let mut view =
-                    session_daw::frame::viewport(frame, (scroll_x, scroll_y), PPS * zx, zy);
+                let mut at = View {
+                    scroll_x: span_x * fx,
+                    scroll_y: span_y * fy,
+                    zoom_x: zx,
+                    zoom_y: zy,
+                    play_at: t * scene.length_secs,
+                };
                 editor.editor.playhead = Some(t * doc_end);
                 if *name == "zoom tool drag" {
                     // The pointer's path: out to the right and up over
                     // the phase, back, and again — a slow figure, so the
                     // zoom sweeps its range rather than jumping.
                     let travel = (tri(t / 3.0) - 0.5) * 2.0;
-                    let at = (press_at.0 + travel * 300.0, press_at.1 - travel * 150.0);
-                    let base =
-                        session_daw::frame::viewport(frame, (span_x * 0.2, span_y * 0.3), PPS, 1.0);
+                    let moved = (travel * 300.0, -travel * 150.0);
+                    // Right zooms time in and up zooms the rows out: the
+                    // panel's drag, about where the press landed.
+                    let to = (
+                        at.zoom_x * session_daw::panel::factor(moved.0),
+                        at.zoom_y * session_daw::panel::factor(moved.1),
+                    );
+                    // No further than the session reaches at the new
+                    // zoom, and never before its start.
+                    let reach = |span: f64, lane: f64, zoom: f64| ((span + lane) * zoom - lane).max(0.0);
+                    at.scroll_x = session_daw::panel::zoom_about(press.0, at.scroll_x, at.zoom_x, to.0)
+                        .min(reach(span_x, lanes.0, to.0))
+                        .max(0.0);
+                    at.scroll_y = session_daw::panel::zoom_about(press.1, at.scroll_y, at.zoom_y, to.1)
+                        .min(reach(span_y, lanes.1, to.1))
+                        .max(0.0);
+                    (at.zoom_x, at.zoom_y) = to;
                     if frame_index == 0 {
-                        zoom_editor.zoom_press(press_at, &base, lanes_origin, Default::default());
                         editor.key("z", Default::default());
                         editor.press(
                             dock_box.x0 + 400.0,
@@ -1975,13 +1858,6 @@ fn studio(
                             Default::default(),
                             0,
                         );
-                    }
-                    if let Some(next) =
-                        zoom_editor.zoom_move(at, &base, lanes_origin, Default::default())
-                    {
-                        view = next;
-                        view.scroll_x = view.scroll_x.clamp(0.0, span_x);
-                        view.scroll_y = view.scroll_y.clamp(0.0, span_y);
                     }
                     // The same drag on the docked kit, through its own
                     // zoom tool.
@@ -1991,22 +1867,52 @@ fn studio(
                         Default::default(),
                     );
                 } else if *name == "slip drag" {
-                    // The offset sweeps a few seconds and back, so the
-                    // waveform is regenerated every frame rather than
-                    // landing on the same path twice.
-                    at_rest.slip = Some((0, tri(t) * 4.0));
+                    if let Some((still, (x, y))) = slip {
+                        at = View {
+                            play_at: at.play_at,
+                            ..still
+                        };
+                        // The offset sweeps a few seconds and back, so the
+                        // waveform is regenerated every frame rather than
+                        // landing on the same path twice.
+                        let slide = tri(t) * 4.0 * PPS;
+                        let event = if frame_index == 0 {
+                            use blitz_traits::events::Modifiers;
+                            blitz_traits::events::UiEvent::PointerDown(pointer_at(
+                                x,
+                                y,
+                                Modifiers::CONTROL | Modifiers::ALT,
+                            ))
+                        } else {
+                            use blitz_traits::events::Modifiers;
+                            blitz_traits::events::UiEvent::PointerMove(pointer_at(
+                                x + slide,
+                                y,
+                                Modifiers::CONTROL | Modifiers::ALT,
+                            ))
+                        };
+                        *view.borrow_mut() = at;
+                        widget.event(&event);
+                    }
                 } else {
                     // The playhead across the song, the camera following
                     // it a page at a time — the hits scroll past, and
                     // every frame is a fresh page of markers.
                     editor.editor.pan_px(-2.0, 0.0);
                 }
+                *view.borrow_mut() = at;
 
                 painted += arrange
                     .frame(|painter| {
-                        let mut drawn = at_rest.arrange(scene, font, view, Some(&mut editor));
-                        drawn.play_at = t * scene.length_secs;
-                        drawn.paint(painter);
+                        painter.fill(
+                            vello::peniko::Fill::NonZero,
+                            Affine::IDENTITY,
+                            palette.surface,
+                            None,
+                            &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+                        );
+                        painter.append_scene(widget.paint_scene(width, above, 1.0), Affine::IDENTITY);
+                        paint_dock(painter, palette, &mut editor, dock_box);
                     })
                     .expect("render the arrangement");
                 mixer.drive(t, frame_index);
@@ -2042,6 +1948,24 @@ fn studio(
             worst_name = name;
         }
     }
+    // Let go of the slip, and check it was one: a press that missed the
+    // item would have measured a still view and called it a slip drag.
+    // The edit it queues goes nowhere — nothing here drains the queue.
+    if let Some((_, (x, y))) = slip {
+        widget.event(&blitz_traits::events::UiEvent::PointerUp(pointer_at(
+            x,
+            y,
+            blitz_traits::events::Modifiers::CONTROL | blitz_traits::events::Modifiers::ALT,
+        )));
+        let slipped = widget
+            .edits()
+            .borrow()
+            .iter()
+            .any(|edit| matches!(edit, session_daw::engine::Edit::SlipItem(..)));
+        if !slipped {
+            tracing::warn!("the slip drag never took hold of its item; its row measured a still view");
+        }
+    }
     let verdict = if worst_p99 <= BUDGET_MS {
         "PASS"
     } else {
@@ -2051,21 +1975,6 @@ fn studio(
         "\n  240 Hz {verdict}: worst gesture {worst_name} at {worst_p99:.2} ms p99 — headroom {:.2}x\n",
         BUDGET_MS / worst_p99.max(0.001)
     );
-}
-
-/// The visible rows and their tracks, for the panel's live controls.
-fn panel_rows() -> (Vec<(daw_proto::Track, u32)>, Vec<daw_proto::Track>) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime");
-    let Some(project) = rt.block_on(daw_ui::studio::project::fetch()) else {
-        return (Vec::new(), Vec::new());
-    };
-    let (visible, depths) =
-        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
-    let tracks = visible.clone();
-    (visible.into_iter().zip(depths).collect(), tracks)
 }
 
 /// Write one frame of the Patch List view to a PNG.
