@@ -1547,9 +1547,10 @@ app PROJECT="" CHART="" MODE="":
     mkdir -p "$HOME/Library/Logs/Session Dev"
     log="$HOME/Library/Logs/Session Dev/session-dev.log"
     envs=(--env "RUST_LOG=${RUST_LOG:-warn,session_daw=info}" --env RUST_BACKTRACE=1)
-    project='{{PROJECT}}'
-    chart='{{CHART}}'
-    mode='{{MODE}}'
+    # quote(): a song title can carry an apostrophe (God, I'm Just Grateful).
+    project={{quote(PROJECT)}}
+    chart={{quote(CHART)}}
+    mode={{quote(MODE)}}
     if [[ -n "$project" ]]; then
         # A folder or a .setlist is a set; anything else is one song.
         if [[ -d "$project" && "$project" != *.session ]] || [[ "$project" == *.setlist ]]; then
@@ -1560,6 +1561,8 @@ app PROJECT="" CHART="" MODE="":
     fi
     if [[ -n "$chart" ]]; then envs+=(--env "FTS_SESSION_CHART=$chart"); fi
     if [[ -n "$mode" ]]; then envs+=(--env "FTS_SESSION_MODE=$mode"); fi
+    # The view to open on (overview, performance, setup), from the caller's env.
+    if [[ -n "${FTS_SESSION_VIEW:-}" ]]; then envs+=(--env "FTS_SESSION_VIEW=$FTS_SESSION_VIEW"); fi
     pkill -f 'Session Dev.app/Contents/MacOS/session-desktop' || true
     # Let a killed copy go before its bundle is opened again.
     sleep 1
