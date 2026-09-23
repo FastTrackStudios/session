@@ -5,8 +5,16 @@ edition = "2024"
 license.workspace = true
 description = "The live session as a Loro document: its schema, and the diff between it and the engine"
 
+[features]
+default = []
+# The bridge to a live daw project, through daw-control.
+engine = ["dep:daw-control", "dep:daw-proto", "dep:eyre"]
+
 [dependencies]
 loro.workspace = true
+daw-control = { workspace = true, optional = true }
+daw-proto = { workspace = true, optional = true }
+eyre = { workspace = true, optional = true }
 
 [lib]
 doctest = false

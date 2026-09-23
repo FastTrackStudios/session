@@ -8,13 +8,21 @@
 //! one says what the engine must do. Concurrent edits merge field by
 //! field, and the doc keeps the whole history.
 //!
-//! This crate is transport- and engine-free: no daw, no vox, no iroh.
-//! The bridge to daw-standalone and the sync drivers build on it.
+//! The schema, model and diff are engine- and transport-free. The
+//! `engine` feature adds the bridge to a daw project (daw-standalone
+//! in-process, or REAPER), through `daw_control`.
 
+#[cfg(feature = "engine")]
+pub mod bridge;
 pub mod diff;
 pub mod doc;
+#[cfg(feature = "engine")]
+pub mod engine;
 pub mod model;
+pub mod presence;
 
+#[cfg(feature = "engine")]
+pub use bridge::Bridge;
 pub use diff::{Change, ItemField, TrackField, diff};
 pub use doc::{ORIGIN_LOCAL, SCHEMA, SessionDoc};
 pub use loro;
