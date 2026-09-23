@@ -159,6 +159,9 @@ pub struct ModeState {
     /// A streamed engine's media. Complete (0 of 0) unless a loader said
     /// otherwise.
     pub assets: Assets,
+    /// Which of a song's tracks the local engine loads and plays (the
+    /// template groups; Cue is `guide`).
+    pub selection: session::load_selection::LoadSelection,
 }
 
 impl Default for ModeState {
@@ -180,12 +183,28 @@ impl ModeState {
                 loaded: 0,
                 total: 0,
             },
+            selection: session::load_selection::LoadSelection::All,
+        }
+    }
+
+    /// Engine, streamed in from `target`: the data comes from it at once
+    /// (Remote), the click and guide play here as soon as they can (Cue),
+    /// and the selected media streams in until this engine plays the song
+    /// (Engine) — its transport locked to `target`'s throughout.
+    #[must_use]
+    pub const fn streamed(target: RemoteTarget, selection: session::load_selection::LoadSelection) -> Self {
+        Self {
+            requested: AudioMode::Engine,
+            target: Some(target),
+            cue_ready: false,
+            assets: Assets { loaded: 0, total: 0 },
+            selection,
         }
     }
 
     /// Driving `target`; `cue` adds the local click and guide.
     #[must_use]
-    pub const fn remote(target: RemoteTarget, cue: bool) -> Self {
+    pub fn remote(target: RemoteTarget, cue: bool) -> Self {
         Self {
             requested: if cue {
                 AudioMode::Cue
@@ -199,6 +218,11 @@ impl ModeState {
                 loaded: 0,
                 total: 0,
             },
+            selection: if cue {
+                session::load_selection::LoadSelection::cue()
+            } else {
+                session::load_selection::LoadSelection::All
+            },
         }
     }
 
@@ -207,7 +231,14 @@ impl ModeState {
     /// local engine filling up, not a remote one.
     #[must_use]
     pub fn owns_project(&self) -> bool {
-        self.requested == AudioMode::Engine
+        self.requested == AudioMode::Engine && self.target.is_none()
+    }
+
+    /// Whether this window streams a song in from `target` into its own
+    /// engine — Cue, or a streamed Engine — rather than only driving it.
+    #[must_use]
+    pub const fn streams_in(&self) -> bool {
+        self.target.is_some() && !matches!(self.requested, AudioMode::Remote)
     }
 
     /// What is possible now — never more than was asked for.
@@ -320,7 +351,14 @@ pub fn from_launch(
         None if project_named => Some(AudioMode::Engine),
         None => remembered,
     };
+    let selection = env(LOAD_ENV).map_or(session::load_selection::LoadSelection::All, |v| {
+        session::load_selection::LoadSelection::parse(&v)
+    });
+    // Engine with somewhere to stream from is a streamed Engine: a named
+    // target (a Session engine) or REAPER asked for.
+    let streamed_from = env(TARGET_ENV).filter(|v| !v.trim().is_empty()).is_some() || reaper.is_some();
     match chosen.unwrap_or(AudioMode::Engine) {
+        AudioMode::Engine if streamed_from => ModeState::streamed(target(), selection),
         AudioMode::Engine => ModeState::engine(),
         AudioMode::Remote => ModeState::remote(target(), false),
         AudioMode::Cue => ModeState::remote(target(), true),
@@ -335,6 +373,8 @@ pub const REAPER_ENV: &str = "SESSION_DAW_REAPER";
 pub const SOCKET_ENV: &str = "FTS_SOCKET";
 /// A Session engine's address, to drive it rather than REAPER.
 pub const TARGET_ENV: &str = "FTS_AUDIO_TARGET";
+/// Which template groups the local engine loads (`all`, `guide, keys`).
+pub const LOAD_ENV: &str = "FTS_LOAD";
 
 // ── the process's mode ───────────────────────────────────────────────
 

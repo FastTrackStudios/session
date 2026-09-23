@@ -53,6 +53,7 @@ pub mod strip_width;
 #[cfg(all(not(target_arch = "wasm32"), feature = "reaper"))]
 pub mod color;
 pub mod guide;
+pub mod load_selection;
 pub mod key;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod key_actions;

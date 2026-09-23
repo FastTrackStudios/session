@@ -208,8 +208,33 @@ pub fn open_song_into(
     path: &Path,
     prepare: &crate::prepare::Prepare,
 ) -> eyre::Result<(Opened, SongPlan)> {
+    open_song_into_with(daw, path, prepare, Media::All)
+}
+
+/// When a song's media is loaded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Media {
+    /// All of it, as the song opens.
+    All,
+    /// None yet: a progressive loader brings it in, what will be heard
+    /// first first (`daw::standalone::audio_engine::materialize::materialize_take`).
+    /// Until then a take is silent.
+    Deferred,
+}
+
+/// [`open_song_into`], choosing when the media loads.
+///
+/// # Errors
+///
+/// As [`open_song_into`].
+pub fn open_song_into_with(
+    daw: &Standalone,
+    path: &Path,
+    prepare: &crate::prepare::Prepare,
+    media: Media,
+) -> eyre::Result<(Opened, SongPlan)> {
     let plan = song_plan(path, prepare);
-    let opened = load_into(daw, &plan.open)?;
+    let opened = load_into_with(daw, &plan.open, media)?;
     prepare_and_save(&opened, &plan, prepare);
     Ok((opened, plan))
 }
@@ -292,7 +317,7 @@ pub fn switch_song(project_guid: &str) {
 }
 
 /// A Cue window's click and guide follow the song by themselves: the Cue
-/// task ([`crate::cue`]) watches the remote's current song, whoever changed
+/// task ([`crate::stream_in`]) watches the remote's current song, whoever changed
 /// it (a pick here, a tab in REAPER).
 fn cue_follow_song(project_guid: &str) {
     tracing::debug!(song.project = project_guid, "cue: the song changed; the Cue task follows");
@@ -530,6 +555,16 @@ fn load(path: &Path) -> eyre::Result<Opened> {
 ///
 /// The file could not be read or parsed, or its media did not materialize.
 pub fn load_into(daw: &Standalone, path: &Path) -> eyre::Result<Opened> {
+    load_into_with(daw, path, Media::All)
+}
+
+/// [`load_into`], choosing when the media loads.
+///
+/// # Errors
+///
+/// The file could not be read or parsed, or (with [`Media::All`]) its
+/// media did not materialize.
+pub fn load_into_with(daw: &Standalone, path: &Path, media: Media) -> eyre::Result<Opened> {
     // Absolute from here on: the project's path is what a later save
     // writes its media relative to, and a path relative to wherever the
     // app was started from means nothing once it is saved.
@@ -547,17 +582,19 @@ pub fn load_into(daw: &Standalone, path: &Path) -> eyre::Result<Opened> {
         .map_err(|e| eyre::eyre!("{name} did not parse: {e}"))?;
     daw::standalone::project_loader::anchor_media(&daw, &summary.project_guid, &media_dir);
 
-    let audio = daw::standalone::audio_engine::materialize::materialize_via_bay(
-        &daw,
-        &summary.project_guid,
-    )
-    .map_err(|e| eyre::eyre!("{name}'s media did not materialize: {e}"))?;
-    if !audio.failed.is_empty() {
-        tracing::warn!(
-            failed = audio.failed.len(),
-            loaded = audio.loaded,
-            "some sources did not materialize"
-        );
+    if media == Media::All {
+        let audio = daw::standalone::audio_engine::materialize::materialize_via_bay(
+            &daw,
+            &summary.project_guid,
+        )
+        .map_err(|e| eyre::eyre!("{name}'s media did not materialize: {e}"))?;
+        if !audio.failed.is_empty() {
+            tracing::warn!(
+                failed = audio.failed.len(),
+                loaded = audio.loaded,
+                "some sources did not materialize"
+            );
+        }
     }
 
     let track_count = daw::service::Tracks::all(&daw, daw::service::ProjectContext::Project(summary.project_guid.clone())).len();
@@ -929,7 +966,7 @@ pub fn attach(target: &RemoteTarget) -> eyre::Result<Attached> {
     }?;
     // Idle unless Cue is asked for; then the click and guide play here,
     // locked to what this window drives.
-    crate::cue::start();
+    crate::stream_in::start();
     Ok(attached)
 }
 
