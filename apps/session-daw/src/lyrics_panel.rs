@@ -40,6 +40,15 @@ impl View {
     }
 }
 
+/// How much sooner than the song a section or a slide comes up: words
+/// on a screen have to be there before they are sung, so the change is
+/// made ahead, the way a projectionist makes it.
+const SWITCH_EARLY: f64 = 1.0;
+
+/// How much sooner a line is lit than it is sung — enough to be read
+/// into, not so much that it runs ahead of the singer.
+const LINE_EARLY: f64 = 0.4;
+
 /// What the panel shows — Audience or Performer, and the Audience's
 /// layer. A host provides one above the songs so the choice holds from
 /// song to song; without one each panel keeps its own.
@@ -115,26 +124,38 @@ impl Words {
         }
     }
 
-    /// The section the song is in at `at`, or the first before it starts.
+    /// When a section comes up on screen: its downbeat, or its first
+    /// sung line when that is a pickup ahead of it.
+    fn shows_from(&self, section: &LyricSection) -> f64 {
+        self.lyrics
+            .lines
+            .get(section.lines.start)
+            .filter(|_| !section.lines.is_empty())
+            .map_or(section.start, |first| first.start.min(section.start))
+    }
+
+    /// The section shown at `at` — up [`SWITCH_EARLY`] before it comes,
+    /// or before its pickup does — or the first before any.
     fn section_at(&self, at: f64) -> Option<usize> {
         self.sections
             .iter()
-            .rposition(|s| s.start <= at + 1e-6)
+            .rposition(|s| self.shows_from(s) <= at + SWITCH_EARLY)
             .or_else(|| (!self.sections.is_empty()).then_some(0))
     }
 
-    /// The slide showing at `at`: the one sung, or held through a gap
-    /// after it, or the first before any has started.
+    /// The slide showing at `at`: up [`SWITCH_EARLY`] before it is sung,
+    /// held through a gap after it, or the first before any.
     fn slide_at(&self, at: f64) -> Option<usize> {
         self.slides
             .iter()
-            .rposition(|s| s.start <= at + 1e-6)
+            .rposition(|s| s.start <= at + SWITCH_EARLY)
             .or_else(|| (!self.slides.is_empty()).then_some(0))
     }
 
     /// The line to show at `at`: the one sung, or the last before a gap,
     /// or the first before any.
     fn line_shown(&self, at: f64) -> Option<usize> {
+        let at = at + LINE_EARLY;
         self.lyrics
             .line_at(at)
             .or_else(|| self.lyrics.line_reached(at))
@@ -271,8 +292,8 @@ fn Performer(words: Words, at: f64) -> Element {
     let section = &words.sections[i];
     let color = words.colors.get(i).cloned().unwrap_or_else(|| ACCENT.to_owned());
     let through = ((at - section.start) / (section.end - section.start).max(1e-6)).clamp(0.0, 1.0) * 100.0;
-    let current = words.lyrics.line_at(at);
-    let next_line = words.line_shown(at).map_or(0, |k| k + usize::from(current.is_some() || at >= lines[k].start));
+    let current = words.lyrics.line_at(at + LINE_EARLY);
+    let next_line = words.line_shown(at).map_or(0, |k| k + usize::from(current.is_some() || at + LINE_EARLY >= lines[k].start));
     let upcoming = words.sections.get(i + 1).map(|s| {
         let first = (!s.lines.is_empty()).then(|| lines[s.lines.start].text.clone());
         (s.name.clone(), (s.start - at).max(0.0), first, words.colors.get(i + 1).cloned())
