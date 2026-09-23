@@ -267,11 +267,6 @@ name = "chain-probe"
 path = "src/bin/chain-probe.rs"
 required-features = ["native"]
 
-[[bin]]
-name = "vello"
-path = "src/bin/vello.rs"
-required-features = ["native"]
-
 [dev-dependencies]
 # Temp project trees for the Patch List view's discovery tests, and the
 # scratch directory the golden scene renders (`tests/golden_scenes.rs`)

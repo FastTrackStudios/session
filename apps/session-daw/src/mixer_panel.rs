@@ -2,8 +2,8 @@
 //! toggled by the profile's "Toggle mixer" (`x`, REAPER's 40078), the way
 //! REAPER docks its mixer.
 //!
-//! The painting, hit test and edits are the ones the painted window
-//! (`bin/vello.rs`) has always used: [`crate::mcp::Mixer`] records the
+//! The painting, hit test and edits are the mixer's own:
+//! [`crate::mcp::Mixer`] records the
 //! strips' chrome, [`crate::overlay::controls`] draws the values over it
 //! every frame (so a fader moves without re-recording anything), and
 //! [`crate::engine::click`] / [`crate::engine::drag`] turn a gesture into
@@ -18,8 +18,10 @@
 //!   one that made them, or a toggle would flip twice and do nothing;
 //! - **open**, and a toggle either widget can ask for.
 //!
-//! v1 leaves out what the painted window's mixer has beyond that: the
-//! routing panel, renaming, folding a folder's strip, the Tone rack.
+//! v1 leaves out what the retired winit window's mixer had beyond that:
+//! the routing panel, renaming, folding a folder's strip, the Tone rack,
+//! and balance groups (`crate::balance`, whose rule is implemented and
+//! tested but not wired to a fader here yet).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

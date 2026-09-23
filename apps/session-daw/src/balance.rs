@@ -19,6 +19,10 @@
 //! rather than as a constant linear sum: a mixer moves faders in dB
 //! and reads them in dB, and a quarter of a decibel is a quarter of a
 //! decibel wherever the fader is.
+//!
+//! This is the rule, tested on its own. The retired winit window was
+//! the one surface that applied it to a fader drag; the docked mixer
+//! (`crate::mixer_panel`) does not yet.
 
 use daw_proto::Track;
 

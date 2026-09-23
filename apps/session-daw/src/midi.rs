@@ -101,9 +101,6 @@ pub struct Previews {
     known: Arc<Mutex<HashMap<String, Vec<Note>>>>,
     /// The audio items' waveforms, by item GUID.
     waves: Arc<Mutex<HashMap<String, Arc<Wave>>>>,
-    /// Set when something new has landed, so the window knows to
-    /// re-record rather than polling a map every frame.
-    fresh: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Previews {
@@ -145,57 +142,6 @@ impl Previews {
                 waves.insert(guid, Arc::new(wave));
             }
         }
-    }
-
-    /// Has anything arrived since this was last asked?
-    ///
-    /// Asking clears it. A re-record is the only thing that acts on
-    /// this, and it redraws everything, so a second answer would only
-    /// buy a second identical redraw.
-    pub fn take_fresh(&self) -> bool {
-        self.fresh.swap(false, std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Read the notes of every MIDI item that has not been read yet.
-    ///
-    /// Spawns and returns; the window keeps drawing. Items already
-    /// known are skipped, so a re-record after a reload costs nothing
-    /// for what it already has.
-    pub fn fetch(&self, wanted: Vec<(String, f64)>) {
-        let Some(runtime) = crate::open::runtime() else {
-            return;
-        };
-        let missing: Vec<(String, f64)> = {
-            let Ok(known) = self.known.lock() else { return };
-            wanted
-                .into_iter()
-                .filter(|(guid, _)| !known.contains_key(guid))
-                .collect()
-        };
-        if missing.is_empty() {
-            return;
-        }
-        let known = Arc::clone(&self.known);
-        let fresh = Arc::clone(&self.fresh);
-        std::thread::Builder::new()
-            .name("session-daw-midi".into())
-            .spawn(move || {
-                runtime.block_on(async move {
-                    let Some(daw) = daw::rpc::Daw::try_get() else {
-                        return;
-                    };
-                    let Ok(project) = daw.current_project().await else {
-                        return;
-                    };
-                    for (guid, length) in missing {
-                        let notes = read(&project, &guid, length).await;
-                        let Ok(mut known) = known.lock() else { return };
-                        known.insert(guid, notes);
-                        fresh.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                });
-            })
-            .ok();
     }
 
     /// Read the notes now, on this thread.
@@ -288,19 +234,6 @@ mod tests {
             .unwrap()
             .insert("empty".into(), Vec::new());
         assert_eq!(previews.get("empty"), Some(Vec::new()));
-    }
-
-    /// Freshness is consumed once: a re-record redraws everything, so a
-    /// second answer buys a second identical redraw.
-    #[test]
-    fn freshness_is_taken_once() {
-        let previews = Previews::default();
-        assert!(!previews.take_fresh());
-        previews
-            .fresh
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        assert!(previews.take_fresh());
-        assert!(!previews.take_fresh(), "it was taken twice");
     }
 
     /// The shape a preview is drawn from: fractions, so the cache

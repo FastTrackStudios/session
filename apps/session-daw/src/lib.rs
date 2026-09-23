@@ -1,13 +1,13 @@
-//! The Session DAW window, in two renderings.
+//! The Session DAW: the arrangement, the mixer and the panels around them.
 //!
-//! - `main.rs` — the dioxus/WebView studio. What runs today.
-//! - `bin/vello.rs` — the GPU arrangement, drawn through `anyrender`
-//!   onto a wgpu surface. Where this is going.
+//! The arrangement is painted by one thing, [`widget::ArrangementWidget`],
+//! mounted by [`panel::use_arrangement_panel`] and [`panel::PanelChrome`]
+//! wherever the app shows it — the desktop shell on dioxus-native, the
+//! browser through `web_host`. The headless tools (`bin/bench`,
+//! `bin/blitz_shot`) draw through the same widget, so a benchmark or a
+//! screenshot is a picture of the window rather than of a copy of it.
 //!
-//! They share everything below the UI: opening a project, standing up
-//! the `daw` facade, and resolving the theme. Only the drawing differs,
-//! which is the point of keeping both runnable while the second comes
-//! up.
+//! `main.rs` is the older dioxus/WebView studio.
 
 pub mod animate;
 pub mod arrange_edit;
@@ -81,9 +81,7 @@ pub mod rails;
 #[cfg(feature = "native")]
 pub mod session_file;
 pub mod rename;
-pub mod repeat;
 pub mod routes;
-pub mod routing;
 pub mod row;
 pub mod ruler;
 pub mod scrollbar;
@@ -93,7 +91,6 @@ pub mod strip;
 pub mod studio;
 pub mod take_window;
 pub mod tcp;
-pub mod tempo_map;
 pub mod text;
 pub mod theme;
 pub mod tone;

@@ -14,7 +14,7 @@
 # `dynamic_template::golden_session` and committed under
 # features/dynamic-template/fixtures/golden/. `just daw-template`
 # regenerates it. Override for a one-off with an argument
-# (`just daw-window some.rpp`) or for a session with FTS_DAW_TEMPLATE.
+# (`just studio-song some.rpp`) or for a session with FTS_DAW_TEMPLATE.
 GOLDEN_DIR := "features/dynamic-template/fixtures/golden"
 DAW_PROJECT := env("FTS_DAW_TEMPLATE", GOLDEN_DIR / "template.rpp")
 DAW_VOCAL := env("FTS_DAW_VOCAL", GOLDEN_DIR / "vocal-fx.rpp")
@@ -1603,9 +1603,6 @@ daw-animate PROJECT="" SIZE="2560x1440":
     FTS_BENCH_ANIMATE=1 FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 \
         | grep -viE 'vulkan|objects:|WARN'
 
-# Opens the arrangement and scrolls it hard in both axes while reporting
-# the rate it actually presents at. This is the one to watch when asking
-# "does scrolling ever stutter" — the headless bench cannot show you that.
 # The studio window (Blitz + the painted arrangement) on a real session,
 # prepared first: organize it, build the song from its keyflow chart
 # (tempo, markers, section regions, Keyflow folder), and generate the
@@ -1622,74 +1619,6 @@ studio-song PROJECT CHART="" SIZE="2560x1440":
     env FTS_BLITZ_WINDOW=1 FTS_BLITZ_SIZE="{{SIZE}}" ${prep[@]+"${prep[@]}"} \
         RUST_LOG="${RUST_LOG:-warn,session_daw=info}" \
         ./target/release/blitz_shot "{{PROJECT}}" /tmp/fts-studio.png
-
-daw-vello PROJECT="" SIZE="2560x1440":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    project="{{PROJECT}}"
-    if [[ -z "$project" ]]; then
-        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
-        [[ -f "$project" ]] || just daw-fixture
-    fi
-    cargo build --release -p session-daw --bin vello 2>&1 | grep -E '^error' -A6 || true
-    FTS_VELLO_AUTOSCROLL=1 FTS_VELLO_SIZE="{{SIZE}}" \
-        RUST_LOG="${RUST_LOG:-warn,vello=info}" \
-        ./target/release/vello "$project"
-
-# The drum session, in a window you can screenshot.
-#
-# This is the one to open by hand: `just daw-template`'s session has the
-# hierarchy, the colours and the item density a real desk has, and it
-# opens with the KICK selected — so the focus-width rack is on screen
-# without clicking anything.
-#
-# Forced onto XWayland, and that is the point of this recipe. The window
-# is a Wayland surface by default, which no X screenshot tool and no
-# `xdotool` can see — every "the window did not open" in this repo's
-# history has been that. `WAYLAND_DISPLAY=` empties the variable winit
-# checks, so it falls back to X11 through XWayland, where the window has
-# a real X id.
-#
-# Note that `xdotool mousemove --window` does NOT work on it either:
-# winit ignores synthetic (send_event) motion. Move the REAL pointer to
-# absolute screen coordinates instead — window origin plus the offset
-# you want, read from `xdotool getwindowgeometry --shell`.
-daw-window PROJECT="" SIZE="2560x1440":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    project="{{PROJECT}}"
-    if [[ -z "$project" ]]; then
-        project="{{DAW_PROJECT}}"
-        [[ -f "$project" ]] || just daw-template
-    fi
-    cargo build --release -p session-daw --bin vello 2>&1 | grep -E '^error' -A6 || true
-    WAYLAND_DISPLAY= WINIT_UNIX_BACKEND=x11 \
-        FTS_VELLO_SIZE="{{SIZE}}" FTS_VELLO_SIMULATE=1 \
-        RUST_LOG="${RUST_LOG:-warn}" \
-        ./target/release/vello "$project"
-
-# The same window, captured to a PNG once it has settled.
-#
-# `just daw-shot` writes /tmp/fts-mixer.png at the window's own
-# resolution — no upscaling a small window, which is the other half of
-# why shots of this thing kept being unreadable.
-daw-shot OUT="/tmp/fts-mixer.png" PROJECT="" SIZE="2560x1440":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just daw-window "{{PROJECT}}" "{{SIZE}}" &
-    trap 'pkill -f "target/release/vello" || true' EXIT
-    for _ in $(seq 60); do
-        id="$(xdotool search --name 'Session' 2>/dev/null | head -1 || true)"
-        [[ -n "$id" ]] && break
-        sleep 2
-    done
-    [[ -n "${id:-}" ]] || { echo "the window never appeared" >&2; exit 1; }
-    xdotool windowactivate --sync "$id"
-    # Into the mixer, which is what these shots are of.
-    xdotool key --window "$id" x
-    sleep 3
-    magick import -window "$id" "{{OUT}}"
-    printf 'wrote %s — %s\n' "{{OUT}}" "$(magick identify -format '%wx%h' "{{OUT}}")"
 
 # Everything CI runs, in CI's order, with one command.
 #
@@ -1801,27 +1730,6 @@ ci FROM="lockfile":
 
     echo
     echo "every CI step passed locally"
-
-# Attach the session window to a REAPER that is already running the FTS
-# extension, instead of opening a `.rpp` this window owns.
-#
-# The extension publishes its whole service surface on a Unix socket
-# (`/tmp/fts-daw-<pid>.sock`); this connects to it and installs it as
-# the facade every panel reads through. Pass a socket when more than one
-# REAPER is up — discovery picks one and does not ask.
-#
-# REAPER owns the audio here. No media is materialised, no meters are
-# built and no engine is attached: standing a second engine up beside
-# REAPER's would be two things playing the same project.
-daw-reaper SOCKET="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -z "{{SOCKET}}" ] && ! ls /tmp/fts-daw-*.sock >/dev/null 2>&1; then
-      echo "No REAPER socket in /tmp. Is REAPER running with the FTS extension?" >&2
-      echo "Build and install it from ../fts-extensions: just reaper build && just reaper install" >&2
-      exit 1
-    fi
-    cargo run --release -p session-daw --bin vello -- --reaper {{SOCKET}}
 
 # The Session DAW view in a browser (session-daw's web_host), built to
 # apps/session-daw-web/dist: cargo → wasm-bindgen → index.html, plus the
