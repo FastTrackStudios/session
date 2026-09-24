@@ -405,6 +405,9 @@ pub fn sync_key(peer: &str) -> String {
 /// followers want fresh stamps, not just the last change.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyncPosition {
+    /// The song, by its library slug ([`crate::slug::slugify`]): the id a
+    /// set Task keeps knows its songs by, and the Session watch app's relay
+    /// matches the song on screen with.
     pub song: Option<String>,
     pub position: daw_transport_sync::Position,
 }

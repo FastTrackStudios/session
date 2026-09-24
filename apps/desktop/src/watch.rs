@@ -96,16 +96,20 @@ fn snapshot(
         .and_then(|b| b.snapshot())
         .map(|s| Lead::local(None, s.position(), 0.0));
     let playing = lead.as_ref().is_some_and(|l| l.position.is_playing);
-    let song = timelines.get(&current.guid, playing).map(|timeline| SongSnapshot {
-        key: current.guid.clone(),
-        title: titles.of(daw, &current),
-        index: projects
-            .iter()
-            .position(|p| p.guid == current.guid)
-            .and_then(|i| i32::try_from(i).ok())
-            .unwrap_or(-1),
-        count: u32::try_from(projects.len()).unwrap_or(u32::MAX),
-        timeline,
+    let song = timelines.get(&current.guid, playing).map(|timeline| {
+        let title = titles.of(daw, &current);
+        SongSnapshot {
+            // By slug, as a live set knows it (the lead here names none).
+            key: session::sync::slug::slugify(&title),
+            title,
+            index: projects
+                .iter()
+                .position(|p| p.guid == current.guid)
+                .and_then(|i| i32::try_from(i).ok())
+                .unwrap_or(-1),
+            count: u32::try_from(projects.len()).unwrap_or(u32::MAX),
+            timeline,
+        }
     });
     Snapshot {
         set_title: String::new(),

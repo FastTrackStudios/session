@@ -16,7 +16,8 @@
 //!   snapshot carried into the shared clock (Engine mode only: a Remote
 //!   window has no engine of its own to stamp).
 //!
-//! Songs are matched by their library slug (`LiveSong.slug`), whatever
+//! Songs are matched by their library slug (`session::sync::slug`, what
+//! `LiveSong.slug` and a leader's `SyncPosition.song` carry), whatever
 //! spelling of the name each side holds.
 //!
 //! The song's beats come from `Guide::watch_timeline` on this window's
@@ -27,9 +28,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use daw_transport_sync::TransportBackend as _;
 use session::sync::clock::SharedClock;
 use session::sync::loro::LoroValue;
+use session::sync::slug::slugify;
 use session::watch_guide::{GuideTimeline, Lead, SongSnapshot, Snapshot};
 
 /// What the last tick said.
@@ -68,20 +69,16 @@ pub fn live_tick<'a>(
 ) {
     start_relay();
     let offset = clock.offset_micros();
-    let slug = here.map(session_library::slugify);
-    let songs: Vec<String> = songs.map(session_library::slugify).collect();
+    let slug = here.map(slugify);
+    let songs: Vec<String> = songs.map(slugify).collect();
     let index = slug
         .as_ref()
         .and_then(|s| songs.iter().position(|k| k == s))
         .and_then(|i| i32::try_from(i).ok())
         .unwrap_or(-1);
     let project = crate::open::current_song();
-    let lead = Lead::from_presence(seen)
-        .or_else(|| own_lead(project.as_deref(), here, offset))
-        .map(|mut lead| {
-            lead.song = lead.song.as_deref().map(session_library::slugify);
-            lead
-        });
+    // A leader's stamp already names its song by slug.
+    let lead = Lead::from_presence(seen).or_else(|| own_lead(project.as_deref(), slug.clone(), offset));
     let set_title = crate::collab::status().map(|s| s.set).unwrap_or_default();
     let reading = Reading {
         at: Some(Instant::now()),
@@ -102,10 +99,10 @@ pub fn live_tick<'a>(
 
 /// This window's own engine as the lead: its per-buffer snapshot (in this
 /// process's clock) carried into the shared one.
-fn own_lead(project: Option<&str>, here: Option<&str>, offset: Option<f64>) -> Option<Lead> {
+fn own_lead(project: Option<&str>, slug: Option<String>, offset: Option<f64>) -> Option<Lead> {
     let backend = crate::collab::sync_backend(project?)?;
     let snapshot = backend.snapshot()?;
-    Some(Lead::local(here.map(str::to_owned), snapshot.position(), offset?))
+    Some(Lead::local(slug, snapshot.position(), offset?))
 }
 
 /// What the relay reads, a tick at a time (on its own thread).
@@ -163,4 +160,46 @@ fn start_relay() {
 #[must_use]
 pub fn current() -> Snapshot {
     snapshot()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use session::sync::transport::{self, SharedTransport, SyncPosition, TransportMode};
+
+    /// Playing together, the watch follows the shared transport's leader —
+    /// by the stamp it publishes, naming the song by slug — and knows the
+    /// song on screen by the same slug, whatever spelling this window holds.
+    #[test]
+    fn together_the_watch_follows_the_leaders_stamp() {
+        let position = daw_transport_sync::Position {
+            host_micros: 2.0e6,
+            playhead_seconds: 12.5,
+            playrate: 1.0,
+            is_playing: true,
+        };
+        let mut seen = HashMap::new();
+        let entry = SharedTransport {
+            mode: TransportMode::Shared,
+            playing: true,
+            position: 12.5,
+            at_ms: 2_000.0,
+            song: Some("God, I'm Just Grateful".into()),
+            seq: 3,
+            by: "peer-lead".into(),
+        };
+        seen.insert(transport::KEY.to_owned(), entry.encode());
+        seen.insert(
+            transport::sync_key("peer-lead"),
+            SyncPosition { song: Some(slugify("God, I'm Just Grateful")), position }.encode(),
+        );
+        let songs = ["Washed", "God, I’m Just Grateful", "Always On Time"];
+        live_tick(&seen, &SharedClock::owned(), Some("God, I'm Just Grateful"), songs.into_iter());
+
+        let reading = READING.lock().ok().and_then(|r| r.as_ref().map(|r| (r.slug.clone(), r.index, r.count)));
+        assert_eq!(reading, Some((Some("god-im-just-grateful".to_owned()), 1, 3)));
+        let lead = current().lead.expect("the leader's stamp leads");
+        assert_eq!(lead.song.as_deref(), Some("god-im-just-grateful"));
+        assert_eq!(lead.position, position);
+    }
 }

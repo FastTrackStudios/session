@@ -1059,11 +1059,14 @@ impl Lock {
             self.role = role;
         }
         let (Some(backend), Some(offset)) = (backend, clock.offset_micros()) else { return false };
+        // A stamp names its song by slug — the id a set Task keeps knows
+        // songs by, whatever spelling of the name each machine holds.
+        let here = here.map(|key| session::sync::slug::slugify(key));
         match role {
             Role::Apart => false,
             Role::Leading => {
                 if let Some(snapshot) = backend.snapshot() {
-                    let stamped = SyncPosition { song: here.cloned(), position: snapshot.position().shifted(offset) };
+                    let stamped = SyncPosition { song: here, position: snapshot.position().shifted(offset) };
                     presence.set(&transport::sync_key(me), stamped.encode());
                 }
                 false
@@ -1076,7 +1079,7 @@ impl Lock {
                     return false;
                 };
                 // Another song: the switch comes first (the coarse path).
-                if lead.song.as_ref() != here {
+                if lead.song != here {
                     return false;
                 }
                 let now = daw_transport_sync::clock::now_micros_f64();

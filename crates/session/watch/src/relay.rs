@@ -52,7 +52,8 @@ const JUMP: f64 = 0.020;
 /// Who leads, and where: a playhead stamped in Task's clock.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lead {
-    /// The song it is on (the set's name for it), if said.
+    /// The song it is on, by its library slug (`SyncPosition::song`), if
+    /// said.
     pub song: Option<String>,
     /// The playhead, stamped in the shared clock (µs).
     pub position: Position,
@@ -96,7 +97,7 @@ impl Lead {
 /// The song on the phone, as the watch sees it.
 #[derive(Debug, Clone, Copy)]
 pub struct SongRef<'a> {
-    /// The set's name for it — what [`Lead::song`] says.
+    /// Its library slug — what [`Lead::song`] says.
     pub key: &'a str,
     pub title: &'a str,
     /// Its place in the set, and the set's length.
