@@ -63,6 +63,9 @@ fn up_to_date(media: &Path, proxy: &Path) -> bool {
     matches!((modified(media), modified(proxy)), (Some(m), Some(p)) if p >= m)
 }
 
+/// Frames between a proxy's index points: about a second.
+const INDEX_STEP: u64 = 48_000;
+
 pub fn write(session: &Path, quality: f32, force: bool) -> eyre::Result<()> {
     let project = project_file(session)?;
     let mut todo = Vec::new();
@@ -78,7 +81,15 @@ pub fn write(session: &Path, quality: f32, force: bool) -> eyre::Result<()> {
         } else if !is_wav {
             println!("{}  not a WAV — skipped", media.display());
         } else if !force && up_to_date(&media, &proxy) {
-            println!("{}  up to date", proxy.display());
+            // A proxy made before its page index existed gets one: what a
+            // client streaming it from elsewhere fetches by.
+            let index = fts_sample::ogg_index::OggIndex::path_for(&proxy);
+            if index.exists() {
+                println!("{}  up to date", proxy.display());
+            } else {
+                fts_sample::cache::write_ogg_index(&proxy, INDEX_STEP).map_err(|e| eyre::eyre!("{e}"))?;
+                println!("{}  up to date; indexed", proxy.display());
+            }
         } else {
             todo.push((media, proxy));
         }
@@ -103,6 +114,10 @@ pub fn write(session: &Path, quality: f32, force: bool) -> eyre::Result<()> {
                             let frames = fts_sample::cache::write_ogg_proxy(&media, &partial, quality)
                                 .map_err(|e| eyre::eyre!("{e}"))?;
                             std::fs::rename(&partial, &proxy)?;
+                            // Its page index was written beside the partial
+                            // name: it moves with the proxy.
+                            let index = fts_sample::ogg_index::OggIndex::path_for;
+                            std::fs::rename(index(&partial), index(&proxy))?;
                             Ok(frames)
                         });
                     match result {
