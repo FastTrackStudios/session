@@ -4950,7 +4950,7 @@ dependencies = [
 [[package]]
 name = "editor-keyflow-lang"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "editor-state",
  "keyflow-text",
@@ -5040,7 +5040,7 @@ dependencies = [
 [[package]]
 name = "engraver"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "engraver-proto",
 ]
@@ -5048,7 +5048,7 @@ dependencies = [
 [[package]]
 name = "engraver-proto"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "anyrender",
  "bitflags 2.13.1",
@@ -8212,7 +8212,7 @@ dependencies = [
 [[package]]
 name = "keyflow"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "color-eyre",
  "colored",
@@ -8231,12 +8231,12 @@ dependencies = [
 [[package]]
 name = "keyflow-chordpro"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 
 [[package]]
 name = "keyflow-daw-analysis"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "architect",
  "daw",
@@ -8250,7 +8250,7 @@ dependencies = [
 [[package]]
 name = "keyflow-midi"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "keyflow-proto",
  "keyflow-text",
@@ -8260,7 +8260,7 @@ dependencies = [
 [[package]]
 name = "keyflow-proto"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "architect",
  "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.0)",
@@ -8277,7 +8277,7 @@ dependencies = [
 [[package]]
 name = "keyflow-sync"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "facet",
  "facet-json",
@@ -8290,7 +8290,7 @@ dependencies = [
 [[package]]
 name = "keyflow-syntax"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "facet",
  "serde",
@@ -8300,7 +8300,7 @@ dependencies = [
 [[package]]
 name = "keyflow-text"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?branch=tag-section#c52470da9b78834a9993d1672f64e68ffb4d09ba"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
 dependencies = [
  "keyflow-chordpro",
  "keyflow-proto",
@@ -18565,6 +18565,14 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "baseview"
+version = "0.3.3"
+
+[[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -18666,12 +18674,4 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "baseview"
-version = "0.3.3"
-
-[[patch.unused]]
-name = "dsp-golden"
 version = "0.1.0"

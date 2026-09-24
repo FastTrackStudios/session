@@ -66,7 +66,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: FastTrackStudios/daw
-          ref: 987b314591b87082b427f672b822bfc7fb1d4003
+          ref: e9566a9a023ca5b6d29956c4de374dcc2ef268d9
           path: daw
       - name: Sibling checkout — processor
         uses: actions/checkout@v4

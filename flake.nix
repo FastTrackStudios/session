@@ -37,7 +37,7 @@
     # the sibling checkouts in .github/workflows/checks.yml — bump both
     # together, to the commits the local siblings are on.
     daw-src = {
-      url = "github:FastTrackStudios/daw/987b314591b87082b427f672b822bfc7fb1d4003";
+      url = "github:FastTrackStudios/daw/e9566a9a023ca5b6d29956c4de374dcc2ef268d9";
       flake = false;
     };
     processor-src = {
