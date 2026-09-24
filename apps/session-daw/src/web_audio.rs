@@ -34,7 +34,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use daw_standalone::audio_engine::render::ProjectRenderer;
-use daw_standalone::audio_engine::streamed::{Decode, StreamFeeder};
+use daw_standalone::audio_engine::streamed::{self, Decode, StreamFeeder};
 use daw_standalone::sync::Standalone;
 use daw_standalone::transport_engine::{TransportBundle, TransportShared};
 use fts_sample::ogg_stream::OggStream;
@@ -62,6 +62,9 @@ const AHEAD_HIDDEN: u64 = RATE as u64 * 2;
 const DECODED_AHEAD: usize = 8;
 /// How long a tick may spend decoding stems before it renders.
 const DECODE_BUDGET_MS: u128 = 6;
+/// And while a stem is missing the audio at the playhead (after a jump):
+/// long enough that the band sounds again within a beat or two.
+const CATCH_UP_BUDGET_MS: u128 = 24;
 
 /// The worklet: a queue of interleaved stereo blocks, played in order,
 /// silence when it runs dry. It reports how much it has played, tagged
@@ -410,12 +413,27 @@ impl Player {
         let started = web_time::Instant::now();
         let first = self.first.get() % count;
         self.first.set(first + 1);
+        // After a jump every stem is missing the audio at the playhead, and
+        // until each has it the song is partly silent: decode harder until
+        // they all do. The device is fed from the worklet's own queue, so a
+        // longer tick here costs only the page a frame or two.
+        let behind = feeders.iter().any(|f| {
+            let source = f.source();
+            let wanted = source.wanted();
+            let here = usize::try_from(wanted).unwrap_or(usize::MAX) / streamed::CHUNK;
+            wanted < source.frames() && !source.resident(here)
+        });
+        let budget = if behind {
+            CATCH_UP_BUDGET_MS
+        } else {
+            DECODE_BUDGET_MS
+        };
         let mut busy = true;
-        while busy && started.elapsed().as_millis() < DECODE_BUDGET_MS {
+        while busy && started.elapsed().as_millis() < budget {
             busy = false;
             for i in 0..count {
                 busy |= feeders[(first + i) % count].pump(2048);
-                if started.elapsed().as_millis() >= DECODE_BUDGET_MS {
+                if started.elapsed().as_millis() >= budget {
                     break;
                 }
             }

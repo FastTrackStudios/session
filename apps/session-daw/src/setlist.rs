@@ -159,12 +159,20 @@ pub struct Setlist {
     /// Which song is current — an index into `songs`, past the end when
     /// the list is empty.
     pub at: usize,
+    /// Songs of the set still on their way, by title, in set order — a page
+    /// shows its first song while the rest open behind it; each moves into
+    /// `songs` as it arrives. Their tabs show them coming.
+    pub pending: Vec<String>,
 }
 
 impl Setlist {
     #[must_use]
     pub fn of(songs: Vec<Song>) -> Self {
-        Self { songs, at: 0 }
+        Self {
+            songs,
+            at: 0,
+            pending: Vec::new(),
+        }
     }
 
     #[must_use]
@@ -362,7 +370,11 @@ impl Setlist {
             .position(|s| s.project == attached.project_guid)
             .unwrap_or(0);
         crate::open::switch_song(&songs[at].project);
-        Ok(Self { songs, at })
+        Ok(Self {
+            songs,
+            at,
+            pending: Vec::new(),
+        })
     }
 
     /// Give `index` a colour by hand — or, with `None`, give it back the

@@ -467,25 +467,97 @@ pub fn WebDemo(
     /// The guide sample library's share link: the click, count and cues.
     guide: Option<String>,
 ) -> Element {
-    let opened = use_resource(move || {
+    use crate::web_engine::Progress;
+    // What the loading screen says: each step of the open, and why it is
+    // trying again when it is.
+    let progress = use_signal(|| Progress::Joining { retry: None });
+    let mut opened = use_resource(move || {
         let (source, guide) = (source.clone(), guide.clone());
         async move {
-            crate::web_engine::open(&source, guide.as_deref())
-                .await
-                .map_err(|e| e.to_string())
+            crate::web_engine::open(&source, guide.as_deref(), move |step| {
+                let mut progress = progress;
+                progress.set(step);
+            })
+            .await
+            .map_err(|e| e.to_string())
         }
     });
     let state = opened.read();
     match &*state {
-        None => rsx! {
-            div { style: "color:#9aa0a6; font:14px system-ui; padding:24px;", "Opening the session…" }
-        },
+        None => rsx! { Loading { progress: progress() } },
         Some(Err(e)) => rsx! {
-            div { style: "color:#f87171; font:14px system-ui; padding:24px;", "Could not open the session: {e}" }
+            LoadingFrame {
+                headline: "The session did not open".to_owned(),
+                detail: e.clone(),
+                failed: true,
+                button {
+                    style: "margin-top:8px; height:32px; padding:0 16px; border-radius:8px; border:none; \
+                            background:#3aa0ff; color:#0b0c0e; font-weight:600; font-size:13px; cursor:pointer;",
+                    onclick: move |_| opened.restart(),
+                    "Try again"
+                }
+            }
         },
         Some(Ok((engine, setlist))) => rsx! {
             DemoView { engine: engine.clone(), setlist: setlist.clone() }
         },
+    }
+}
+
+/// The loading screen: where the open has got to.
+#[component]
+fn Loading(progress: crate::web_engine::Progress) -> Element {
+    use crate::web_engine::Progress;
+    let (headline, detail, retry) = match progress {
+        Progress::Joining { retry } => (
+            "Joining the live session".to_owned(),
+            "Reaching Task…".to_owned(),
+            retry,
+        ),
+        Progress::Fetching { title, retry } => (
+            format!("Opening {title}"),
+            "Bringing the song in…".to_owned(),
+            retry,
+        ),
+        Progress::Opening { title } => (
+            format!("Opening {title}"),
+            "Laying out the session…".to_owned(),
+            None,
+        ),
+    };
+    let detail = retry.unwrap_or(detail);
+    rsx! {
+        LoadingFrame { headline, detail, failed: false,
+            // A thin sweep: working, without claiming how far.
+            div {
+                style: "position:relative; width:220px; height:3px; border-radius:2px; overflow:hidden; \
+                        background:#1f2228; margin-top:6px;",
+                div {
+                    style: "position:absolute; top:0; left:0; width:40%; height:100%; border-radius:2px; \
+                            background:#3aa0ff; animation:fts-sweep 1.4s ease-in-out infinite;",
+                }
+            }
+        }
+    }
+}
+
+/// The frame every loading state shares: Session's mark, a headline, a
+/// line of detail, and whatever goes under it.
+#[component]
+fn LoadingFrame(headline: String, detail: String, failed: bool, children: Element) -> Element {
+    let detail_color = if failed { "#f87171" } else { "#9aa0a6" };
+    rsx! {
+        style { "@keyframes fts-sweep {{ 0% {{ left: -40% }} 100% {{ left: 100% }} }}" }
+        div {
+            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
+                    flex-direction:column; align-items:center; justify-content:center; gap:10px; \
+                    background:#0f1012; color:#e5e7eb; font-family:system-ui, sans-serif; \
+                    text-align:center; padding:0 24px; box-sizing:border-box;",
+            img { src: "/favicon.svg", width: "56", height: "56", style: "border-radius:13px; margin-bottom:6px;" }
+            div { style: "font-size:17px; font-weight:650;", "{headline}" }
+            div { style: "font-size:13px; color:{detail_color}; max-width:420px; line-height:1.5;", "{detail}" }
+            {children}
+        }
     }
 }
 
@@ -502,9 +574,31 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     let view = use_signal(|| View::Daw);
     let mode = use_signal(|| Mode::Live);
     use_context_provider(|| mode);
+    // The lyrics' Audience / Performer and layer, held across songs.
+    use_context_provider(crate::lyrics_panel::LyricsChoice::new);
     // The songs — a signal from here on, which the tabs read and a pick
     // writes.
     let mut setlist = use_context_provider(|| Signal::new(setlist));
+    // The set's other songs, as they open behind the one on screen: each
+    // takes its tab's place.
+    use_future(move || async move {
+        use crate::web_engine::Arrival;
+        let Some(mut arrivals) = crate::web_engine::take_arrivals() else {
+            return;
+        };
+        while let Some(arrival) = arrivals.recv().await {
+            let mut list = setlist.write();
+            match arrival {
+                Arrival::Song(song) => {
+                    if let Some(at) = list.pending.iter().position(|t| *t == song.name) {
+                        list.pending.remove(at);
+                    }
+                    list.songs.push(song);
+                }
+                Arrival::Failed(title) => list.pending.retain(|t| *t != title),
+            }
+        }
+    });
     // Playing together, a song someone else picked is picked here too.
     crate::collab_bar::use_follow_song(setlist);
     let current = setlist.read().current().cloned();
@@ -578,6 +672,9 @@ fn SongViews(
                     OverviewLayout {
                         progress: rsx! { crate::progress::ProgressBar {} },
                         chart: rsx! { crate::chart_panel::WebChart { paged: true } },
+                        // The song's synced lyrics under its chart, as on the
+                        // desktop — from its Lyrics track.
+                        under_chart: rsx! { crate::lyrics_panel::LyricsPanel {} },
                         panels: rsx! {
                             crate::mixer_panel::WebDawPanels {
                                 engine: engine.clone(),

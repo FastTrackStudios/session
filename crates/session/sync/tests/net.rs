@@ -124,7 +124,7 @@ async fn a_joiner_gets_the_session_and_edits_flow_both_ways() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_whole_set_is_shared_and_people_can_be_on_different_songs() {
-    use session_sync::net::{SetHost, SetPeer, song_id};
+    use session_sync::net::{SetHost, SetPeer, dial_fixed, song_id};
     let set = "Worship Set";
     let (washed, praise) = (SessionDoc::new(), SessionDoc::new());
     washed.write(&song(), ORIGIN_LOCAL).unwrap();
@@ -147,8 +147,8 @@ async fn a_whole_set_is_shared_and_people_can_be_on_different_songs() {
             .await
             .unwrap()
     };
-    let peer_washed = SetPeer::sync_song(song_id(set, "Washed"), sync().await);
-    let peer_praise = SetPeer::sync_song(song_id(set, "Praise"), sync().await);
+    let peer_washed = SetPeer::sync_song(song_id(set, "Washed"), dial_fixed(sync().await));
+    let peer_praise = SetPeer::sync_song(song_id(set, "Praise"), dial_fixed(sync().await));
     until(|| peer_washed.read() == song()).await;
     until(|| peer_praise.read().chart == "Praise\n").await;
 
@@ -162,7 +162,7 @@ async fn a_whole_set_is_shared_and_people_can_be_on_different_songs() {
     // One presence channel for the set: the host (as its own peer) sees
     // the joiner, who is on another song.
     let mut joiner = SetPeer::new(host.id());
-    joiner.run_presence(server.establish().await.unwrap());
+    joiner.run_presence(dial_fixed(server.establish().await.unwrap()));
     let me = PeerState {
         name: "Alice".into(),
         song: Some("Praise".into()),

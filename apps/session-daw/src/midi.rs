@@ -183,8 +183,14 @@ impl Previews {
         let Ok(project) = daw.current_project().await else {
             return;
         };
+        self.fill_in(&project, wanted).await;
+    }
+
+    /// [`Self::fill`] from a given project rather than the current one —
+    /// a song a page opens in the background.
+    pub async fn fill_in(&self, project: &daw_control::Project, wanted: Vec<(String, f64)>) {
         for (guid, length) in wanted {
-            let notes = read(&project, &guid, length).await;
+            let notes = read(project, &guid, length).await;
             if let Ok(mut known) = self.known.lock() {
                 known.insert(guid, notes);
             }

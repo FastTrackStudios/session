@@ -18,6 +18,9 @@ use crdt::sync::{
     DocPresenceDispatcher, DocSyncDispatcher, DocSyncHost, PresenceHost,
     doc_presence_service_descriptor, doc_sync_service_descriptor,
 };
+use std::sync::Arc;
+use std::time::Duration;
+
 use uuid::Uuid;
 
 use crate::doc::SessionDoc;
@@ -156,28 +159,107 @@ impl SetPeer {
         &self.presence
     }
 
-    /// Start the set's presence session.
-    pub fn run_presence(&mut self, client: DocPresenceClient) {
+    /// Start the set's presence session — and keep it: when its
+    /// connection goes (the server restarting, a network blip), `dial`
+    /// is asked for a new one and the session attaches again, re-announcing
+    /// this peer.
+    pub fn run_presence(&mut self, dial: Dial<DocPresenceClient>) {
         if let Some(mut driver) = self.driver.take() {
             architect::platform::spawn(async move {
-                if let Err(e) = driver.run(&client).await {
-                    tracing::warn!(collab.error = %e, "collab: presence ended");
+                let mut backoff = Backoff::default();
+                loop {
+                    let began = architect::platform::now();
+                    match dial().await {
+                        Ok(client) => {
+                            if let Err(e) = driver.run(&client).await {
+                                tracing::debug!(collab.error = %e, "collab: presence ended; reconnecting");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(collab.error = %e, "collab: presence could not reconnect yet")
+                        }
+                    }
+                    backoff.wait(began.elapsed() >= HELD).await;
                 }
             });
         }
     }
 
-    /// Replicate one song's doc: an empty replica, filled from the host.
+    /// Replicate one song's doc: an empty replica, filled from the host,
+    /// and kept in sync across reconnects the same way as
+    /// [`Self::run_presence`] — the replica catches up by version vector
+    /// each time it attaches, both ways.
     #[must_use]
-    pub fn sync_song(doc_id: Uuid, client: DocSyncClient) -> SessionDoc {
+    pub fn sync_song(doc_id: Uuid, dial: Dial<DocSyncClient>) -> SessionDoc {
         let doc = SessionDoc::new();
         let mut synced = SyncedDoc::new(doc_id, CrdtDoc::from_loro(doc.loro().clone()));
         architect::platform::spawn(async move {
-            if let Err(e) = synced.run(&client).await {
-                tracing::warn!(collab.error = %e, "collab: a song's sync ended");
+            let mut backoff = Backoff::default();
+            loop {
+                let began = architect::platform::now();
+                match dial().await {
+                    Ok(client) => {
+                        if let Err(e) = synced.run(&client).await {
+                            tracing::debug!(collab.error = %e, "collab: a song's sync ended; reconnecting");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(collab.error = %e, "collab: a song's sync could not reconnect yet")
+                    }
+                }
+                backoff.wait(began.elapsed() >= HELD).await;
             }
         });
         doc
+    }
+}
+
+/// Makes a client afresh: what a replica reconnects with once its
+/// connection has gone. A dial for a connection that cannot be made again
+/// (an in-process link, an iroh connection already open) is
+/// [`dial_fixed`].
+pub type Dial<C> =
+    Arc<dyn Fn() -> architect::platform::BoxFuture<'static, eyre::Result<C>> + Send + Sync>;
+
+/// A [`Dial`] that hands back the one client it was given.
+pub fn dial_fixed<C>(client: C) -> Dial<C>
+where
+    C: Clone + Send + Sync + 'static,
+{
+    Arc::new(move || {
+        let client = client.clone();
+        Box::pin(async move { Ok(client) })
+    })
+}
+
+/// A session that lasted this long was a working connection, not a
+/// failed attempt: the next wait starts short again.
+const HELD: Duration = Duration::from_secs(10);
+
+/// How long to wait before dialling again: from a second, doubling to
+/// fifteen while attempts keep failing, back to a second after one held.
+struct Backoff {
+    wait: Duration,
+}
+
+impl Default for Backoff {
+    fn default() -> Self {
+        Self {
+            wait: Backoff::FIRST,
+        }
+    }
+}
+
+impl Backoff {
+    const FIRST: Duration = Duration::from_secs(1);
+    const LONGEST: Duration = Duration::from_secs(15);
+
+    async fn wait(&mut self, held: bool) {
+        if held {
+            self.wait = Self::FIRST;
+        }
+        architect::platform::sleep(self.wait).await;
+        self.wait = (self.wait * 2).min(Self::LONGEST);
     }
 }
 

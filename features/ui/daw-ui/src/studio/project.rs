@@ -179,8 +179,13 @@ impl Project {
 /// is a self-inflicted wait.
 pub async fn fetch() -> Option<Project> {
     let daw = daw_control::Daw::try_get()?;
-    let project = daw.current_project().await.ok()?;
+    fetch_of(daw.current_project().await.ok()?).await
+}
 
+/// [`fetch`] for a given project rather than the current one — how a
+/// page reads a song it opens in the background, without switching the
+/// song on screen away.
+pub async fn fetch_of(project: daw_control::Project) -> Option<Project> {
     let tracks = project.tracks().all().await.ok()?;
     let all_items = project.items().all().await.ok()?;
 

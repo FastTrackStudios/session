@@ -34,9 +34,9 @@ use std::time::Duration;
 
 use session::sync::clock::SharedClock;
 use session::sync::engine::MediaRoot;
-use session::sync::net::{PresenceSink, SetPeer};
+use session::sync::net::{Dial, PresenceSink, SetPeer};
 #[cfg(feature = "native")]
-use session::sync::net::{SetHost, session_id, song_id};
+use session::sync::net::{SetHost, dial_fixed, session_id, song_id};
 use session::sync::presence::{self, PeerState, PlayState, Pointer, Roster, Throttle};
 use session::sync::transport::{
     self, Command, LocalTransport, SharedTransport, SyncPosition, TransportMode, TransportSync,
@@ -316,6 +316,7 @@ fn open_local_with(mut docs: HashMap<String, SessionDoc>) -> eyre::Result<()> {
             "local".into(),
             String::new(),
             None,
+            None,
         );
         let mut live = started.into_live(String::new(), false, presence);
         live.shared = false;
@@ -336,6 +337,9 @@ fn stop(live: Option<Live>) -> HashMap<String, SessionDoc> {
         return HashMap::new();
     };
     let _ = live.stop.send(true);
+    if let Ok(mut opened) = OPENED.lock() {
+        *opened = None;
+    }
     live.songs.into_iter().map(|s| (s.key, s.doc)).collect()
 }
 
@@ -540,6 +544,7 @@ fn host_inner(name: String) -> eyre::Result<String> {
             me,
             name,
             Some(Box::new((host, endpoint))),
+            None,
         );
         Ok::<_, eyre::Report>((ticket.clone(), started.into_live(ticket, true, presence)))
     })?;
@@ -594,14 +599,14 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
         );
 
         let mut peer = SetPeer::new(id);
-        peer.run_presence(presence_client);
+        peer.run_presence(dial_fixed(presence_client));
         let presence: Arc<dyn PresenceSink> = Arc::new(peer.presence().clone());
         // Every song, replicated from the host.
         let replicas: Vec<(SessionDoc, _)> = open
             .into_iter()
             .map(|song| {
                 (
-                    SetPeer::sync_song(song_id(&set, &song.2), sync.clone()),
+                    SetPeer::sync_song(song_id(&set, &song.2), dial_fixed(sync.clone())),
                     song,
                 )
             })
@@ -649,6 +654,7 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
             me,
             name,
             Some(Box::new(endpoint)),
+            None,
         );
         let _keep = peer;
         Ok::<_, eyre::Report>(started.into_live(ticket.to_string(), false, presence))
@@ -771,12 +777,25 @@ fn join_task_inner(set: &TaskSet, name: String) -> eyre::Result<()> {
     Ok(())
 }
 
+/// Whether a session is being joined right now — a page joins in the
+/// background, and the session bar says so rather than offering to share.
+static JOINING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a session is being joined (see [`JOINING`]).
+#[must_use]
+pub fn joining() -> bool {
+    JOINING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// [`join_task`] in a page: joined on the page's event loop.
 #[cfg(not(feature = "native"))]
 fn join_task_inner(set: &TaskSet, name: String) -> eyre::Result<()> {
     let set = set.clone();
+    JOINING.store(true, std::sync::atomic::Ordering::Relaxed);
     architect::platform::spawn(async move {
-        match record(join_task_live(set, name).await) {
+        let joined = record(join_task_live(set, name).await);
+        JOINING.store(false, std::sync::atomic::Ordering::Relaxed);
+        match joined {
             Ok(live) => {
                 if let Ok(mut slot) = LIVE.lock() {
                     *slot = Some(live);
@@ -793,124 +812,320 @@ fn join_task_inner(set: &TaskSet, name: String) -> eyre::Result<()> {
 /// Joining a set Task keeps — the part both a desktop and a page run.
 async fn join_task_live(set: TaskSet, name: String) -> eyre::Result<Live> {
     use live_proto::LiveSessionsClient;
-    {
-        let open = open_songs().await?;
-        let token = set.token.as_deref();
-        let lane: LiveSessionsClient = task_dial::establish_at(&set.url, token)
-            .await
-            .map_err(|e| eyre::eyre!("dialling {}: {e}", set.url))?;
-        let joined = lane
-            .join(set.setlist.clone())
-            .await
-            .map_err(|e| eyre::eyre!("joining the set: {e:?}"))?;
-        // A playground's end, from Task's clock onto this machine's.
-        let resets_at = match joined.resets_at {
-            Some(at) => lane.now().await.ok().map(|now| {
-                let left = std::time::Duration::from_secs_f64(((at - now) / 1e6).max(0.0));
-                architect::platform::Instant::now() + left
-            }),
-            None => None,
-        };
-        let sync: crdt::sync::DocSyncClient = task_dial::establish_at(&set.url, token)
-            .await
-            .map_err(|e| eyre::eyre!("session sync: {e}"))?;
-        let presence_client: crdt::sync::DocPresenceClient =
-            task_dial::establish_at(&set.url, token)
-                .await
-                .map_err(|e| eyre::eyre!("session presence: {e}"))?;
-        // Task's clock is the session's.
-        let clock = SharedClock::follow_with(move || {
-            let lane = lane.clone();
-            async move { lane.now().await.ok() }
-        });
-        let presence_id: Uuid = joined
-            .presence_id
-            .parse()
-            .map_err(|e| eyre::eyre!("presence id: {e}"))?;
-        let mut peer = SetPeer::new(presence_id);
-        peer.run_presence(presence_client);
-        let presence: Arc<dyn PresenceSink> = Arc::new(peer.presence().clone());
+    let open = open_songs().await?;
+    let token = set.token.as_deref();
+    let lane: LiveSessionsClient = task_dial::establish_at(&set.url, token)
+        .await
+        .map_err(|e| eyre::eyre!("dialling {}: {e}", set.url))?;
+    let joined = lane
+        .join(set.setlist.clone())
+        .await
+        .map_err(|e| eyre::eyre!("joining the set: {e:?}"))?;
+    // A playground's end, from Task's clock onto this machine's.
+    let resets_at = match joined.resets_at {
+        Some(at) => lane.now().await.ok().map(|now| {
+            let left = std::time::Duration::from_secs_f64(((at - now) / 1e6).max(0.0));
+            architect::platform::Instant::now() + left
+        }),
+        None => None,
+    };
+    // Each replica and the presence dial Task again whenever their
+    // connection goes (Task restarting, a network blip) and catch up.
+    let sync: Dial<crdt::sync::DocSyncClient> = task_dial_for(&set);
+    let presence_dial: Dial<crdt::sync::DocPresenceClient> = task_dial_for(&set);
+    // Task's clock is the session's.
+    let clock = task_clock(&set, lane);
+    let presence_id: Uuid = joined
+        .presence_id
+        .parse()
+        .map_err(|e| eyre::eyre!("presence id: {e}"))?;
+    let mut peer = SetPeer::new(presence_id);
+    peer.run_presence(presence_dial);
+    let presence: Arc<dyn PresenceSink> = Arc::new(peer.presence().clone());
 
-        // Each open song, replicated from the set's song of its id.
-        let songs: HashMap<String, Uuid> = joined
+    // Each open song, replicated from the set's song of its id.
+    let ids: Arc<HashMap<String, Uuid>> = Arc::new(
+        joined
             .songs
             .iter()
             .filter_map(|s| Some((s.slug.clone(), s.doc_id.parse().ok()?)))
-            .collect();
-        let replicas: Vec<(Option<SessionDoc>, _)> = open
-            .into_iter()
-            .map(|song| {
-                let doc = songs
-                    .get(&session::sync::slug::slugify(&song.2))
-                    .map(|id| SetPeer::sync_song(*id, sync.clone()));
-                (doc, song)
-            })
-            .collect();
-        // What Task has arrives at once; a song still empty after that is
-        // this peer's to seed.
-        for _ in 0..80 {
-            if replicas
-                .iter()
-                .all(|(doc, _)| doc.as_ref().is_none_or(SessionDoc::has_session))
-            {
+            .collect(),
+    );
+    let replicas: Vec<_> = open
+        .into_iter()
+        .map(|song| (replicate(&ids, &sync, &song.2), song))
+        .collect();
+    settle(replicas.iter().filter_map(|(doc, _)| doc.as_ref())).await;
+    let mut docs = LIVE
+        .lock()
+        .ok()
+        .map(|mut l| stop(l.take()))
+        .unwrap_or_default();
+    let mut bridges = Vec::new();
+    let mut seeded = 0usize;
+    for (doc, song) in replicas {
+        let (song, bridge, was_seeded) = bridge_song(doc, song, &mut docs).await?;
+        seeded += usize::from(was_seeded);
+        bridges.push((song, bridge));
+    }
+    crate::studio::request_resync();
+    let me = format!("peer-{}", &Uuid::new_v4().simple().to_string()[..8]);
+    tracing::info!(
+        collab.setlist = %joined.setlist,
+        collab.epoch = joined.epoch,
+        collab.songs = bridges.len(),
+        collab.seeded = seeded,
+        "collab: joined a set Task keeps"
+    );
+    // Songs opened after this (a page opens its first song, then the
+    // rest): the same replica and bridge, handed to the running session.
+    let (adds_tx, adds_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (opened_tx, mut opened_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut bridged: std::collections::HashSet<String> = bridges
+        .iter()
+        .map(|(song, _)| song.project.clone())
+        .collect();
+    architect::platform::spawn(async move {
+        while let Some(project) = opened_rx.recv().await {
+            if !bridged.insert(project.clone()) {
+                continue;
+            }
+            let Ok(open) = open_songs().await else {
+                continue;
+            };
+            let Some(song) = open.into_iter().find(|s| s.0.guid() == project) else {
+                continue;
+            };
+            let doc = replicate(&ids, &sync, &song.2);
+            settle(doc.iter()).await;
+            match bridge_song(doc, song, &mut HashMap::new()).await {
+                Ok((song, bridge, _)) => {
+                    if adds_tx.send((song, bridge)).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(collab.error = %e, "collab: a song opened later could not join the session")
+                }
+            }
+        }
+    });
+    if let Ok(mut slot) = OPENED.lock() {
+        // Songs that opened while this was joining — after `open_songs`
+        // looked, or before: the adder skips the ones already bridged.
+        for project in EARLY
+            .lock()
+            .map(|mut e| std::mem::take(&mut *e))
+            .unwrap_or_default()
+        {
+            let _ = opened_tx.send(project);
+        }
+        *slot = Some(opened_tx);
+    }
+    let started = start(
+        bridges,
+        Arc::clone(&presence),
+        clock,
+        joined.title.clone(),
+        me,
+        name,
+        None,
+        Some(adds_rx),
+    );
+    let _keep = peer;
+    let mut live = started.into_live(set.url.clone(), false, presence);
+    live.status.resets_at = resets_at;
+    Ok::<_, eyre::Report>(live)
+}
+
+/// Where a song opened after the session began is announced (see
+/// [`song_opened`]); set while in a set Task keeps.
+static OPENED: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>> = Mutex::new(None);
+
+/// Songs that opened before a session could take them (it was still
+/// joining): handed to it once it has.
+static EARLY: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// `project` has just opened in this engine: in a set Task keeps, it joins
+/// the session like the songs that were open when it began — or, while
+/// the session is still joining, as soon as it has.
+pub fn song_opened(project: &str) {
+    let Ok(slot) = OPENED.lock() else { return };
+    match slot.as_ref() {
+        Some(opened) => {
+            let _ = opened.send(project.to_owned());
+        }
+        None => {
+            if let Ok(mut early) = EARLY.lock() {
+                early.push(project.to_owned());
+            }
+        }
+    }
+}
+
+/// A song as `open_songs` finds it.
+type OpenSong = (daw_control::Project, MediaRoot, String, std::path::PathBuf);
+
+// The same trait: the desktop reaches vox through vox-core, a page
+// through the vox facade.
+#[cfg(not(feature = "native"))]
+use vox::FromVoxLane;
+#[cfg(feature = "native")]
+use vox_core::FromVoxLane;
+
+/// A dial for `C` on the Task server `set` is on, for a replica to
+/// reconnect with.
+fn task_dial_for<C>(set: &TaskSet) -> Dial<C>
+where
+    C: FromVoxLane + 'static,
+{
+    let (url, token) = (set.url.clone(), set.token.clone());
+    Arc::new(move || {
+        let (url, token) = (url.clone(), token.clone());
+        Box::pin(async move {
+            task_dial::establish_at::<C>(&url, token.as_deref())
+                .await
+                .map_err(|e| eyre::eyre!("dialling {url}: {e}"))
+        })
+    })
+}
+
+/// Task's clock, followed — through `lane` while it answers, and a lane
+/// dialled again when it stops (Task restarting).
+fn task_clock(set: &TaskSet, lane: live_proto::LiveSessionsClient) -> SharedClock {
+    let lane = Arc::new(Mutex::new(Some(lane)));
+    let dial: Dial<live_proto::LiveSessionsClient> = task_dial_for(set);
+    SharedClock::follow_with(move || {
+        let (lane, dial) = (Arc::clone(&lane), Arc::clone(&dial));
+        async move {
+            let current = lane.lock().ok().and_then(|l| l.clone());
+            if let Some(client) = current {
+                if let Ok(now) = client.now().await {
+                    return Some(now);
+                }
+            }
+            // Gone: dial again for the next ping.
+            let fresh = dial().await.ok();
+            if let Ok(mut slot) = lane.lock() {
+                *slot = fresh;
+            }
+            None
+        }
+    })
+}
+
+/// A replica of the set's doc for the song named `key`, syncing — `None`
+/// for a song the set does not have.
+fn replicate(
+    ids: &HashMap<String, Uuid>,
+    sync: &Dial<crdt::sync::DocSyncClient>,
+    key: &str,
+) -> Option<SessionDoc> {
+    ids.get(&session::sync::slug::slugify(key))
+        .map(|id| SetPeer::sync_song(*id, Arc::clone(sync)))
+}
+
+/// Wait for what Task has of these replicas to arrive — at once, when it
+/// has any; a replica still empty after that is this peer's to seed.
+async fn settle<'a>(docs: impl Iterator<Item = &'a SessionDoc> + Clone) {
+    for _ in 0..80 {
+        if docs.clone().all(SessionDoc::has_session) {
+            break;
+        }
+        architect::platform::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Bridge one song to its replica: joining the set's session of it, or
+/// seeding it from this song when the set has none yet (or, with no
+/// replica, keeping this machine's own record from `docs`). Says whether
+/// it seeded.
+async fn bridge_song(
+    doc: Option<SessionDoc>,
+    (project, media, key, path): OpenSong,
+    docs: &mut HashMap<String, SessionDoc>,
+) -> eyre::Result<(Song, Bridge, bool)> {
+    let guid = project.guid().to_owned();
+    let (bridge, seeded) = match doc {
+        Some(doc) if doc.has_session() => (Bridge::join(project, media, doc).await?, false),
+        Some(doc) => {
+            let chart = chart_for(&path, &doc);
+            (Bridge::host(project, media, doc, chart).await?, true)
+        }
+        None => {
+            let own = docs.remove(&key).unwrap_or_default();
+            let chart = chart_for(&path, &own);
+            (Bridge::host(project, media, own, chart).await?, false)
+        }
+    };
+    let song = Song {
+        project: guid,
+        key,
+        doc: bridge.doc().clone(),
+    };
+    Ok((song, bridge, seeded))
+}
+
+/// Songs handed to a running session ([`start`]), each with its bridge.
+type Adds = tokio::sync::mpsc::UnboundedReceiver<(Song, Bridge)>;
+
+/// The next song handed to the session, or never when none can come.
+async fn next_add(adds: &mut Option<Adds>) -> Option<(Song, Bridge)> {
+    match adds.as_mut() {
+        Some(adds) => adds.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Tell the session's task, by `index`, whenever this song's engine
+/// changes — from its own slice of the event bus.
+fn follow_engine(
+    index: usize,
+    project: String,
+    local_tx: tokio::sync::mpsc::UnboundedSender<usize>,
+) {
+    architect::platform::spawn(async move {
+        let Some(daw) = daw::rpc::Daw::try_get() else {
+            tracing::warn!("collab: no daw facade; this song's edits will not be shared");
+            return;
+        };
+        let filter = daw_proto::event_bus::BusFilter {
+            tracks: true,
+            items: true,
+            takes: true,
+            markers: true,
+            regions: true,
+            tempo_map: true,
+            project_guid: Some(project),
+            ..daw_proto::event_bus::BusFilter::default()
+        };
+        let mut stream = match daw.events().subscribe(filter).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                tracing::warn!(collab.error = %e, "collab: this song's edits cannot be followed; none will be shared");
+                return;
+            }
+        };
+        while let Ok(Some(_)) = stream.recv().await {
+            if local_tx.send(index).is_err() {
                 break;
             }
-            architect::platform::sleep(Duration::from_millis(25)).await;
         }
-        let mut docs = LIVE
-            .lock()
-            .ok()
-            .map(|mut l| stop(l.take()))
-            .unwrap_or_default();
-        let mut bridges = Vec::new();
-        let mut seeded = 0usize;
-        for (doc, (project, media, key, path)) in replicas {
-            let guid = project.guid().to_owned();
-            let bridge = match doc {
-                Some(doc) if doc.has_session() => Bridge::join(project, media, doc).await?,
-                Some(doc) => {
-                    seeded += 1;
-                    let chart = chart_for(&path, &doc);
-                    Bridge::host(project, media, doc, chart).await?
-                }
-                None => {
-                    let own = docs.remove(&key).unwrap_or_default();
-                    let chart = chart_for(&path, &own);
-                    Bridge::host(project, media, own, chart).await?
-                }
-            };
-            bridges.push((
-                Song {
-                    project: guid,
-                    key,
-                    doc: bridge.doc().clone(),
-                },
-                bridge,
-            ));
+    });
+}
+
+/// Tell the session's task, by `index`, whenever the others' edits arrive
+/// in this song's doc.
+fn follow_doc(
+    index: usize,
+    song: &Song,
+    remote_tx: tokio::sync::mpsc::UnboundedSender<usize>,
+) -> session::sync::loro::Subscription {
+    song.doc.loro().subscribe_root(Arc::new(move |event| {
+        if event.triggered_by == session::sync::loro::EventTriggerKind::Import {
+            let _ = remote_tx.send(index);
         }
-        crate::studio::request_resync();
-        let me = format!("peer-{}", &Uuid::new_v4().simple().to_string()[..8]);
-        tracing::info!(
-            collab.setlist = %joined.setlist,
-            collab.epoch = joined.epoch,
-            collab.songs = bridges.len(),
-            collab.seeded = seeded,
-            "collab: joined a set Task keeps"
-        );
-        let started = start(
-            bridges,
-            Arc::clone(&presence),
-            clock,
-            joined.title.clone(),
-            me,
-            name,
-            None,
-        );
-        let _keep = peer;
-        let mut live = started.into_live(set.url.clone(), false, presence);
-        live.status.resets_at = resets_at;
-        Ok::<_, eyre::Report>(live)
-    }
+    }))
 }
 
 /// The half-built `Live` [`start`] returns; finished by the caller.
@@ -965,6 +1180,7 @@ fn start(
     me: String,
     name: String,
     keep: Keep,
+    adds: Option<Adds>,
 ) -> Started {
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
     let sync = Arc::new(Mutex::new(TransportSync::new(me.clone())));
@@ -984,55 +1200,21 @@ fn start(
     // Each song's engine changes, from its own slice of the event bus.
     let (local_tx, mut local_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
     for (index, song) in songs.iter().enumerate() {
-        let local_tx = local_tx.clone();
-        let project = song.project.clone();
-        architect::platform::spawn(async move {
-            let Some(daw) = daw::rpc::Daw::try_get() else {
-                tracing::warn!("collab: no daw facade; this song's edits will not be shared");
-                return;
-            };
-            let filter = daw_proto::event_bus::BusFilter {
-                tracks: true,
-                items: true,
-                takes: true,
-                markers: true,
-                regions: true,
-                tempo_map: true,
-                project_guid: Some(project),
-                ..daw_proto::event_bus::BusFilter::default()
-            };
-            let mut stream = match daw.events().subscribe(filter).await {
-                Ok(stream) => stream,
-                Err(e) => {
-                    tracing::warn!(collab.error = %e, "collab: this song's edits cannot be followed; none will be shared");
-                    return;
-                }
-            };
-            while let Ok(Some(_)) = stream.recv().await {
-                if local_tx.send(index).is_err() {
-                    break;
-                }
-            }
-        });
+        follow_engine(index, song.project.clone(), local_tx.clone());
     }
 
     // Each song's remote changes: any import into its doc.
     let (remote_tx, mut remote_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
-    let subscriptions: Vec<_> = songs
+    let mut subscriptions: Vec<_> = songs
         .iter()
         .enumerate()
-        .map(|(index, song)| {
-            let remote_tx = remote_tx.clone();
-            song.doc.loro().subscribe_root(Arc::new(move |event| {
-                if event.triggered_by == session::sync::loro::EventTriggerKind::Import {
-                    let _ = remote_tx.send(index);
-                }
-            }))
-        })
+        .map(|(index, song)| follow_doc(index, song, remote_tx.clone()))
         .collect();
+    let mut adds = adds;
+    let mut songs = songs;
 
     architect::platform::spawn(async move {
-        let _keep = (keep, subscriptions);
+        let _keep = keep;
         // ~30 Hz, from a deadline: a burst of edits does not starve it.
         let mut next_tick = architect::platform::now();
         let mut out = Outbox::new(me.clone(), name);
@@ -1041,12 +1223,28 @@ fn start(
         // Sample-accurate following (daw-transport-sync): the leader's
         // stamped playhead, this engine locked to it.
         let mut lock = Lock::default();
-        let key_of = |project: Option<String>| {
+        let key_of = |songs: &[Song], project: Option<String>| {
             project.and_then(|p| songs.iter().find(|s| s.project == p).map(|s| s.key.clone()))
         };
         loop {
             tokio::select! {
                 _ = stopped.changed() => break,
+                // A song opened after the session began (a page's songs
+                // arrive one by one): followed the same way as the rest.
+                Some((song, bridge)) = next_add(&mut adds) => {
+                    let index = songs.len();
+                    follow_engine(index, song.project.clone(), local_tx.clone());
+                    subscriptions.push(follow_doc(index, &song, remote_tx.clone()));
+                    if let Ok(mut live) = LIVE.lock()
+                        && let Some(l) = live.as_mut()
+                    {
+                        l.songs.push(song.clone());
+                    }
+                    tracing::info!(collab.song = %song.key, collab.songs = index + 1, "collab: a song joined the session");
+                    songs.push(song);
+                    bridges.push(bridge);
+                    crate::studio::request_resync();
+                }
                 Some(first) = local_rx.recv() => {
                     // Let a burst (a drag, a rebuild) settle into one read
                     // per song it touched.
@@ -1092,7 +1290,7 @@ fn start(
                 () = architect::platform::sleep(next_tick.saturating_duration_since(architect::platform::now())) => {
                     next_tick = architect::platform::now() + TICK;
                     let now = crate::ghosts::now_ms();
-                    let here = key_of(crate::open::current_song());
+                    let here = key_of(&songs, crate::open::current_song());
                     out.publish(presence.as_ref(), now, here.clone());
                     // Everyone else, into the roster.
                     let states = presence.states();

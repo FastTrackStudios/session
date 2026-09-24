@@ -46,6 +46,8 @@ pub fn CollabBar() -> Element {
     #[cfg(feature = "native")]
     let mut joining = use_signal(String::new);
     let mut people = use_signal(crate::ghosts::everyone);
+    // Whether a session is being joined (a page joins in the background).
+    let mut session_joining = use_signal(crate::collab::joining);
     let mut open = use_signal(|| false);
     let mut copied = use_signal(|| false);
     let density = crate::shell::use_density();
@@ -125,6 +127,10 @@ pub fn CollabBar() -> Element {
             if *status.peek() != now {
                 status.set(now);
             }
+            let now_joining = crate::collab::joining();
+            if *session_joining.peek() != now_joining {
+                session_joining.set(now_joining);
+            }
             let why = crate::collab::last_error();
             if *error.peek() != why {
                 error.set(why);
@@ -158,6 +164,9 @@ pub fn CollabBar() -> Element {
                 }
             }
         }
+        None if session_joining() => rsx! {
+            span { style: "font-size:12px; font-weight:600; color:{DIM};", "Joining…" }
+        },
         None => rsx! {
             ShareGlyph {}
             if density == Density::Full {
