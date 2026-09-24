@@ -931,6 +931,7 @@ fn keyflow() -> Node {
         // Empty on purpose. The chart says nothing about what belongs
         // in them, and a generator filling them would be composing.
         Node::new("LINES", KEYFLOW, Kind::Source).empty(),
+        Node::new("Lyrics", KEYFLOW, Kind::Source).empty(),
         Node::new("HITS", KEYFLOW, Kind::Source).empty(),
     ])
 }

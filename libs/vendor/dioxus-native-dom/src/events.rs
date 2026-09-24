@@ -217,13 +217,27 @@ impl RenderedElementBacking for NodeHandle {
         self
     }
 
+    // FTS: like `get_client_rect` — a handle can outlive its node (a panel
+    // unmounted since it was mounted) and the document can be busy; both
+    // are an error to report, never a panic.
     fn get_scroll_offset(&self) -> Pin<Box<dyn Future<Output = MountedResult<PixelsVector2D>>>> {
-        let scroll_offset = self.node().scroll_offset;
+        let Ok(doc) = self.doc.try_borrow() else {
+            return self.doc_busy_err();
+        };
+        let Some(node) = doc.get_node(self.node_id) else {
+            return self.node_not_exist_err();
+        };
+        let scroll_offset = node.scroll_offset;
         Box::pin(async move { Ok(PixelsVector2D::new(scroll_offset.x, scroll_offset.y)) })
     }
 
     fn get_scroll_size(&self) -> Pin<Box<dyn Future<Output = MountedResult<PixelsSize>>>> {
-        let node = self.node();
+        let Ok(doc) = self.doc.try_borrow() else {
+            return self.doc_busy_err();
+        };
+        let Some(node) = doc.get_node(self.node_id) else {
+            return self.node_not_exist_err();
+        };
         let scroll_width = node.final_layout.scroll_width() as f64;
         let scroll_height = node.final_layout.scroll_height() as f64;
         Box::pin(async move { Ok(PixelsSize::new(scroll_width, scroll_height)) })
@@ -270,16 +284,17 @@ impl RenderedElementBacking for NodeHandle {
     }
 
     fn set_focus(&self, focus: bool) -> Pin<Box<dyn Future<Output = MountedResult<()>>>> {
-        let mut doc = self.doc_mut();
-        if focus {
-            // TODO: queue focus events somehow
-            doc.set_focus_to(self.node_id);
-        } else if doc.get_focussed_node_id() == Some(self.node_id) {
-            // Q: Should this only clear focus if the node is focussed?
-            // TODO: queue blur events somehow
-            doc.clear_focus();
+        // FTS: never borrow a document someone else has. It used to borrow
+        // mutably on the spot, which panicked ("RefCell already borrowed")
+        // when a task asked for focus while the document was busy; a retry
+        // loop in its place then spun forever, because tasks are polled
+        // with the document borrowed. So: apply it now if the document is
+        // free, else park it for `DioxusDocument` to apply the next time
+        // it holds the document (`apply_pending_focus`).
+        match self.doc.try_borrow_mut() {
+            Ok(mut doc) => apply_focus(&mut doc, self.node_id, focus),
+            Err(_) => PENDING_FOCUS.with(|p| *p.borrow_mut() = Some((self.node_id, focus))),
         }
-
         Box::pin(async { Ok(()) })
     }
 }
@@ -714,5 +729,30 @@ mod tests {
         let data = NativeTouchData(finger_event(0, 1.0, 2.0));
         assert!(data.touches().is_empty());
         assert_eq!(data.touches_changed().len(), 1);
+    }
+}
+
+thread_local! {
+    /// A focus change asked for while the document was borrowed: the node,
+    /// and whether it gains or loses focus. The last one asked wins.
+    static PENDING_FOCUS: std::cell::RefCell<Option<(NodeId, bool)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn apply_focus(doc: &mut BaseDocument, node_id: NodeId, focus: bool) {
+    if focus {
+        // TODO: queue focus events somehow
+        doc.set_focus_to(node_id);
+    } else if doc.get_focussed_node_id() == Some(node_id) {
+        // Q: Should this only clear focus if the node is focussed?
+        // TODO: queue blur events somehow
+        doc.clear_focus();
+    }
+}
+
+/// Apply a focus change [`NodeHandle`]'s `set_focus` had to park.
+pub(crate) fn apply_pending_focus(doc: &mut BaseDocument) {
+    if let Some((node_id, focus)) = PENDING_FOCUS.with(|p| p.borrow_mut().take()) {
+        apply_focus(doc, node_id, focus);
     }
 }

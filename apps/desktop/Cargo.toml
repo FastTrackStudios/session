@@ -24,7 +24,11 @@ authors = ["FastTrackStudio"]
 [features]
 # Two axes here -- Session and Charts. (The monorepo had a third, Signal;
 # it ships from the signal repo now.)
-default = ["session", "charts"]
+default = ["session", "charts", "native"]
+# The app on Blitz (dioxus-native): the panels-and-views shell with our own
+# title bar — see docs/app-on-blitz.md. Desktop only for now (iOS follows);
+# without it the desktop build launches the WRY app as before.
+native = ["session-domain", "dep:dioxus-native", "dep:session-daw", "dep:winit", "dep:rfd", "dep:dirs"]
 # Session on the web build is a REMOTE: the wasm target compiles only the
 # wire surface (session-proto's SetlistService clients + session-ui) and
 # talks to the network engine's SetlistService over the shared `/vox` link
@@ -141,6 +145,15 @@ dioxus = { workspace = true, default-features = true, features = ["desktop", "la
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tracing-subscriber.workspace = true
+# The Blitz shell (feature `native`): the renderer, the studio panels, and
+# winit for the window's title bar.
+dioxus-native = { workspace = true, optional = true }
+session-daw = { path = "../session-daw", optional = true }
+winit = { version = "0.31.0-beta.2", optional = true }
+# The native app's Open dialog and error alert, and where it remembers the
+# last session it opened (`native::choose`).
+rfd = { version = "0.17", optional = true }
+dirs = { version = "6", optional = true }
 # Telemetry: fmt console logs + optional Sentry + OTLP export (traces,
 # logs, metrics). Doubly opt-in — the `otel` cargo feature carries the
 # dependency weight, and at runtime nothing exports unless
@@ -202,7 +215,8 @@ daw-control = { workspace = true, optional = true }
 # "rpp-project"/"rpp-loader": real .RPP parse + audio materialize
 # (`project_loader::load_rpp_via_bay`) — the Home page's "Load & Play"
 # loads a setlist's songs this way instead of hand-seeding stems.
-daw-standalone = { workspace = true, features = ["bootstrap", "audio", "rpp-project", "rpp-loader"], optional = true }
+# "session-file": `--engine --project Song.session` (engine_open.rs).
+daw-standalone = { workspace = true, features = ["bootstrap", "audio", "rpp-project", "rpp-loader", "session-file"], optional = true }
 # The Home page's library/setlist scanner — reuses the exact scan/RPP-
 # build/note-writing code the `session-vault-sync` and `session-player`
 # CLIs already use, rather than re-implementing it here.

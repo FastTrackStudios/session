@@ -11,13 +11,14 @@ categories = ["template-engine", "web-programming"]
 [[bin]]
 name = "dynamic-template"
 path = "src/main.rs"
+required-features = ["reaper"]
 
 [dependencies]
 dynamic-template-proto = { workspace = true }
 architect = { workspace = true }
-daw = { workspace = true, features = ["reaper"] }
+daw = { workspace = true }
 daw-proto = { workspace = true }
-daw-reaper = { workspace = true, default-features = true }
+daw-reaper = { workspace = true, default-features = true, optional = true }
 dawfile-reaper = { workspace = true }
 eyre = { workspace = true }
 monarchy = { workspace = true }
@@ -35,7 +36,13 @@ tracing = { workspace = true }
 facet-json = { workspace = true }
 
 [features]
-default = []
+default = ["reaper"]
+# The REAPER side: the live organizer (`apply`), the REAPER actions
+# (`daw_module`) and the CLI. Off, what is left is the classification —
+# groups, scenes, the visibility grouping, track kinds, the golden
+# session's RPP builder — which is pure and builds for wasm32 (the Session
+# web demo).
+reaper = ["daw/reaper", "dep:daw-reaper"]
 
 [lints]
 workspace = true

@@ -73,6 +73,8 @@ pub fn midi_note_for_section(section_type: &SectionType) -> Option<u8> {
         SectionType::Vamp => 97,
         SectionType::Turnaround => 98,
         SectionType::Refrain => 99,
+        // The legacy table's "Tag" sample, now that Tag is a variant.
+        SectionType::Tag => 94,
         // Pre-/Post- have their own notes only for Chorus, which is all
         // the legacy plugin ever had; anything else takes the inner
         // section's note so a Pre-Verse still announces as a Verse.
@@ -84,7 +86,7 @@ pub fn midi_note_for_section(section_type: &SectionType) -> Option<u8> {
             SectionType::Chorus => 91,
             ref other => return midi_note_for_section(other),
         },
-        // Names the enum doesn't model (Tag, Rap, Acapella, Exhortation)
+        // Names the enum doesn't model (Rap, Acapella, Exhortation)
         // still resolve through the legacy table.
         SectionType::Custom(name) => return get_midi_note_for_section_type(name),
         // Count-ins are Count-track material; Opening and Hits had no
@@ -113,6 +115,29 @@ pub struct GuideMidiNote {
     pub length_seconds: f64,
     pub pitch: u8,
     pub velocity: u8,
+}
+
+/// The velocity a count note carries when a spoken cue lands on it.
+///
+/// Both notes stay in the MIDI; the cue takes the count's place in the
+/// AUDIO, so muting the Guide track brings the count back. This is how the
+/// Count track's instrument knows which of its notes to give way — a mark
+/// in its own notes, which it can read in any track order.
+pub const COUNT_UNDER_CUE_VELOCITY: u8 = 1;
+
+/// Mark every Count note that a Guide cue lands on (within a
+/// millisecond) with [`COUNT_UNDER_CUE_VELOCITY`].
+pub fn mark_counts_under_cues(notes: &mut [GuideMidiNote]) {
+    let cues: Vec<f64> = notes
+        .iter()
+        .filter(|n| n.role == GuideTrackRole::Guide)
+        .map(|n| n.time_seconds)
+        .collect();
+    for note in notes.iter_mut().filter(|n| n.role == GuideTrackRole::Count) {
+        if cues.iter().any(|at| (at - note.time_seconds).abs() < 0.001) {
+            note.velocity = COUNT_UNDER_CUE_VELOCITY;
+        }
+    }
 }
 
 /// A constant-tempo stretch of the timeline.
@@ -154,19 +179,38 @@ impl TempoSegment {
 /// How finely to lay down the click.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ClickSubdivision {
-    /// One note per beat. Downbeats accent.
+    /// Eighths below [`AUTO_EIGHTHS_BELOW_BPM`], one per beat at or above
+    /// it — decided per tempo segment, so a song that speeds up past the
+    /// line drops to quarters there. A slow song's beats are too far apart
+    /// to lock to on their own.
     #[default]
+    Auto,
+    /// One note per beat. Downbeats accent.
     Beat,
     Eighth,
     Sixteenth,
     Triplet,
 }
 
+/// Below this tempo the automatic click plays eighths.
+pub const AUTO_EIGHTHS_BELOW_BPM: f64 = 75.0;
+
 impl ClickSubdivision {
+    /// What this subdivision plays at `tempo_bpm` — only [`Self::Auto`]
+    /// depends on it.
+    #[must_use]
+    pub fn at_tempo(self, tempo_bpm: f64) -> Self {
+        match self {
+            Self::Auto if tempo_bpm < AUTO_EIGHTHS_BELOW_BPM => Self::Eighth,
+            Self::Auto => Self::Beat,
+            fixed => fixed,
+        }
+    }
+
     /// How many notes per beat, and the note to use for the off-positions.
     const fn divisions(self) -> (u32, u8) {
         match self {
-            Self::Beat => (1, MIDI_NOTE_CLICK_BEAT),
+            Self::Auto | Self::Beat => (1, MIDI_NOTE_CLICK_BEAT),
             Self::Eighth => (2, MIDI_NOTE_CLICK_EIGHTH),
             Self::Sixteenth => (4, MIDI_NOTE_CLICK_SIXTEENTH),
             Self::Triplet => (3, MIDI_NOTE_CLICK_TRIPLET),
@@ -193,9 +237,9 @@ pub fn click_notes(
     subdivision: ClickSubdivision,
 ) -> Vec<GuideMidiNote> {
     let mut notes = Vec::new();
-    let (per_beat, off_pitch) = subdivision.divisions();
 
     for (i, segment) in segments.iter().enumerate() {
+        let (per_beat, off_pitch) = subdivision.at_tempo(segment.tempo_bpm).divisions();
         let segment_end = segments
             .get(i.saturating_add(1))
             .map_or(end_seconds, |next| next.start_seconds)
@@ -362,6 +406,39 @@ mod tests {
     #[test]
     fn no_tempo_segments_means_no_click() {
         assert!(click_notes(&[], 10.0, ClickSubdivision::Beat).is_empty());
+    }
+
+    #[test]
+    fn the_automatic_click_plays_eighths_below_75_and_quarters_from_it() {
+        // 68 bpm for 4 beats, then 120 bpm for 4 beats.
+        let slow_beat = 60.0 / 68.0;
+        let slow_end = 4.0 * slow_beat;
+        let notes = click_notes(
+            &[seg(0.0, 68.0, 4, 4), seg(slow_end, 120.0, 4, 4)],
+            slow_end + 2.0,
+            ClickSubdivision::Auto,
+        );
+        let slow: Vec<_> = notes
+            .iter()
+            .filter(|n| n.time_seconds < slow_end - 1e-9)
+            .collect();
+        let fast: Vec<_> = notes
+            .iter()
+            .filter(|n| n.time_seconds >= slow_end - 1e-9)
+            .collect();
+        assert_eq!(slow.len(), 8, "eighths at 68");
+        assert_eq!(slow[1].pitch, MIDI_NOTE_CLICK_EIGHTH);
+        assert_eq!(fast.len(), 4, "quarters at 120");
+        assert!(fast.iter().all(|n| n.pitch != MIDI_NOTE_CLICK_EIGHTH));
+        // The line itself is quarters.
+        assert_eq!(
+            ClickSubdivision::Auto.at_tempo(75.0),
+            ClickSubdivision::Beat
+        );
+        assert_eq!(
+            ClickSubdivision::Auto.at_tempo(74.9),
+            ClickSubdivision::Eighth
+        );
     }
 
     #[test]

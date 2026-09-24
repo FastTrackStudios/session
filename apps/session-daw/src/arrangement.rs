@@ -170,6 +170,9 @@ impl Palette {
 
 /// Everything drawn, recorded in content space.
 pub struct Arrangement {
+    /// The panel's shape — full, or compact. What it was RECORDED at:
+    /// changing it re-cuts the panel, because the rows are drawn to it.
+    pub tcp: crate::tcp::Tcp,
     /// The lanes and their items, at x = seconds * 1.0. The zoom is
     /// applied by the replay transform, so this is recorded at one
     /// pixel per second and scaled at draw time.
@@ -208,6 +211,12 @@ pub struct Arrangement {
     /// pixel space over the lanes, because recorded text would stretch
     /// with the zoom.
     titles: Vec<Title>,
+    /// What the items say on their faces — see [`Lettering`]. A view
+    /// setting rather than part of the recording: the titles are drawn
+    /// per frame, so switching it costs no rebuild.
+    pub lettering: Lettering,
+    /// The song's chords and key changes, for the ruler's CHORDS lane.
+    chart: ChartMarks,
     /// Every item, by row, in seconds, with its fades — what a hit
     /// test asks and what the fade handles are drawn from.
     items: Vec<ItemBox>,
@@ -255,6 +264,108 @@ pub struct Index {
     /// Content-space x extent of every `lanes` command, indexed the same
     /// way as `lanes.commands`. In seconds, like the recording.
     x: Vec<(f64, f64)>,
+    /// The audio items' waveforms, by the command of the item body they
+    /// are drawn over: built at replay ([`lane_wave_path`]), at about a
+    /// point a pixel and only where on screen, never recorded. Recorded,
+    /// every envelope's every point was a path element at the lanes' one
+    /// pixel a second — tens of megabytes a song, most of a browser
+    /// page — for a picture that at any zoom shows a point a pixel.
+    waves: std::collections::HashMap<u32, LaneWave>,
+}
+
+/// An item's waveform, to draw over its body at replay.
+struct LaneWave {
+    wave: std::sync::Arc<crate::midi::Wave>,
+    /// The item's span, seconds, and the lane's band.
+    x0: f64,
+    x1: f64,
+    top: f64,
+    bottom: f64,
+    color: Color,
+    /// Display gain: the take's loudest peak reaches the band's edge.
+    gain: f64,
+}
+
+/// The display gain for `wave`: its loudest peak to the lane's edge, so a
+/// stem mixed at -20 dB draws as a waveform and not a line. What is drawn
+/// changes, never what plays. Capped, so a stem that is near-silent all
+/// through shows as near-silent rather than as its noise floor blown up
+/// to full height.
+fn wave_gain(wave: &crate::midi::Wave) -> f64 {
+    const MOST_GAIN: f64 = 24.0; // ≈ +27.6 dB
+    let loudest = wave
+        .points
+        .iter()
+        .map(|&(max, min)| f64::from(max.abs().max(min.abs())))
+        .fold(0.0_f64, f64::max);
+    if loudest > 0.0 {
+        (1.0 / loudest).min(MOST_GAIN)
+    } else {
+        1.0
+    }
+}
+
+/// A pixel short of the lane at full scale, and never thinner than a hair
+/// either side of the middle.
+const HAIR: f64 = 0.6;
+
+/// The part of `lane`'s waveform between `left` and `right` (seconds), at
+/// about a point for each of `pps` pixels a second: the envelope's points
+/// folded (loudest of each run kept) until there is one per pixel. `None`
+/// when none of it is in view, or the band is too thin to show one.
+fn lane_wave_path(lane: &LaneWave, left: f64, right: f64, pps: f64) -> Option<BezPath> {
+    let wave = &lane.wave;
+    let half = (lane.bottom - lane.top) / 2.0;
+    let (from, to) = (lane.x0.max(left), lane.x1.min(right));
+    if half < 1.5 || wave.step <= 0.0 || from >= to || wave.points.is_empty() {
+        return None;
+    }
+    // Points folded per drawn point, and the runs aligned to it so a
+    // scroll does not shimmer.
+    let fold = crate::num::index((1.0 / (wave.step * pps.max(1e-9))).floor().max(1.0)).max(1);
+    let last = wave.points.len();
+    let first = (crate::num::index(((from - lane.x0) / wave.step).floor().max(0.0)) / fold) * fold;
+    let end = crate::num::index(((to - lane.x0) / wave.step).ceil().max(0.0))
+        .saturating_add(fold)
+        .min(last);
+    if first >= end {
+        return None;
+    }
+    let runs: Vec<(f64, f32, f32)> = wave.points[first..end]
+        .chunks(fold)
+        .enumerate()
+        .map(|(r, run)| {
+            let (max, min) = run.iter().fold((0.0_f32, 0.0_f32), |(mx, mn), &(a, b)| {
+                (mx.max(a), mn.min(b))
+            });
+            let at = crate::num::coord(first + r * fold) + crate::num::coord(run.len()) / 2.0;
+            (
+                at.mul_add(wave.step, lane.x0).clamp(lane.x0, lane.x1),
+                max,
+                min,
+            )
+        })
+        .collect();
+    let mid = (lane.top + lane.bottom) / 2.0;
+    let edge = half - 1.0;
+    let reach = edge * lane.gain;
+    let mut path = BezPath::new();
+    for (i, &(x, max, _)) in runs.iter().enumerate() {
+        let y = mid - (f64::from(max.max(0.0)) * reach).clamp(HAIR, edge.max(HAIR));
+        if i == 0 {
+            path.move_to((x, y));
+        } else {
+            path.line_to((x, y));
+        }
+    }
+    for &(x, _, min) in runs.iter().rev() {
+        path.line_to((
+            x,
+            mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR)),
+        ));
+    }
+    path.close_path();
+    Some(path)
 }
 
 impl Arrangement {
@@ -366,7 +477,7 @@ impl Arrangement {
         x: f64,
         y: f64,
     ) -> Option<(usize, crate::row::Control)> {
-        if x < 0.0 || x >= TCP_WIDTH {
+        if x < 0.0 || x >= self.tcp.width() {
             return None;
         }
         let index = self.row_at_screen(y, view)?;
@@ -377,6 +488,7 @@ impl Arrangement {
             height,
             i32::try_from(*depth).unwrap_or(0),
             track.is_folder,
+            self.tcp,
         );
         // In the band's own frame, which is what `Row` measures from.
         Some((index, row.control_at(x, y)?))
@@ -426,6 +538,12 @@ pub struct Viewport {
     pub zoom_y: f64,
     pub width: f64,
     pub height: f64,
+    /// Where the lanes start: the track panel's width, in whichever
+    /// shape it is in. The ONE number every pass that places something
+    /// against time reads — the lanes, the ruler, the cursors, the hit
+    /// test — so a narrower panel cannot move some of them and not
+    /// others.
+    pub panel_w: f64,
 }
 
 impl Viewport {
@@ -434,7 +552,7 @@ impl Viewport {
     #[must_use]
     pub fn secs(self) -> (f64, f64) {
         let pps = self.pps.max(1e-9);
-        let left = (self.scroll_x - TCP_WIDTH) / pps;
+        let left = (self.scroll_x - self.panel_w) / pps;
         let right = (self.scroll_x + self.width) / pps;
         (left - 1.0, right + 1.0)
     }
@@ -460,6 +578,7 @@ fn record_panel(
     rows: &[(daw_proto::Track, u32)],
     layout: crate::layout::Layout,
     zoom: f64,
+    tcp: crate::tcp::Tcp,
 ) -> Panels {
     let mut panel = Scene::new();
     let mut bar = Scene::new();
@@ -487,13 +606,14 @@ fn record_panel(
             y,
             body,
             &ancestors,
+            tcp,
         );
         panel.fill(
             Fill::NonZero,
             Affine::IDENTITY,
             palette.divider,
             None,
-            &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
+            &Rect::new(0.0, y + body, tcp.width(), y + h),
         );
 
         // The same row as a band, for when it is too short on screen to
@@ -503,14 +623,14 @@ fn record_panel(
             Affine::IDENTITY,
             crate::tcp::row_tint(palette, track),
             None,
-            &Rect::new(0.0, y, TCP_WIDTH, y + body),
+            &Rect::new(0.0, y, tcp.width(), y + body),
         );
         bar.fill(
             Fill::NonZero,
             Affine::IDENTITY,
             palette.divider,
             None,
-            &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
+            &Rect::new(0.0, y + body, tcp.width(), y + h),
         );
 
         spans.push(from..command_index(&panel));
@@ -545,6 +665,7 @@ impl Arrangement {
         rows: &RowsRef,
         layout: crate::layout::Layout,
         previews: &crate::midi::Previews,
+        tcp: crate::tcp::Tcp,
     ) -> Self {
         let mut lanes = Scene::new();
         let mut index = Index::default();
@@ -552,6 +673,7 @@ impl Arrangement {
         let mut boxes = Vec::with_capacity(project.item_count);
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         let mut y = 0.0_f64;
+        let keys = keys_of(project);
         for (row, (track, depth)) in rows.iter().enumerate() {
             // A folder closes simply by the next row being shallower,
             // so the truncate IS the close.
@@ -606,7 +728,6 @@ impl Arrangement {
             // row shrinks, so a collapsed session still shows its items
             // as bands rather than as empty lanes.
             let inset = (body * 0.05).clamp(0.0, 2.0);
-            let track_index = usize::try_from(track.index).unwrap_or(0);
             for item in project.lane(&track.guid) {
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
@@ -640,6 +761,7 @@ impl Arrangement {
                 // block is drawn plain rather than filled with a fake
                 // shape, because a wrong picture that later corrects
                 // itself is worse than an honest empty one.
+                let wave = previews.wave(&item.guid);
                 match previews.get(&item.guid) {
                     Some(notes) => {
                         if let Some(roll) = midi_preview(&notes, x0, x1, top, bottom) {
@@ -647,13 +769,29 @@ impl Arrangement {
                             index.x.push((x0, x1));
                         }
                     }
-                    None if !project.is_midi(&item.guid) => {
-                        if let Some(wave) = waveform(track_index, x0, x1, top, bottom, slip) {
-                            lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &wave);
-                            index.x.push((x0, x1));
+                    // Audio: the take's own peaks, once they have been
+                    // read — plain until then, for the same reason.
+                    None => {
+                        if let Some(wave) = wave
+                            .clone()
+                            .filter(|w| w.step > 0.0 && !w.points.is_empty())
+                        {
+                            // Over the body just recorded, drawn at replay.
+                            let body = command_index(&lanes).saturating_sub(1);
+                            index.waves.insert(
+                                body,
+                                LaneWave {
+                                    gain: wave_gain(&wave),
+                                    wave,
+                                    x0,
+                                    x1,
+                                    top,
+                                    bottom,
+                                    color,
+                                },
+                            );
                         }
                     }
-                    None => {}
                 }
                 // The fades, as the part of the item they take away:
                 // the region over the gain curve, darkened, from each
@@ -667,7 +805,7 @@ impl Arrangement {
                 boxes.push(ItemBox {
                     row,
                     guid: item.guid.clone(),
-                    track: track_index,
+                    wave,
                     color,
                     slip,
                     x0,
@@ -680,6 +818,7 @@ impl Arrangement {
                         x0,
                         x1,
                         name: name.to_owned(),
+                        spelled: spell(&track.name, name, x0, &keys),
                     });
                 }
             }
@@ -698,11 +837,12 @@ impl Arrangement {
 
         // The panel, cut at zoom 1 to start with. `repanel` re-cuts it
         // whenever the vertical zoom moves.
-        let cut = record_panel(palette, font, rows.as_slice(), layout, 1.0);
+        let cut = record_panel(palette, font, rows.as_slice(), layout, 1.0, tcp);
         index.panel = cut.spans;
         index.panel_bar = cut.bar_spans;
 
         Self {
+            tcp,
             lanes,
             panel: cut.panel,
             panel_bar: cut.bar,
@@ -718,6 +858,8 @@ impl Arrangement {
             items: boxes,
             sections: project.sections.clone(),
             markers: project.markers.clone(),
+            lettering: Lettering::from_env(),
+            chart: chart_marks(project, &keys),
         }
     }
 
@@ -948,10 +1090,10 @@ pub enum ItemZone {
 pub struct ItemBox {
     pub row: usize,
     pub guid: String,
-    /// The simulation's index for the lane this sits on, which is what
-    /// its waveform is generated from. Carried so a live pass can draw
-    /// the same waveform the recorded one drew — see `slip_overlay`.
-    pub track: usize,
+    /// The waveform it was recorded with, if its peaks had been read.
+    /// Carried so a live pass can draw the same waveform the recorded one
+    /// drew — see `slip_overlay`.
+    pub wave: Option<std::sync::Arc<crate::midi::Wave>>,
     /// The colour the item was recorded in, for the same reason.
     pub color: Color,
     /// How far into its source the item starts, in seconds — the active
@@ -1171,8 +1313,15 @@ pub fn slip_overlay(
         None,
         &Rect::new(item.x0, y0, item.x1, y1),
     );
-    if let Some(wave) = waveform(item.track, item.x0, item.x1, y0, y1, slip) {
-        painter.fill(Fill::NonZero, at, item.color, None, &wave);
+    // The recorded peaks, moved by how far the drag has slipped the
+    // source under the item: past the audio's end they run out, and the
+    // item shows empty there until the release re-reads them.
+    if let Some(path) = item
+        .wave
+        .as_deref()
+        .and_then(|wave| waveform(wave, item.x0, item.x1, y0, y1, slip - item.slip))
+    {
+        painter.fill(Fill::NonZero, at, item.color, None, &path);
     }
     // And the fades back over it. The cover took them with the rest of
     // the recorded item, and an item that lost its fade shading for the
@@ -1321,7 +1470,214 @@ pub struct Title {
     pub x0: f64,
     pub x1: f64,
     pub name: String,
+    /// A Keyflow chord or key item's words both ways, for the lettered
+    /// views. `None` for every other item.
+    pub spelled: Option<Spelled>,
 }
+
+/// What the items say on their faces.
+///
+/// `Titles` is every item's name, small, in its corner. The other two
+/// are for reading the song off the Keyflow folder from across a room:
+/// its chord items (and its key) lettered as large as the item holds —
+/// the chords as NUMBERS in the song's key, or as chord NAMES. Items
+/// that are not chords keep their titles either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lettering {
+    #[default]
+    Titles,
+    Numbers,
+    Chords,
+}
+
+impl Lettering {
+    /// `FTS_LETTERING=numbers|chords` — how a window opens. Anything
+    /// else is the titles.
+    #[must_use]
+    pub fn from_env() -> Self {
+        match std::env::var("FTS_LETTERING")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "numbers" | "nashville" => Self::Numbers,
+            "chords" | "names" => Self::Chords,
+            _ => Self::Titles,
+        }
+    }
+
+    /// The next view round: titles, numbers, chords, titles.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Titles => Self::Numbers,
+            Self::Numbers => Self::Chords,
+            Self::Chords => Self::Titles,
+        }
+    }
+}
+
+/// A chord item's symbol as a number and as a chord name, in the key
+/// that holds where it starts. A key item says its key both ways.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Spelled {
+    pub numbers: String,
+    pub chords: String,
+}
+
+/// A chord on the ruler's CHORDS lane: its span, and its symbol both ways.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChordMark {
+    pub x0: f64,
+    pub x1: f64,
+    pub spelled: Spelled,
+}
+
+/// A key change on the CHORDS lane: where, and the key as its item names
+/// it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyMark {
+    pub at: f64,
+    pub name: String,
+}
+
+/// Everything the CHORDS lane draws.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChartMarks {
+    pub chords: Vec<ChordMark>,
+    pub keys: Vec<KeyMark>,
+}
+
+/// The Keyflow folder's KEY and CHORD items as the ruler shows them.
+///
+/// From every track, not the visible rows: the folder is hidden from the
+/// panel once a session is prepared, and the lane is where it is read.
+/// Built with the recording, so an edit to the folder — made with it
+/// opened — is in the lane on the next cut.
+fn chart_marks(
+    project: &daw_ui::studio::project::Project,
+    keys: &[(f64, keyflow::key::Key)],
+) -> ChartMarks {
+    let mut marks = ChartMarks::default();
+    for track in &project.tracks {
+        let name = track.name.trim();
+        let is_key = name.eq_ignore_ascii_case(session::key::KEY_TRACK);
+        if !is_key && !name.eq_ignore_ascii_case(CHORD_TRACK) {
+            continue;
+        }
+        for item in project.lane(&track.guid) {
+            let Some(written) = project.title(item) else {
+                continue;
+            };
+            let x0 = item.position.as_seconds();
+            if is_key {
+                if session::key::parse_key(written).is_some() {
+                    marks.keys.push(KeyMark {
+                        at: x0,
+                        name: written.to_owned(),
+                    });
+                }
+            } else if let Some(spelled) = spell(name, written, x0, keys) {
+                marks.chords.push(ChordMark {
+                    x0,
+                    x1: x0 + item.length.as_seconds().max(0.001),
+                    spelled,
+                });
+            }
+        }
+    }
+    marks.chords.sort_by(|a, b| a.x0.total_cmp(&b.x0));
+    marks.keys.sort_by(|a, b| a.at.total_cmp(&b.at));
+    marks
+}
+
+/// The track the chart's chords are stamped on, one item a chord,
+/// named as written (`session::keyflow::from_chart`).
+const CHORD_TRACK: &str = "CHORD";
+
+/// Every key change on the KEY track, by where it starts, in order.
+///
+/// Read from every track rather than the visible rows, so a collapsed
+/// Keyflow folder still spells its chords in the right key.
+fn keys_of(project: &daw_ui::studio::project::Project) -> Vec<(f64, keyflow::key::Key)> {
+    let mut keys: Vec<(f64, keyflow::key::Key)> = project
+        .tracks
+        .iter()
+        .filter(|t| t.name.trim().eq_ignore_ascii_case(session::key::KEY_TRACK))
+        .flat_map(|t| project.lane(&t.guid))
+        .filter_map(|item| {
+            let key = session::key::parse_key(project.title(item)?)?;
+            Some((item.position.as_seconds(), key))
+        })
+        .collect();
+    keys.sort_by(|a, b| a.0.total_cmp(&b.0));
+    keys
+}
+
+/// The key in force at `at`, as the KEY track's item names it ("F major"):
+/// the last change at or before it, or the first if `at` comes before them
+/// all. `None` for a session with no key items.
+#[must_use]
+pub fn key_at(project: &daw_ui::studio::project::Project, at: f64) -> Option<String> {
+    let mut keys: Vec<(f64, &str)> = project
+        .tracks
+        .iter()
+        .filter(|t| t.name.trim().eq_ignore_ascii_case(session::key::KEY_TRACK))
+        .flat_map(|t| project.lane(&t.guid))
+        .filter_map(|item| {
+            let name = project.title(item)?;
+            session::key::parse_key(name).map(|_| (item.position.as_seconds(), name))
+        })
+        .collect();
+    keys.sort_by(|a, b| a.0.total_cmp(&b.0));
+    keys.iter()
+        .rev()
+        .find(|(from, _)| *from <= at + 1e-6)
+        .or_else(|| keys.first())
+        .map(|(_, name)| (*name).to_owned())
+}
+
+/// A title's two spellings, if its track is the chord or the key track.
+///
+/// A chord takes the key in force where it starts — the last change at
+/// or before it, or the first one if it comes before them all. A symbol
+/// that is not a chord, or a song with no key, reads as written.
+fn spell(
+    track: &str,
+    written: &str,
+    at: f64,
+    keys: &[(f64, keyflow::key::Key)],
+) -> Option<Spelled> {
+    let track = track.trim();
+    if track.eq_ignore_ascii_case(session::key::KEY_TRACK) {
+        return Some(Spelled {
+            numbers: written.to_owned(),
+            chords: written.to_owned(),
+        });
+    }
+    if !track.eq_ignore_ascii_case(CHORD_TRACK) {
+        return None;
+    }
+    // A hair of slack: a chord stamped on the key change's own beat
+    // must not read in the key before it for a rounding error.
+    let key = keys
+        .iter()
+        .rev()
+        .find(|(from, _)| *from <= at + 1e-6)
+        .or_else(|| keys.first())
+        .map(|(_, key)| key);
+    let as_ = |notation| {
+        key.and_then(|key| keyflow::renotate_symbol(written, key, notation))
+            .unwrap_or_else(|| written.to_owned())
+    };
+    Some(Spelled {
+        numbers: as_(keyflow::NotationSystem::Nashville),
+        chords: as_(keyflow::NotationSystem::Letters),
+    })
+}
+
+/// The least a note is drawn as, in seconds — the recording's unit.
+const MIN_NOTE_SECS: f64 = 0.02;
 
 /// An item's notes as one path: a block per note, stacked by pitch.
 ///
@@ -1361,7 +1717,9 @@ fn midi_preview(
         let at = x0 + width * f64::from(note.at);
         // Every note gets a width, however short: a preview of a
         // sixteenth-note part at this zoom is otherwise nothing at all.
-        let len = (width * f64::from(note.len)).max(width * 0.004);
+        // A fixed time, not a share of the item: a share of a whole-song
+        // click item was a second, and every click drew a beat long.
+        let len = (width * f64::from(note.len)).max(MIN_NOTE_SECS);
         let from_top = f64::from(high.saturating_sub(note.pitch)) / span;
         let y = (height - note_h).mul_add(from_top, top);
         // Written out rather than built from a Rect: one path holding
@@ -1377,62 +1735,58 @@ fn midi_preview(
     Some(path)
 }
 
-/// How many points a second a recorded waveform has.
+/// An item's waveform as one closed path: the maxima forward along the
+/// top, the minima back along the bottom, about the lane's middle.
 ///
-/// Recorded once in seconds, so the zoom stretches it: at a hundred
-/// pixels a second twelve points is a facet every eight pixels, which
-/// is the coarsest a waveform can be before it reads as a polygon —
-/// and at the opening zoom it is finer than the pixels.
-const WAVE_POINTS_PER_SECOND: f64 = 12.0;
-
-/// How many readings each point holds the peak of.
-///
-/// A waveform display is a peak display: each column is the loudest
-/// the audio got across it, not a sample from it. Sampled, a hit that
-/// fell between two points was a bead where a transient should be.
-const WAVE_HOLD: usize = 4;
-
-/// An item's waveform as one closed path: the envelope forward along
-/// the top, back along the bottom, mirrored about the lane's middle.
-///
-/// `slip` is how far into the source the item starts, and it shifts
-/// which part of the source each column shows — the item stays where it
-/// is and the audio inside it moves, which is what a slip edit is.
-/// Added to the timeline position rather than replacing it, so an
-/// unslipped item draws exactly what it drew before this existed.
-///
-/// From the simulation until the engine streams peaks — see
-/// `simulate::waveform` — and `None` for a lane too short to show one.
-fn waveform(track: usize, x0: f64, x1: f64, top: f64, bottom: f64, slip: f64) -> Option<BezPath> {
+/// Drawn from the take's own peaks ([`crate::midi::Wave`]), so point `i`
+/// sits at item time `i * step`. `shift` moves the audio under the item —
+/// a slip in flight, in seconds into the source — without moving the item.
+/// A hair of height at silence, so a quiet stretch still reads as audio
+/// rather than as a gap. `None` for a lane too short to show one, or for
+/// no audio inside the item.
+fn waveform(
+    wave: &crate::midi::Wave,
+    x0: f64,
+    x1: f64,
+    top: f64,
+    bottom: f64,
+    shift: f64,
+) -> Option<BezPath> {
     let half = (bottom - top) / 2.0;
-    if half < 1.5 {
+    if half < 1.5 || wave.step <= 0.0 || x1 <= x0 {
         return None;
     }
     let mid = (top + bottom) / 2.0;
-    let span = (x1 - x0).max(0.0);
-    let count = crate::num::index((span * WAVE_POINTS_PER_SECOND).ceil()).max(2);
-    let at = |i: usize| x0 + span * crate::num::coord(i) / crate::num::coord(count);
-    // A hair of amplitude at silence, so a quiet item still has a
-    // line down its middle and reads as audio rather than as a gap.
-    // Each point holds the peak over the stretch it stands for.
-    let step = 1.0 / WAVE_POINTS_PER_SECOND / crate::num::coord(WAVE_HOLD);
-    let amp = |t: f64| {
-        (0..WAVE_HOLD)
-            .map(|k| {
-                crate::simulate::waveform(track, crate::num::coord(k).mul_add(-step, t + slip))
-            })
-            .fold(0.0_f64, f64::max)
-            .mul_add(half - 1.0, 0.6)
-    };
-    let mut path = BezPath::new();
-    path.move_to((x0, mid - amp(x0)));
-    for i in 1..=count {
-        let x = at(i).min(x1);
-        path.line_to((x, mid - amp(x)));
+    // The points that land inside the item once shifted.
+    let first = crate::num::index((shift / wave.step).floor().max(0.0));
+    let last =
+        crate::num::index(((x1 - x0 + shift) / wave.step).ceil().max(0.0)).min(wave.points.len());
+    if first >= last {
+        return None;
     }
-    for i in (0..=count).rev() {
-        let x = at(i).min(x1);
-        path.line_to((x, mid + amp(x)));
+    let span = &wave.points[first..last];
+    // Each point at the middle of the stretch it stands for.
+    let x_of = |i: usize| {
+        (crate::num::coord(first + i) + 0.5)
+            .mul_add(wave.step, x0 - shift)
+            .clamp(x0, x1)
+    };
+    let reach = (half - 1.0) * wave_gain(wave);
+    let mut path = BezPath::new();
+    let edge = half - 1.0;
+    for (i, &(max, _)) in span.iter().enumerate() {
+        let y = mid - (f64::from(max.max(0.0)) * reach).clamp(HAIR, edge.max(HAIR));
+        if i == 0 {
+            path.move_to((x_of(i), y));
+        } else {
+            path.line_to((x_of(i), y));
+        }
+    }
+    for (i, &(_, min)) in span.iter().enumerate().rev() {
+        path.line_to((
+            x_of(i),
+            mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR)),
+        ));
     }
     path.close_path();
     Some(path)
@@ -1462,6 +1816,26 @@ pub fn titles(
         }
         let left = title.x0.mul_add(view.pps, origin.0);
         let right = title.x1.mul_add(view.pps, origin.0);
+        let lettered = match (scene.lettering, &title.spelled) {
+            (Lettering::Numbers, Some(spelled)) => Some(spelled.numbers.as_str()),
+            (Lettering::Chords, Some(spelled)) => Some(spelled.chords.as_str()),
+            _ => None,
+        };
+        if let Some(text) = lettered {
+            let row_top = top.mul_add(view.zoom_y, origin.1);
+            // The lanes' own left edge, so an item that began off
+            // screen still says what it is where it can be seen.
+            let seen = origin.0 + view.scroll_x;
+            letter(
+                painter,
+                palette,
+                font,
+                text,
+                (left.max(seen), right),
+                (row_top, row_h),
+            );
+            continue;
+        }
         let room = right - left - PAD * 2.0;
         if room < 12.0 {
             continue;
@@ -1484,7 +1858,69 @@ pub fn titles(
     }
 }
 
+/// One word as large as its item: as tall as the row allows, shrunk
+/// only if it would run past the item's end, over a shade that keeps
+/// the notes under it from reading as part of the letters.
+fn letter(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &crate::text::Font,
+    text: &str,
+    (left, right): (f64, f64),
+    (top, row_h): (f64, f64),
+) {
+    const PAD: f64 = 4.0;
+    // How much of the size the capitals stand, near enough for the
+    // embedded face — what centres the word in its row.
+    const CAP: f64 = 0.72;
+    // Measured at one size and scaled: a face's advance is linear in
+    // its size.
+    const PROBE: f32 = 100.0;
+    // Below this the word is not the thing to read any more; the
+    // title's own size, from the same face.
+    const FLOOR: f64 = 8.0;
+    let inset = 2.0;
+    let room = right - left - PAD * 2.0;
+    let tall = (row_h - inset * 2.0 - PAD) / CAP;
+    let wide = font.width(text, PROBE);
+    if room <= 0.0 || wide <= 0.0 {
+        return;
+    }
+    let size = tall.min(room * f64::from(PROBE) / wide);
+    if size < FLOOR {
+        return;
+    }
+    painter.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgba8(0x00, 0x00, 0x00, 0x73),
+        None,
+        &Rect::new(left, top + inset, right, top + row_h - inset),
+    );
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a font size, well inside f32"
+    )]
+    let size_f32 = size as f32;
+    let baseline = top + (row_h + size * CAP) / 2.0;
+    crate::tcp::glyphs(
+        painter,
+        font,
+        palette.text,
+        text,
+        left + PAD,
+        baseline,
+        size_f32,
+    );
+}
+
 impl Arrangement {
+    /// The song's chords and key changes, for the ruler.
+    #[must_use]
+    pub const fn chart(&self) -> &ChartMarks {
+        &self.chart
+    }
+
     /// How many items this scene draws.
     #[must_use]
     pub const fn items(&self) -> usize {
@@ -1521,6 +1957,14 @@ impl Arrangement {
                 if submit_command(painter, cmd, transform) {
                     counts.submitted = counts.submitted.saturating_add(1);
                 }
+                // An item body with a waveform over it: the part on
+                // screen, a point a pixel.
+                if let Some(lane) = u32::try_from(i).ok().and_then(|i| self.index.waves.get(&i))
+                    && let Some(path) = lane_wave_path(lane, left, right, view.pps)
+                {
+                    painter.fill(Fill::NonZero, transform, lane.color, None, &path);
+                    counts.submitted = counts.submitted.saturating_add(1);
+                }
             }
         }
         counts
@@ -1546,7 +1990,7 @@ impl Arrangement {
         if (zoom - self.panel_zoom).abs() < f64::EPSILON {
             return false;
         }
-        let cut = record_panel(palette, font, rows, layout, zoom);
+        let cut = record_panel(palette, font, rows, layout, zoom, self.tcp);
         self.panel = cut.panel;
         self.panel_bar = cut.bar;
         self.index.panel = cut.spans;
@@ -1823,5 +2267,174 @@ mod chrome_tests {
         // look see-through was the level being painted over the whole
         // cap instead of only the pane cut in it. See `CAP_PANE_Y0`.
         assert_eq!(chrome.hardware, chrome.surface_raised);
+    }
+}
+
+#[cfg(test)]
+mod lettering_tests {
+    use super::{Spelled, spell};
+
+    fn key(label: &str) -> keyflow::key::Key {
+        session::key::parse_key(label).expect("a key")
+    }
+
+    /// A chord is spelled in the key that holds where it starts — the
+    /// change at its own beat included — and reads as written before
+    /// any key or when it is not a chord.
+    #[test]
+    fn chords_take_the_key_in_force() {
+        let keys = [(0.0, key("F major")), (10.0, key("G major"))];
+        let at = |written, t| spell("CHORD", written, t, &keys);
+        assert_eq!(
+            at("5/7", 2.0),
+            Some(Spelled {
+                numbers: "5/7".into(),
+                chords: "C/E".into()
+            })
+        );
+        assert_eq!(at("4", 10.0).map(|s| s.chords), Some("C".into()));
+        assert_eq!(at("Bb", 2.0).map(|s| s.numbers), Some("4".into()));
+        assert_eq!(at("N.C.", 2.0).map(|s| s.chords), Some("N.C.".into()));
+        assert_eq!(
+            spell("CHORD", "1", 0.0, &[]).map(|s| s.chords),
+            Some("1".into())
+        );
+        assert_eq!(spell("Bass", "1", 0.0, &keys), None);
+        assert_eq!(
+            spell("KEY", "F major", 0.0, &keys).map(|s| s.numbers),
+            Some("F major".into())
+        );
+    }
+}
+
+#[cfg(test)]
+mod waveform_tests {
+    use super::waveform;
+    use crate::midi::Wave;
+
+    fn wave() -> Wave {
+        Wave {
+            step: 0.5,
+            points: vec![(1.0, -1.0), (0.0, 0.0), (0.5, -0.25), (1.0, -1.0)],
+        }
+    }
+
+    /// Full scale reaches the lane's edges less a pixel; silence keeps a
+    /// hair of height; and nothing is drawn outside the item.
+    #[test]
+    fn the_envelope_fills_the_lane_and_stays_in_the_item() {
+        use vello::kurbo::Shape as _;
+        let path = waveform(&wave(), 10.0, 12.0, 0.0, 20.0, 0.0).expect("a path");
+        let b = path.bounding_box();
+        assert!(
+            (b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9,
+            "{b:?}"
+        );
+        assert!(b.x0 >= 10.0 && b.x1 <= 12.0, "{b:?}");
+    }
+
+    /// A quiet take is drawn normalized: its loudest peak reaches the lane
+    /// edge as a full-scale one does — and the gain is capped, so a take of
+    /// nothing but noise stays small.
+    #[test]
+    fn a_quiet_take_fills_its_lane() {
+        use vello::kurbo::Shape as _;
+        let quiet = Wave {
+            step: 0.5,
+            points: vec![(0.1, -0.1), (0.05, -0.02), (0.1, -0.1)],
+        };
+        let b = waveform(&quiet, 0.0, 1.5, 0.0, 20.0, 0.0)
+            .expect("a path")
+            .bounding_box();
+        assert!(
+            (b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9,
+            "{b:?}"
+        );
+        let noise = Wave {
+            step: 0.5,
+            points: vec![(0.001, -0.001), (0.001, -0.001)],
+        };
+        let b = waveform(&noise, 0.0, 1.0, 0.0, 20.0, 0.0)
+            .expect("a path")
+            .bounding_box();
+        assert!(b.height() < 4.0, "noise stays small: {b:?}");
+    }
+
+    /// A slip moves the audio, not the item: shifted a whole second, the
+    /// first two points have gone out of the item's left edge.
+    #[test]
+    fn a_slip_moves_the_audio_under_the_item() {
+        let still = waveform(&wave(), 0.0, 2.0, 0.0, 20.0, 0.0).expect("a path");
+        let slipped = waveform(&wave(), 0.0, 2.0, 0.0, 20.0, 1.0).expect("a path");
+        assert!(slipped.elements().len() < still.elements().len());
+        // Past the end of the audio there is nothing left to draw.
+        assert!(waveform(&wave(), 0.0, 2.0, 0.0, 20.0, 5.0).is_none());
+    }
+}
+
+#[cfg(test)]
+mod lane_wave_tests {
+    use super::{LaneWave, lane_wave_path};
+    use crate::midi::Wave;
+    use vello::peniko::Color;
+
+    fn lane(points: usize) -> LaneWave {
+        // Forty points a second over 100 s.
+        let wave = Wave {
+            step: 0.025,
+            points: (0..points)
+                .map(|i| if i == 2000 { (0.9, -0.9) } else { (0.1, -0.1) })
+                .collect(),
+        };
+        LaneWave {
+            wave: std::sync::Arc::new(wave),
+            x0: 0.0,
+            x1: 100.0,
+            top: 0.0,
+            bottom: 40.0,
+            color: Color::WHITE,
+            gain: 1.0,
+        }
+    }
+
+    fn points_of(path: &vello::kurbo::BezPath) -> usize {
+        path.elements().len()
+    }
+
+    #[test]
+    fn a_waveform_is_drawn_a_point_a_pixel_and_only_where_on_screen() {
+        let lane = lane(4000);
+        // Fitted: 100 s across 200 px — two pixels a second, ~200 points
+        // each way, not 4000.
+        let fitted = lane_wave_path(&lane, 0.0, 100.0, 2.0).expect("a path");
+        assert!(
+            points_of(&fitted) < 2 * 210,
+            "{} elements",
+            points_of(&fitted)
+        );
+        // Zoomed in on 10 s at 100 px a second: only those seconds, at the
+        // envelope's own resolution (40 a second is under a pixel's worth).
+        let near = lane_wave_path(&lane, 45.0, 55.0, 100.0).expect("a path");
+        assert!(
+            points_of(&near) < 2 * 420 && points_of(&near) > 2 * 380,
+            "{} elements",
+            points_of(&near)
+        );
+        // Out of view: nothing.
+        assert!(lane_wave_path(&lane, 200.0, 300.0, 2.0).is_none());
+    }
+
+    #[test]
+    fn a_fold_keeps_a_peak_it_passes_over() {
+        let lane = lane(4000);
+        let fitted = lane_wave_path(&lane, 0.0, 100.0, 2.0).expect("a path");
+        // The spike at point 2000 (50 s) reaches near the band's top edge.
+        let top = fitted
+            .elements()
+            .iter()
+            .filter_map(|e| e.end_point())
+            .map(|p| p.y)
+            .fold(f64::MAX, f64::min);
+        assert!(top < 5.0, "the spike survives the fold: top at {top}");
     }
 }

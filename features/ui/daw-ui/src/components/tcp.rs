@@ -524,7 +524,7 @@ fn FixedLanes(on: bool) -> Element {
 /// # Why the store is mounted here and not left to the caller
 ///
 /// [`use_track_store`] is provide-or-consume, so a window that already
-/// has one (see `studio::Studio`) shares it and this adds nothing. A
+/// has one shares it and this adds nothing. A
 /// panel dropped into a dock by itself gets its own. Either way the
 /// controls inside have somewhere to read and write, which is the
 /// difference between a live panel and a picture of one.

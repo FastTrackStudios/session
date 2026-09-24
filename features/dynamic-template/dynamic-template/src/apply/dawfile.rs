@@ -22,7 +22,7 @@ use dawfile_reaper::types::track::{
 };
 use dawfile_reaper::types::ReaperProject;
 
-use super::TemplateTarget;
+use super::{find_group, TemplateTarget};
 
 /// A parsed `.RPP` project the template can be applied to.
 pub struct RppTarget<'a> {
@@ -84,7 +84,28 @@ impl<'a> RppTarget<'a> {
             })
             .collect()
     }
+}
 
+/// This backend edits an in-memory project; nothing here can fail, so the
+/// error type is uninhabited and `?` on it is free.
+#[derive(Debug)]
+pub enum Never {}
+
+impl std::fmt::Display for Never {
+    // rustc requires the dereference for exhaustiveness — `&T` is always
+    // considered inhabited regardless of `T` ("references are always
+    // considered inhabited"), so `match self {}` doesn't type-check; only
+    // `match *self {}` does, and that's exactly what this lint flags. No
+    // rewrite avoids the deref here.
+    #[allow(clippy::uninhabited_references)]
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {}
+    }
+}
+
+impl std::error::Error for Never {}
+
+impl TemplateTarget for RppTarget<'_> {
     /// Nest a "DI" capture under its sibling primary track, for any group
     /// that opts in via [`monarchy::Group::nest_secondary_mics`] — electric
     /// guitar turns this on for its DI feed.
@@ -97,7 +118,7 @@ impl<'a> RppTarget<'a> {
     ///
     /// Idempotent: once nested, "DI" sits inside its sibling rather than
     /// beside it, so a second pass no longer sees them as siblings.
-    pub fn nest_secondary_mics(&mut self) {
+    fn nest_secondary_mics(&mut self) {
         let config = crate::default_config();
         let entries = super::contextual_paths(self);
 
@@ -162,46 +183,7 @@ impl<'a> RppTarget<'a> {
             }
         }
     }
-}
 
-/// Find a group by name anywhere in the config's tree (recursing into
-/// nested groups).
-fn find_group<'a>(
-    config: &'a crate::DynamicTemplateConfig,
-    name: &str,
-) -> Option<&'a monarchy::Group<crate::ItemMetadata>> {
-    fn search<'a>(
-        group: &'a monarchy::Group<crate::ItemMetadata>,
-        name: &str,
-    ) -> Option<&'a monarchy::Group<crate::ItemMetadata>> {
-        if group.name == name {
-            return Some(group);
-        }
-        group.groups.iter().find_map(|g| search(g, name))
-    }
-    config.groups.iter().find_map(|g| search(g, name))
-}
-
-/// This backend edits an in-memory project; nothing here can fail, so the
-/// error type is uninhabited and `?` on it is free.
-#[derive(Debug)]
-pub enum Never {}
-
-impl std::fmt::Display for Never {
-    // rustc requires the dereference for exhaustiveness — `&T` is always
-    // considered inhabited regardless of `T` ("references are always
-    // considered inhabited"), so `match self {}` doesn't type-check; only
-    // `match *self {}` does, and that's exactly what this lint flags. No
-    // rewrite avoids the deref here.
-    #[allow(clippy::uninhabited_references)]
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {}
-    }
-}
-
-impl std::error::Error for Never {}
-
-impl TemplateTarget for RppTarget<'_> {
     type TrackId = usize;
     type Error = Never;
 

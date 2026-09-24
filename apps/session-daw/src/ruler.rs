@@ -38,12 +38,38 @@ pub const LANE_H: f64 = 15.0;
 
 /// How many ruler lanes there are, over the bars.
 ///
-/// The FTS convention (REAPER 7.62's ruler lanes): lane 1 is the SONG,
-/// one region over the whole song; lane 2 the SECTIONS, a region per
-/// verse and chorus; lane 3 the MARKS — SONGSTART, SONGEND and the
-/// like. Always three, so a session with fewer still lays its rows out
+/// The FTS convention (REAPER 7.62's ruler lanes, numbered from 0 as
+/// REAPER's API and the daw service do): lane 0 is the SONG, one region
+/// over the whole song; lane 1 the SECTIONS, a region per verse and
+/// chorus; lane 2 the MARKS — SONGSTART, SONGEND and the like. Always three, so a session with fewer still lays its rows out
 /// where every other session does.
 pub const LANES: usize = 3;
+
+/// How wide the strip of lane names is, against the ruler's left edge:
+/// the track panel's mute/solo column, so the names line up over the
+/// buttons below them.
+///
+/// The names used to start at the corner's left edge and their rules ran
+/// across it; the corner is the DAW view's main toolbar now, so the names
+/// sit in this column and the rules stop at it.
+pub const LABEL_W: f64 = TCP_WIDTH - daw_ui::studio::panel::TINT_W;
+
+/// A lane's name in the label column, shrunk to fit it — centred, as the
+/// mute and solo buttons under it are.
+fn label(
+    painter: &mut impl PaintScene,
+    font: &Font,
+    color: Color,
+    // Where the lanes start: the label column is the LABEL_W before it.
+    left: f64,
+    name: &str,
+    baseline: f64,
+    size: f32,
+) {
+    let (name, size) = font.fit(name, size, 5.0, LABEL_W - 4.0);
+    let x = left - LABEL_W / 2.0 - font.width(&name, size) / 2.0;
+    crate::tcp::glyphs(painter, font, color, &name, x, baseline, size);
+}
 
 /// What the lanes are called, top to bottom.
 pub const LANE_NAMES: [&str; LANES] = ["SONG", "SECTIONS", "MARKS"];
@@ -56,8 +82,71 @@ pub const LANE_NAMES: [&str; LANES] = ["SONG", "SECTIONS", "MARKS"];
 /// it reinterprets.
 pub const TEMPO_H: f64 = 13.0;
 
-/// The whole top strip: the lanes, then the bars under them.
-pub const RULER_H: f64 = BARS_H + TEMPO_H + LANE_H * 3.0;
+/// The CHORDS lane's height: the song's key changes and its chords,
+/// read off the Keyflow folder's KEY and CHORD tracks. A lane like the
+/// others, so the ruler reads as one set of rows; the chords are lettered
+/// smaller to fit it.
+pub const CHORD_H: f64 = LANE_H;
+
+/// Whether the ruler carries the CHORDS lane: unset, off, on.
+static CHORDS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Whether the ruler shows the CHORDS lane. On unless
+/// `FTS_RULER_CHORDS=0` — it is where a prepared session keeps its key
+/// and chords once the Keyflow folder is out of the panel.
+///
+/// Process-wide rather than per view because the ruler's height is: the
+/// hit tests, the lanes' offset and the corner beside the ruler all ask
+/// it, and a height that two of them disagreed about would put every
+/// click one lane off.
+#[must_use]
+pub fn chords_shown() -> bool {
+    use std::sync::atomic::Ordering;
+    match CHORDS.load(Ordering::Relaxed) {
+        1 => false,
+        2 => true,
+        _ => {
+            let on = std::env::var("FTS_RULER_CHORDS").map_or(true, |v| v != "0");
+            CHORDS.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+            on
+        }
+    }
+}
+
+/// Show or hide the CHORDS lane.
+pub fn show_chords(on: bool) {
+    CHORDS.store(if on { 2 } else { 1 }, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The CHORDS lane's height as the ruler has it now: nothing when it is
+/// hidden.
+#[must_use]
+pub fn chords_h() -> f64 {
+    if chords_shown() { CHORD_H } else { 0.0 }
+}
+
+/// How far down the ruler a lane row starts.
+///
+/// SONG and SECTIONS stack from the top; the CHORDS lane, when shown,
+/// sits under SECTIONS and pushes MARKS below it. The chords follow the
+/// sections they are the harmony of, and the marks — the sparsest lane —
+/// sit nearest the bars, where a SONGSTART flag is read against its bar.
+#[must_use]
+pub fn row_top(row: usize) -> f64 {
+    let lanes = LANE_H * crate::num::coord(row);
+    if row >= MARKS_ROW {
+        lanes + chords_h()
+    } else {
+        lanes
+    }
+}
+
+/// The whole top strip: the lanes, the chords, then the tempo and the
+/// bars under them.
+#[must_use]
+pub fn ruler_h() -> f64 {
+    BARS_H + TEMPO_H + LANE_H * 3.0 + chords_h()
+}
 
 /// The project's bar grid.
 ///
@@ -129,6 +218,10 @@ pub fn grid(
     finest: f64,
     origin: (f64, f64),
 ) {
+    // The main toolbar's grid-lines switch.
+    if !crate::options::GRID.get() {
+        return;
+    }
     let measure_px = bars.secs_per_bar() * view.pps;
     if measure_px <= 0.0 {
         return;
@@ -186,16 +279,16 @@ pub fn ruler(
     fill(
         painter,
         palette.ruler_bg,
-        Rect::new(ox, oy, ox + view.width, oy + RULER_H),
+        Rect::new(ox, oy, ox + view.width, oy + ruler_h()),
     );
     fill(
         painter,
         palette.tcp_rule,
-        Rect::new(ox, oy + RULER_H - 1.0, ox + view.width, oy + RULER_H),
+        Rect::new(ox, oy + ruler_h() - 1.0, ox + view.width, oy + ruler_h()),
     );
     // The bars are the bottom of the strip; the tempo sits just above
     // them and the lanes over that.
-    let oy = oy + RULER_H - BARS_H;
+    let oy = oy + ruler_h() - BARS_H;
 
     let (from, to) = view.secs();
     // Every beat up to the right edge, counted through the tempo map
@@ -259,8 +352,8 @@ pub fn ruler(
             if t < from || t > to {
                 continue;
             }
-            let x = t.mul_add(view.pps, TCP_WIDTH - view.scroll_x);
-            if x < TCP_WIDTH - 1.0 || x > view.width {
+            let x = t.mul_add(view.pps, view.panel_w - view.scroll_x);
+            if x < view.panel_w - 1.0 || x > view.width {
                 continue;
             }
             fill(
@@ -387,23 +480,23 @@ pub fn lanes(
 ) {
     const SIZE: f32 = 8.0;
     let (ox, oy) = origin;
-    let left = ox + TCP_WIDTH;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
     let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
     for (row, name) in LANE_NAMES.iter().enumerate() {
-        let top = LANE_H.mul_add(crate::num::coord(row), oy);
+        let top = oy + row_top(row);
         // A rule under each lane, and the lane's name in the column.
         fill(
             painter,
             palette.tcp_rule,
-            Rect::new(ox, top + LANE_H - 1.0, right, top + LANE_H),
+            Rect::new(left - LABEL_W, top + LANE_H - 1.0, right, top + LANE_H),
         );
-        crate::tcp::glyphs(
+        label(
             painter,
             font,
             palette.text_faint,
+            left,
             name,
-            ox + 8.0,
             top + LANE_H - 4.0,
             SIZE,
         );
@@ -413,7 +506,7 @@ pub fn lanes(
     // long section still says what it is.
     for section in sections {
         let row = lane_row(section.lane);
-        let top = LANE_H.mul_add(crate::num::coord(row), oy) + 2.0;
+        let top = oy + row_top(row) + 2.0;
         let x0 = x_of(section.start).max(left);
         let x1 = x_of(section.end).min(right);
         if x1 <= x0 {
@@ -452,7 +545,7 @@ pub fn lanes(
     // Markers: a flag on its lane, named to the right of it.
     for marker in markers {
         let row = lane_row(marker.lane);
-        let top = LANE_H.mul_add(crate::num::coord(row), oy) + 2.0;
+        let top = oy + row_top(row) + 2.0;
         let x = x_of(marker.at);
         if x < left || x > right {
             continue;
@@ -486,10 +579,126 @@ pub fn lanes(
     }
 }
 
+/// The CHORDS lane: the song's key changes and its chords, under the
+/// marks and over the tempo, when the ruler shows it.
+///
+/// A key change is a violet tag with the key in it — the KEY track's own
+/// colour — and a chord is its symbol from where it starts, the next
+/// chord's edge a faint tick. Numbers or chord names by the same
+/// [`Lettering`](crate::arrangement::Lettering) the items wear; with the
+/// items on their titles, the lane reads in numbers — the song's own
+/// notation, and the one that survives a change of key.
+pub fn chord_lane(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    view: Viewport,
+    origin: (f64, f64),
+    chart: &crate::arrangement::ChartMarks,
+    lettering: crate::arrangement::Lettering,
+) {
+    use crate::arrangement::Lettering;
+    const SIZE: f32 = 10.0;
+    const TAG: f32 = 8.0;
+    if !chords_shown() {
+        return;
+    }
+    let (ox, oy) = origin;
+    // Under SECTIONS, over MARKS — see `row_top`.
+    let top = oy + row_top(MARKS_ROW) - CHORD_H;
+    let left = ox + view.panel_w;
+    let right = ox + view.width;
+    let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
+    fill(
+        painter,
+        palette.tcp_rule,
+        Rect::new(left - LABEL_W, top + CHORD_H - 1.0, right, top + CHORD_H),
+    );
+    label(
+        painter,
+        font,
+        palette.text_faint,
+        left,
+        "CHORDS",
+        top + CHORD_H - 4.0,
+        8.0,
+    );
+    // Where each key tag ends, so a chord starting under one is written
+    // after it rather than through it.
+    let tags: Vec<(f64, f64, &str)> = chart
+        .keys
+        .iter()
+        .map(|key| {
+            let x = x_of(key.at);
+            (x, x + font.width(&key.name, TAG) + 10.0, key.name.as_str())
+        })
+        .collect();
+    for chord in &chart.chords {
+        let x0 = x_of(chord.x0);
+        let x1 = x_of(chord.x1).min(right);
+        if x1 <= left || x0 >= right {
+            continue;
+        }
+        if x0 >= left {
+            fill(
+                painter,
+                palette.text_faint.multiply_alpha(0.5),
+                Rect::new(x0, top + 3.0, x0 + 1.0, top + CHORD_H - 3.0),
+            );
+        }
+        // Past a key tag that starts where this chord does, and past the
+        // lane's left edge for a chord that began off screen.
+        let under_tag = tags
+            .iter()
+            .filter(|(at, _, _)| (at - x0).abs() < 1.0)
+            .map(|(_, end, _)| *end)
+            .fold(x0, f64::max);
+        let at = under_tag.max(left) + 4.0;
+        let text = match lettering {
+            Lettering::Chords => chord.spelled.chords.as_str(),
+            Lettering::Titles | Lettering::Numbers => chord.spelled.numbers.as_str(),
+        };
+        // Smaller rather than shorter: a chord cut to fit is a different
+        // chord ("5/7" read as "5/"), so the lettering shrinks, and a
+        // chord with no room at all is left to its tick.
+        let (fitted, size) = font.fit(text, SIZE, 6.0, x1 - at - 2.0);
+        if fitted == text {
+            let baseline = top + (CHORD_H + f64::from(size) * 0.72) / 2.0;
+            crate::tcp::glyphs(painter, font, palette.text, text, at, baseline, size);
+        }
+    }
+    let violet = Color::from_rgba8(0x7c, 0x3a, 0xed, 0xff);
+    for (x0, x1, name) in tags {
+        if x1 <= left || x0 >= right {
+            continue;
+        }
+        let x0 = x0.max(left);
+        fill(
+            painter,
+            violet,
+            Rect::new(x0, top + 3.0, x1.min(right), top + CHORD_H - 3.0),
+        );
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text,
+            name,
+            x0 + 5.0,
+            top + (CHORD_H + f64::from(TAG) * 0.72) / 2.0,
+            TAG,
+        );
+    }
+}
+
 /// The lanes' lines, down through the arrangement: every region edge
-/// and every marker, from under the ruler to the bottom of the view,
+/// and every marker, from under its own band to the bottom of the view,
 /// so the song's shape is read against the items and not only over
 /// them.
+///
+/// Drawn OVER the ruler, after it: a line starts where its band or flag
+/// ends and crosses the lanes below it, the tempo and the bars, as
+/// REAPER's do — a section's edge read against the bar number it
+/// falls on. So it has to come after [`ruler`], [`tempo`] and [`lanes`].
 ///
 /// Where two fall on one pixel the LOWEST lane wins — a section's
 /// edge over the song's, a mark over a section — and a start beats an
@@ -502,11 +711,10 @@ pub fn lane_lines(
     origin: (f64, f64),
     sections: &[daw_ui::studio::project::Section],
     markers: &[daw_ui::studio::project::Marker],
-    top: f64,
     bottom: f64,
 ) {
-    let (ox, _) = origin;
-    let left = ox + TCP_WIDTH;
+    let (ox, oy) = origin;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
     let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
     // Every line, with what decides between two on one pixel: the lane
@@ -550,6 +758,9 @@ pub fn lane_lines(
             (_, true) => 0.7,
             (_, false) => 0.5,
         };
+        // From the foot of the band or flag it belongs to — which is
+        // drawn inset 2px from its lane — so the line continues it.
+        let top = oy + row_top(row) + LANE_H - 2.0;
         let x = x.round();
         fill(
             painter,
@@ -559,12 +770,14 @@ pub fn lane_lines(
     }
 }
 
-/// Which lane row a REAPER lane index lands on: lanes are numbered from
-/// one, the default lane is the first, and anything past the last row
-/// is drawn on it rather than off the strip.
+/// Which lane row a lane index lands on. Lanes are numbered from 0, as
+/// REAPER's API and the daw service number them (`CoreLane`: SONG 0,
+/// SECTIONS 1, MARKS 2) — the `.rpp` file's own 1-based rows are
+/// converted where it is read. Anything past the last row is drawn on it
+/// rather than off the strip.
 #[must_use]
 pub fn lane_row(lane: u32) -> usize {
-    usize::try_from(lane.saturating_sub(1))
+    usize::try_from(lane)
         .unwrap_or(0)
         .min(LANES.saturating_sub(1))
 }
@@ -636,14 +849,14 @@ fn line_every(
         if t > to {
             break;
         }
-        let x = t.mul_add(view.pps, TCP_WIDTH - view.scroll_x);
-        if x >= TCP_WIDTH {
+        let x = t.mul_add(view.pps, view.panel_w - view.scroll_x);
+        if x >= view.panel_w {
             painter.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
                 color,
                 None,
-                &Rect::new(ox + x, oy + RULER_H, ox + x + width, oy + view.height),
+                &Rect::new(ox + x, oy + ruler_h(), ox + x + width, oy + view.height),
             );
         }
     }
@@ -721,9 +934,9 @@ const EDGE_GRIP: f64 = 4.0;
 pub fn field(view: Viewport, origin: (f64, f64), row: usize, at: f64) -> Rect {
     const WIDTH: f64 = 140.0;
     let (ox, oy) = origin;
-    let left = ox + TCP_WIDTH;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
-    let top = LANE_H.mul_add(crate::num::coord(row), oy);
+    let top = oy + row_top(row);
     let x0 = at
         .mul_add(view.pps, left - view.scroll_x)
         .clamp(left, (right - WIDTH).max(left));
@@ -732,13 +945,15 @@ pub fn field(view: Viewport, origin: (f64, f64), row: usize, at: f64) -> Rect {
 
 /// The lane a y falls in, or `None` if it is in the bars.
 #[must_use]
+///
+/// The CHORDS lane is not one: a press there falls to the bars, like a
+/// press on the tempo, rather than making a marker in a lane of chords.
 pub fn lane_at(y: f64, top: f64) -> Option<usize> {
-    let row = ((y - top) / LANE_H).floor();
-    if row < 0.0 {
-        return None;
-    }
-    let row = crate::num::index(row);
-    (row < LANES).then_some(row)
+    let down = y - top;
+    (0..LANES).find(|&row| {
+        let from = row_top(row);
+        down >= from && down < from + LANE_H
+    })
 }
 
 /// What is under a point on the ruler.
@@ -832,11 +1047,10 @@ pub const SECTIONS_ROW: usize = 1;
 
 /// The lane number to store for a row.
 ///
-/// The inverse of `lane_row`: REAPER counts ruler lanes from one, with
-/// zero meaning the default lane, and the rows here count from zero.
+/// The inverse of `lane_row`: rows and lanes both count from 0.
 #[must_use]
 pub const fn lane_of(row: usize) -> u32 {
-    row as u32 + 1
+    row as u32
 }
 
 // ─── Counting through tempo and signature changes ───────────────────
@@ -985,20 +1199,20 @@ pub fn tempo(
 ) {
     const SIZE: f32 = 8.0;
     let (ox, oy) = origin;
-    let top = oy + RULER_H - BARS_H - TEMPO_H;
-    let left = ox + TCP_WIDTH;
+    let top = oy + ruler_h() - BARS_H - TEMPO_H;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
     fill(
         painter,
         palette.tcp_rule,
-        Rect::new(ox, top + TEMPO_H - 1.0, right, top + TEMPO_H),
+        Rect::new(left - LABEL_W, top + TEMPO_H - 1.0, right, top + TEMPO_H),
     );
-    crate::tcp::glyphs(
+    label(
         painter,
         font,
         palette.text_faint,
+        left,
         "TEMPO",
-        ox + 8.0,
         top + TEMPO_H - 3.0,
         SIZE,
     );
@@ -1084,6 +1298,7 @@ mod tests {
             zoom_y: 1.0,
             width: 1000.0,
             height: 600.0,
+            panel_w: crate::arrangement::TCP_WIDTH,
         }
     }
 

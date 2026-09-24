@@ -531,28 +531,65 @@ pub fn drag(
 /// backlog after a stall, which is the one thing a playhead must not
 /// replay.
 pub struct Transport {
-    state: std::sync::Arc<std::sync::Mutex<(f64, bool)>>,
+    state: std::sync::Arc<std::sync::Mutex<Reading>>,
 }
+
+/// One read of the transport.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Reading {
+    /// The play position, in seconds.
+    pub at: f64,
+    pub playing: bool,
+    pub looping: bool,
+    pub recording: bool,
+    /// The tempo at the play position.
+    pub bpm: f64,
+}
+
+/// The one poller every panel reads — see [`Transport::shared`].
+static SHARED: std::sync::OnceLock<Option<Transport>> = std::sync::OnceLock::new();
 
 impl Transport {
     /// Start polling. `None` if the facade is not up.
     #[must_use]
+    #[cfg(not(feature = "native"))]
+    pub fn start() -> Option<Self> {
+        // The browser: no thread to poll on, so a task on the page's
+        // event loop, at about a frame.
+        daw::rpc::Daw::try_get()?;
+        let state = std::sync::Arc::new(std::sync::Mutex::new(Reading::default()));
+        let writer = std::sync::Arc::clone(&state);
+        wasm_bindgen_futures::spawn_local(async move {
+            loop {
+                if let Some(mut read) = read_transport().await
+                    && let Ok(mut slot) = writer.lock()
+                {
+                    // The engine renders ahead of the device; the playhead
+                    // drawn is the one heard.
+                    #[cfg(feature = "web")]
+                    if read.playing {
+                        read.at = (read.at - crate::web_audio::latency_seconds()).max(0.0);
+                    }
+                    *slot = read;
+                }
+                gloo_timers::future::TimeoutFuture::new(16).await;
+            }
+        });
+        Some(Self { state })
+    }
+
+    /// Start polling. `None` if the facade is not up.
+    #[cfg(feature = "native")]
+    #[must_use]
     pub fn start() -> Option<Self> {
         let runtime = crate::open::runtime()?;
-        let state = std::sync::Arc::new(std::sync::Mutex::new((0.0, false)));
+        let state = std::sync::Arc::new(std::sync::Mutex::new(Reading::default()));
         let writer = std::sync::Arc::clone(&state);
         std::thread::Builder::new()
             .name("session-daw-transport".into())
             .spawn(move || {
                 loop {
-                    let read = runtime.block_on(async {
-                        let daw = daw::rpc::Daw::try_get()?;
-                        let project = daw.current_project().await.ok()?;
-                        let transport = project.transport();
-                        let at = transport.get_position().await.ok()?;
-                        let playing = transport.is_playing().await.ok()?;
-                        Some((at, playing))
-                    });
+                    let read = runtime.block_on(read_transport());
                     if let Some(read) = read {
                         if let Ok(mut slot) = writer.lock() {
                             *slot = read;
@@ -570,10 +607,28 @@ impl Transport {
         Some(Self { state })
     }
 
+    /// The process's poller, started on first use. Every panel reads this
+    /// one rather than starting its own: a transport is one thing, and a
+    /// poll thread per panel asks the engine the same question N times.
+    /// `None` if the facade is not up.
+    #[must_use]
+    pub fn shared() -> Option<&'static Self> {
+        SHARED.get_or_init(Self::start).as_ref()
+    }
+
     /// The last position read, and whether it is moving.
     #[must_use]
     pub fn read(&self) -> (f64, bool) {
-        self.state.lock().map_or((0.0, false), |slot| *slot)
+        let reading = self.reading();
+        (reading.at, reading.playing)
+    }
+
+    /// Everything the last poll read.
+    #[must_use]
+    pub fn reading(&self) -> Reading {
+        self.state
+            .lock()
+            .map_or_else(|_| Reading::default(), |slot| *slot)
     }
 }
 
@@ -592,6 +647,18 @@ pub enum Move {
     /// Move the play position to a time — what a click on the ruler
     /// means once the transport is following it.
     Seek,
+    /// Stop, wherever it is.
+    Stop,
+    /// To the end of the project.
+    End,
+    /// Loop on or off.
+    ToggleLoop,
+    /// Record on or off.
+    ToggleRecord,
+    /// Move to a time and play from it — one command, in order, so the
+    /// play cannot land before the move (what rolling into the next song
+    /// of a set does).
+    PlayFrom,
 }
 
 /// Send a transport command, off the event loop.
@@ -600,31 +667,72 @@ pub enum Move {
 /// tells the window what happened, so waiting for the call to return
 /// would be waiting for news the window is already subscribed to.
 pub fn transport(command: Move, seconds: f64) {
-    let Some(runtime) = crate::open::runtime() else {
+    // A press by a person: playing together, everyone's.
+    #[cfg(any(feature = "native", feature = "web"))]
+    if !matches!(command, Move::ToggleLoop | Move::ToggleRecord) {
+        crate::collab::transport_pressed();
+    }
+    transport_following(command, seconds);
+}
+
+/// [`transport`], for the shared transport moving this engine: not a press
+/// here, so not sent back to the others.
+pub fn transport_following(command: Move, seconds: f64) {
+    #[cfg(not(feature = "native"))]
+    wasm_bindgen_futures::spawn_local(run_transport(command, seconds));
+    #[cfg(feature = "native")]
+    {
+        let Some(runtime) = crate::open::runtime() else {
+            return;
+        };
+        std::thread::Builder::new()
+            .name("session-daw-transport-cmd".into())
+            .spawn(move || runtime.block_on(run_transport(command, seconds)))
+            .ok();
+    }
+}
+
+/// A transport command, against the engine.
+async fn run_transport(command: Move, seconds: f64) {
+    let Some(daw) = daw::rpc::Daw::try_get() else {
         return;
     };
-    std::thread::Builder::new()
-        .name("session-daw-transport-cmd".into())
-        .spawn(move || {
-            runtime.block_on(async move {
-                let Some(daw) = daw::rpc::Daw::try_get() else {
-                    return;
-                };
-                let Ok(project) = daw.current_project().await else {
-                    return;
-                };
-                let transport = project.transport();
-                let outcome = match command {
-                    Move::PlayStop => transport.play_stop().await,
-                    Move::Home => transport.goto_start().await,
-                    Move::Seek => transport.set_position(seconds.max(0.0)).await,
-                };
-                if let Err(error) = outcome {
-                    tracing::warn!(error = %error, command = ?command, "the transport refused");
-                }
-            });
-        })
-        .ok();
+    let Ok(project) = daw.current_project().await else {
+        return;
+    };
+    let transport = project.transport();
+    let outcome = match command {
+        Move::PlayStop => transport.play_stop().await,
+        Move::Home => transport.goto_start().await,
+        Move::Seek => transport.set_position(seconds.max(0.0)).await,
+        Move::Stop => transport.stop().await,
+        Move::End => transport.goto_end().await,
+        Move::ToggleLoop => transport.toggle_loop().await,
+        Move::ToggleRecord => transport.toggle_recording().await,
+        Move::PlayFrom => match transport.set_position(seconds.max(0.0)).await {
+            Ok(()) => transport.play().await,
+            Err(error) => Err(error),
+        },
+    };
+    if let Err(error) = outcome {
+        tracing::warn!(error = %error, command = ?command, "the transport refused");
+    }
+}
+
+/// One read of the transport.
+async fn read_transport() -> Option<Reading> {
+    let daw = daw::rpc::Daw::try_get()?;
+    let project = daw.current_project().await.ok()?;
+    let transport = project.transport();
+    let at = transport.get_position().await.ok()?;
+    let playing = transport.is_playing().await.ok()?;
+    Some(Reading {
+        at,
+        playing,
+        looping: transport.is_looping().await.unwrap_or(false),
+        recording: transport.is_recording().await.unwrap_or(false),
+        bpm: transport.get_tempo().await.unwrap_or(0.0),
+    })
 }
 
 /// A dB value as a linear gain. `Track::volume`'s unit.
@@ -859,12 +967,54 @@ mod tests {
 /// were made. Two mutes racing would be a mute that ends up in the
 /// wrong state and no way to tell which.
 pub struct Applier {
+    #[cfg(feature = "native")]
     edits: std::sync::mpsc::Sender<Edit>,
+    /// The browser's: a queue, and whether a task is draining it.
+    #[cfg(not(feature = "native"))]
+    queue: std::rc::Rc<std::cell::RefCell<(Queue, bool)>>,
 }
 
 impl Applier {
+    /// Start the worker. `None` if the facade is not up.
+    #[cfg(not(feature = "native"))]
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        daw::rpc::Daw::try_get()?;
+        Some(Self {
+            queue: std::rc::Rc::default(),
+        })
+    }
+
+    /// Send an edit: queued, and drained in order by one task, so edits
+    /// land in the order they were made (and coalesce, as natively).
+    #[cfg(not(feature = "native"))]
+    pub fn send(&self, edit: Edit) {
+        let mut slot = self.queue.borrow_mut();
+        slot.0.push(edit);
+        if slot.1 {
+            return;
+        }
+        slot.1 = true;
+        let queue = std::rc::Rc::clone(&self.queue);
+        wasm_bindgen_futures::spawn_local(async move {
+            loop {
+                let next = {
+                    let mut slot = queue.borrow_mut();
+                    let next = slot.0.pop();
+                    if next.is_none() {
+                        slot.1 = false;
+                    }
+                    next
+                };
+                let Some(edit) = next else { break };
+                apply(&edit).await;
+            }
+        });
+    }
+
     /// Start the worker. `None` if the facade is not up, in which case
     /// the window runs read-only rather than pretending to edit.
+    #[cfg(feature = "native")]
     #[must_use]
     pub fn start() -> Option<Self> {
         let runtime = crate::open::runtime()?;
@@ -892,6 +1042,7 @@ impl Applier {
 
     /// Send an edit. Dropped if the worker has gone, because a window
     /// that could not edit is better than one that panics trying.
+    #[cfg(feature = "native")]
     pub fn send(&self, edit: Edit) {
         let _ = self.edits.send(edit);
     }
@@ -1927,7 +2078,40 @@ pub struct Meters {
 
 impl Meters {
     /// Subscribe. `None` if the facade is not up, in which case the
+    /// meters stay at rest rather than the page failing to open.
+    ///
+    /// The browser: no thread to subscribe on, so a task on the page's
+    /// event loop, fed by the engine's meter pump (which the web audio
+    /// loop's renders fill).
+    #[cfg(not(feature = "native"))]
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        let daw = daw::rpc::Daw::try_get()?;
+        let latest = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into_task = std::sync::Arc::clone(&latest);
+        let alive = Alive::new();
+        let mine = alive.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _end = scopeguard(move || mine.ended());
+            let Ok(project) = daw.current_project().await else {
+                return;
+            };
+            let mut stream = project.meter_events();
+            while let Ok(Some(frame)) = stream.recv().await {
+                let frame = frame.get();
+                let Ok(mut slot) = into_task.lock() else {
+                    break;
+                };
+                slot.clear();
+                slot.extend_from_slice(&frame.tracks);
+            }
+        });
+        Some(Self { latest, alive })
+    }
+
+    /// Subscribe. `None` if the facade is not up, in which case the
     /// meters stay at rest rather than the window failing to open.
+    #[cfg(feature = "native")]
     #[must_use]
     pub fn start() -> Option<Self> {
         let runtime = crate::open::runtime()?;

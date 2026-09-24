@@ -1684,8 +1684,22 @@ pub mod tcp {
         // labelled half first and the bypass toggle after it, which is
         // the order REAPER blits `track_fx_norm` (20 wide) and
         // `track_fxon_h` (16) in.
-        let (w, h) = (36.0, 22.0);
-        let split = 20.0;
+        fx_pill_wide(chrome, lit, chain, at, 36.0)
+    }
+
+    /// [`fx_pill`] at `w` wide: the mixer's, which spans its strip. The
+    /// bypass toggle keeps its traced 16 at the right end; the labelled
+    /// half takes the rest, with "FX" centred in it.
+    #[must_use]
+    pub fn fx_pill_wide(
+        chrome: &Chrome,
+        lit: Lit,
+        chain: Chain,
+        at: Interaction,
+        w: f64,
+    ) -> Drawing {
+        let (w, h) = (w.max(36.0), 22.0);
+        let split = w - 16.0;
         let plate = ink_in(chrome, None, at, true, 0.35);
         let (body_y, body_h) = (h / 22.0, h * 20.0 / 22.0);
         let radius = h * 0.12;

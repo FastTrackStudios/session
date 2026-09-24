@@ -108,12 +108,15 @@ fn resource_path() -> Option<PathBuf> {
     if let Some(from_env) = std::env::var_os(ENV) {
         candidates.push(PathBuf::from(from_env));
     }
-    if let Some(home) = dirs::home_dir() {
-        candidates.push(home.join("fts-dev"));
-        candidates.push(home.join(".fts-dev"));
-    }
-    if let Some(config) = dirs::config_dir() {
-        candidates.push(config.join("REAPER"));
+    #[cfg(feature = "native")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(home.join("fts-dev"));
+            candidates.push(home.join(".fts-dev"));
+        }
+        if let Some(config) = dirs::config_dir() {
+            candidates.push(config.join("REAPER"));
+        }
     }
     candidates
         .into_iter()

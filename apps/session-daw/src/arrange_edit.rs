@@ -231,7 +231,7 @@ struct Snapback {
     from: (f64, f64),
     /// And where the item has been all along.
     to: (f64, f64),
-    started: std::time::Instant,
+    started: web_time::Instant,
 }
 
 /// How long a refused ghost takes to get back.
@@ -293,6 +293,17 @@ struct RulerPress {
 }
 
 impl Editor {
+    /// The mouse-map context a press on `hit` would be asked about: the
+    /// hit's own, unless a razor area already drawn is under it, which
+    /// answers for itself (the same rule [`Self::press`] follows).
+    #[must_use]
+    pub fn context_at(&self, hit: Hit) -> input_config_proto::MouseModifierContext {
+        match Self::where_in_lanes(hit.target) {
+            Some((at, row)) if self.razor.at(at, row).is_some() => mousemap::RAZOR_AREA,
+            _ => hit.context,
+        }
+    }
+
     /// The pointer went down on `hit`, with `keys` held. `true` if the
     /// press was taken here.
     pub fn press(
@@ -819,7 +830,7 @@ impl Editor {
                                 index: press.index,
                                 from: (x0, x1),
                                 to: (press.x0, press.x1),
-                                started: std::time::Instant::now(),
+                                started: web_time::Instant::now(),
                             });
                         }
                         return true;
@@ -838,7 +849,7 @@ impl Editor {
                                 index: press.index,
                                 from: (x0, x1),
                                 to: (press.x0, press.x1),
-                                started: std::time::Instant::now(),
+                                started: web_time::Instant::now(),
                             });
                         } else {
                             effects.push(Effect::ReRecord);
@@ -871,7 +882,7 @@ impl Editor {
                             index: press.index,
                             from: (x0, x1),
                             to: (press.x0, press.x1),
-                            started: std::time::Instant::now(),
+                            started: web_time::Instant::now(),
                         });
                     }
                     // And every edge that was sitting on the one just
@@ -1017,6 +1028,7 @@ impl Editor {
             zoom_y,
             width: view.width,
             height: view.height,
+            panel_w: view.panel_w,
         })
     }
 
@@ -1052,6 +1064,7 @@ impl Editor {
             zoom_y: zoom,
             width: view.width,
             height: view.height,
+            panel_w: view.panel_w,
         })
     }
 
@@ -1184,6 +1197,10 @@ impl Editor {
         effects: &mut Vec<Effect>,
     ) -> bool {
         match action {
+            // The window has these when it can (`keys::use_window_transport_keys`),
+            // so the space bar works whatever has the focus; acting on it
+            // here too would play and stop in one press.
+            Action::PlayStop | Action::PlayPause if crate::keys::window_has_transport() => {}
             Action::PlayStop | Action::PlayPause => {
                 effects.push(Effect::Transport(Move::PlayStop, 0.0))
             }
@@ -1326,6 +1343,9 @@ impl Editor {
                 }
             }
             Action::ToggleRecord => tracing::info!("record is not wired to the transport yet"),
+            // The view's, not the session's: the widget sends these to
+            // the panel before the editor is asked.
+            Action::View(_) | Action::Visibility(_) | Action::ToggleMixer => return false,
             Action::Unbound(id) => {
                 tracing::info!(ui.action = %id, "bound in the profile, not built here yet");
                 return false;
@@ -1760,6 +1780,7 @@ mod zoom_tests {
             zoom_y: 1.0,
             width: 2000.0,
             height: 1000.0,
+            panel_w: crate::arrangement::TCP_WIDTH,
         }
     }
     const LANES: LanesOrigin = (387.0, 103.0);
@@ -1856,7 +1877,7 @@ mod zoom_tests {
 mod tests {
     use super::*;
     use crate::arrangement::{Palette, TCP_WIDTH, Viewport};
-    use crate::ruler::RULER_H;
+    use crate::ruler::ruler_h;
     use daw_proto::primitives::{Duration, PositionInSeconds};
     use daw_ui::studio::{ProjectRef, RowsRef};
 
@@ -1969,6 +1990,7 @@ mod tests {
             Viewport {
                 scroll_x: 0.0,
                 scroll_y: 0.0,
+                panel_w: crate::arrangement::TCP_WIDTH,
                 pps: PPS,
                 zoom_y: 1.0,
                 width: 2000.0,
@@ -1981,7 +2003,7 @@ mod tests {
             let (top, _) = self.scene.row_box(row).expect("a row");
             (
                 crate::rails::SIDE + TCP_WIDTH + seconds * PPS,
-                crate::rails::TOP + RULER_H + top + dy,
+                crate::rails::TOP + ruler_h() + top + dy,
             )
         }
 
@@ -2107,6 +2129,7 @@ mod tests {
             &RowsRef(std::sync::Arc::new(rows.to_vec())),
             crate::layout::Layout::default(),
             &crate::midi::Previews::default(),
+            crate::tcp::Tcp::FULL,
         )
     }
 

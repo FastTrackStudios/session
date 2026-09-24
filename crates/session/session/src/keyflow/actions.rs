@@ -929,6 +929,7 @@ impl SectionKind {
             Self::Breakdown => SectionType::Breakdown,
             Self::Vamp => SectionType::Vamp,
             Self::Refrain => SectionType::Refrain,
+            Self::Tag => SectionType::Tag,
             Self::Turnaround => SectionType::Turnaround,
             Self::CountIn => SectionType::CountIn,
             Self::End => SectionType::End,
@@ -957,6 +958,7 @@ impl SectionKind {
             SectionType::Breakdown => Self::Breakdown,
             SectionType::Vamp => Self::Vamp,
             SectionType::Refrain => Self::Refrain,
+            SectionType::Tag => Self::Tag,
             SectionType::Turnaround => Self::Turnaround,
             SectionType::Pre(_) => Self::PreChorus,
         }
@@ -970,7 +972,7 @@ impl SectionKind {
         match self {
             Self::CountIn | Self::Turnaround => Some(2),
             Self::Verse | Self::Chorus | Self::Bridge | Self::Refrain => Some(8),
-            Self::Intro | Self::Outro | Self::Instrumental => Some(4),
+            Self::Intro | Self::Outro | Self::Instrumental | Self::Tag => Some(4),
             Self::PreChorus
             | Self::Solo
             | Self::Hits
@@ -983,7 +985,7 @@ impl SectionKind {
 }
 
 impl MarkerKind {
-    const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::CountIn => "COUNT-IN",
             Self::Start => "=START",
@@ -995,6 +997,22 @@ impl MarkerKind {
 
     const fn default_color(self) -> u32 {
         reaper_native_rgb(self.rgb())
+    }
+}
+
+impl SectionKind {
+    /// The colour its region is stamped in, as CSS (`#rrggbb`) — so a
+    /// toolbar button and the region it inserts cannot disagree.
+    #[must_use]
+    pub fn css_color(self) -> String {
+        let native = section_type_color(&self.section_type());
+        // Undo `reaper_native_rgb`: BGR with a flag on Windows, RGB with a
+        // flag elsewhere.
+        #[cfg(target_os = "windows")]
+        let rgb = ((native & 0xff) << 16) | (native & 0xff00) | ((native >> 16) & 0xff);
+        #[cfg(not(target_os = "windows"))]
+        let rgb = native & 0x00ff_ffff;
+        format!("#{rgb:06x}")
     }
 }
 

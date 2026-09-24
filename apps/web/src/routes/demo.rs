@@ -1,166 +1,65 @@
-//! `/demo` — the real thing, running in the browser.
+//! `/demo` — the public playground: the Session app itself, in the live set
+//! Task keeps for the demo (a live share link with a reset), everyone who
+//! comes in one session with everyone else.
 //!
-//! Boots the in-process backend (see [`crate::demo_backend`]), installs
-//! it as session-ui's `Session` singleton, pumps its `#[subscribe]`
-//! streams into session-ui's global signals (mirroring
-//! `apps/desktop/src/session_view.rs::SessionEventBridge`), then renders
-//! the real desktop performance view: sidebar, `PerformanceLayout`,
-//! transport bar.
+//! The app is the same page a live link opens anywhere (`/app/?live=…`,
+//! the `session-daw-web` bundle the image serves under `/app/`); this route
+//! only sends the visitor there with the demo's link, baked in at build
+//! time (`SESSION_DEMO_LINK`).
 
 use dioxus::prelude::*;
-use session_ui::{PerformanceLayout, TransportPanel};
 
-use crate::demo_backend;
+/// The demo set's live share link, when this build has one.
+const DEMO_LINK: Option<&str> = option_env!("SESSION_DEMO_LINK");
+
+/// Where the demo opens: the app, in the demo set.
+fn demo_url(link: &str) -> String {
+    let mut encoded = String::new();
+    for b in link.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            encoded.push(char::from(b));
+        } else {
+            encoded.push_str(&format!("%{b:02X}"));
+        }
+    }
+    format!("/app/?live={encoded}")
+}
 
 #[component]
 pub fn Demo() -> Element {
-    let mut booted = use_signal(|| false);
-    let mut boot_error = use_signal(|| None::<String>);
-
-    use_future(move || async move {
-        let handle = match demo_backend::boot().await {
-            Ok(h) => h,
-            Err(e) => {
-                boot_error.set(Some(format!("{e:?}")));
-                return;
-            }
-        };
-
-        // `Session::init` only accepts one client per process — fine here
-        // since `demo_backend::boot()` itself is idempotent and always
-        // hands back the same handle.
-        if session_ui::Session::init(handle.client.clone()).is_err() {
-            tracing::debug!("session-ui Session already initialized");
-        }
-
-        // Events stream: setlist structure + per-song transport.
-        let events_stream_client = handle.stream_client.clone();
-        let events_client = handle.client.clone();
-        spawn(async move {
-            let (tx, mut rx) = vox::channel::<session::SetlistEvent>();
-            spawn(async move {
-                if let Err(e) = events_stream_client.events(tx).await {
-                    tracing::warn!("events subscription ended: {e:?}");
-                }
-            });
-            match events_client.setlist().await {
-                Ok(setlist) => {
-                    session_ui::apply_setlist_event(&session::SetlistEvent::SetlistChanged(
-                        setlist,
-                    ));
-                }
-                Err(e) => tracing::warn!("initial setlist snapshot failed: {e:?}"),
-            }
-            while let Ok(Some(ev)) = rx.recv().await {
-                session_ui::apply_setlist_event(ev.get());
-            }
-        });
-
-        // Active-indices stream: which song/section is current.
-        let indices_stream_client = handle.stream_client.clone();
-        let seek_client = handle.client.clone();
-        spawn(async move {
-            let (tx, mut rx) = vox::channel::<session::ActiveIndices>();
-            spawn(async move {
-                if let Err(e) = indices_stream_client.active_indices(tx).await {
-                    tracing::warn!("active_indices subscription ended: {e:?}");
-                }
-            });
-            // Open on song 0 / section 0, fired concurrently so this future
-            // is already polling `rx` when the seek's cursor publish lands.
-            spawn(async move {
-                if let Err(e) = seek_client.seek_to_section(0, 0).await {
-                    tracing::warn!("initial seek to song 0 failed: {e:?}");
-                }
-            });
-            while let Ok(Some(ai)) = rx.recv().await {
-                session_ui::apply_active_indices(ai.get());
-            }
-        });
-
-        booted.set(true);
-    });
-
-    if let Some(err) = boot_error.read().as_ref() {
+    let Some(link) = DEMO_LINK.filter(|l| !l.is_empty()) else {
         return rsx! {
             div { class: "h-screen w-screen flex flex-col items-center justify-center gap-2 bg-zinc-950 text-zinc-100 text-center px-8",
-                span { class: "text-xl font-bold", "Demo failed to start" }
-                span { class: "text-sm text-zinc-400 max-w-lg", "{err}" }
+                span { class: "text-xl font-bold", "The live demo opens soon" }
+                span { class: "text-sm text-zinc-400 max-w-lg", "This build was made without the demo set's link." }
             }
         };
-    }
-
-    if !booted() || session_ui::SETLIST_STRUCTURE.read().songs.is_empty() {
-        return rsx! {
-            div { class: "h-screen w-screen flex items-center justify-center bg-zinc-950 text-zinc-100",
-                span { class: "text-lg font-semibold", "Loading the demo setlist\u{2026}" }
-            }
-        };
-    }
-
-    // A take to review, so the demo shows the review panel the way the
-    // room will see it. Seeded HERE and not in the component, because
-    // in the product a pass comes from a recording that just stopped —
-    // a panel that invented one would be showing a take nobody played.
-    use_hook(|| {
-        use session::review::{Mark, Pass, Span, Verdict};
-        let mut pass = Pass::new(4, 0.0, 182.0);
-        pass.mark(Mark::whole("Joshua", 182.0, Verdict::VeryGood));
-        pass.mark(
-            Mark::part("Joshua", Span::new(96.0, 108.0), Verdict::Mistake).noted("came in early"),
-        );
-        *session_ui::TAKE_UNDER_REVIEW.write() = Some(pass);
-        // Roles, not names: what the session is made of, and what the
-        // tracks are grouped by.
-        *session_ui::ROLES.write() = [
-            "Vocalist 1",
-            "Vocalist 2",
-            "Guitar 1",
-            "Guitar 2",
-            "Bass",
-            "Keys 1",
-            "Drums",
-        ]
-        .iter()
-        .map(|role| (*role).to_string())
-        .collect();
-        *session_ui::TAKE_PEAKS.write() = demo_peaks();
+    };
+    let url = demo_url(link);
+    // In the browser: go. (The page also carries a plain link to it.)
+    use_effect({
+        let url = url.clone();
+        move || {
+            let _ = document::eval(&format!("window.location.replace({url:?})"));
+        }
     });
-
     rsx! {
-        div { class: "h-screen w-screen flex flex-row bg-zinc-950 text-zinc-100",
-            // No navigator: the demo shows what the desktop app shows,
-            // and that is the point of it being the real component.
-            div { class: "flex-1 min-w-0 min-h-0 flex flex-col",
-                div { class: "relative flex-1 min-h-0 flex", PerformanceLayout {} }
-                div { class: "h-[92px] flex-none border-t border-zinc-800",
-                    TransportPanel { show_recording: false }
-                }
-            }
+        div { class: "h-screen w-screen flex flex-col items-center justify-center gap-3 bg-zinc-950 text-zinc-100 text-center px-8",
+            span { class: "text-xl font-bold", "Opening the live demo…" }
+            a { class: "text-sm text-sky-400 underline", href: "{url}", "Open it" }
         }
     }
 }
 
-/// A plausible envelope for the demo's take.
-///
-/// Shaped rather than random: a count-in, verses that breathe and
-/// choruses that do not, so the panel is shown doing the thing it is
-/// for — finding a place in a performance by looking at it.
-fn demo_peaks() -> Vec<f32> {
-    (0..600)
-        .map(|i| {
-            let t = f64::from(i) / 600.0;
-            let section = (t * 6.0).floor() as i32;
-            let base = match section {
-                0 => 0.18,
-                1 | 3 => 0.45,
-                2 | 4 => 0.85,
-                _ => 0.6,
-            };
-            // A little motion, so it reads as a performance rather than
-            // a bar chart of six numbers.
-            let wobble = ((f64::from(i) * 0.7).sin() * 0.12).abs();
-            ((base + wobble) as f32).clamp(0.0, 1.0)
-        })
-        .collect()
+#[cfg(test)]
+mod tests {
+    use super::demo_url;
+
+    #[test]
+    fn the_demo_link_rides_in_the_apps_address() {
+        assert_eq!(
+            demo_url("https://task.example/org/days-to-praise/share/abc"),
+            "/app/?live=https%3A%2F%2Ftask.example%2Forg%2Fdays-to-praise%2Fshare%2Fabc"
+        );
+    }
 }

@@ -30,6 +30,20 @@
     # (dioxus-cli) at the version the workspace Cargo.lock pins (0.7.9)
     # plus binaryen 129 — see nix/modules/dx.nix.
     nixpkgs-dx.url = "github:NixOS/nixpkgs/d99b013d5d1931ad77fe3912ed218170dec5d9a4";
+
+    # The sibling checkouts the root Cargo.toml patches daw and processor
+    # to (`../daw`, `../processor`; see CLAUDE.md): the deployable builds
+    # put them beside this repo (nix/modules/crane.nix). The SAME shas as
+    # the sibling checkouts in .github/workflows/checks.yml — bump both
+    # together, to the commits the local siblings are on.
+    daw-src = {
+      url = "github:FastTrackStudios/daw/e9566a9a023ca5b6d29956c4de374dcc2ef268d9";
+      flake = false;
+    };
+    processor-src = {
+      url = "github:FastTrackStudios/processor/bdf855f35e646ced8e08d31750dcf158e0b1bc60";
+      flake = false;
+    };
   };
 
   nixConfig = {

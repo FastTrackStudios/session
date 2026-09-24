@@ -39,7 +39,7 @@ use color_palette::Color;
 use daw_proto::FolderDepthChange;
 use dawfile_reaper::rpp_tree::{tokenize, RChunk, RNode, RNodeTree, RToken};
 
-use super::TemplateTarget;
+use super::{find_group, TemplateTarget};
 
 /// A parsed `.RPP` chunk tree the template can be applied to.
 pub struct RChunkTarget<'a> {
@@ -173,56 +173,6 @@ impl<'a> RChunkTarget<'a> {
     #[must_use]
     pub fn carries_folder_structure(&self, id: usize) -> bool {
         !self.is_plain(id)
-    }
-
-    /// Nest a "DI" capture under its sibling primary track, for any group that
-    /// opts in via [`monarchy::Group::nest_secondary_mics`] — electric guitar
-    /// turns this on for its DI feed.
-    ///
-    /// Only reshapes the exact adjacency the house convention already tracks
-    /// in: a "DI" track immediately following, at the same folder depth, a
-    /// non-DI sibling. No track changes position, so no `AUXRECV` index needs
-    /// rewriting — only folder nesting, mute, and collapse flags change.
-    ///
-    /// Idempotent: once nested, "DI" sits inside its sibling rather than beside
-    /// it, so a second pass no longer sees them as siblings.
-    pub fn nest_secondary_mics(&mut self) {
-        let config = crate::default_config();
-        let entries = super::contextual_paths(self);
-
-        for pair in entries.windows(2) {
-            let [main, di] = pair else { continue };
-            if main.context != di.context {
-                continue; // not siblings
-            }
-            let is_di = |name: &str| name.trim().eq_ignore_ascii_case("di");
-            if !is_di(&di.name) || is_di(&main.name) {
-                continue;
-            }
-            let Some(leaf) = di.path.last() else { continue };
-            if !find_group(&config, leaf).is_some_and(|g| g.nest_secondary_mics) {
-                continue;
-            }
-
-            let di_indentation = self.indentation(di.track);
-            if !self.is_plain(main.track) || di_indentation > 0 {
-                // Not the plain "two siblings" shape this expects — leave
-                // whatever unusual structure is already there alone.
-                continue;
-            }
-
-            if let Some(track) = self.track_mut(main.track) {
-                set_line(track, "ISBUS", "ISBUS 1 1".to_string());
-                set_line(track, "BUSCOMP", "BUSCOMP 2 2 0 0 0".to_string());
-            }
-            if let Some(track) = self.track_mut(di.track) {
-                // One more level to close than before: the DI folder we just
-                // opened on `main`, on top of whatever it already closed.
-                let closes = di_indentation.saturating_sub(1);
-                set_line(track, "ISBUS", format!("ISBUS 2 {closes}"));
-                set_line(track, "MUTESOLO", "MUTESOLO 1 0 0".to_string());
-            }
-        }
     }
 }
 
@@ -416,25 +366,57 @@ fn derived_guid(name: &str) -> String {
     )
 }
 
-/// Find a group by name anywhere in the config's tree (recursing into nested
-/// groups).
-fn find_group<'a>(
-    config: &'a crate::DynamicTemplateConfig,
-    name: &str,
-) -> Option<&'a monarchy::Group<crate::ItemMetadata>> {
-    fn search<'a>(
-        group: &'a monarchy::Group<crate::ItemMetadata>,
-        name: &str,
-    ) -> Option<&'a monarchy::Group<crate::ItemMetadata>> {
-        if group.name == name {
-            return Some(group);
-        }
-        group.groups.iter().find_map(|g| search(g, name))
-    }
-    config.groups.iter().find_map(|g| search(g, name))
-}
-
 impl TemplateTarget for RChunkTarget<'_> {
+    /// Nest a "DI" capture under its sibling primary track, for any group that
+    /// opts in via [`monarchy::Group::nest_secondary_mics`] — electric guitar
+    /// turns this on for its DI feed.
+    ///
+    /// Only reshapes the exact adjacency the house convention already tracks
+    /// in: a "DI" track immediately following, at the same folder depth, a
+    /// non-DI sibling. No track changes position, so no `AUXRECV` index needs
+    /// rewriting — only folder nesting, mute, and collapse flags change.
+    ///
+    /// Idempotent: once nested, "DI" sits inside its sibling rather than beside
+    /// it, so a second pass no longer sees them as siblings.
+    fn nest_secondary_mics(&mut self) {
+        let config = crate::default_config();
+        let entries = super::contextual_paths(self);
+
+        for pair in entries.windows(2) {
+            let [main, di] = pair else { continue };
+            if main.context != di.context {
+                continue; // not siblings
+            }
+            let is_di = |name: &str| name.trim().eq_ignore_ascii_case("di");
+            if !is_di(&di.name) || is_di(&main.name) {
+                continue;
+            }
+            let Some(leaf) = di.path.last() else { continue };
+            if !find_group(&config, leaf).is_some_and(|g| g.nest_secondary_mics) {
+                continue;
+            }
+
+            let di_indentation = self.indentation(di.track);
+            if !self.is_plain(main.track) || di_indentation > 0 {
+                // Not the plain "two siblings" shape this expects — leave
+                // whatever unusual structure is already there alone.
+                continue;
+            }
+
+            if let Some(track) = self.track_mut(main.track) {
+                set_line(track, "ISBUS", "ISBUS 1 1".to_string());
+                set_line(track, "BUSCOMP", "BUSCOMP 2 2 0 0 0".to_string());
+            }
+            if let Some(track) = self.track_mut(di.track) {
+                // One more level to close than before: the DI folder we just
+                // opened on `main`, on top of whatever it already closed.
+                let closes = di_indentation.saturating_sub(1);
+                set_line(track, "ISBUS", format!("ISBUS 2 {closes}"));
+                set_line(track, "MUTESOLO", "MUTESOLO 1 0 0".to_string());
+            }
+        }
+    }
+
     type TrackId = usize;
     type Error = Never;
 

@@ -24,7 +24,7 @@
 //! a stage table and a phase table cannot drift into reporting
 //! percentiles two different ways.
 
-use std::time::Instant;
+use web_time::Instant;
 
 /// A set of frame timings in milliseconds, summarised the same way
 /// everywhere.

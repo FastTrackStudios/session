@@ -238,7 +238,7 @@ impl Default for SongView {
     fn default() -> Self {
         Self {
             target_key: None,
-            notation: keyflow::NotationSystem::Letters,
+            notation: keyflow::NotationSystem::AsWritten,
             capo: 0,
         }
     }
@@ -250,7 +250,7 @@ impl SongView {
     pub fn is_identity(&self) -> bool {
         self.target_key.is_none()
             && self.capo == 0
-            && self.notation == keyflow::NotationSystem::Letters
+            && self.notation == keyflow::NotationSystem::AsWritten
     }
 
     /// Build the keyflow transposition view (target key parsed from the string).
@@ -276,6 +276,7 @@ impl SongView {
             keyflow::NotationSystem::Letters => 0u8,
             keyflow::NotationSystem::Nashville => 1,
             keyflow::NotationSystem::Roman => 2,
+            keyflow::NotationSystem::AsWritten => 3,
         };
         n.hash(&mut h);
         self.capo.hash(&mut h);

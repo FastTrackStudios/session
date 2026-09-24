@@ -54,7 +54,7 @@ web-sys = { version = "0.3", features = ["Window", "Performance"] }
 # does not build for wasm32, so the mixer target-gates it and uses a built-in
 # taxonomy classifier on the wasm app. Both paths yield the same folder tree.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-dynamic-template = { workspace = true }
+dynamic-template = { workspace = true, features = ["reaper"] }
 
 [dev-dependencies]
 # Integration test (tests/navigation.rs): a real in-process daw-standalone +

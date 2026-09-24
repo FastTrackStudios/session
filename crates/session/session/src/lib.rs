@@ -52,12 +52,11 @@ pub mod strip_width;
 // also drives `dynamic-template` (the native template engine).
 #[cfg(all(not(target_arch = "wasm32"), feature = "reaper"))]
 pub mod color;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod guide;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod key;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod key_actions;
+pub mod load_selection;
 // NOT gated, deliberately: `chart_import`, `setlist::service::demo` and
 // `task-player-ui` (the browser setlist engine) all reach into
 // `keyflow::actions`. Adding gated modules directly above this line once
@@ -65,7 +64,7 @@ pub mod key_actions;
 // wasm-gated it and broke the task-web image build — so keep a
 // non-attribute line between this and any gated module added above.
 pub mod keyflow;
-#[cfg(not(target_arch = "wasm32"))]
+pub mod lyrics;
 pub mod mix_phases;
 pub mod modes;
 pub mod playback;
@@ -99,6 +98,9 @@ pub mod rpc_services;
 
 // Re-export service implementations for library use
 pub use setlist::SetlistServiceImpl;
+
+/// Collaboration: the session as a Loro doc, presence, shared transport.
+pub use session_sync as sync;
 #[cfg(not(target_arch = "wasm32"))]
 pub use song::SongServiceImpl;
 
@@ -133,6 +135,8 @@ where
         + daw::service::TempoMap
         + daw::service::Tracks
         + daw::service::Items
+        + daw::service::Takes
+        + daw::service::Effects
         + daw::service::Midi
         + daw::service::PositionConversion
         + daw::service::UiDialogs
@@ -436,6 +440,8 @@ pub mod host {
             + daw::service::TempoMap
             + daw::service::Tracks
             + daw::service::Items
+            + daw::service::Takes
+            + daw::service::Effects
             + daw::service::Midi
             + daw::service::PositionConversion
             + daw::service::UiDialogs

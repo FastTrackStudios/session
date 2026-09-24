@@ -23,6 +23,11 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
+
+mod lyrics;
+mod multitracks;
+mod peaks;
+mod proxies;
 use session::SetlistServiceClient;
 
 /// The dev-rig REAPER profile, matching `session-desktop`'s Recording Mode.
@@ -54,6 +59,11 @@ enum Command {
     },
     /// Print the loaded setlist: every song, and every section under it.
     Setlist,
+    /// The song library in Task (keyflow's): setlists, and pulling a
+    /// setlist's sessions down to open here. Server, org and token from
+    /// FTS_TASK_SERVER / FTS_TASK_ORG / FTS_TASK_TOKEN.
+    #[command(subcommand)]
+    Library(LibraryCommand),
     /// Move the cursor to a song, and optionally a section within it.
     Seek {
         /// Song index, 0-based — as printed by `session setlist`.
@@ -63,10 +73,102 @@ enum Command {
     },
     /// Which REAPER this would talk to, and where its cursor is.
     Status,
+    /// Write Ogg Vorbis proxies of a session's media: `Media/Bass.wav` →
+    /// `Media/Proxies/Bass.ogg`, beside what they stand in for, so they
+    /// sync with the session. What a browser or a phone plays from.
+    ///
+    /// Reads the sources from the `.RPP`; a proxy newer than its source is
+    /// kept unless `--force`.
+    Proxies {
+        /// The session's `.RPP` (or the folder holding exactly one).
+        session: PathBuf,
+        /// libvorbis quality, -0.2..=1.0 (0.4 ≈ 128 kbps stereo).
+        #[arg(long, default_value_t = 0.4)]
+        quality: f32,
+        /// Rewrite proxies that are already up to date.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Write the waveform peaks cache for a session's media:
+    /// `Media/Bass.wav` → `Media/Peaks/Bass.wav.sessionpeaks`, beside
+    /// what it describes, so it syncs and streams with the session.
+    ///
+    /// The file is REAPER's own format under another name: a
+    /// `Media/peaks/*.reapeaks` REAPER already wrote is adopted rather
+    /// than recomputed, and a cache written here is one REAPER reads.
+    /// Sources with no WAV are scanned from their Ogg proxy.
+    Peaks {
+        /// The session's `.RPP` (or the folder holding exactly one).
+        session: PathBuf,
+        /// Rescan sources whose cache is already up to date.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Turn folders of multitracks into sessions on the grid: the click
+    /// stem gives the tempo and where bar one is, every stem is trimmed to
+    /// it, and the guide's cues become regions and a chart to start from.
+    Import {
+        /// A song's folder, or one holding several.
+        folders: Vec<PathBuf>,
+        /// Where the sessions are written.
+        #[arg(long, default_value = "../sessions")]
+        out: PathBuf,
+        /// Write over a session that is already there.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Write an Ogg Vorbis copy of the FTS-GUIDE sample library — the
+    /// same layout, each `.wav` a `.ogg` — for a browser to stream the
+    /// click, the count and the cues from.
+    GuideLibrary {
+        /// The WAV library (`~/.config/fts/guide-samples`).
+        library: PathBuf,
+        /// Where the Ogg copy goes.
+        out: PathBuf,
+        /// libvorbis quality, -0.2..=1.0. Higher than a stem's: a click is
+        /// all transient.
+        #[arg(long, default_value_t = 0.6)]
+        quality: f32,
+    },
+    /// Line-synced lyrics for songs, as `<Song>.lrc` beside each `.RPP`.
+    Lyrics {
+        #[command(subcommand)]
+        command: LyricsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum LyricsCommand {
+    /// Find line-synced lyrics for each song and write `<Song>.lrc`.
+    ///
+    /// Title and artists come from the song's chart (`<Song>.kf`, first
+    /// line `Title - Artist1, Artist2`); each artist is searched, then the
+    /// title alone. Of the versions found, the one whose length is closest
+    /// to the chart's SONGSTART→SONGEND is written. Provider: LRCLIB.
+    Fetch {
+        /// Songs' `.RPP` files (or folders holding exactly one).
+        paths: Vec<PathBuf>,
+        /// Search for this title instead of the chart's.
+        #[arg(long)]
+        title: Option<String>,
+        /// Search under this artist instead of the chart's (repeatable).
+        #[arg(long = "artist")]
+        artists: Vec<String>,
+        /// Take this exact LRCLIB record, skipping the search.
+        #[arg(long)]
+        lrclib_id: Option<String>,
+        /// Take candidate N (as listed, from 1) instead of the closest length.
+        #[arg(long)]
+        pick: Option<usize>,
+        /// Replace a `.lrc` that is already there.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
+    init_tracing();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -74,12 +176,121 @@ fn main() -> eyre::Result<()> {
     runtime.block_on(run(cli.command))
 }
 
+/// Diagnostics go to stderr through `tracing`, quiet unless asked:
+/// `RUST_LOG=info` prints each command's wide event (e.g. one
+/// `lyrics.fetch` span per song) as it closes.
+fn init_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan};
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_span_events(FmtSpan::CLOSE)
+        .try_init();
+}
+
+#[derive(clap::Subcommand)]
+enum LibraryCommand {
+    /// Every setlist in the org, with its songs.
+    List,
+    /// Download a setlist's sessions (proxies, charts, lyrics, the
+    /// `.session`) and write a `.setlist` the app opens.
+    Pull {
+        /// The setlist's title (`Worship Set`).
+        setlist: String,
+        /// Where to put it. Default: the platform cache, under the org.
+        #[arg(long)]
+        into: Option<PathBuf>,
+        /// The original media too, not only the proxies.
+        #[arg(long)]
+        originals: bool,
+    },
+}
+
+async fn library(command: LibraryCommand) -> eyre::Result<()> {
+    let lib = session_library::Library::from_env();
+    let setlists = lib.setlists().await?;
+    match command {
+        LibraryCommand::List => {
+            for list in &setlists {
+                println!("{} ({} songs)", list.title, list.songs.len());
+                for song in &list.songs {
+                    let by = song.writers.join(", ");
+                    println!(
+                        "  song:{:<28} {}{}",
+                        song.slug,
+                        song.title,
+                        if by.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" — {by}")
+                        }
+                    );
+                }
+            }
+        }
+        LibraryCommand::Pull {
+            setlist,
+            into,
+            originals,
+        } => {
+            let list = setlists
+                .iter()
+                .find(|l| l.title == setlist)
+                .ok_or_else(|| eyre::eyre!("no setlist `{setlist}` in {}", lib.org))?;
+            let into = into.unwrap_or_else(|| {
+                std::env::temp_dir()
+                    .join("fts-session-library")
+                    .join(&lib.org)
+            });
+            let file = lib.pull_setlist(list, &into, originals).await?;
+            println!("{}", file.display());
+        }
+    }
+    Ok(())
+}
+
 async fn run(command: Command) -> eyre::Result<()> {
     match command {
+        Command::Library(command) => library(command).await,
         Command::Open { paths } => open(&paths).await,
         Command::Setlist => setlist().await,
         Command::Seek { song, section } => seek(song, section.unwrap_or(0)).await,
         Command::Status => status().await,
+        Command::Proxies {
+            session,
+            quality,
+            force,
+        } => proxies::write(&session, quality, force),
+        Command::Peaks { session, force } => peaks::write(&session, force),
+        Command::GuideLibrary {
+            library,
+            out,
+            quality,
+        } => proxies::guide_library(&library, &out, quality),
+        Command::Import {
+            folders,
+            out,
+            force,
+        } => import(&folders, &out, force),
+        Command::Lyrics {
+            command:
+                LyricsCommand::Fetch {
+                    paths,
+                    title,
+                    artists,
+                    lrclib_id,
+                    pick,
+                    force,
+                },
+        } => lyrics::fetch(&lyrics::FetchArgs {
+            paths,
+            title,
+            artists,
+            lrclib_id,
+            pick,
+            force,
+        }),
     }
 }
 
@@ -315,4 +526,44 @@ async fn status() -> eyre::Result<()> {
         Err(_) => println!("cursor: nowhere yet — `session seek <song>`"),
     }
     Ok(())
+}
+
+/// `session import`: each folder named, or each song folder inside one.
+fn import(folders: &[PathBuf], out: &Path, force: bool) -> eyre::Result<()> {
+    let mut songs: Vec<PathBuf> = Vec::new();
+    for folder in folders {
+        // A folder of folders (the downloads directory) imports each song
+        // in it; a folder with stems in it is one song.
+        let holds_stems = std::fs::read_dir(folder)?.flatten().any(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("wav"))
+        });
+        if holds_stems {
+            songs.push(folder.clone());
+        } else {
+            let mut inside: Vec<PathBuf> = std::fs::read_dir(folder)?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect();
+            inside.sort();
+            songs.extend(inside);
+        }
+    }
+    let mut failed = Vec::new();
+    for song in &songs {
+        if let Err(e) = multitracks::import(song, out, force) {
+            failed.push(format!("{}: {e}", song.display()));
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(eyre::eyre!(
+            "{} did not import:\n{}",
+            failed.len(),
+            failed.join("\n")
+        ))
+    }
 }

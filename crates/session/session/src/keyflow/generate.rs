@@ -103,17 +103,20 @@ pub fn key_spans(chart: &Chart) -> Vec<KeySpan> {
 /// that uses them without naming one has not said enough yet.
 #[must_use]
 pub fn voicings(chart: &Chart, octave: i32) -> Vec<Voicing> {
-    let mut out = Vec::new();
+    let mut out: Vec<Voicing> = Vec::new();
     let mut measure = 0usize;
     let mut key = chart.initial_key.clone();
     for section in &chart.sections {
-        for track in &section.tracks {
-            for bar in &track.measures {
+        // The chord track's bars — the same bars, counted the same way, as
+        // the layout places (`chart_to_layout`'s `measure_starts`).
+        {
+            for bar in section.measures() {
                 // Chords divide the bar by their written durations, and
                 // a bar whose durations say nothing divides evenly —
                 // four chords in a bar of four is one a beat, which is
                 // what a chart means when it writes them side by side.
-                let beats_per_bar = f64::from(bar_beats(chart));
+                // The bar's own meter: a bar of 2/4 holds two.
+                let beats_per_bar = crate::setlist::chart_import::quarters_in(bar.time_signature);
                 let written: f64 = bar.chords.iter().map(|c| beats_of(c, chart)).sum();
                 let even = beats_per_bar / bar.chords.len().max(1) as f64;
                 let mut beat = 0.0;
@@ -131,17 +134,39 @@ pub fn voicings(chart: &Chart, octave: i32) -> Vec<Voicing> {
                     // The last chord in a bar holds to the bar line
                     // rather than to its written length: what a chart
                     // writes is where a chord STARTS, and the harmony
-                    // sounds until the next one.
-                    let beats = if std::ptr::eq(chord, last) {
-                        (beats_per_bar - beat).max(beats)
+                    // sounds until the next one. Not past it, either — a
+                    // lone chord is written a whole note, which in a bar
+                    // of 2/4 would run into the next bar's chord.
+                    let room = beats_per_bar - beat;
+                    let beats = if std::ptr::eq(chord, last) && room > 0.0 {
+                        room
                     } else {
                         beats
                     };
-                    if let Some(pitches) = voice(chord, key.as_ref(), octave) {
+                    // A rest or a spacer (`r`, `s` — a bar of N.C.) takes
+                    // its time and sounds nothing.
+                    let silent = matches!(chord.full_symbol.as_str(), "r" | "s");
+                    // A push sounds early (`'4`, an eighth before its beat,
+                    // across the bar line if it is on the one) and a pull
+                    // late; it still ends where it would have, and the
+                    // chord before it gives up (or takes) the difference.
+                    let shift = chord.push_pull.as_ref().map_or(0.0, |(push, amount)| {
+                        if *push {
+                            -amount.to_beats()
+                        } else {
+                            amount.to_beats()
+                        }
+                    });
+                    if !silent && let Some(pitches) = voice(chord, key.as_ref(), octave) {
+                        if shift != 0.0
+                            && let Some(before) = out.last_mut()
+                        {
+                            before.beats = (before.beats + shift).max(0.0);
+                        }
                         out.push(Voicing {
                             measure,
-                            beat,
-                            beats,
+                            beat: beat + shift,
+                            beats: beats - shift,
                             pitches,
                             symbol: chord.full_symbol.clone(),
                         });
@@ -332,6 +357,46 @@ mod holding_tests {
     /// sounding while the harmony is still going, and the analyser
     /// reading this track back would report a gap in a progression
     /// that has none.
+    /// A bar of 2/4 holds two beats of chord, however the chord is
+    /// written — not a whole 4/4 bar running into the next one.
+    #[test]
+    fn a_chord_in_a_short_bar_ends_at_its_bar_line() {
+        let voiced = voicings(&chart("My Song\n72bpm 4/4 #D\n\nVS 2\n!T2/4 2m7\n6m7\n"), 3);
+        assert_eq!(voiced.len(), 2, "{voiced:?}");
+        assert!(
+            (voiced[0].beats - 2.0).abs() < 1e-9,
+            "the 2/4 bar: {voiced:?}"
+        );
+        assert!(
+            (voiced[1].beats - 4.0).abs() < 1e-9,
+            "the 4/4 bar: {voiced:?}"
+        );
+    }
+
+    /// A bar of rests is no chord: nothing on the chord track.
+    #[test]
+    fn rests_are_no_chord() {
+        let voiced = voicings(&chart("My Song\n72bpm 4/4 #D\n\nVS 4\n1 1maj7 r r\n"), 3);
+        let symbols: Vec<_> = voiced
+            .iter()
+            .map(|v| (v.measure, v.symbol.as_str()))
+            .collect();
+        assert_eq!(symbols, vec![(0, "1"), (1, "1maj7")]);
+    }
+
+    /// `'4` is pushed an eighth: it sounds on the "and" of four of the
+    /// bar before, holds to its own bar's end, and the chord before it
+    /// stops where it starts.
+    #[test]
+    fn a_pushed_chord_sounds_an_eighth_early() {
+        let voiced = voicings(&chart("My Song\n120bpm 4/4 #C\n\nVS 2\n1 '4\n"), 3);
+        assert_eq!(voiced.len(), 2, "{voiced:?}");
+        assert!((voiced[0].beats - 3.5).abs() < 1e-9, "{voiced:?}");
+        assert_eq!(voiced[1].measure, 1);
+        assert!((voiced[1].beat + 0.5).abs() < 1e-9, "{voiced:?}");
+        assert!((voiced[1].beats - 4.5).abs() < 1e-9, "{voiced:?}");
+    }
+
     #[test]
     fn a_chord_holds_until_the_next() {
         let voiced = voicings(&chart("My Song\n4/4 #C\n\nVS 1: | C | F |\n"), 3);

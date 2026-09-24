@@ -132,7 +132,7 @@ impl Headless {
     where
         F: FnOnce(&mut VelloScenePainter<'_, '_>),
     {
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         // The image/window renderers hand their painter a renderer and
         // a device so it can register image resources. The arrangement
         // records solid fills and nothing else, so the plain constructor

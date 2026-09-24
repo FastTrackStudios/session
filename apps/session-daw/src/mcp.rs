@@ -245,6 +245,8 @@ pub struct Mixer {
     pub buttons_top: f64,
     /// How much of a strip the rack took.
     pub rack_h: f64,
+    /// Live-mode strips — see `strip::shape`.
+    pub live: bool,
     /// Each strip's own height.
     ///
     /// NOT the mixer's: nesting shortens a strip from the bottom, so a
@@ -383,9 +385,10 @@ impl Mixer {
         // needs the button column on one line. The fader gives way
         // instead — it is shorter on a shortened strip, which is the
         // cost of the indent rather than a second inconsistency.
-        let shared = Collapse::at(f64_to_f32((height - rack_h).max(1.0)));
+        let live = settings.live_strips;
+        let shared = crate::strip::shape(height - rack_h, live);
         let buttons_top = rack_h
-            + f64::from(daw_theme_art::collapse::FX_SECTION)
+            + crate::strip::fx_section(live)
             + f64::from(shared.pan_band)
             + f64::from(shared.input_band)
             + 4.0;
@@ -454,6 +457,7 @@ impl Mixer {
                     mixer_h: height,
                     column,
                     collapsed,
+                    live,
                 },
                 rack,
                 // A track with no settings yet gets none drawn rather
@@ -482,6 +486,7 @@ impl Mixer {
             height,
             buttons_top,
             rack_h,
+            live,
             heights,
             columns,
             labels,
@@ -499,6 +504,7 @@ impl Mixer {
             self.rack_h,
             self.buttons_top,
             self.columns.get(row).copied().unwrap_or(false),
+            self.live,
         ))
     }
 
@@ -618,6 +624,8 @@ struct Slot {
     column: bool,
     /// Whether the track is a folder whose rows are folded away.
     collapsed: bool,
+    /// A live-mode strip — see `strip::shape`.
+    live: bool,
 }
 
 /// How much of the panel the REAPER strip keeps, with the rack on.
@@ -874,10 +882,17 @@ fn strip(
     // three levels deep several pixels above the arm beside it, and a
     // control that moves because of something about ITS track cannot be
     // scanned across tracks.
-    let shape = Collapse::at(f64_to_f32((slot.mixer_h - rack_h).max(1.0)));
-    let own = Collapse::at(f64_to_f32((h - rack_h).max(1.0)));
-    let geometry =
-        crate::strip::Strip::laid_out(w, h, slot.mixer_h, rack_h, buttons_top, slot.column);
+    let shape = crate::strip::shape(slot.mixer_h - rack_h, slot.live);
+    let own = crate::strip::shape(h - rack_h, slot.live);
+    let geometry = crate::strip::Strip::laid_out(
+        w,
+        h,
+        slot.mixer_h,
+        rack_h,
+        buttons_top,
+        slot.column,
+        slot.live,
+    );
     // The strip's own chrome — band, sections, plate — is the whole
     // strip when the rack is stacked over it, and the left column when
     // the rack stands beside it. See `strip::Layout`.
@@ -951,7 +966,7 @@ fn strip(
         );
     }
 
-    let fx_section = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
+    let fx_section = crate::strip::fx_section(slot.live) + rack_h;
     let pan_band = f64::from(shape.pan_band);
     let input_band = f64::from(shape.input_band);
     let stretch_h = f64::from(own.stretch);
@@ -1023,6 +1038,7 @@ fn strip(
             mixer_h: slot.mixer_h,
             column: slot.column,
             collapsed: slot.collapsed,
+            live: slot.live,
         },
         (band_top, pan_band, input_band),
         &shape,

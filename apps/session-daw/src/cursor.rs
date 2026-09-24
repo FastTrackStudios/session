@@ -26,7 +26,8 @@
 //! which is why [`Playhead::seek`] exists — a jump is told to the
 //! cursor rather than inferred from a position that moved too far.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 /// Where the audio is, as something that can be asked at any moment.
 #[derive(Clone, Copy, Debug)]
@@ -345,14 +346,17 @@ pub fn paint_edit(
     use vello::peniko::Fill;
 
     let (ox, _) = origin;
-    let at = |seconds: f64| {
-        seconds.mul_add(view.pps, ox + crate::arrangement::TCP_WIDTH - view.scroll_x)
-    };
+    // The lanes' left edge. Nothing here draws past it: scrolled right,
+    // the cursor and the selection are off the left of the lanes, and
+    // without the clamp they painted over the track panel instead.
+    let left = ox + view.panel_w;
+    let at = |seconds: f64| seconds.mul_add(view.pps, left - view.scroll_x);
 
     // The selection first, as a wash — it is a region, and a region
     // drawn over its own edges hides them.
     if let Some(span) = edit.selection {
-        let (x0, x1) = (at(span.start), at(span.end));
+        let (edge0, edge1) = (at(span.start), at(span.end));
+        let (x0, x1) = (edge0.max(left), edge1.max(left));
         if x1 > x0 {
             painter.fill(
                 Fill::NonZero,
@@ -365,7 +369,7 @@ pub fn paint_edit(
                 None,
                 &Rect::new(x0, top, x1, bottom),
             );
-            for edge in [x0, x1] {
+            for edge in [edge0, edge1].into_iter().filter(|&edge| edge >= left) {
                 painter.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
@@ -378,14 +382,22 @@ pub fn paint_edit(
     }
 
     let x = at(edit.at);
+    if x < left {
+        return;
+    }
     painter.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        palette.text,
+        EDIT_CURSOR,
         None,
         &Rect::new(x, top, x + 1.0, bottom),
     );
 }
+
+/// The edit cursor's colour: blue (blue-500), where YOU are — against the
+/// play cursor's yellow, where the audio is.
+pub const EDIT_CURSOR: vello::peniko::Color =
+    vello::peniko::Color::from_rgba8(0x3b, 0x82, 0xf6, 0xff);
 
 /// How the play cursor looks.
 ///
@@ -410,18 +422,145 @@ pub struct Look {
     pub trail: f64,
     /// How far the shadow reaches, under everything else.
     pub shadow: f64,
-    /// How far the glow bleeds either side of the line.
+    /// How far the glow bleeds behind the line.
     pub glow: f64,
+    /// Opacity at the head of the trail (it falls off from there).
+    pub trail_strength: f32,
+    /// Opacity at the centre of the glow.
+    pub glow_strength: f32,
 }
 
 impl Default for Look {
     fn default() -> Self {
         Self {
-            line: vello::peniko::Color::from_rgba8(0xff, 0x4a, 0x3d, 0xff),
+            // Yellow: where the audio is. The edit cursor is blue — see
+            // `EDIT_CURSOR` — so the two never read as one another.
+            line: vello::peniko::Color::from_rgba8(0xfa, 0xcc, 0x15, 0xff),
             width: 2.0,
-            trail: 120.0,
+            // A hint of where the audio has been, not a bar following
+            // the line around.
+            trail: 90.0,
             shadow: 0.0,
             glow: 6.0,
+            trail_strength: 0.28,
+            glow_strength: 0.5,
+        }
+    }
+}
+
+/// The play cursor's trail, from where it has actually been.
+///
+/// A trail drawn at a fixed length sits beside the line whether or not
+/// anything moves — which is what this replaced. This one remembers the
+/// play position against the wall clock and draws back to where the
+/// cursor was a moment ago: so it drags out behind the cursor from where
+/// it set off, reaches its full length once it has travelled that far,
+/// and after a stop the tail keeps coming until it has caught the head.
+/// A cursor at rest has no trail.
+///
+/// How far back "a moment" is depends on the zoom — the time it takes
+/// the cursor to cover [`Look::trail`] pixels playing at speed — so the
+/// trail is the same length on screen at any zoom, capped at
+/// [`Trail::MAX_LAG`] so that far out it does not linger for seconds.
+///
+/// In project seconds rather than pixels, so a scroll or a zoom while
+/// playing does not read as the cursor having moved.
+#[derive(Clone, Debug, Default)]
+pub struct Trail {
+    /// (when, where), oldest first — back as far as `MAX_LAG` and no
+    /// further.
+    seen: std::collections::VecDeque<(Instant, f64)>,
+}
+
+impl Trail {
+    /// The longest the tail ever lags the head, in wall-clock time.
+    pub const MAX_LAG: Duration = Duration::from_millis(1500);
+
+    /// Where the cursor is now. A jump — a seek, a loop back, a play
+    /// from somewhere else — is not motion, so it starts the trail over
+    /// rather than smearing it across the gap.
+    ///
+    /// The same position twice is NOT a stop: the engine moves the
+    /// position once an audio block, and a frame can land between two.
+    pub fn record(&mut self, now: Instant, at: f64) {
+        if let Some(&(then, was)) = self.seen.back() {
+            let elapsed = now.saturating_duration_since(then).as_secs_f64();
+            // Faster than real time by more than a frame's slack, or
+            // backwards at all: not the transport rolling.
+            if at < was - 1e-4 || at - was > elapsed + 0.25 {
+                self.seen.clear();
+            }
+        }
+        self.seen.push_back((now, at));
+        while self.seen.len() > 2
+            && self
+                .seen
+                .get(1)
+                .is_some_and(|&(t, _)| now.saturating_duration_since(t) >= Self::MAX_LAG)
+        {
+            self.seen.pop_front();
+        }
+    }
+
+    /// Where the cursor was `lag` before `now` — or where the trail's
+    /// memory starts, which is where the cursor set off from.
+    #[must_use]
+    pub fn tail(&self, now: Instant, lag: Duration) -> Option<f64> {
+        let (&(t0, x0), rest) = (self.seen.front()?, self.seen.iter().skip(1));
+        let Some(horizon) = now.checked_sub(lag) else {
+            return Some(x0);
+        };
+        if t0 >= horizon {
+            return Some(x0);
+        }
+        let mut before = (t0, x0);
+        for &(t, x) in rest {
+            if t >= horizon {
+                let span = t.saturating_duration_since(before.0).as_secs_f64();
+                let into = horizon.saturating_duration_since(before.0).as_secs_f64();
+                let f = if span > 0.0 { into / span } else { 1.0 };
+                return Some(f.mul_add(x - before.1, before.1));
+            }
+            before = (t, x);
+        }
+        Some(before.1)
+    }
+
+    /// How long the trail is on screen, in pixels, for a full trail of
+    /// `full` pixels at `pps`.
+    #[must_use]
+    pub fn length(&self, now: Instant, pps: f64, full: f64) -> f64 {
+        if pps <= 0.0 || full <= 0.0 {
+            return 0.0;
+        }
+        let lag = Duration::from_secs_f64((full / pps).min(Self::MAX_LAG.as_secs_f64()));
+        let (Some(&(_, head)), Some(tail)) = (self.seen.back(), self.tail(now, lag)) else {
+            return 0.0;
+        };
+        ((head - tail) * pps).clamp(0.0, full)
+    }
+
+    /// Whether there is still a trail to draw — what keeps frames coming
+    /// while the tail catches up after a stop.
+    #[must_use]
+    pub fn alive(&self, now: Instant) -> bool {
+        let (Some(&(_, head)), Some(tail)) = (self.seen.back(), self.tail(now, Self::MAX_LAG))
+        else {
+            return false;
+        };
+        head - tail > 1e-6
+    }
+}
+
+impl Look {
+    /// This look with its trail `length` pixels long — what
+    /// [`Trail::length`] says the cursor has dragged out behind it. The
+    /// glow on the line is the line's and stays as it is.
+    #[must_use]
+    pub fn trailing(self, length: f64) -> Self {
+        Self {
+            trail: length.clamp(0.0, self.trail),
+            ..self
         }
     }
 }
@@ -520,12 +659,13 @@ pub fn paint(
         ramp(x, x - look.shadow, 0.35);
     }
     if look.trail > 0.0 {
-        ramp(x, x - look.trail, 0.55);
+        ramp(x, x - look.trail, look.trail_strength);
     }
-    // The glow is symmetric, so it is two ramps rather than one.
+    // The glow bleeds behind the line only: ahead of the cursor is
+    // audio that has not played, and a halo there reads as the cursor
+    // being further on than it is.
     if look.glow > 0.0 {
-        ramp(x, x - look.glow, 0.9);
-        ramp(x, x + look.glow, 0.9);
+        ramp(x, x - look.glow, look.glow_strength);
     }
 
     let line_left = (x - look.width / 2.0).max(left_bound);
@@ -619,8 +759,8 @@ mod look_tests {
             900.0,
             0.0,
         );
-        // shadow + trail + two glow halves + the line.
-        assert_eq!(scene.commands.len(), 5);
+        // shadow + trail + the glow behind + the line.
+        assert_eq!(scene.commands.len(), 4);
         assert!(FALLOFF_STOPS >= 4, "a curve needs stops to be a curve");
     }
 
@@ -657,6 +797,108 @@ mod look_tests {
             900.0,
             400.0,
         );
-        assert_eq!(scene.commands.len(), 5);
+        // shadow + trail + the glow behind + the line.
+        assert_eq!(scene.commands.len(), 4);
     }
+}
+
+#[cfg(test)]
+mod trail_tests {
+    use super::Trail;
+    use std::time::Duration;
+    use web_time::Instant;
+
+    const PPS: f64 = 100.0;
+    const FULL: f64 = 90.0;
+
+    /// A transport rolling at real time for `secs`, a frame at a time —
+    /// its position moving once per audio block, so some frames see the
+    /// same position twice, as the window does.
+    fn roll(trail: &mut Trail, from: Instant, at: f64, secs: f64) -> (Instant, f64) {
+        let frame = 1.0 / 120.0;
+        let block = 512.0 / 48_000.0;
+        let (mut now, mut clock) = (from, 0.0_f64);
+        for _ in 0..(secs / frame).round() as usize {
+            now += Duration::from_secs_f64(frame);
+            clock += frame;
+            trail.record(now, at + (clock / block).floor() * block);
+        }
+        (now, at + (clock / block).floor() * block)
+    }
+
+    #[test]
+    fn drags_out_from_where_it_set_off() {
+        let start = Instant::now();
+        let mut trail = Trail::default();
+        trail.record(start, 4.0);
+        let rest = start + Duration::from_secs(1);
+        trail.record(rest, 4.0);
+        assert!(trail.length(rest, PPS, FULL) < 1e-9, "a trail at rest");
+        let (now, pos) = roll(&mut trail, rest, 4.0, 0.3);
+        let early = trail.length(now, PPS, FULL);
+        // As far as it has come, and no further: it was never behind 4.0.
+        assert!(
+            (early - (pos - 4.0) * PPS).abs() < 1.5,
+            "{early} vs {}",
+            (pos - 4.0) * PPS
+        );
+        let (now, _) = roll(&mut trail, now, pos, 1.0);
+        assert!(
+            (trail.length(now, PPS, FULL) - FULL).abs() < 1.5,
+            "not at full length"
+        );
+    }
+
+    #[test]
+    fn the_tail_catches_up_after_a_stop() {
+        let start = Instant::now();
+        let mut trail = Trail::default();
+        trail.record(start, 0.0);
+        let (mut now, pos) = roll(&mut trail, start, 0.0, 2.0);
+        let playing = trail.length(now, PPS, FULL);
+        now += Duration::from_millis(300);
+        trail.record(now, pos);
+        let shrinking = trail.length(now, PPS, FULL);
+        assert!(
+            shrinking > 0.0 && shrinking < playing,
+            "{shrinking} of {playing}"
+        );
+        now += Trail::MAX_LAG;
+        trail.record(now, pos);
+        assert!(trail.length(now, PPS, FULL) < 1e-9);
+        assert!(!trail.alive(now), "still a trail long after the stop");
+    }
+
+    #[test]
+    fn a_seek_is_not_motion() {
+        let start = Instant::now();
+        let mut trail = Trail::default();
+        trail.record(start, 0.0);
+        let (now, _) = roll(&mut trail, start, 0.0, 1.0);
+        let now = now + Duration::from_millis(8);
+        trail.record(now, 60.0);
+        assert!(trail.length(now, PPS, FULL) < 1e-9);
+        let now = now + Duration::from_millis(8);
+        trail.record(now, 10.0);
+        assert!(trail.length(now, PPS, FULL) < 1e-9, "a jump back smeared");
+    }
+}
+
+/// The arrangement's edit cursor and time selection, as last drawn — for
+/// what acts on them from outside the arrangement (the Organize toolbar's
+/// inserts, which go through the engine and read ITS cursor and
+/// selection, so they are handed these first).
+static CURRENT: std::sync::Mutex<Option<Edit>> = std::sync::Mutex::new(None);
+
+/// Publish the arrangement's edit state (every frame it draws).
+pub fn publish(edit: Edit) {
+    if let Ok(mut slot) = CURRENT.lock() {
+        *slot = Some(edit);
+    }
+}
+
+/// The arrangement's edit state as last drawn, if it has drawn.
+#[must_use]
+pub fn current() -> Option<Edit> {
+    CURRENT.lock().ok().and_then(|slot| *slot)
 }

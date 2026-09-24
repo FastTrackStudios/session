@@ -11,6 +11,7 @@ use monarchy::{
 pub mod apply;
 pub mod buses;
 pub mod colors;
+#[cfg(feature = "reaper")]
 pub mod daw_module;
 pub mod equipment;
 mod error;
@@ -28,6 +29,7 @@ pub mod song_name;
 pub mod source_defaults;
 mod tempo;
 pub mod track_schema;
+pub mod visibility;
 
 pub use apply::{apply_buses, route_to_bus, AppliedBuses, TemplateTarget};
 pub use buses::{bus_for_path, bus_nodes, bus_nodes_for_paths, buses_for_paths, BusSpec, BUS_TREE};

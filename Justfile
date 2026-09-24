@@ -14,7 +14,7 @@
 # `dynamic_template::golden_session` and committed under
 # features/dynamic-template/fixtures/golden/. `just daw-template`
 # regenerates it. Override for a one-off with an argument
-# (`just daw-window some.rpp`) or for a session with FTS_DAW_TEMPLATE.
+# (`just studio-song some.rpp`) or for a session with FTS_DAW_TEMPLATE.
 GOLDEN_DIR := "features/dynamic-template/fixtures/golden"
 DAW_PROJECT := env("FTS_DAW_TEMPLATE", GOLDEN_DIR / "template.rpp")
 DAW_VOCAL := env("FTS_DAW_VOCAL", GOLDEN_DIR / "vocal-fx.rpp")
@@ -271,6 +271,17 @@ uninstall:
     update-desktop-database ~/.local/share/applications 2>/dev/null || true
     gtk-update-icon-cache ~/.local/share/icons/hicolor 2>/dev/null || true
     echo "uninstalled (user data in ~/.config/fts and ~/.config/signal kept)"
+
+# Session.app + its macOS .pkg installer (signed with the Developer ID
+# identities in the login keychain), built with the host toolchain — see the
+# script's header for the knobs (NOTARIZE=1, ADHOC_SIGN=1, MAC_TARGETS=...).
+macos-pkg:
+    bash apps/desktop/ios/package-session-macos.sh
+
+# Build the installer and install it for this user (~/Applications, no
+# password), replacing any earlier install.
+macos-install: macos-pkg
+    installer -pkg "target/Session-$(cargo pkgid -p session-desktop | sed 's/.*[#@]//')-macos.pkg" -target CurrentUserHomeDirectory
 
 # ── Release packaging ────────────────────────────────────────────────────
 # Assemble the distributable release artifacts into dist/ (what a
@@ -986,67 +997,6 @@ ee-fps $LINES="20":
       | awk '{ printf "%6.1f fps   worst %6.1f ms\n", $1, $2 }' \
       | tail -n "$LINES"
 
-# ── The Session DAW window ──────────────────────────────────────────
-#
-# TCP + arrangement + transport over a real REAPER project, in a WRY
-# WebView. The panels live in `daw_ui::studio`; `apps/session-daw` is
-# launch and the loader thread.
-#
-# Not the expression editor. That arrives once this holds its frame rate
-# with a real session open, and it arrives as a panel this window mounts.
-#
-# Same practice staging as `ee-practice` — reused, not re-copied — so the
-# numbers here and there are from the same project. Served, so `rsx!`
-# edits hot-reload into the running window.
-#
-# The window reports the rate its own compositor presented at a couple of
-# times a second (`ui.fps`, `ui.worst_frame_ms`), so a scroll can be
-# measured from a terminal rather than a screenshot: `just daw-fps`.
-daw $SONG="set-in-stone" $FRESH="false":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ "$SONG" == "both" ]]; then
-        echo 'Open one song per window: just daw set-in-stone / just daw unbreakable' >&2
-        exit 2
-    fi
-    staging=(--cached)
-    if [[ "$FRESH" == "true" ]]; then staging=(); fi
-    project=$(cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG")
-    mkdir -p target
-    RUST_LOG="${RUST_LOG:-warn,daw_ui::studio::fps=info}" \
-    SESSION_DAW_PROJECT="$project" \
-        dx serve -p session-daw --platform desktop 2>&1 | tee target/session-daw.log
-
-# Does the studio drop frames while you use it?
-#
-# Drives a real scroll and a real ctrl-zoom over the arrangement on a
-# private display and reports the WORST frame in each half-second window.
-# WebKit caps rAF near 60, so a clean run is a flat 62.x with a 17ms
-# worst frame; a dropped frame shows as ~33ms and cannot hide.
-#
-# Xvfb is not a GPU — these are a FLOOR, not what the real window does.
-# A clean run here is strong evidence; a dirty one is worth chasing
-# before believing. Check `uptime` first: this box runs other people's
-# work, and a measurement under a moving load is not one.
-daw-stress:
-    scripts/ui-stress/daw-gesture.sh
-
-# The window's own frame rate, off the log rather than a screenshot.
-#
-# Read the LOW end of the range and the worst frame. A window that idles
-# between gestures averages beautifully and still feels terrible. The
-# budget is 120 fps — 8.33 ms a frame.
-daw-fps $LINES="20":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    log=target/session-daw.log
-    if [[ ! -f "$log" ]]; then echo "no $log — run just daw first" >&2; exit 1; fi
-    sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$log" \
-      | grep -o 'ui\.fps=[0-9.]*  *ui\.worst_frame_ms=[0-9.]*' \
-      | sed -E 's/ui\.fps=([0-9.]*)  *ui\.worst_frame_ms=([0-9.]*)/\1 \2/' \
-      | awk '{ printf "%6.1f fps   worst %6.1f ms\n", $1, $2 }' \
-      | tail -n "$LINES"
-
 # Prepare self-contained projects without opening a window; prints their paths.
 # Reuses the shared staging; pass FRESH=true for a throwaway copy.
 ee-practice-prepare $SONG="both" $FRESH="false":
@@ -1124,36 +1074,6 @@ ee-stress $SONG="set-in-stone" $FRAMES="120" $PROFILE="dev" $ENFORCE="false":
     printf 'Practice project: %s\nReport directory: %s\n' "$project" "$report_root"
     RUST_BACKTRACE=1 FTS_STRESS_FRAMES="$FRAMES" FTS_STRESS_PROFILE="$PROFILE" "$artifact_root/$artifact_profile/examples/stress" "$project" --drums --size 1600x900 --out "$report_root" 2>&1 | tee "$report_root/run.log"
     python3 scripts/ui-stress/run.py "$report_root" "${options[@]}"
-
-# Measure the studio on the RIGHT-hand display, out of your way.
-#
-# Drives the window's own scroll (no input driver needed — see
-# `daw_ui::studio::autoscroll`) and reports the worst frame per
-# half-second window. `PROBE` takes `FTS_STUDIO_PROBE` switches, so a
-# bisect is one argument: `just daw-sweep v build:0`.
-#
-# Check `uptime` first and read the load this prints. This box's load has
-# swung between 25 and 308 in a single session, and a measurement taken
-# across that swing is not a measurement — compare only runs whose load
-# matches.
-daw-sweep AXIS="v" PROBE="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source scripts/ui-stress/daw-display.sh
-    project="${SESSION_DAW_PROJECT:-/tmp/fts-drum-practice-cache/set-in-stone/set in stone.practice.RPP}"
-    mkdir -p target
-    echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
-    FTS_STUDIO_PROBE="{{PROBE}}" FTS_STUDIO_AUTOSCROLL="{{AXIS}}" \
-    RUST_LOG="${RUST_LOG:-warn,daw_ui::studio=info}" \
-    SESSION_DAW_PROJECT="$project" \
-        timeout 70 ./target/debug/session-daw > target/daw-sweep.log 2>&1 || true
-    echo "load after:  $(cut -d' ' -f1-3 /proc/loadavg)"
-    sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' target/daw-sweep.log \
-      | grep -oE 'ui\.fps=[0-9.]+ +ui\.worst_frame_ms=[0-9.]+' \
-      | sed -E 's/ui\.fps=([0-9.]+) +ui\.worst_frame_ms=([0-9.]+)/\1 \2/' \
-      | awk 'NR>10{n++; if(min==""||$1<min)min=$1; if($2>max)max=$2}
-             END{if(n)printf "%6.1f fps   worst %6.1f ms   (n=%d)\n",min,max,n;
-                 else print "no samples — did the project mount?"}'
 
 # The orchestral test fixture: 2,000 tracks, 20,000 items, no media.
 #
@@ -1366,9 +1286,10 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
 #   just studio "" 2560x1440       at another size
 #   FPS=1 just studio              with the frame-time graph over it
 #
-# Wheel scrolls; shift makes it sideways. Hold `z` and scroll to zoom the
-# rows, shift-`z` for time; `z` and drag is the zoom tool. Middle-drag is
-# the hand. The corner says what a frame cost — the shell's own
+# The app's own panels (DawPanels), with the app's hands: wheel scrolls,
+# shift makes it sideways; hold `z` and scroll to zoom time, shift-`z` for
+# the rows; `z` and drag is the zoom tool; middle-drag is the hand; `x`
+# docks the mixer. `FPS=1` draws what a frame cost — the shell's own
 # resolve-encode-present, not the gap between redraws.
 #
 # `FPS=1` puts a hundred-frame bar graph in the bottom right, with the
@@ -1389,7 +1310,7 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
 studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p session-daw --bin blitz_shot
+    cargo build --profile release-fast -p session-daw --bin blitz_shot
     # Through `env`, not as a bare `VAR=x` prefix: bash decides what is
     # an assignment BEFORE it expands anything, so `${FPS:+FTS_BLITZ_FPS=1}`
     # in that position becomes a command name and the recipe dies with
@@ -1400,7 +1321,7 @@ studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     FTS_BLITZ_SIZE="{{SIZE}}" \
     FTS_BLITZ_SCENE="{{SCENE}}" \
     FTS_BLITZ_LOG=/tmp/fts-studio.log \
-    ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
+    ./target/release-fast/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
 
 # The studio, on the golden session.
 #
@@ -1438,7 +1359,6 @@ studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
     set -euo pipefail
     cargo build --release -p session-daw --bin blitz_shot
     env ${DUMP:+FTS_BLITZ_DUMP="{{DUMP}}"} ${FPS:+FTS_BLITZ_FPS=1} \
-    FTS_BLITZ_PART=all \
     FTS_BLITZ_SCENE=drum-mixing \
     FTS_BLITZ_SIZE="{{SIZE}}" \
     FTS_BLITZ_GESTURE="{{GESTURE}}" \
@@ -1483,7 +1403,7 @@ studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
 drive SIZE="2560x1440" SCENE="drum-mixing" DISPLAY_NUM="99":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p session-daw --bin blitz_shot
+    cargo build --profile release-fast -p session-daw --bin blitz_shot
     just drive-stop "{{DISPLAY_NUM}}"
     # A killed Xvfb leaves its lock behind and the next one refuses to
     # start — silently, as far as anything asking the display is
@@ -1511,7 +1431,7 @@ drive SIZE="2560x1440" SCENE="drum-mixing" DISPLAY_NUM="99":
         FTS_BLITZ_FPS=0 \
         FTS_PRESENT=immediate \
         FTS_BLITZ_LOG=/tmp/fts-drive.log \
-        ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-drive.png \
+        ./target/release-fast/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-drive.png \
         > /tmp/fts-drive.out 2>&1 < /dev/null &
     disown || true
     # Software rendering opens slowly; a minute is generous and a hang
@@ -1592,76 +1512,165 @@ daw-animate PROJECT="" SIZE="2560x1440":
     FTS_BENCH_ANIMATE=1 FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 \
         | grep -viE 'vulkan|objects:|WARN'
 
-# Opens the arrangement and scrolls it hard in both axes while reporting
-# the rate it actually presents at. This is the one to watch when asking
-# "does scrolling ever stutter" — the headless bench cannot show you that.
-daw-vello PROJECT="" SIZE="2560x1440":
+# The studio window (Blitz + the painted arrangement) on a real session,
+# prepared first: organize it, build the song from its keyflow chart
+# (tempo, markers, section regions, Keyflow folder), and generate the
+# click and guide — the multitrack's own click/guide stems are kept,
+# muted, beside them. Leave CHART empty to open the session as it is.
+# The desktop app, as you run it while working on it: `release-fast`
+# (release's optimisation, incremental — see Cargo.toml). A one-line edit
+# rebuilds in ~15 s instead of ~60 s. `PROJECT` is a `.RPP` (its prepared
+# `.session` beside it opens instead, once there is one), a `.session`, or
+# a setlist (a folder of songs, or a `.setlist`); `MODE` opens in a mode:
+#   just app "../sessions/Worship Set.setlist" "" organize
+app PROJECT="" CHART="" MODE="":
     #!/usr/bin/env bash
     set -euo pipefail
-    project="{{PROJECT}}"
-    if [[ -z "$project" ]]; then
-        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
-        [[ -f "$project" ]] || just daw-fixture
+    cargo build --profile release-fast -p session-desktop
+    # A bare binary started from a shell is not a foreground app on macOS
+    # (it opens behind whatever is in front); wrapped in a bundle and
+    # started with `open`, it comes forward like any app.
+    bundle="target/release-fast/Session Dev.app"
+    mkdir -p "$bundle/Contents/MacOS"
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+        '<plist version="1.0"><dict>' \
+        '<key>CFBundleName</key><string>Session Dev</string>' \
+        '<key>CFBundleIdentifier</key><string>app.fasttrackstudio.session.dev</string>' \
+        '<key>CFBundleExecutable</key><string>session-desktop</string>' \
+        '<key>CFBundlePackageType</key><string>APPL</string>' \
+        '<key>NSHighResolutionCapable</key><true/>' \
+        '</dict></plist>' > "$bundle/Contents/Info.plist"
+    # Everything the app prints, panics with their backtraces included, goes
+    # here — `open` would otherwise throw it away.
+    # ~/Library/Logs, not target/: `open` cannot write a launched app's
+    # output onto an external volume (-10810).
+    mkdir -p "$HOME/Library/Logs/Session Dev"
+    log="$HOME/Library/Logs/Session Dev/session-dev.log"
+    envs=(--env "RUST_LOG=${RUST_LOG:-warn,session_daw=info}" --env RUST_BACKTRACE=1)
+    # quote(): a song title can carry an apostrophe (God, I'm Just Grateful).
+    project={{quote(PROJECT)}}
+    chart={{quote(CHART)}}
+    mode={{quote(MODE)}}
+    if [[ -n "$project" ]]; then
+        # A folder or a .setlist is a set; anything else is one song.
+        if [[ -d "$project" && "$project" != *.session ]] || [[ "$project" == *.setlist ]]; then
+            envs+=(--env "FTS_SESSION_SETLIST=$(cd "$(dirname "$project")" && pwd)/$(basename "$project")")
+        else
+            envs+=(--env "FTS_SESSION_PROJECT=$(cd "$(dirname "$project")" && pwd)/$(basename "$project")")
+        fi
     fi
-    cargo build --release -p session-daw --bin vello 2>&1 | grep -E '^error' -A6 || true
-    FTS_VELLO_AUTOSCROLL=1 FTS_VELLO_SIZE="{{SIZE}}" \
-        RUST_LOG="${RUST_LOG:-warn,vello=info}" \
-        ./target/release/vello "$project"
-
-# The drum session, in a window you can screenshot.
-#
-# This is the one to open by hand: `just daw-template`'s session has the
-# hierarchy, the colours and the item density a real desk has, and it
-# opens with the KICK selected — so the focus-width rack is on screen
-# without clicking anything.
-#
-# Forced onto XWayland, and that is the point of this recipe. The window
-# is a Wayland surface by default, which no X screenshot tool and no
-# `xdotool` can see — every "the window did not open" in this repo's
-# history has been that. `WAYLAND_DISPLAY=` empties the variable winit
-# checks, so it falls back to X11 through XWayland, where the window has
-# a real X id.
-#
-# Note that `xdotool mousemove --window` does NOT work on it either:
-# winit ignores synthetic (send_event) motion. Move the REAL pointer to
-# absolute screen coordinates instead — window origin plus the offset
-# you want, read from `xdotool getwindowgeometry --shell`.
-daw-window PROJECT="" SIZE="2560x1440":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    project="{{PROJECT}}"
-    if [[ -z "$project" ]]; then
-        project="{{DAW_PROJECT}}"
-        [[ -f "$project" ]] || just daw-template
-    fi
-    cargo build --release -p session-daw --bin vello 2>&1 | grep -E '^error' -A6 || true
-    WAYLAND_DISPLAY= WINIT_UNIX_BACKEND=x11 \
-        FTS_VELLO_SIZE="{{SIZE}}" FTS_VELLO_SIMULATE=1 \
-        RUST_LOG="${RUST_LOG:-warn}" \
-        ./target/release/vello "$project"
-
-# The same window, captured to a PNG once it has settled.
-#
-# `just daw-shot` writes /tmp/fts-mixer.png at the window's own
-# resolution — no upscaling a small window, which is the other half of
-# why shots of this thing kept being unreadable.
-daw-shot OUT="/tmp/fts-mixer.png" PROJECT="" SIZE="2560x1440":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just daw-window "{{PROJECT}}" "{{SIZE}}" &
-    trap 'pkill -f "target/release/vello" || true' EXIT
-    for _ in $(seq 60); do
-        id="$(xdotool search --name 'Session' 2>/dev/null | head -1 || true)"
-        [[ -n "$id" ]] && break
-        sleep 2
+    if [[ -n "$chart" ]]; then envs+=(--env "FTS_SESSION_CHART=$chart"); fi
+    if [[ -n "$mode" ]]; then envs+=(--env "FTS_SESSION_MODE=$mode"); fi
+    # The view to open on (overview, performance, setup), from the caller's env.
+    if [[ -n "${FTS_SESSION_VIEW:-}" ]]; then envs+=(--env "FTS_SESSION_VIEW=$FTS_SESSION_VIEW"); fi
+    # The lyrics panel's view (audience, performer, confidence), likewise.
+    if [[ -n "${FTS_LYRICS_VIEW:-}" ]]; then envs+=(--env "FTS_LYRICS_VIEW=$FTS_LYRICS_VIEW"); fi
+    # Collaboration (collab_bar.rs): share on open, or join a ticket / the
+    # file a host writes one to. A joining copy is a SECOND window beside
+    # the host, so it neither kills the running one nor shares its log.
+    for var in FTS_COLLAB_HOST FTS_COLLAB_JOIN FTS_COLLAB_TASK FTS_COLLAB_NAME FTS_COLLAB_TICKET FTS_COLLAB_PUPPET FTS_COLLAB_PUPPET_TRANSPORT FTS_COLLAB_PUPPET_MOUSE FTS_WINDOW_POS FTS_WINDOW_SIZE FTS_SESSION_SONG FTS_AUDIO_MODE FTS_AUDIO_TARGET SESSION_DAW_REAPER FTS_SOCKET FTS_STREAM_SOURCE FTS_SHARE_LINKS FTS_LOAD FTS_TASK_SERVER FTS_TASK_ORG FTS_TASK_TOKEN XDG_DATA_HOME; do
+        if [[ -n "${!var:-}" ]]; then envs+=(--env "$var=${!var}"); fi
     done
-    [[ -n "${id:-}" ]] || { echo "the window never appeared" >&2; exit 1; }
-    xdotool windowactivate --sync "$id"
-    # Into the mixer, which is what these shots are of.
-    xdotool key --window "$id" x
-    sleep 3
-    magick import -window "$id" "{{OUT}}"
-    printf 'wrote %s — %s\n' "{{OUT}}" "$(magick identify -format '%wx%h' "{{OUT}}")"
+    # FTS_SECOND_WINDOW: the same, for any second window (`duo-task`).
+    if [[ -n "${FTS_COLLAB_JOIN:-}" || -n "${FTS_SECOND_WINDOW:-}" ]]; then
+        log="$HOME/Library/Logs/Session Dev/session-dev-joined.log"
+        open -n --stdout "$log" --stderr "$log" "${envs[@]}" "$bundle"
+        echo "log: $log"
+        exit 0
+    fi
+    pkill -f 'Session Dev.app/Contents/MacOS/session-desktop' || true
+    # Let a killed copy go before its bundle is opened again.
+    sleep 1
+    # A new file, never an overwrite: macOS caches a binary's code signature
+    # by file, and launching one rewritten in place fails (-10810).
+    rm -f "$bundle/Contents/MacOS/session-desktop"
+    cp target/release-fast/session-desktop "$bundle/Contents/MacOS/session-desktop"
+    # One signature across rebuilds. The linker's ad-hoc one names the
+    # binary by a build hash, so every build is a new app to macOS and it
+    # asks again for the removable drive; a real identity and a fixed
+    # identifier keep the grant. SESSION_SIGN_IDENTITY overrides the pick.
+    identity="${SESSION_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
+        | awk -F'"' '/Apple Development/ {print $2; exit}')}"
+    if [[ -n "$identity" ]]; then
+        codesign --force --sign "$identity" --identifier app.fasttrackstudio.session.dev "$bundle" \
+            || echo "codesign with '$identity' failed; the build keeps its ad-hoc signature"
+    fi
+    open -n --stdout "$log" --stderr "$log" "${envs[@]}" "$bundle"
+    echo "log: $log"
+
+# Two windows side by side on one song or setlist, collaborating: the left
+# one shares it, the right one joins — to see both ends of a session at
+# once with your own mouse. `NAME_A`/`NAME_B` name the two people.
+#
+#   just duo "../sessions/Worship Set.setlist"
+#   just duo "../sessions/imported/Washed/Washed.RPP"
+duo PROJECT MODE="live" NAME_A="Cody" NAME_B="Alice":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --profile release-fast -p session-desktop
+    # The main screen's usable area, in points: below the menu bar, above
+    # the Dock — NOT Finder's desktop bounds, which span every monitor.
+    read -r X Y W H < <(swift -e 'import AppKit; let s = NSScreen.main!; let f = s.visibleFrame; print(Int(f.origin.x), Int(s.frame.height - f.maxY), Int(f.width), Int(f.height))' 2>/dev/null)
+    # Not an even split: the sharer's window is a little narrower, so
+    # every panel is a different size on each side — what anchored
+    # pointers have to survive. DUO_SPLIT is the left one's share, in %.
+    left=$((W * ${DUO_SPLIT:-44} / 100))
+    right=$((W - left))
+    ticket="${TMPDIR:-/tmp}/fts-session-ticket"
+    rm -f "$ticket"
+    FTS_COLLAB_HOST=1 FTS_COLLAB_NAME={{quote(NAME_A)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
+        FTS_WINDOW_POS="${X},${Y}" FTS_WINDOW_SIZE="${left}x${H}" \
+        just app {{quote(PROJECT)}} "" {{quote(MODE)}}
+    for _ in $(seq 1 90); do [[ -s "$ticket" ]] && break; sleep 1; done
+    [[ -s "$ticket" ]] || { echo "the host did not share (see the log)"; exit 1; }
+    # JOIN_SONG=<n> starts the joiner on the set's n-th song.
+    FTS_SESSION_SONG="${JOIN_SONG:-}" FTS_COLLAB_JOIN="$ticket" FTS_COLLAB_NAME={{quote(NAME_B)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
+        FTS_WINDOW_POS="$((X + left)),${Y}" FTS_WINDOW_SIZE="${right}x${H}" \
+        just app {{quote(PROJECT)}} "" {{quote(MODE)}}
+    echo "sharing: $(cat "$ticket")"
+
+# Two windows meeting in a set Task keeps (`FTS_COLLAB_TASK`): no host —
+# Task keeps the session, the first window on a song seeds its doc, and the
+# second takes it from Task. SETLIST is the set's id in the library's org
+# (`FTS_TASK_*`), or `share:<live share link>` to join as a guest.
+duo-task SETLIST PROJECT MODE="live" NAME_A="Cody" NAME_B="Alice":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --profile release-fast -p session-desktop
+    read -r X Y W H < <(swift -e 'import AppKit; let s = NSScreen.main!; let f = s.visibleFrame; print(Int(f.origin.x), Int(s.frame.height - f.maxY), Int(f.width), Int(f.height))' 2>/dev/null)
+    left=$((W * ${DUO_SPLIT:-44} / 100))
+    right=$((W - left))
+    FTS_COLLAB_TASK={{quote(SETLIST)}} FTS_COLLAB_NAME={{quote(NAME_A)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
+        FTS_WINDOW_POS="${X},${Y}" FTS_WINDOW_SIZE="${left}x${H}" \
+        just app {{quote(PROJECT)}} "" {{quote(MODE)}}
+    # The first seeds; give it the moment it takes before the second looks.
+    sleep "${DUO_TASK_GAP:-8}"
+    FTS_SECOND_WINDOW=1 FTS_SESSION_SONG="${JOIN_SONG:-}" FTS_COLLAB_TASK={{quote(SETLIST)}} FTS_COLLAB_NAME={{quote(NAME_B)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
+        FTS_WINDOW_POS="$((X + left)),${Y}" FTS_WINDOW_SIZE="${right}x${H}" \
+        just app {{quote(PROJECT)}} "" {{quote(MODE)}}
+
+# Prepare songs once — organize, build from the chart, generate the click
+# and guide — and save each as `Song.session` beside its `.RPP`, which the
+# app then opens instead. One process per song (the engine is
+# process-wide). `just prepare ../sessions/imported/*/*.RPP`
+[positional-arguments]
+prepare +PROJECTS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --profile release-fast -p session-daw --bin prepare
+    for p in "$@"; do ./target/release-fast/prepare "$p"; done
+
+studio-song PROJECT CHART="" SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --profile release-fast -p session-daw --bin blitz_shot
+    prep=()
+    if [[ -n "{{CHART}}" ]]; then
+        prep=(FTS_BLITZ_ORGANIZE=1 "FTS_BLITZ_CHART={{CHART}}" FTS_BLITZ_GUIDE=1)
+    fi
+    env FTS_BLITZ_WINDOW=1 FTS_BLITZ_SIZE="{{SIZE}}" ${prep[@]+"${prep[@]}"} \
+        RUST_LOG="${RUST_LOG:-warn,session_daw=info}" \
+        ./target/release-fast/blitz_shot "{{PROJECT}}" /tmp/fts-studio.png
 
 # Everything CI runs, in CI's order, with one command.
 #
@@ -1774,23 +1783,31 @@ ci FROM="lockfile":
     echo
     echo "every CI step passed locally"
 
-# Attach the session window to a REAPER that is already running the FTS
-# extension, instead of opening a `.rpp` this window owns.
-#
-# The extension publishes its whole service surface on a Unix socket
-# (`/tmp/fts-daw-<pid>.sock`); this connects to it and installs it as
-# the facade every panel reads through. Pass a socket when more than one
-# REAPER is up — discovery picks one and does not ask.
-#
-# REAPER owns the audio here. No media is materialised, no meters are
-# built and no engine is attached: standing a second engine up beside
-# REAPER's would be two things playing the same project.
-daw-reaper SOCKET="":
+# The Session DAW view in a browser (session-daw's web_host), built to
+# apps/session-daw-web/dist: cargo → wasm-bindgen → index.html, plus the
+# demo session's project and chart under dist/session/. Host toolchain
+# (rustup target add wasm32-unknown-unknown; cargo install
+# wasm-bindgen-cli --version 0.2.126). Serve with `just web-daw-serve`.
+web-daw SESSION="../sessions/Always On Time" RPP="Always On Time.RPP" CHART="Always_on_Time.kf" PROFILE="release":
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ -z "{{SOCKET}}" ] && ! ls /tmp/fts-daw-*.sock >/dev/null 2>&1; then
-      echo "No REAPER socket in /tmp. Is REAPER running with the FTS extension?" >&2
-      echo "Build and install it from ../fts-extensions: just reaper build && just reaper install" >&2
-      exit 1
+    cargo build -p session-daw-web --target wasm32-unknown-unknown --profile {{PROFILE}}
+    out=apps/session-daw-web/dist
+    mkdir -p "$out/session"
+    dir=$([ "{{PROFILE}}" = "dev" ] && echo debug || echo "{{PROFILE}}")
+    wasm-bindgen --target web --no-typescript --out-dir "$out" \
+        "target/wasm32-unknown-unknown/$dir/session-daw-web.wasm"
+    # 26 MB → 19 MB (7 MB gzipped). Release only: it takes half a minute.
+    if [ "{{PROFILE}}" != "dev" ] && command -v wasm-opt >/dev/null; then
+        wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+            --enable-sign-ext --enable-mutable-globals --enable-reference-types \
+            --enable-multivalue "$out/session-daw-web_bg.wasm" -o "$out/session-daw-web_bg.wasm"
     fi
-    cargo run --release -p session-daw --bin vello -- --reaper {{SOCKET}}
+    cp apps/session-daw-web/www/index.html "$out/"
+    cp "{{SESSION}}/{{RPP}}" "$out/session/demo.RPP"
+    cp "{{SESSION}}/{{CHART}}" "$out/session/demo.kf"
+    ls -lh "$out" "$out/session"
+
+# Serve the built web DAW on http://localhost:8765.
+web-daw-serve:
+    cd apps/session-daw-web/dist && python3 -m http.server 8765

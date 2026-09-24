@@ -12,9 +12,8 @@ use daw_reaper::track::{
 
 use crate::golden_session::kind::{Kind, TrackExt};
 use crate::scenes;
-use crate::{
-    default_config, monarchy_sort, track_schema, ItemMetadata, OrganizeIntoTracks, Structure,
-};
+use crate::visibility::normalize_key;
+use crate::{default_config, track_schema, OrganizeIntoTracks};
 /// Every action this module declares, in one list.
 ///
 /// The four `#[architect::actions]` traits below are the single source of
@@ -238,25 +237,25 @@ const fn project() -> ProjectContext {
     ProjectContext::Current
 }
 
-fn selected_or_all_tracks(selected_only: bool) -> Vec<daw::service::Track> {
-    if selected_only {
-        daw_reaper::Reaper.selected(project())
-    } else {
-        daw_reaper::Reaper.all(project())
-    }
-}
-
 fn sort_tracks(selected_only: bool) -> eyre::Result<()> {
-    let source = selected_or_all_tracks(selected_only);
-    if source.is_empty() {
+    if selected_only {
+        // The organize pass reasons about the whole project (buses, routing,
+        // the UNSORTED gather), so a selection-scoped run is its own feature.
+        // Say so rather than quietly reorganizing everything.
+        tracing::warn!(
+            "[dynamic-template] sorting only the selected tracks is not supported yet; \
+             use Sort All"
+        );
         return Ok(());
     }
-    let names: Vec<String> = source.iter().map(|t| t.name.clone()).collect();
-    let config = default_config();
-    let hierarchy = names.organize_into_tracks(&config, None)?;
-    tracing::warn!(
-        "[dynamic-template] sort skipped for {} tracks; current DAW facade no longer exposes hierarchy apply",
-        hierarchy.tracks.len()
+    let mut target = crate::apply::ReaperTarget::new(project());
+    let organized = crate::apply::organize(&mut target)?;
+    tracing::info!(
+        tracks = organized.existing,
+        buses = organized.buses.len(),
+        painted = organized.painted,
+        unsorted = organized.unsorted.len(),
+        "[dynamic-template] session organized"
     );
     Ok(())
 }
@@ -637,48 +636,7 @@ fn rebuild_group_cache() -> eyre::Result<HashMap<String, Vec<String>>> {
         .into_iter()
         .map(|t| t.name)
         .collect();
-    let structure = monarchy_sort(names, &default_config())?;
-    let mut cache = HashMap::new();
-    collect_group_cache(&structure, &mut Vec::new(), &mut cache);
-    for names in cache.values_mut() {
-        names.sort();
-        names.dedup();
-    }
-    Ok(cache)
-}
-
-fn collect_group_cache(
-    structure: &Structure<ItemMetadata>,
-    path: &mut Vec<String>,
-    cache: &mut HashMap<String, Vec<String>>,
-) {
-    let pushed = !structure.name.is_empty() && structure.name != "root";
-    if pushed {
-        path.push(structure.name.clone());
-    }
-
-    for item in &structure.items {
-        for group in path.iter() {
-            cache
-                .entry(normalize_key(group))
-                .or_default()
-                .push(item.original.clone());
-        }
-        if !path.is_empty() {
-            cache
-                .entry(normalize_key(&path.join("_")))
-                .or_default()
-                .push(item.original.clone());
-        }
-    }
-
-    for child in &structure.children {
-        collect_group_cache(child, path, cache);
-    }
-
-    if pushed {
-        path.pop();
-    }
+    crate::visibility::groups(names)
 }
 
 fn log_status_action(state: &Arc<Mutex<State>>) {
@@ -1206,24 +1164,6 @@ fn next_version_suffix(existing: &HashSet<String>, root_name: &str) -> String {
 
 fn with_suffix(name: &str, suffix: &str) -> String {
     format!("{name}{suffix}")
-}
-
-fn normalize_key(value: &str) -> String {
-    let mut key = String::new();
-    let mut last_was_sep = false;
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            key.push(ch.to_ascii_lowercase());
-            last_was_sep = false;
-        } else if !last_was_sep && !key.is_empty() {
-            key.push('_');
-            last_was_sep = true;
-        }
-    }
-    while key.ends_with('_') {
-        key.pop();
-    }
-    key
 }
 
 // One static table entry per template group; splitting it up would only

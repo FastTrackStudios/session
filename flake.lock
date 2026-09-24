@@ -30,6 +30,23 @@
         "type": "github"
       }
     },
+    "daw-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790269055,
+        "narHash": "sha256-9WARZaDBByoT6avPQJn9qoGmQXSXRI5Q54Zi82+5O+0=",
+        "owner": "FastTrackStudios",
+        "repo": "daw",
+        "rev": "e9566a9a023ca5b6d29956c4de374dcc2ef268d9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "FastTrackStudios",
+        "repo": "daw",
+        "rev": "e9566a9a023ca5b6d29956c4de374dcc2ef268d9",
+        "type": "github"
+      }
+    },
     "den": {
       "locked": {
         "lastModified": 1783964713,
@@ -201,9 +218,27 @@
         "type": "github"
       }
     },
+    "processor-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790195447,
+        "narHash": "sha256-5J/zPmrUsm5FuuoDlJV6iIz7/rjOLxjLW4f3MNWLHCk=",
+        "owner": "FastTrackStudios",
+        "repo": "processor",
+        "rev": "bdf855f35e646ced8e08d31750dcf158e0b1bc60",
+        "type": "github"
+      },
+      "original": {
+        "owner": "FastTrackStudios",
+        "repo": "processor",
+        "rev": "bdf855f35e646ced8e08d31750dcf158e0b1bc60",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "crane": "crane",
+        "daw-src": "daw-src",
         "den": "den",
         "dioxus-flake": "dioxus-flake",
         "flake-parts": "flake-parts_2",
@@ -213,6 +248,7 @@
           "nixpkgs"
         ],
         "nixpkgs-dx": "nixpkgs-dx",
+        "processor-src": "processor-src",
         "rust-overlay": [
           "dioxus-flake",
           "rust-overlay"

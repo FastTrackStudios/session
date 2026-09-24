@@ -49,6 +49,10 @@ mod session_view;
 // LAN-reachable `/vox` WebSocket instead of opening a GUI window.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod engine_server;
+// `--engine --project/--setlist`: what the headless engine opens first —
+// through the app's own song-opening path, so it needs the app (`native`).
+#[cfg(all(feature = "session", feature = "native", not(target_arch = "wasm32")))]
+mod engine_open;
 // Home page data layer: the on-disk track libraries + their setlist notes.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod setlist_library;
@@ -64,6 +68,12 @@ mod session_remote_view;
 mod collection_browser;
 // The browser chart pane: the active song's keyflow chart (CPU engraver →
 // SVG) with a playhead highlight driven by the transport streams.
+/// The app on Blitz — see `docs/app-on-blitz.md`.
+#[cfg(all(
+    feature = "native",
+    not(any(target_arch = "wasm32", target_os = "ios"))
+))]
+mod native;
 #[cfg(all(feature = "session", target_arch = "wasm32"))]
 mod session_chart_pane;
 #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
@@ -105,15 +115,17 @@ fn main() {
         if let Some(guard) = architect_telemetry::init("session") {
             std::mem::forget(guard);
         }
+        // What is logged without RUST_LOG — and what is exported.
+        const LOG_DEFAULT: &str = "info,vox_core=warn,schema_deser=off";
         let registry = tracing_subscriber::registry()
             .with(
                 tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "info,vox_core=warn,schema_deser=off".into()),
+                    .unwrap_or_else(|_| LOG_DEFAULT.into()),
             )
             .with(tracing_subscriber::fmt::layer())
             .with(log_ring::RingLayer::new())
             .with(architect_telemetry::tracing_layer());
-        match architect_telemetry::otel::init("session") {
+        match architect_telemetry::otel::init("session", LOG_DEFAULT) {
             Some((otel_guard, layers)) => {
                 registry.with(layers).init();
                 std::mem::forget(otel_guard);
@@ -123,16 +135,20 @@ fn main() {
         log_ring::install_panic_hook();
     }
 
-    // `--engine`: headless, serves the setlist over a LAN-reachable /vox
-    // WebSocket for other devices on the network — no GUI window, never
-    // returns. Checked before the GUI's own session bootstrap below since
-    // it replaces the whole rest of `main` rather than adding to it.
+    // `--engine`: headless — serves the setlist and (Live Mode) the whole
+    // daw facade over a LAN-reachable /vox WebSocket and over iroh, for
+    // other devices and for Session UIs attaching to it as a Remote — no
+    // GUI window, never returns. Checked before the GUI's own session
+    // bootstrap below since it replaces the whole rest of `main` rather
+    // than adding to it. Arguments: see `engine_server::EngineArgs`.
     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
     if std::env::args().any(|a| a == "--engine") {
+        let args = engine_server::EngineArgs::parse(&std::env::args().collect::<Vec<_>>());
         // Same mode switch the GUI path uses below — `--engine` just
         // replaces the GUI with a LAN server on top of whichever engine
         // that env var selects.
-        if std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording") {
+        let recording = std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording");
+        if recording {
             match reaper_engine::bootstrap_blocking() {
                 Ok(()) => {
                     tracing::info!("--engine: recording mode ready (connected to live REAPER)");
@@ -141,6 +157,11 @@ fn main() {
                     tracing::error!("--engine: recording mode failed to connect to REAPER: {e:?}");
                     std::process::exit(1);
                 }
+            }
+            if args.open.is_some() {
+                tracing::warn!(
+                    "--engine: --project/--setlist ignored in recording mode (REAPER owns the project)"
+                );
             }
         } else {
             match session_engine::bootstrap_blocking() {
@@ -151,15 +172,42 @@ fn main() {
                 }
             }
         }
-        let port = std::env::args()
-            .position(|a| a == "--port")
-            .and_then(|i| std::env::args().nth(i + 1))
-            .and_then(|p| p.parse::<u16>().ok());
         let rt = tokio::runtime::Runtime::new().expect("build the --engine server runtime");
-        if let Err(e) = rt.block_on(engine_server::run(port)) {
+        if let (false, Some(target), Some(engine)) =
+            (recording, args.open.as_ref(), session_engine::engine())
+        {
+            #[cfg(feature = "native")]
+            let opened = rt.block_on(engine_open::open(engine, target));
+            // Songs open through the app's one path (session-daw): a build
+            // without the app opens none, rather than a second way.
+            #[cfg(not(feature = "native"))]
+            let opened: eyre::Result<()> = {
+                let _ = (engine, target);
+                Err(eyre::eyre!(
+                    "this build opens no songs: built without the app (feature `native`)"
+                ))
+            };
+            if let Err(e) = opened {
+                tracing::error!("--engine: could not open {target:?}: {e:?}");
+                std::process::exit(1);
+            }
+        }
+        if let Err(e) = rt.block_on(engine_server::run(&args)) {
             tracing::error!("--engine: server failed: {e:?}");
             std::process::exit(1);
         }
+        return;
+    }
+
+    // The Blitz app opens its session on the studio's engine itself (see
+    // `native::launch`); bringing the WRY app's engine up as well would put
+    // two daw-standalone facades in one process.
+    #[cfg(all(
+        feature = "native",
+        not(any(target_arch = "wasm32", target_os = "ios"))
+    ))]
+    {
+        native::launch();
         return;
     }
 

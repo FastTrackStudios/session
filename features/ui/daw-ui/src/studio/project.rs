@@ -245,7 +245,7 @@ pub async fn fetch() -> Option<Project> {
             start: r.time_range.start_seconds(),
             end: r.time_range.end_seconds(),
             name: r.name.clone(),
-            color: r.color.map(|c| format!("#{c:06x}")),
+            color: r.color.map(css_color),
             lane: r.lane.unwrap_or(0),
         })
         .collect();
@@ -264,7 +264,7 @@ pub async fn fetch() -> Option<Project> {
         .map(|(i, m)| Marker {
             at: m.position.seconds().unwrap_or(0.0),
             name: m.name.clone(),
-            color: m.color.map(|c| format!("#{c:06x}")),
+            color: m.color.map(css_color),
             idx: m.id.unwrap_or(i as u32 + 1),
             lane: m.lane.unwrap_or(0),
         })
@@ -347,4 +347,12 @@ pub async fn fetch_when_ready() -> Arc<Project> {
         }
         futures_timer::Delay::new(std::time::Duration::from_millis(80)).await;
     }
+}
+
+/// A service colour (`0xRRGGBB`) as CSS. Masked to 24 bits: a backend
+/// that hands back REAPER's "custom colour" flag in the top byte would
+/// otherwise format as seven hex digits, which is not a colour, and the
+/// band falls back to the accent.
+fn css_color(c: u32) -> String {
+    format!("#{:06x}", c & 0x00ff_ffff)
 }

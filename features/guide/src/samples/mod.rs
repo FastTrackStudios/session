@@ -7,6 +7,7 @@
 //! rate changes — no platform audio I/O.
 
 mod bank;
+pub mod library;
 mod loader;
 
 pub use bank::{

@@ -75,7 +75,7 @@ daw-synchronization = { workspace = true, optional = true }
 reaper-high = { workspace = true, optional = true }
 reaper-low = { workspace = true, optional = true }
 reaper-medium = { workspace = true, optional = true }
-dynamic-template.workspace = true
+dynamic-template = { workspace = true, features = ["reaper"] }
 vox = { workspace = true, features = ["transport-local"] }
 
 # Wasm-only: the browser setlist pump drives its single-threaded reactive loop
@@ -119,7 +119,15 @@ vox-websocket = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
+# The live session as a Loro doc, presence and shared transport
+# (FastTrackStudios/session#139).
+[dependencies.session-sync]
+workspace = true
+
 [features]
+# Sharing a session: the doc bridge to the engine, and hosting/joining
+# over vox (FastTrackStudios/session#139).
+collab = ["session-sync/engine", "session-sync/net"]
 # Real REAPER integration: window-layout modes (screensets), auto-colour
 # action registration, the DawModule extension glue, take-ranking, live
 # cross-window DAW sync. Off by default. A REAPER-hosted binary (the

@@ -35,14 +35,17 @@
         jq
         # Pre-compression for --compression-static serving.
         brotli
+        # stylo (Blitz's CSS engine, in the Session app's page) generates
+        # its property tables with a Python script at build time.
+        python3
         llvmPackages_18.clang-unwrapped
         llvmPackages_18.bintools-unwrapped
       ]);
 
       # The dx build runs from the app dir but writes to the
       # WORKSPACE-ROOT target/dx/<name>/release/web/public.
-      mkDxWebBundle = { pname, appDir, dxName, preBuild ? "", dxArgs ? "" }:
-        craneLib.buildPackage (commonArgs // dxWebEnv // {
+      mkDxWebBundle = { pname, appDir, dxName, preBuild ? "", dxArgs ? "", env ? { } }:
+        craneLib.buildPackage (commonArgs // dxWebEnv // env // {
           inherit pname;
           version = "0.1.0";
           cargoArtifacts = null;
@@ -75,6 +78,40 @@
           '';
           doCheck = false;
         });
+
+      # The public demo's set: a live share link (`task share live <setlist>
+      # --reset-minutes 5`) on the public Task, baked into the site's /demo.
+      # Empty until the demo set is published there: /demo then says so.
+      sessionDemoLink = "";
+
+      # The Session app in a browser (`just web-daw`): what /demo and every
+      # live link open, served under the site's /app/. A plain cargo +
+      # wasm-bindgen build (no dx: the page is a library host, see
+      # session-daw's web_host).
+      session-app-web = craneLib.buildPackage (commonArgs // dxWebEnv // {
+        pname = "session-app-web";
+        version = "0.1.0";
+        cargoArtifacts = null;
+        nativeBuildInputs = dxWebNativeInputs;
+        doNotPostBuildInstallCargoBinaries = true;
+        buildPhaseCargoCommand = ''
+          cargo build --release -p session-daw-web --target wasm32-unknown-unknown
+          mkdir -p dist
+          wasm-bindgen --target web --no-typescript --out-dir dist \
+            target/wasm32-unknown-unknown/release/session-daw-web.wasm
+          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+            --enable-sign-ext --enable-mutable-globals --enable-reference-types \
+            --enable-multivalue dist/session-daw-web_bg.wasm -o dist/session-daw-web_bg.wasm
+        '';
+        installPhaseCommand = ''
+          mkdir -p $out/www
+          cp -R dist/. $out/www/
+          cp apps/session-daw-web/www/index.html $out/www/
+          find $out/www -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.html' \) \
+            -exec brotli --keep --quality=9 {} +
+        '';
+        doCheck = false;
+      });
 
       # task-webapp moved to the task repo with the August 2026 split,
       # along with task-server and the ui-lab bundle.
@@ -131,10 +168,25 @@
         # Dioxus's bare fallback shell, with the build still reporting
         # success. (dioxus#3518.)
         dxArgs = "--ssg --fullstack --force-sequential";
+        env = {
+          SESSION_DEMO_LINK = sessionDemoLink;
+          # The pre-render server is a native binary over the same session
+          # crates the desktop links (Blitz, baseview's X11 window layer):
+          # the desktop's native libraries, not just openssl.
+          buildInputs = config.fts.buildInputs ++ [ pkgs.openssl ];
+        };
       };
+
+      # What session.fasttrackstudio.app serves: the site, and the app
+      # under /app/.
+      session-site-root = pkgs.runCommand "session-site-root" { } ''
+        mkdir -p $out/app
+        cp -R ${session-web}/www/. $out/
+        cp -R ${session-app-web}/www/. $out/app/
+      '';
     in
     {
-      packages = { inherit fts-site-web session-web; }
+      packages = { inherit fts-site-web session-web session-app-web; }
       // lib.optionalAttrs pkgs.stdenv.isLinux {
         fts-site-image = mkStaticSite {
           name = "fts-site";
@@ -142,7 +194,7 @@
         };
         session-web-image = mkStaticSite {
           name = "session-web";
-          siteRoot = "${session-web}/www";
+          siteRoot = "${session-site-root}";
         };
       };
     };

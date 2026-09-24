@@ -206,3 +206,179 @@ pub(crate) async fn establish_verbose<C: vox_core::FromVoxLane>(
         }
     }
 }
+
+// ── A Session engine's daw facade (native) ──────────────────────────────────
+//
+// `session-desktop --engine` serves the whole daw facade — every service
+// daw-standalone mounts, the same set REAPER's daw-bridge serves — next to
+// the setlist, over its `/vox` WebSocket and over iroh. This is the client
+// half: one vox connection, one lane, one `Caller` that every daw service
+// client shares (the engine's router dispatches by method id, exactly like
+// the REAPER extension's socket that `daw::cli::connect` dials).
+//
+// The result is what `daw::init_from_parts` takes, so a UI attaches to a
+// Session engine the way `open::attach_to_reaper` attaches to REAPER.
+
+/// Prefix of the connect string an engine logs for its iroh endpoint:
+/// `fts-engine:<endpoint id>`.
+#[cfg(not(target_arch = "wasm32"))]
+pub const ENGINE_CONNECT_PREFIX: &str = "fts-engine:";
+
+/// How long dialing an engine may take before it is reported unreachable.
+/// iroh through a relay can take a few seconds on a cold endpoint.
+#[cfg(not(target_arch = "wasm32"))]
+const ENGINE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Where a Session engine is reachable.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug)]
+pub enum EngineAddr {
+    /// A `ws://` / `wss://` URL of the engine's `/vox` endpoint.
+    Ws(String),
+    /// An iroh endpoint — a bare id (resolved through the endpoint's
+    /// address lookup: relays, DNS) or a full address with direct sockets.
+    Iroh(iroh::EndpointAddr),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl EngineAddr {
+    /// Read what a person pastes: `ws://host:4040/vox` (a bare
+    /// `ws://host:4040` gets `/vox` appended), `fts-engine:<id>`, or a bare
+    /// 64-hex endpoint id.
+    ///
+    /// # Errors
+    ///
+    /// The text is none of those, or the id does not parse.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let text = text.trim();
+        if text.starts_with("ws://") || text.starts_with("wss://") {
+            let rest = text.split_once("://").map_or("", |(_, rest)| rest);
+            return Ok(Self::Ws(if rest.contains('/') {
+                text.to_string()
+            } else {
+                format!("{text}/vox")
+            }));
+        }
+        let id = text.strip_prefix(ENGINE_CONNECT_PREFIX).unwrap_or(text);
+        id.trim()
+            .parse::<iroh::EndpointId>()
+            .map(|id| Self::Iroh(id.into()))
+            .map_err(|e| {
+                format!("not a ws:// URL or an engine id ({ENGINE_CONNECT_PREFIX}<id>): {e}")
+            })
+    }
+
+    /// The connect string for an engine's iroh endpoint.
+    pub fn connect_string(id: &iroh::EndpointId) -> String {
+        format!("{ENGINE_CONNECT_PREFIX}{id}")
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Ws(url) => url.clone(),
+            Self::Iroh(addr) => Self::connect_string(&addr.id),
+        }
+    }
+}
+
+/// Captures the raw `Caller` of the one lane every daw service client
+/// shares. The engine's router accepts any lane name.
+#[cfg(not(target_arch = "wasm32"))]
+struct EngineDawLane {
+    caller: vox_core::Caller,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl vox_core::FromVoxLane for EngineDawLane {
+    const SERVICE_NAME: &'static str = "session-engine-daw";
+
+    fn from_vox_lane(caller: vox_core::Caller, _: Option<vox_core::ConnectionHandle>) -> Self {
+        Self { caller }
+    }
+}
+
+/// A Session engine's daw facade, dialed. Keep it alive for as long as the
+/// facade is in use — dropping it closes the connection, and every call
+/// on `daw` fails from then on.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct EngineDaw {
+    /// The facade: hand a clone to `daw::init_from_parts`.
+    pub daw: daw::rpc::Daw,
+    /// Which engine this is, as it was dialed.
+    pub addr: EngineAddr,
+    _connection: vox_core::ConnectionHandle,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::ops::Deref for EngineDaw {
+    type Target = daw::rpc::Daw;
+    fn deref(&self) -> &daw::rpc::Daw {
+        &self.daw
+    }
+}
+
+/// Dial a Session engine and build its daw facade. iroh addresses dial
+/// from this app's own endpoint (a stable per-install identity).
+///
+/// The same `Caller` (`engine.daw.caller()`) also reaches the engine's
+/// setlist: `session::SetlistServiceClient::new(caller.clone())`.
+///
+/// # Errors
+///
+/// The engine could not be reached, or the vox handshake failed.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn connect_engine_daw(addr: &EngineAddr) -> eyre::Result<EngineDaw> {
+    match addr {
+        EngineAddr::Ws(_) => connect_engine_daw_from(None, addr).await,
+        EngineAddr::Iroh(_) => {
+            let endpoint = app_endpoint().await.map_err(|e| eyre::eyre!(e))?;
+            connect_engine_daw_from(Some(&endpoint), addr).await
+        }
+    }
+}
+
+/// [`connect_engine_daw`] from a given iroh endpoint — for a caller that
+/// already owns one (a test binding loopback-only endpoints, a window
+/// with its own identity). `endpoint` is only read for iroh addresses.
+///
+/// # Errors
+///
+/// As [`connect_engine_daw`]; also an iroh address with no endpoint.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn connect_engine_daw_from(
+    endpoint: Option<&iroh::Endpoint>,
+    addr: &EngineAddr,
+) -> eyre::Result<EngineDaw> {
+    let label = addr.label();
+    let dial = async {
+        let connection = match addr {
+            EngineAddr::Ws(url) => {
+                let link = vox_websocket::WsLink::connect(url)
+                    .await
+                    .map_err(|e| eyre::eyre!("ws connect {url}: {e:?}"))?;
+                vox_core::initiator_on(link).establish_connection().await
+            }
+            EngineAddr::Iroh(remote) => {
+                let endpoint = endpoint
+                    .ok_or_else(|| eyre::eyre!("dialing {label} needs an iroh endpoint"))?;
+                let link = architect::iroh_link::connect(endpoint, remote.clone())
+                    .await
+                    .map_err(|e| eyre::eyre!("iroh connect {label}: {e}"))?;
+                vox_core::initiator_on(link).establish_connection().await
+            }
+        }
+        .map_err(|e| eyre::eyre!("vox handshake with {label}: {e:?}"))?;
+        let lane = connection
+            .open_lane::<EngineDawLane>()
+            .await
+            .map_err(|e| eyre::eyre!("opening the daw lane on {label}: {e:?}"))?;
+        Ok::<_, eyre::Report>(EngineDaw {
+            daw: daw::rpc::Daw::new(lane.caller),
+            addr: addr.clone(),
+            _connection: connection,
+        })
+    };
+    tokio::time::timeout(ENGINE_CONNECT_TIMEOUT, dial)
+        .await
+        .map_err(|_| eyre::eyre!("timed out dialing {label}"))?
+}

@@ -6,7 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-dynamic-template.workspace = true
+dynamic-template = { workspace = true, features = ["reaper"] }
 dawfile-reaper.workspace = true
 daw-proto.workspace = true
 # daw-standalone needs its "audio" feature to compile (cpal → ALSA, which the
