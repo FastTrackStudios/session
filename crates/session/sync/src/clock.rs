@@ -50,7 +50,7 @@ pub struct SharedClock {
     offset: Arc<AtomicU64>,
     /// Round trip, µs, as f64 bits.
     round_trip: Arc<AtomicU64>,
-    pinger: Option<Arc<tokio::task::JoinHandle<()>>>,
+    pinger: Option<Arc<architect::platform::JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for SharedClock {
@@ -87,26 +87,29 @@ impl SharedClock {
     #[must_use]
     pub fn follow_with<F, Fut>(now: F) -> Self
     where
-        F: Fn() -> Fut + Send + 'static,
-        Fut: std::future::Future<Output = Option<f64>> + Send,
+        F: Fn() -> Fut + architect::platform::MaybeSend + 'static,
+        Fut: std::future::Future<Output = Option<f64>> + architect::platform::MaybeSend,
     {
         let offset = Arc::new(AtomicU64::new(UNKNOWN));
         let round_trip = Arc::new(AtomicU64::new(UNKNOWN));
         let (o, r) = (Arc::clone(&offset), Arc::clone(&round_trip));
-        let pinger = tokio::spawn(async move {
+        // `architect::platform`: tokio natively, the page's event loop in a
+        // browser.
+        let pinger = architect::platform::spawn(async move {
             let mut estimator = ClockEstimator::default();
-            let mut tick = tokio::time::interval(PING);
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                tick.tick().await;
                 let t1 = now_micros_f64();
-                let Some(host) = now().await else { continue };
+                let Some(host) = now().await else {
+                    architect::platform::sleep(PING).await;
+                    continue;
+                };
                 let t4 = now_micros_f64();
                 estimator.record(t1, host, host, t4);
                 if let (Some(off), Some(rtt)) = (estimator.offset_micros(), estimator.round_trip_micros()) {
                     o.store(off.to_bits(), Ordering::Relaxed);
                     r.store(rtt.to_bits(), Ordering::Relaxed);
                 }
+                architect::platform::sleep(PING).await;
             }
         });
         Self { offset, round_trip, pinger: Some(Arc::new(pinger)) }
