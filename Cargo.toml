@@ -726,6 +726,8 @@ resources-proto = { git = "https://github.com/FastTrackStudios/task", branch = "
 files-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 files-client = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 task-dial = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+# Live sessions Task keeps: joining a set, the clock, the epochs.
+live-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 links-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 session-library = { path = "crates/session/library" }
 
@@ -1314,4 +1316,5 @@ ssg-vault = { path = "../task/features/ssg/ssg-vault" }
 resources-proto = { path = "../task/features/resources/resources-proto" }
 files-proto = { path = "../task/features/files/files-proto" }
 files-client = { path = "../task/features/files/files-client" }
+live-proto = { path = "../task/features/live/live-proto" }
 task-dial = { path = "../task/crates/task-dial" }

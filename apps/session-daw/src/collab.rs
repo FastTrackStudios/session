@@ -520,6 +520,162 @@ fn parse_ticket(ticket: &str) -> eyre::Result<(architect::iroh_link::iroh::Endpo
     ))
 }
 
+/// A set Task keeps (`live-proto`): where to reach Task, and which
+/// setlist — a member's org lane with its token, or a live share link's
+/// guest lane with none.
+#[derive(Clone, Debug)]
+pub struct TaskSet {
+    /// The vox URL (`wss://…/org/<org>/vox`, or `…/org/<org>/share/<token>/vox`).
+    pub url: String,
+    /// The member's bearer token; `None` on a share link.
+    pub token: Option<String>,
+    /// The setlist's id in Task.
+    pub setlist: String,
+}
+
+/// How the environment names a set Task keeps (`FTS_COLLAB_TASK`): a
+/// setlist's id, joined as a member of the library's org (`FTS_TASK_*`), or
+/// `share:<live share link>`, joined as a guest of the link's set.
+pub const TASK_SET_ENV: &str = "FTS_COLLAB_TASK";
+
+impl TaskSet {
+    /// The set `FTS_COLLAB_TASK` names, if it names one.
+    #[must_use]
+    pub fn from_env() -> Option<Self> {
+        let value = std::env::var(TASK_SET_ENV).ok().filter(|v| !v.trim().is_empty())?;
+        Some(Self::parse(value.trim()))
+    }
+
+    /// A setlist id, or `share:<link>`.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value.strip_prefix("share:") {
+            Some(link) => {
+                let link = link.trim_end_matches('/');
+                let base = link.split('?').next().unwrap_or(link);
+                let url = base.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
+                Self { url: format!("{url}/vox"), token: None, setlist: String::new() }
+            }
+            None => {
+                let library = session_library::Library::from_env();
+                Self { url: library.org_url(), token: library.token, setlist: value.to_owned() }
+            }
+        }
+    }
+}
+
+/// [`join_task`] off the calling thread.
+pub fn join_task_in_background(set: TaskSet, name: String) {
+    std::thread::spawn(move || {
+        let _ = join_task(&set, name);
+    });
+}
+
+/// Join a set Task keeps: its songs' docs synced through Task, its
+/// presence, Task's clock. Each open song meets the set's song of the same
+/// library id; the first peer on a song seeds its doc from what it has open
+/// (Task starts every song empty), and everyone after takes the doc's
+/// state. A song the set does not have stays this machine's own.
+///
+/// # Errors
+///
+/// Task could not be reached or refused the set, or an engine call failed.
+pub fn join_task(set: &TaskSet, name: String) -> eyre::Result<()> {
+    record(join_task_inner(set, name))
+}
+
+fn join_task_inner(set: &TaskSet, name: String) -> eyre::Result<()> {
+    use live_proto::LiveSessionsClient;
+    let runtime = crate::open::runtime().ok_or_else(|| eyre::eyre!("the engine is not up"))?;
+    let set = set.clone();
+    let live = runtime.block_on(async move {
+        let open = open_songs().await?;
+        let token = set.token.as_deref();
+        let lane: LiveSessionsClient = task_dial::establish_at(&set.url, token)
+            .await
+            .map_err(|e| eyre::eyre!("dialling {}: {e}", set.url))?;
+        let joined = lane
+            .join(set.setlist.clone())
+            .await
+            .map_err(|e| eyre::eyre!("joining the set: {e:?}"))?;
+        let sync: crdt::sync::DocSyncClient = task_dial::establish_at(&set.url, token)
+            .await
+            .map_err(|e| eyre::eyre!("session sync: {e}"))?;
+        let presence_client: crdt::sync::DocPresenceClient = task_dial::establish_at(&set.url, token)
+            .await
+            .map_err(|e| eyre::eyre!("session presence: {e}"))?;
+        // Task's clock is the session's.
+        let clock = SharedClock::follow_with(move || {
+            let lane = lane.clone();
+            async move { lane.now().await.ok() }
+        });
+        let presence_id: Uuid = joined.presence_id.parse().map_err(|e| eyre::eyre!("presence id: {e}"))?;
+        let mut peer = SetPeer::new(presence_id);
+        peer.run_presence(presence_client);
+        let presence: Arc<dyn PresenceSink> = Arc::new(peer.presence().clone());
+
+        // Each open song, replicated from the set's song of its id.
+        let songs: HashMap<String, Uuid> = joined
+            .songs
+            .iter()
+            .filter_map(|s| Some((s.slug.clone(), s.doc_id.parse().ok()?)))
+            .collect();
+        let replicas: Vec<(Option<SessionDoc>, _)> = open
+            .into_iter()
+            .map(|song| {
+                let doc = songs
+                    .get(&session_library::slugify(&song.2))
+                    .map(|id| SetPeer::sync_song(*id, sync.clone()));
+                (doc, song)
+            })
+            .collect();
+        // What Task has arrives at once; a song still empty after that is
+        // this peer's to seed.
+        for _ in 0..80 {
+            if replicas.iter().all(|(doc, _)| doc.as_ref().is_none_or(SessionDoc::has_session)) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let mut docs = LIVE.lock().ok().map(|mut l| stop(l.take())).unwrap_or_default();
+        let mut bridges = Vec::new();
+        let mut seeded = 0usize;
+        for (doc, (project, media, key, path)) in replicas {
+            let guid = project.guid().to_owned();
+            let bridge = match doc {
+                Some(doc) if doc.has_session() => Bridge::join(project, media, doc).await?,
+                Some(doc) => {
+                    seeded += 1;
+                    let chart = chart_for(&path, &doc);
+                    Bridge::host(project, media, doc, chart).await?
+                }
+                None => {
+                    let own = docs.remove(&key).unwrap_or_default();
+                    let chart = chart_for(&path, &own);
+                    Bridge::host(project, media, own, chart).await?
+                }
+            };
+            bridges.push((Song { project: guid, key, doc: bridge.doc().clone() }, bridge));
+        }
+        crate::studio::request_resync();
+        let me = format!("peer-{}", &Uuid::new_v4().simple().to_string()[..8]);
+        tracing::info!(
+            collab.setlist = %joined.setlist,
+            collab.epoch = joined.epoch,
+            collab.songs = bridges.len(),
+            collab.seeded = seeded,
+            "collab: joined a set Task keeps"
+        );
+        let started = start(bridges, Arc::clone(&presence), clock, joined.setlist.clone(), me, name, None, None);
+        let _keep = peer;
+        Ok::<_, eyre::Report>(started.into_live(set.url.clone(), false, presence))
+    })?;
+    if let Ok(mut slot) = LIVE.lock() {
+        *slot = Some(live);
+    }
+    Ok(())
+}
+
 /// The half-built `Live` [`start`] returns; finished by the caller.
 struct Started {
     stop: tokio::sync::watch::Sender<bool>,
@@ -1055,5 +1211,41 @@ impl Outbox {
         if let Some(Some(pointer)) = self.pointer.offer(Some(place), now) {
             sink.set(&presence::key(&self.me, presence::POINTER), pointer.encode(now));
         }
+    }
+}
+
+#[cfg(test)]
+mod task_set_tests {
+    use super::TaskSet;
+
+    #[test]
+    fn a_share_link_is_joined_on_its_guest_lane() {
+        let set = TaskSet::parse("share:https://task.example/org/days-to-praise/share/abc123?pw=x");
+        assert_eq!(set.url, "wss://task.example/org/days-to-praise/share/abc123/vox");
+        assert_eq!(set.token, None);
+        assert_eq!(set.setlist, "", "the link's own set");
+    }
+}
+
+#[cfg(test)]
+mod task_set_probe {
+    /// Probe: join a live share link's set on a real Task
+    /// (`FTS_PROBE_LIVE=<link> cargo test -p session-daw --lib live_probe -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "needs a live Task link"]
+    fn live_probe() {
+        use live_proto::LiveSessionsClient;
+        let link = std::env::var("FTS_PROBE_LIVE").unwrap();
+        let set = super::TaskSet::parse(&format!("share:{link}"));
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let lane: LiveSessionsClient = task_dial::establish_at(&set.url, None).await.unwrap();
+            let joined = lane.join(String::new()).await.unwrap();
+            eprintln!("set {} epoch {} resets {:?}", joined.title, joined.epoch, joined.resets_every_secs);
+            for song in &joined.songs {
+                eprintln!("  {} {} files={:?}", song.slug, song.title, song.files);
+            }
+            eprintln!("clock {}", lane.now().await.unwrap());
+        });
     }
 }
