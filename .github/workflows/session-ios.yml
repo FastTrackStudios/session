@@ -14,9 +14,10 @@ on:
   push:
     branches: [main]
     paths:
-      - "apps/fasttrackstudio/**"
+      - "apps/desktop/**"
+      - "apps/session-daw/**"
+      - "apps/session-watch/**"
       - "crates/session/**"
-      - "crates/daw/**"
       - "features/**"
       - "flake.nix"
       - "flake.lock"
@@ -58,7 +59,7 @@ jobs:
         with:
           clean: false
 
-      - name: Build, sign, and upload Keyflow to TestFlight
+      - name: Build, sign, and upload Session (with its watch app) to TestFlight
         env:
           KEYCHAIN: fts-build.keychain
           KEYCHAIN_PW: fts-build
@@ -76,27 +77,41 @@ jobs:
           TASK_OTLP_TOKEN: ${{ secrets.TASK_OTLP_TOKEN }}
           TASK_SENTRY_DSN: ${{ secrets.TASK_SENTRY_DSN }}
           # ── Session product identity ─────────────────────────────────
-          # NOTE the crate is still called `fasttrackstudio` here, a leftover
-          # of the repo split -- same crate name as Signal's app, in a
-          # different repo. Only DX_BUNDLE_ID separates the shipped products,
-          # so it must never be left at the default.
-          DX_PACKAGE: fasttrackstudio
-          DX_APP_DIR: apps/fasttrackstudio
-          # NOT the crate defaults. `session` implies `tts`, which pulls
-          # ort/ONNX Runtime -- and ONNX publishes no prebuilt binary for
+          # The app is apps/desktop, crate `session-desktop` (renamed from
+          # `fasttrackstudio` when Session became its own product). Only
+          # DX_BUNDLE_ID separates the shipped products, so it must never be
+          # left at a default.
+          DX_PACKAGE: session-desktop
+          DX_APP_DIR: apps/desktop
+          # NOT the crate defaults: those add `tts`, which pulls ort/ONNX
+          # Runtime -- and ONNX publishes no prebuilt binary for
           # aarch64-apple-ios, so ort-sys' build.rs panics and the whole
-          # build dies. `session-domain` is Session without the TTS backend;
-          # the guide still runs on synthesized cues.
-          DX_FEATURES: --no-default-features --features session-domain,charts
+          # build dies. Without it the guide runs on synthesized cues.
+          # (`session-domain` alone, as this used to say, compiles no Session
+          # workspace -- the code gates them on `session`.) `watch` relays
+          # the guide feed to the embedded watch app.
+          DX_FEATURES: --no-default-features --features session,charts,watch
           DX_BUNDLE_ID: app.fasttrackstudio.session
           APP_DISPLAY_NAME: Session
           PROFILE_NAME: FTS Session App Store
-          ICONS_DIR: ${{ github.workspace }}/apps/fasttrackstudio/ios/Assets.xcassets
+          ICONS_DIR: ${{ github.workspace }}/apps/desktop/ios/Assets.xcassets
+          # ── The Session watch app, embedded ──────────────────────────
+          # Built unsigned from its XcodeGen project, embedded at
+          # <iOS app>/Watch/Session.app and signed inside-out with its own
+          # App Store profile (minted, and its bundle id registered, by
+          # mint-dev-profile.rb on the first run). The watch build uses the
+          # Xcode that has the watchOS device platform installed.
+          WATCH_APP: apps/session-watch
+          WATCH_SCHEME: SessionWatch
+          WATCH_PRODUCT: Session
+          WATCH_BUNDLE_ID: app.fasttrackstudio.session.watchkitapp
+          WATCH_PROFILE_NAME: FTS Session Watch App Store
+          WATCH_XCODE_DIR: /Applications/Xcode-beta.app/Contents/Developer
         run: |
           set -euo pipefail
           export PATH="/nix/var/nix/profiles/default/bin:$PATH"
           export NIX=/nix/var/nix/profiles/default/bin/nix
-          bash apps/fasttrackstudio/ios/deploy-testflight.sh
+          bash apps/desktop/ios/deploy-testflight.sh
 
       - name: Summary
         if: always()

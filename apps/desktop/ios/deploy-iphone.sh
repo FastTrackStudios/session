@@ -45,7 +45,7 @@ echo "profile: $PROFILE"
 echo "=== building (device arch) ==="
 "$NIX" develop "$(git rev-parse --show-toplevel)" -c bash -c \
     "unset DEVELOPER_DIR SDKROOT; export PATH=$BIN_IOS:\$PATH; \
-     dx build --platform ios --device --no-default-features --features session-domain,charts" \
+     dx build --platform ios --device --no-default-features --features session,charts,watch" \
     2>&1 | tail -2
 
 # NOTE: verify this against dx's actual output dir/app name on first run —

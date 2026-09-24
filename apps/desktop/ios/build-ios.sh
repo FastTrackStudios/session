@@ -21,7 +21,7 @@ ln -sf /usr/bin/xcodebuild "$BIN_IOS/xcodebuild"
 unset DEVELOPER_DIR SDKROOT
 export PATH="$BIN_IOS:$PATH"
 
-dx build --platform ios --no-default-features --features session-domain,charts
+dx build --platform ios --no-default-features --features session,charts,watch
 
 # NOTE: verify this against dx's actual output dir/app name on first run —
 # dx derives it from the crate name (`session-desktop`) since the rename.
@@ -33,6 +33,10 @@ APP="$(cd ../.. && pwd)/target/dx/session-desktop/debug/ios/Session-desktop.app"
 # Files-app visibility for the setlist library (Documents/Session).
 /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$APP/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$APP/Info.plist" 2>/dev/null || true
+# Background audio: the set (or the click and guide) keeps playing, and the
+# watch relay keeps running, with the phone locked.
+/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$APP/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$APP/Info.plist" 2>/dev/null || true
 
 echo "built: $APP"
 

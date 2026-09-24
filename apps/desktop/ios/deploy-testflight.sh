@@ -35,7 +35,7 @@ trap cleanup_tmp EXIT
 DX_PACKAGE="${DX_PACKAGE:-session-desktop}"
 DX_APP_DIR="${DX_APP_DIR:-apps/desktop}"
 # No colon: an explicitly-empty DX_FEATURES (Task, default features) is honored.
-DX_FEATURES="${DX_FEATURES---no-default-features --features session-domain,charts}"
+DX_FEATURES="${DX_FEATURES---no-default-features --features session,charts,watch}"
 # Bundle id the App Store profile is minted for — must match the built .app's
 # CFBundleIdentifier (from the package's Dioxus.toml).
 DX_BUNDLE_ID="${DX_BUNDLE_ID:-app.fasttrackstudio.session}"
@@ -48,13 +48,17 @@ DX_TAILWIND="${DX_TAILWIND:-}"
 # unsigned), embedded at <iOS.app>/Watch/<WATCH_PRODUCT>.app, and re-signed
 # inside-out with the Apple Distribution cert + its own App Store profile, so
 # it rides the iOS TestFlight build onto the paired watch and auto-updates.
-# Session has no watch companion today — this stays unset unless a future
-# watch remote is added.
+# Session's is apps/session-watch (the guide and the haptic click); the
+# session-ios workflow sets all of these. The watch's profile gets its own
+# name (WATCH_PROFILE_NAME): mint-dev-profile.rb deletes same-named profiles,
+# so sharing one name between two products' watch apps would revoke the
+# other's on every build.
 WATCH_APP="${WATCH_APP:-}"
 WATCH_SCHEME="${WATCH_SCHEME:-}"       # xcodebuild scheme
 WATCH_PRODUCT="${WATCH_PRODUCT:-}"     # built .app product name
 APP_DISPLAY_NAME="${APP_DISPLAY_NAME:-Session}" # CFBundleDisplayName
 WATCH_BUNDLE_ID="${WATCH_BUNDLE_ID:-}"
+WATCH_PROFILE_NAME="${WATCH_PROFILE_NAME:-FTS ${WATCH_BUNDLE_ID##*.} Watch App Store}"
 
 TEAM_ID="${TEAM_ID:-28C2G63DA7}"
 # nix-darwin (airlock) and nixos put nix in different places; find it.
@@ -197,6 +201,13 @@ fi
 /usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _fts._tcp" "$APP/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$APP/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$APP/Info.plist" 2>/dev/null || true
+# Background audio: Session plays the set (Engine) or the click and guide
+# (Cue) — audio the user started and is listening to, which is what the
+# `audio` mode is for. It also keeps the live set, its clock and the watch
+# relay running with the phone locked, so the wrist click does not stop.
+/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$APP/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes:0" "$APP/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$APP/Info.plist"
 # TestFlight requires ITSAppUsesNonExemptEncryption declared (false = no
 # non-standard crypto → no export-compliance docs).
 /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$APP/Info.plist" 2>/dev/null || true
@@ -301,7 +312,7 @@ if [ -n "$WATCH_APP" ]; then
 
     echo "=== watch App Store provisioning profile ==="
     WATCH_PROFILE="$(PROFILE_TYPE=IOS_APP_STORE CERT_TYPE=DISTRIBUTION \
-        ruby "$SCRIPT_DIR/mint-dev-profile.rb" - "$WATCH_BUNDLE_ID" "FTS Watch App Store" \
+        ruby "$SCRIPT_DIR/mint-dev-profile.rb" - "$WATCH_BUNDLE_ID" "$WATCH_PROFILE_NAME" \
         | awk -F= '/PROFILE_PATH=/{print $2}')"
     echo "watch profile: $WATCH_PROFILE"
 
