@@ -365,20 +365,37 @@ fn tint(color: &str, alpha: u8) -> String {
     }
 }
 
+/// A tick every `every`, for as long as it is listened to: from a thread of
+/// its own natively (the window's executor keeps no timers), from the
+/// browser's timer on a page — which has no threads, so a spawned one never
+/// ticked, and the panel never learnt its size.
+fn ticks(every: Duration) -> futures_channel::mpsc::UnboundedReceiver<()> {
+    let (tick, ticks) = futures_channel::mpsc::unbounded::<()>();
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::spawn(move || {
+        while tick.unbounded_send(()).is_ok() {
+            std::thread::sleep(every);
+        }
+    });
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_futures::spawn_local(async move {
+        let ms = u32::try_from(every.as_millis()).unwrap_or(u32::MAX);
+        while tick.unbounded_send(()).is_ok() {
+            gloo_timers::future::TimeoutFuture::new(ms).await;
+        }
+    });
+    ticks
+}
+
 /// The panel's size in pixels, read back from the layout and kept up to
 /// date — the Audience's words are sized to it.
 fn use_size() -> (Signal<(f64, f64)>, Signal<Option<Rc<MountedData>>>) {
     let mut size = use_signal(|| (0.0_f64, 0.0_f64));
     let node = use_signal(|| None::<Rc<MountedData>>);
     use_future(move || async move {
-        // A tick from a thread of its own: a panel resizes when a divider
-        // or the window moves, and nothing tells it.
-        let (tick, mut ticks) = futures_channel::mpsc::unbounded::<()>();
-        std::thread::spawn(move || {
-            while tick.unbounded_send(()).is_ok() {
-                std::thread::sleep(Duration::from_millis(400));
-            }
-        });
+        // Read on a tick: a panel resizes when a divider or the window
+        // moves, and nothing tells it.
+        let mut ticks = ticks(Duration::from_millis(400));
         while ticks.next().await.is_some() {
             let Some(node) = node.peek().clone() else {
                 continue;
@@ -503,12 +520,7 @@ fn use_controls(open: Signal<bool>) -> (Signal<bool>, Signal<web_time::Instant>)
     let mut awake = use_signal(|| false);
     let moved = use_signal(web_time::Instant::now);
     use_future(move || async move {
-        let (tick, mut ticks) = futures_channel::mpsc::unbounded::<()>();
-        std::thread::spawn(move || {
-            while tick.unbounded_send(()).is_ok() {
-                std::thread::sleep(Duration::from_millis(250));
-            }
-        });
+        let mut ticks = ticks(Duration::from_millis(250));
         while ticks.next().await.is_some() {
             if *awake.peek() && !*open.peek() && moved.peek().elapsed() > CONTROLS_LINGER {
                 awake.set(false);
