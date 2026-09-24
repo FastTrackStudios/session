@@ -38,7 +38,7 @@ pub trait SongSource: Send + Sync + 'static {
     /// A name for its cache folder.
     fn label(&self) -> String;
     /// Every file of the song folder with its size, the project first.
-    fn list(&self) -> Pending<eyre::Result<Vec<(String, u64)>>>;
+    fn list(&self) -> Pending<eyre::Result<Listing>>;
     /// The bytes `range` of `path`.
     fn read(&self, path: String, range: std::ops::Range<u64>) -> Pending<Result<Vec<u8>, String>>;
     /// The song's chart, when the source keeps it apart from the folder
@@ -55,13 +55,32 @@ pub trait SongSource: 'static {
     /// A name for its cache folder.
     fn label(&self) -> String;
     /// Every file of the song folder with its size, the project first.
-    fn list(&self) -> Pending<eyre::Result<Vec<(String, u64)>>>;
+    fn list(&self) -> Pending<eyre::Result<Listing>>;
     /// The bytes `range` of `path`.
     fn read(&self, path: String, range: std::ops::Range<u64>) -> Pending<Result<Vec<u8>, String>>;
     /// The song's chart, when the source keeps it apart from the folder
     /// (the library's) — it replaces the folder's `.kf`.
     fn chart(&self) -> Pending<eyre::Result<Option<String>>> {
         Box::pin(async { Ok(None) })
+    }
+}
+
+/// A song folder's files, and the version they are at when the source
+/// says (a share link's commit): the same version is the same bytes at
+/// every path, so what was fetched at it is kept and not fetched again.
+#[derive(Clone, Debug, Default)]
+pub struct Listing {
+    /// Each file and its size, the project first.
+    pub entries: Vec<(String, u64)>,
+    pub version: Option<String>,
+}
+
+impl From<Vec<(String, u64)>> for Listing {
+    fn from(entries: Vec<(String, u64)>) -> Self {
+        Self {
+            entries,
+            version: None,
+        }
     }
 }
 
@@ -101,7 +120,7 @@ impl SongSource for PeerSource {
         format!("peer-{}", self.remote)
     }
 
-    fn list(&self) -> Pending<eyre::Result<Vec<(String, u64)>>> {
+    fn list(&self) -> Pending<eyre::Result<Listing>> {
         let files = self.files.clone();
         Box::pin(async move {
             Ok(files
@@ -109,7 +128,8 @@ impl SongSource for PeerSource {
                 .await?
                 .into_iter()
                 .map(|f| (f.path, f.size))
-                .collect())
+                .collect::<Vec<_>>()
+                .into())
         })
     }
 
@@ -147,7 +167,7 @@ impl SongSource for TaskSource {
         format!("task-{}", self.song.slug)
     }
 
-    fn list(&self) -> Pending<eyre::Result<Vec<(String, u64)>>> {
+    fn list(&self) -> Pending<eyre::Result<Listing>> {
         // The session's own charts give way to the library's.
         let entries: Vec<(String, u64)> = self
             .song
@@ -156,7 +176,7 @@ impl SongSource for TaskSource {
             .filter(|(rel, _)| rel.contains('/') || !rel.to_lowercase().ends_with(".kf"))
             .cloned()
             .collect();
-        Box::pin(async move { Ok(entries) })
+        Box::pin(async move { Ok(entries.into()) })
     }
 
     fn read(&self, path: String, range: std::ops::Range<u64>) -> Pending<Result<Vec<u8>, String>> {
@@ -243,7 +263,7 @@ impl SongSource for ShareSource {
         format!("share-{}", self.token())
     }
 
-    fn list(&self) -> Pending<eyre::Result<Vec<(String, u64)>>> {
+    fn list(&self) -> Pending<eyre::Result<Listing>> {
         let request = self.http.get(self.url("list", ""));
         Box::pin(async move {
             let listed: serde_json::Value =
@@ -268,7 +288,10 @@ impl SongSource for ShareSource {
                 let project = entries.remove(at);
                 entries.insert(0, project);
             }
-            Ok(entries)
+            Ok(Listing {
+                entries,
+                version: listed["commit"].as_str().map(str::to_owned),
+            })
         })
     }
 
@@ -453,7 +476,13 @@ fn is_media(lower: &str) -> bool {
 ///
 /// The source lists nothing, or a file could not be fetched or kept.
 pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<StreamedSong> {
-    let list = source.list().await?;
+    use futures_util::{StreamExt as _, TryStreamExt as _};
+    /// Files fetched at once: each is a round trip.
+    const AT_ONCE: usize = 8;
+    let Listing {
+        entries: list,
+        version,
+    } = source.list().await?;
     let first = list
         .first()
         .ok_or_else(|| eyre::eyre!("the song folder is empty"))?;
@@ -462,7 +491,7 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
     let project = base.join(&first.0);
     let mut proxies = HashMap::new();
     let mut peaks: HashMap<String, (String, u64)> = HashMap::new();
-    let mut fetched = 0usize;
+    let mut wanted = Vec::new();
     for (path, size) in &list {
         let lower = path.to_lowercase();
         if let Some(cache) = lower.strip_prefix("media/peaks/") {
@@ -488,12 +517,20 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
         if keep.has(&local, *size) {
             continue;
         }
-        let bytes = source
-            .read(path.clone(), 0..*size)
-            .await
-            .map_err(|e| eyre::eyre!(e))?;
+        wanted.push((path.clone(), *size, local));
+    }
+    let fetched = wanted.len();
+    let docs = Docs::new(&source, &label, version.as_deref()).await;
+    let arrived: Vec<(PathBuf, Vec<u8>)> = futures_util::stream::iter(wanted)
+        .map(|(path, size, local)| {
+            let docs = &docs;
+            async move { Ok::<_, eyre::Report>((local, docs.read(path, size).await?)) }
+        })
+        .buffer_unordered(AT_ONCE)
+        .try_collect()
+        .await?;
+    for (local, bytes) in arrived {
         keep.write(&local, bytes)?;
-        fetched = fetched.saturating_add(1);
     }
     if let Some(chart) = source.chart().await? {
         write_chart(&keep, &project, &label, &chart)?;
@@ -502,6 +539,7 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
         stream.source = %label,
         stream.files = list.len(),
         stream.fetched = fetched,
+        stream.kept = docs.kept(),
         stream.proxies = proxies.len(),
         "song-stream: mirrored"
     );
@@ -515,6 +553,97 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
         peaks,
         attached: Mutex::default(),
     })
+}
+
+/// A song's documents (its small files), read whole: in a browser, through
+/// its Cache Storage when the source says what version they are at — so a
+/// page opening the song again (a playground set starting over, a reload)
+/// fetches none of them until the song's files change.
+struct Docs<'a> {
+    source: &'a Arc<dyn SongSource>,
+    #[cfg(target_arch = "wasm32")]
+    cache: Option<(web_sys::Cache, String)>,
+    kept: std::sync::atomic::AtomicUsize,
+}
+
+impl<'a> Docs<'a> {
+    #[allow(unused_variables)]
+    async fn new(source: &'a Arc<dyn SongSource>, label: &str, version: Option<&str>) -> Docs<'a> {
+        #[cfg(target_arch = "wasm32")]
+        let cache = match version {
+            Some(version) => CachedFetch::cache().await.ok().map(|cache| {
+                (
+                    cache,
+                    format!(
+                        "https://fts-cache.invalid/{}/docs/{}",
+                        safe_name(label),
+                        safe_name(version)
+                    ),
+                )
+            }),
+            None => None,
+        };
+        Docs {
+            source,
+            #[cfg(target_arch = "wasm32")]
+            cache,
+            kept: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// How many came from the cache.
+    fn kept(&self) -> usize {
+        self.kept.load(Ordering::Relaxed)
+    }
+
+    async fn read(&self, path: String, size: u64) -> eyre::Result<Vec<u8>> {
+        #[cfg(target_arch = "wasm32")]
+        if let Some((cache, base)) = &self.cache {
+            let key = format!("{base}/{}", url_path(&path));
+            if let Some(bytes) = cache_get(cache, &key).await {
+                self.kept.fetch_add(1, Ordering::Relaxed);
+                return Ok(bytes);
+            }
+            let mut bytes = self
+                .source
+                .read(path, 0..size)
+                .await
+                .map_err(|e| eyre::eyre!(e))?;
+            if let Ok(response) = web_sys::Response::new_with_opt_u8_array(Some(&mut bytes)) {
+                // A cache that is full or refused only costs a fetch next time.
+                let _ =
+                    wasm_bindgen_futures::JsFuture::from(cache.put_with_str(&key, &response)).await;
+            }
+            return Ok(bytes);
+        }
+        self.source
+            .read(path, 0..size)
+            .await
+            .map_err(|e| eyre::eyre!(e))
+    }
+}
+
+/// A path's segments, each escaped for a cache key.
+#[cfg(target_arch = "wasm32")]
+fn url_path(path: &str) -> String {
+    path.split('/')
+        .map(|s| String::from(js_sys::encode_uri_component(s)))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// What `cache` holds under `key`, if anything.
+#[cfg(target_arch = "wasm32")]
+async fn cache_get(cache: &web_sys::Cache, key: &str) -> Option<Vec<u8>> {
+    use wasm_bindgen::JsCast as _;
+    let hit = wasm_bindgen_futures::JsFuture::from(cache.match_with_str(key))
+        .await
+        .ok()?;
+    let response = hit.dyn_into::<web_sys::Response>().ok()?;
+    let body = wasm_bindgen_futures::JsFuture::from(response.array_buffer().ok()?)
+        .await
+        .ok()?;
+    Some(js_sys::Uint8Array::new(&body).to_vec())
 }
 
 /// The source's chart, as THE chart beside `project` (the folder's own
@@ -541,16 +670,18 @@ fn write_chart(keep: &Keep, project: &Path, label: &str, chart: &str) -> eyre::R
     }
 }
 
+/// A take attached as a stream of its proxy: what to fetch for it, and the
+/// audio it plays from (its waveform too, once handed in).
+pub struct Attached {
+    pub take: StreamedTake,
+    pub source: daw::standalone::audio_engine::streamed::Streamed,
+}
+
 impl StreamedSong {
     /// Attach `media` (a take of the song opened into `daw` as `local`) as
     /// a stream of its proxy — silent until its bytes arrive. `None` when
     /// the peer has no indexed proxy for it.
-    pub fn attach(
-        &self,
-        daw: &Standalone,
-        local: &str,
-        media: &PendingMedia,
-    ) -> Option<StreamedTake> {
+    pub fn attach(&self, daw: &Standalone, local: &str, media: &PendingMedia) -> Option<Attached> {
         let stem = Path::new(&media.path)
             .file_stem()?
             .to_string_lossy()
@@ -567,6 +698,7 @@ impl StreamedSong {
             Arc::clone(&bytes),
             index.clone(),
         );
+        let source = feeder.source().clone();
         if let (Ok(mut attached), Some(name)) =
             (self.attached.lock(), Path::new(&media.path).file_name())
         {
@@ -583,15 +715,91 @@ impl StreamedSong {
         crate::web_audio::adopt(local, feeder.boxed());
         #[cfg(all(not(feature = "web"), target_arch = "wasm32"))]
         drop(feeder);
-        Some(StreamedTake {
-            path,
-            bytes,
-            index,
-            start: media.start,
-            end: media.end,
-            source_offset: media.source_offset,
-            playrate: media.playrate,
+        Some(Attached {
+            take: StreamedTake {
+                path,
+                bytes,
+                index,
+                start: media.start,
+                end: media.end,
+                source_offset: media.source_offset,
+                playrate: media.playrate,
+            },
+            source,
         })
+    }
+
+    /// The song's reference ([`crate::reference`]) as streams of their own
+    /// — attached to no take: what a page in reference mode plays instead
+    /// of the stems. Its preview too, when it has one: small enough to be
+    /// heard almost at once, played until the reference proper has arrived
+    /// where the song is. `None` when the song has no indexed reference.
+    pub fn reference(&self) -> Option<Reference> {
+        Some(Reference {
+            full: self.loose_stream(crate::reference::STEM)?,
+            preview: self.loose_stream(crate::reference::PREVIEW_STEM),
+        })
+    }
+
+    /// The proxy of stem `stem` as a stream attached to no take: its fetch
+    /// (a [`StreamedTake`] spanning it from 0 s) and its feeder, silent
+    /// until the bytes arrive.
+    fn loose_stream(&self, stem: &str) -> Option<LooseStream> {
+        use daw::standalone::audio_engine::streamed::{RemoteOgg, StreamFeeder, Streamed};
+        let (path, size) = self.proxies.get(stem)?.clone();
+        let at = self.base.join(&path);
+        let index =
+            OggIndex::from_text(&self.folder.read_to_string(&OggIndex::path_for(&at)).ok()?)?;
+        let bytes = self.keep.sparse(&at, size)?;
+        let seconds = index.frames as f64 / f64::from(index.sample_rate.max(1));
+        let feeder = StreamFeeder::new(
+            Streamed::new(index.channels, index.sample_rate, index.frames),
+            RemoteOgg::new(Arc::clone(&bytes), index.clone()),
+        );
+        Some((
+            StreamedTake {
+                path,
+                bytes,
+                index,
+                start: 0.0,
+                end: seconds,
+                source_offset: 0.0,
+                playrate: 1.0,
+            },
+            feeder,
+        ))
+    }
+
+    /// The proxy paths a song is heard by in `heard`.
+    fn paths_of(&self, heard: Heard) -> std::collections::HashSet<&str> {
+        let reference = [crate::reference::STEM, crate::reference::PREVIEW_STEM];
+        self.proxies
+            .iter()
+            .filter(|(stem, _)| match heard {
+                Heard::Preview => stem.as_str() == crate::reference::PREVIEW_STEM,
+                Heard::Reference => stem.as_str() == crate::reference::STEM,
+                Heard::Stems => !reference.contains(&stem.as_str()),
+            })
+            .map(|(_, (path, _))| path.as_str())
+            .collect()
+    }
+
+    /// Whether the song has a reference to be heard by.
+    #[must_use]
+    pub fn has_reference(&self) -> bool {
+        self.proxies.contains_key(crate::reference::STEM)
+    }
+
+    /// The bytes of the song's stems — every proxy but the reference: what
+    /// loading the multitracks brings in.
+    #[must_use]
+    pub fn stems_bytes(&self) -> u64 {
+        let stems = self.paths_of(Heard::Stems);
+        self.proxies
+            .values()
+            .filter(|(path, _)| stems.contains(path.as_str()))
+            .map(|(_, size)| size)
+            .sum()
     }
 
     /// Fetch each attached take's waveform — its original's peaks cache,
@@ -662,14 +870,17 @@ impl StreamedSong {
 }
 
 impl StreamedSong {
-    /// Bring the song's proxies into the browser's cache before they are
-    /// played: every block — so a seek anywhere in the song is local — or
+    /// Bring what the song is `heard` by into the browser's cache before it
+    /// is played: every block — so a seek anywhere in the song is local — or
     /// only the first `blocks` of each (the song's opening, for the song
     /// after the one on screen), until done or `stop`.
     #[cfg(target_arch = "wasm32")]
-    pub async fn warm(&self, blocks: Option<u64>, stop: Arc<AtomicBool>) {
+    pub async fn warm(&self, heard: Heard, blocks: Option<u64>, stop: Arc<AtomicBool>) {
         let fetch: Arc<dyn RangeFetch> = Arc::new(SourceFetch(Arc::clone(&self.source)));
-        CachedFetch::new(fetch, &self.source.label(), self.versions())
+        let wanted = self.paths_of(heard);
+        let mut files = self.versions();
+        files.retain(|path, _| wanted.contains(path.as_str()));
+        CachedFetch::new(fetch, &self.source.label(), files)
             .warm(blocks, stop)
             .await;
     }
@@ -689,6 +900,29 @@ impl StreamedSong {
             })
             .collect()
     }
+}
+
+/// What a song is heard by: its reference's preview, its reference, or
+/// its stems.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heard {
+    Preview,
+    Reference,
+    Stems,
+}
+
+/// A stream attached to no take: its fetch and its feeder.
+pub type LooseStream = (
+    StreamedTake,
+    daw::standalone::audio_engine::streamed::StreamFeeder<
+        daw::standalone::audio_engine::streamed::RemoteOgg,
+    >,
+);
+
+/// A song's reference, as streams: the reference proper, and its preview.
+pub struct Reference {
+    pub full: LooseStream,
+    pub preview: Option<LooseStream>,
 }
 
 /// FNV-1a: a stable, dependency-free hash for cache keys.
@@ -731,11 +965,7 @@ impl CachedFetch {
     /// The cache key of block `block` of `path` (a URL: Cache Storage keys
     /// are requests; this origin is never fetched).
     fn key(&self, path: &str, version: u64, block: u64) -> String {
-        let path: String = path
-            .split('/')
-            .map(|s| String::from(js_sys::encode_uri_component(s)))
-            .collect::<Vec<_>>()
-            .join("/");
+        let path = url_path(path);
         format!(
             "https://fts-cache.invalid/{}/{version:016x}/{path}/{block}",
             self.label
@@ -761,22 +991,14 @@ impl CachedFetch {
         path: &str,
         block: u64,
     ) -> Result<Vec<u8>, String> {
-        use wasm_bindgen::JsCast as _;
         let (size, version) = self
             .files
             .get(path)
             .copied()
             .ok_or_else(|| format!("{path}: not a proxy of this song"))?;
         let key = self.key(path, version, block);
-        let hit = wasm_bindgen_futures::JsFuture::from(cache.match_with_str(&key))
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        if let Ok(response) = hit.dyn_into::<web_sys::Response>() {
-            let body = response.array_buffer().map_err(|e| format!("{e:?}"))?;
-            let body = wasm_bindgen_futures::JsFuture::from(body)
-                .await
-                .map_err(|e| format!("{e:?}"))?;
-            return Ok(js_sys::Uint8Array::new(&body).to_vec());
+        if let Some(bytes) = cache_get(cache, &key).await {
+            return Ok(bytes);
         }
         let start = block * Self::BLOCK;
         let mut bytes = self

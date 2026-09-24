@@ -8,6 +8,16 @@
 //! - **Stems** stream from their Ogg Vorbis proxies ([`add_stem`]): each
 //!   take's source is a `Streamed` one, decoded a few seconds at a time
 //!   around the playhead by a feeder this loop runs.
+//! - **A reference** ([`reference`]) — the song's mix but the guide, one
+//!   stereo stream — plays instead of the stems while the page is in
+//!   reference mode: it is mixed in at the playhead over what the engine
+//!   renders (the guide, live), and the stems' feeders are held, not run,
+//!   so their takes are silent. [`multitracks`] trades it for the stems.
+//!   A reference comes in two: its preview (mono, a quarter of the size)
+//!   plays wherever the reference proper has not arrived yet.
+//!   The stems' meters still move: each is read from its take's waveform
+//!   at the playhead ([`PeakMeters`]), through its fader and up its
+//!   folders, the way the engine would meter it.
 //! - **Output** is an AudioWorklet that plays blocks the page posts it —
 //!   a small queue, so the page renders ahead of the device by a quarter of
 //!   a second and the playhead the panels see is held back by what is
@@ -135,6 +145,14 @@ impl PlayerSong {
     }
 }
 
+type Feeder = StreamFeeder<Box<dyn Decode + Send>>;
+
+/// A song's reference, decoding: the reference proper, and its preview.
+struct ReferenceFeeders {
+    full: Feeder,
+    preview: Option<Feeder>,
+}
+
 struct Player {
     daw: Standalone,
     /// The song on screen's transport and mix ([`switch`] replaces it).
@@ -146,7 +164,15 @@ struct Player {
     clocked: Cell<bool>,
     /// Each song's streamed takes, by project: only the song on screen's
     /// are decoded.
-    feeders: RefCell<std::collections::HashMap<String, Vec<StreamFeeder<Box<dyn Decode + Send>>>>>,
+    feeders: RefCell<std::collections::HashMap<String, Vec<Feeder>>>,
+    /// Each song's reference, while it is heard by it: decoded and mixed in
+    /// for the song on screen.
+    references: RefCell<std::collections::HashMap<String, ReferenceFeeders>>,
+    /// The stems of a song heard by its reference: attached (their
+    /// waveforms draw) but not decoded, until [`multitracks`].
+    held: RefCell<std::collections::HashMap<String, Vec<Feeder>>>,
+    /// The meters of a song heard by its reference, from its waveforms.
+    peak_meters: RefCell<std::collections::HashMap<String, PeakMeters>>,
     /// Which feeder a tick starts with — round robin, so one stem's
     /// catch-up does not starve the rest.
     first: Cell<usize>,
@@ -185,6 +211,9 @@ pub fn install(daw: Standalone, project: &str) {
         daw,
         clocked: Cell::new(false),
         feeders: RefCell::default(),
+        references: RefCell::default(),
+        held: RefCell::default(),
+        peak_meters: RefCell::default(),
         first: Cell::new(0),
         out: RefCell::new(None),
         starting: Cell::new(false),
@@ -260,16 +289,65 @@ pub fn add_stem(project: &str, take: &str, bytes: Arc<[u8]>) -> Result<(), Strin
 
 /// Feed a streamed take from this page's loop — a whole proxy
 /// ([`add_stem`]) or one arriving by range from a share link
-/// (`song_stream::StreamedSong::attach`). Before the player is installed
-/// there is nothing to feed it from; it is dropped.
-pub fn adopt(project: &str, feeder: StreamFeeder<Box<dyn Decode + Send>>) {
+/// (`song_stream::StreamedSong::attach`). A song heard by its
+/// [`reference`] holds it instead, until [`multitracks`]. Before the
+/// player is installed there is nothing to feed it from; it is dropped.
+pub fn adopt(project: &str, feeder: Feeder) {
     if let Some(player) = player() {
+        let feeder = feeder.with_ahead(DECODED_AHEAD);
+        let into = if player.references.borrow().contains_key(project) {
+            &player.held
+        } else {
+            &player.feeders
+        };
+        into.borrow_mut()
+            .entry(project.to_owned())
+            .or_default()
+            .push(feeder);
+    }
+}
+
+/// Hear `project` by its reference (`full`, and its `preview` where that
+/// has not arrived) — before its takes are attached, so their feeders are
+/// held ([`adopt`]).
+pub fn reference(project: &str, full: Feeder, preview: Option<Feeder>) {
+    if let Some(player) = player() {
+        player.references.borrow_mut().insert(
+            project.to_owned(),
+            ReferenceFeeders {
+                full: full.with_ahead(DECODED_AHEAD),
+                preview: preview.map(|p| p.with_ahead(DECODED_AHEAD)),
+            },
+        );
+    }
+}
+
+/// Meter `project`'s stems from their waveforms while it is heard by its
+/// reference — `takes` are its attached stems.
+pub fn peak_meters(project: &str, takes: Vec<MeterTake>) {
+    if let Some(player) = player() {
+        let meters = PeakMeters::new(&player.daw, project, takes);
+        player
+            .peak_meters
+            .borrow_mut()
+            .insert(project.to_owned(), meters);
+    }
+}
+
+/// Hear `project` by its stems from now on: the held feeders run, the
+/// reference goes. What is queued already (a quarter of a second of the
+/// reference) plays while the stems decode their first chunk.
+pub fn multitracks(project: &str) {
+    if let Some(player) = player() {
+        player.references.borrow_mut().remove(project);
+        player.peak_meters.borrow_mut().remove(project);
+        let held = player.held.borrow_mut().remove(project).unwrap_or_default();
         player
             .feeders
             .borrow_mut()
             .entry(project.to_owned())
             .or_default()
-            .push(feeder.with_ahead(DECODED_AHEAD));
+            .extend(held);
     }
 }
 
@@ -399,13 +477,27 @@ impl Player {
         self.render();
     }
 
-    /// Decode stems toward the playhead, for up to the budget.
+    /// Decode stems (or the reference) toward the playhead, for up to the
+    /// budget.
     fn feed(&self) {
         let project = self.song.borrow().project.clone();
-        let mut all = self.feeders.borrow_mut();
-        let Some(feeders) = all.get_mut(&project) else {
-            return;
-        };
+        let mut stems = self.feeders.borrow_mut();
+        let mut references = self.references.borrow_mut();
+        let reference = references.get_mut(&project);
+        // With a preview, the reference proper is not what is heard until
+        // it has arrived: it decodes, but is not waited on (last, below).
+        let waiting_on_full = reference.as_ref().is_some_and(|r| r.preview.is_some());
+        let mut feeders: Vec<&mut Feeder> = stems
+            .get_mut(&project)
+            .into_iter()
+            .flatten()
+            .chain(reference.into_iter().flat_map(|r| {
+                r.preview
+                    .as_mut()
+                    .into_iter()
+                    .chain(std::iter::once(&mut r.full))
+            }))
+            .collect();
         let count = feeders.len();
         if count == 0 {
             return;
@@ -417,7 +509,8 @@ impl Player {
         // until each has it the song is partly silent: decode harder until
         // they all do. The device is fed from the worklet's own queue, so a
         // longer tick here costs only the page a frame or two.
-        let behind = feeders.iter().any(|f| {
+        let heard = count - usize::from(waiting_on_full);
+        let behind = feeders[..heard].iter().any(|f| {
             let source = f.source();
             let wanted = source.wanted();
             let here = usize::try_from(wanted).unwrap_or(usize::MAX) / streamed::CHUNK;
@@ -485,9 +578,26 @@ impl Player {
         if self.next.get() != Some(playhead) {
             self.flush();
         }
+        let references = self.references.borrow();
+        let reference = references.get(&song.project).map(|r| {
+            (
+                r.full.source(),
+                r.preview.as_ref().map(StreamFeeder::source),
+            )
+        });
+        let mut peak_meters = self.peak_meters.borrow_mut();
+        let mut peak_meters = peak_meters
+            .get_mut(&song.project)
+            .filter(|_| reference.is_some());
         let mut at = playhead;
         while self.queued() < self.ahead() {
-            let block = song.renderer.render_block(at, BLOCK);
+            let mut block = song.renderer.render_block(at, BLOCK);
+            if let Some((full, preview)) = reference {
+                mix_reference(full, preview, at, &mut block.samples);
+            }
+            if let Some(meters) = peak_meters.as_deref_mut() {
+                meters.write(&self.daw, &song.project, at);
+            }
             let samples = js_sys::Float32Array::from(&block.samples[..]);
             let transfer = js_sys::Array::of1(&samples.buffer());
             if out
@@ -503,6 +613,204 @@ impl Player {
             at = song.shared.playhead_samples().0.max(0) as u64;
         }
         self.next.set(Some(at));
+    }
+}
+
+/// A stem of a song heard by its reference, for its meter: its track, its
+/// span, and the stream its waveform is on.
+pub struct MeterTake {
+    pub track: String,
+    pub start: f64,
+    pub end: f64,
+    pub source_offset: f64,
+    pub playrate: f64,
+    pub source: streamed::Streamed,
+}
+
+/// A track as its meter needs it.
+struct MeterTrack {
+    /// Its meter cell (the project's track index).
+    cell: usize,
+    parent: Option<usize>,
+    gain: f32,
+    /// Played live (the guide): the engine meters it.
+    live: bool,
+}
+
+/// The meters of a song heard by its reference: each stem read from its
+/// take's waveform where the playhead is, times its fader, the loudest
+/// child lifting each folder — written over the engine's (silent) reading,
+/// block by block. The tracks the reference leaves out play live and keep
+/// the engine's own.
+pub struct PeakMeters {
+    takes: Vec<(usize, MeterTake)>,
+    tracks: Vec<MeterTrack>,
+    /// Blocks until the tracks are read again (a fader moved, by someone
+    /// in the session).
+    stale_in: u32,
+    guids: Vec<String>,
+}
+
+/// Blocks between readings of the tracks' faders (~ a quarter second).
+const METER_TRACKS_EVERY: u32 = 12;
+
+impl PeakMeters {
+    fn new(daw: &Standalone, project: &str, takes: Vec<MeterTake>) -> Self {
+        let mut meters = Self {
+            takes: Vec::new(),
+            tracks: Vec::new(),
+            stale_in: 0,
+            guids: Vec::new(),
+        };
+        meters.read_tracks(daw, project);
+        meters.takes = takes
+            .into_iter()
+            .filter_map(|t| Some((meters.guids.iter().position(|g| *g == t.track)?, t)))
+            .collect();
+        meters
+    }
+
+    /// The tracks' tree, faders and mutes, now.
+    fn read_tracks(&mut self, daw: &Standalone, project: &str) {
+        let all =
+            daw_proto::Tracks::all(daw, daw_proto::ProjectContext::Project(project.to_owned()));
+        let live = crate::reference::left_out(daw, project);
+        let at = |guid: &str| all.iter().position(|t| t.guid == guid);
+        self.tracks = all
+            .iter()
+            .map(|t| MeterTrack {
+                cell: t.index as usize,
+                parent: t.parent_guid.as_deref().and_then(at),
+                gain: if t.muted { 0.0 } else { t.volume as f32 },
+                live: live.contains(&t.guid),
+            })
+            .collect();
+        // Takes keep pointing at the right track: the order is the same
+        // unless tracks were added, and then the guids say.
+        let guids: Vec<String> = all.into_iter().map(|t| t.guid).collect();
+        if guids != self.guids {
+            let old = std::mem::replace(&mut self.guids, guids);
+            for (track, take) in &mut self.takes {
+                *track = old
+                    .get(*track)
+                    .and_then(|g| self.guids.iter().position(|n| n == g))
+                    .unwrap_or(usize::MAX);
+                let _ = take;
+            }
+        }
+    }
+
+    /// Write the meters for the block at playhead frame `at`.
+    fn write(&mut self, daw: &Standalone, project: &str, at: u64) {
+        if self.stale_in == 0 {
+            self.read_tracks(daw, project);
+            self.stale_in = METER_TRACKS_EVERY;
+        }
+        self.stale_in -= 1;
+        let t = at as f64 / f64::from(RATE);
+        let span = BLOCK as f64 / f64::from(RATE);
+        let mut level = vec![(0.0f32, 0.0f32); self.tracks.len()];
+        for (track, take) in &self.takes {
+            let Some(slot) = level.get_mut(*track) else {
+                continue;
+            };
+            if t + span <= take.start || t >= take.end {
+                continue;
+            }
+            let (l, r) = take.peak_at((t - take.start) * take.playrate + take.source_offset, span);
+            slot.0 = slot.0.max(l);
+            slot.1 = slot.1.max(r);
+        }
+        // Children come after their folders, so walking back each track is
+        // whole (its own takes, its children's) before its folder takes it.
+        for i in (0..self.tracks.len()).rev() {
+            let track = &self.tracks[i];
+            let (l, r) = (level[i].0 * track.gain, level[i].1 * track.gain);
+            level[i] = (l, r);
+            if let Some(parent) = track.parent {
+                level[parent].0 = level[parent].0.max(l);
+                level[parent].1 = level[parent].1.max(r);
+            }
+        }
+        let cells = daw.meters();
+        for (track, (l, r)) in self.tracks.iter().zip(level) {
+            if track.live {
+                continue;
+            }
+            if let Some(cell) = cells.cell(track.cell) {
+                cell.write(l, r, daw_standalone::metering::HOLD_DECAY);
+            }
+        }
+    }
+}
+
+impl MeterTake {
+    /// The loudest sample of its waveform over `span` seconds from `seconds`
+    /// into its file, per channel — silence before its waveform arrives.
+    fn peak_at(&self, seconds: f64, span: f64) -> (f32, f32) {
+        let Some(peaks) = self.source.peaks() else {
+            return (0.0, 0.0);
+        };
+        let rate = f64::from(peaks.samplerate.max(1));
+        let level = peaks.level_for(span * rate);
+        let spp = f64::from(level.samples_per_peak.max(1));
+        let from = (seconds.max(0.0) * rate / spp) as usize;
+        let to = (((seconds + span) * rate / spp).ceil() as usize).max(from + 1);
+        let nch = peaks.channels.max(1);
+        let (mut l, mut r) = (0.0f32, 0.0f32);
+        for peak in from..to.min(level.count) {
+            let (max, min) = level.pair(nch, 0, peak);
+            l = l.max(max.abs()).max(min.abs());
+            let (max, min) = level.pair(nch, (nch > 1).into(), peak);
+            r = r.max(max.abs()).max(min.abs());
+        }
+        (l, r)
+    }
+}
+
+/// Mix a song's reference in from the playhead frame `at`: the reference
+/// proper where it has arrived, else its preview — each told that is
+/// where it is read, so both decode there.
+fn mix_reference(
+    full: &streamed::Streamed,
+    preview: Option<&streamed::Streamed>,
+    at: u64,
+    samples: &mut [f32],
+) {
+    let here = |s: &streamed::Streamed| at * u64::from(s.sample_rate()) / u64::from(RATE);
+    full.want(here(full));
+    if let Some(preview) = preview {
+        preview.want(here(preview));
+    }
+    let arrived = |s: &streamed::Streamed| {
+        let chunk = |frame: u64| usize::try_from(frame).unwrap_or(usize::MAX) / streamed::CHUNK;
+        let last =
+            here(s) + (samples.len() / 2) as u64 * u64::from(s.sample_rate()) / u64::from(RATE);
+        s.resident(chunk(here(s))) && s.resident(chunk(last.min(s.frames().saturating_sub(1))))
+    };
+    match preview {
+        Some(preview) if !arrived(full) => mix_in(preview, at, samples),
+        _ => mix_in(full, at, samples),
+    }
+}
+
+/// Add `source`'s audio from the playhead frame `at` (at [`RATE`]) into
+/// `samples`, interleaved stereo — read at its own rate between samples, a
+/// mono one to both sides. Silent where it has not arrived.
+fn mix_in(source: &streamed::Streamed, at: u64, samples: &mut [f32]) {
+    let step = f64::from(source.sample_rate().max(1)) / f64::from(RATE);
+    let right = usize::from(source.channels() > 1);
+    let from = at as f64 * step;
+    for (i, out) in samples.chunks_exact_mut(2).enumerate() {
+        let position = from + i as f64 * step;
+        let frame = position as usize;
+        let frac = (position - frame as f64) as f32;
+        let read = |ch: usize| {
+            let a = source.sample(frame, ch);
+            a + (source.sample(frame + 1, ch) - a) * frac
+        };
+        out[0] += read(0);
+        out[1] += read(right);
     }
 }
 

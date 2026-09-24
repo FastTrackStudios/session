@@ -18,10 +18,14 @@
 # and its session files are re-put (unchanged ones are skipped). Env:
 #   TASK      the task binary            (default: ../task/target/debug/task)
 #   SESSION   the session binary         (default: target/release-fast/session)
+#   REFERENCE the reference bouncer      (default: target/release-fast/reference)
 #   KIND      the collection kind        (default: songlist — keyflow's)
 #
 # Title and artist come from the chart's first line (`Washed - Elevation
-# Rhythm`), the key from its `#B`. Proxies missing on disk are made first.
+# Rhythm`), the key from its `#B`. Proxies missing on disk are made first,
+# and the song's reference — its mix but the guide, what a page plays until
+# the stems are asked for (`Media/Proxies/Reference.ogg`, its index and its
+# waveform) — bounced when it has none.
 set -euo pipefail
 
 # Every task call gets a deadline and one retry. An upload has hung
@@ -54,6 +58,7 @@ setlist="${1:?usage: library-import.sh <file.setlist> [--originals]}"
 originals="${2:-}"
 TASK="${TASK:-../task/target/debug/task}"
 SESSION="${SESSION:-target/release-fast/session}"
+REFERENCE="${REFERENCE:-target/release-fast/reference}"
 KIND="${KIND:-songlist}"
 base="$(cd "$(dirname "$setlist")" && pwd)"
 collection="$(basename "$setlist" .setlist)"
@@ -83,6 +88,9 @@ while IFS= read -r line; do
 
     if [[ ! -d "$folder/Media/Proxies" ]]; then
         "$SESSION" proxies "$rpp" 2>&1 | grep -v SWELL | tail -1
+    fi
+    if [[ ! -f "$folder/Media/Proxies/Reference.ogg" ]]; then
+        "$REFERENCE" "$folder" 2>&1 | grep -v SWELL | tail -1
     fi
 
     # The slug Task derives from the title (resources' slugify: an

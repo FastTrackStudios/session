@@ -601,6 +601,21 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     });
     // Playing together, a song someone else picked is picked here too.
     crate::collab_bar::use_follow_song(setlist);
+    // How the song on screen is heard (its reference, by default), and
+    // whether a change to the mix just asked for its stems.
+    let mut listening = use_signal(crate::web_engine::listening);
+    let mut asking = use_signal(|| false);
+    use_future(move || async move {
+        use crate::web_engine::Notice;
+        let mut notices = crate::web_engine::notices();
+        listening.set(crate::web_engine::listening());
+        while let Some(notice) = notices.recv().await {
+            match notice {
+                Notice::Listening(now) => listening.set(now),
+                Notice::Blocked => asking.set(true),
+            }
+        }
+    });
     let current = setlist.read().current().cloned();
     rsx! {
         div {
@@ -623,6 +638,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                     // Once, not per song: the live set this page is in —
                     // who is here, together.
                     crate::collab_bar::CollabBar {}
+                    ListeningBadge { listening: listening(), asking }
                 },
                 // A tab picked: that song is current, and the audio moves to
                 // it. Where the one it replaces had got to is kept on its tab.
@@ -640,6 +656,100 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                 // Keyed by the song: picking another remounts every panel
                 // on that song's session rather than patching the last one's.
                 SongViews { key: "{song.project}", session: song.session.clone(), engine: engine.clone(), view }
+            }
+            if asking() {
+                LoadMultitracks { listening: listening(), asking }
+            }
+        }
+    }
+}
+
+/// How the song on screen is heard, beside who is here: its reference (a
+/// press offers the multitracks), the stems arriving, or nothing — by its
+/// stems is how a song is simply played.
+#[component]
+fn ListeningBadge(listening: crate::web_engine::Listening, asking: Signal<bool>) -> Element {
+    use crate::shell::{DIM, RULE};
+    use crate::web_engine::Listening;
+    let (label, title) = match listening {
+        Listening::Reference { .. } => (
+            "Reference mix",
+            "You are hearing this song's reference mix. Load the multitracks to change the mix.",
+        ),
+        Listening::Loading => (
+            "Loading multitracks…",
+            "The stems take over once they are here.",
+        ),
+        Listening::Stems => return rsx! {},
+    };
+    rsx! {
+        button {
+            title: "{title}",
+            style: "height:28px; box-sizing:border-box; flex:none; margin-left:8px; padding:0 10px; \
+                    display:flex; align-items:center; gap:6px; border-radius:14px; \
+                    border:1px solid {RULE}; background:#0f1012; color:{DIM}; \
+                    font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;",
+            onmousedown: move |event| event.stop_propagation(),
+            onclick: move |_| {
+                if matches!(listening, Listening::Reference { .. }) {
+                    asking.set(true);
+                }
+            },
+            span { style: "width:7px; height:7px; border-radius:4px; background:#e3b341; flex:none;" }
+            "{label}"
+        }
+    }
+}
+
+/// The offer a change to the mix makes while the song is heard by its
+/// reference: load every stem (what it costs, said), or keep listening.
+#[component]
+fn LoadMultitracks(listening: crate::web_engine::Listening, asking: Signal<bool>) -> Element {
+    use crate::shell::{ACCENT, BAR_BG, DIM, RULE, TEXT};
+    use crate::web_engine::Listening;
+    let size = match listening {
+        Listening::Reference { stems_mb } => format!("about {stems_mb} MB for this song"),
+        _ => "the song's stems".to_owned(),
+    };
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; z-index:60; \
+                    display:flex; align-items:center; justify-content:center; \
+                    background:rgba(0,0,0,0.55);",
+            onclick: move |_| asking.set(false),
+            div {
+                style: "width:min(380px, calc(100vw - 32px)); box-sizing:border-box; padding:20px; \
+                        display:flex; flex-direction:column; gap:12px; background:{BAR_BG}; \
+                        border:1px solid {RULE}; border-radius:14px; color:{TEXT}; \
+                        box-shadow:0 16px 40px rgba(0,0,0,0.6);",
+                onclick: move |event| event.stop_propagation(),
+                div { style: "font-size:15px; font-weight:700;", "Editing the mix needs the multitracks" }
+                div {
+                    style: "font-size:13px; line-height:1.5; color:{DIM};",
+                    "You are hearing the reference mix — one stream, so the set plays without \
+                     downloading every track. To change volumes, pans or mutes, load all the \
+                     tracks: {size}, and the rest as you open them. The click and guide are \
+                     yours to change either way."
+                }
+                div {
+                    style: "display:flex; gap:8px; justify-content:flex-end; margin-top:4px;",
+                    button {
+                        style: "height:32px; padding:0 14px; border-radius:8px; border:1px solid {RULE}; \
+                                background:transparent; color:{TEXT}; font-size:13px; cursor:pointer;",
+                        onclick: move |_| asking.set(false),
+                        "Keep listening"
+                    }
+                    button {
+                        style: "height:32px; padding:0 14px; border-radius:8px; border:none; \
+                                background:{ACCENT}; color:#0b0c0e; font-size:13px; font-weight:650; \
+                                cursor:pointer;",
+                        onclick: move |_| {
+                            asking.set(false);
+                            crate::web_engine::load_multitracks();
+                        },
+                        "Load multitracks"
+                    }
+                }
             }
         }
     }
