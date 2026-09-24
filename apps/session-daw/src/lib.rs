@@ -130,6 +130,7 @@ pub mod prepare;
 pub mod profile;
 pub mod progress;
 pub mod rails;
+pub mod reference;
 pub mod rename;
 pub mod routes;
 pub mod row;
