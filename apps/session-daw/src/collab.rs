@@ -890,6 +890,8 @@ fn start(
                     }
                     let leader = sync.lock().ok().and_then(|s| s.current().map(|c| c.by.clone()));
                     let locked = lock.step(current, leader.as_deref(), &me, here.as_ref(), &seen, &clock, presence.as_ref());
+                    // The Session watch app's feed (watch_relay.rs).
+                    crate::watch_relay::live_tick(&seen, &clock, here.as_deref(), songs.iter().map(|s| s.key.as_str()));
                     for command in tick.commands {
                         // Locked to the leader's stamped playhead, the
                         // drift follower starts, stops and moves this
@@ -1011,7 +1013,7 @@ impl Lock {
 
 /// A song's sync backend (daw-transport-sync), by project — made once:
 /// making one stands up the project's transport engine.
-fn sync_backend(project: &str) -> Option<Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>> {
+pub(crate) fn sync_backend(project: &str) -> Option<Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>> {
     type Backends = HashMap<String, Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>>;
     static BACKENDS: Mutex<Option<Backends>> = Mutex::new(None);
     let mut cache = BACKENDS.lock().ok()?;

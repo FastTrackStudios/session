@@ -24,6 +24,9 @@ pub mod stream_in;
 pub mod collab_bar;
 #[cfg(feature = "native")]
 pub mod collab_pointers;
+/// The Session watch app's feed, from the live set's tick.
+#[cfg(feature = "native")]
+pub mod watch_relay;
 pub mod cursor;
 pub mod ghosts;
 pub mod engine;

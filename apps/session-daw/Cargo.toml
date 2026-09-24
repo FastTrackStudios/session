@@ -244,6 +244,9 @@ native = [
     "dep:reqwest",
     "dep:serde_json",
 ]
+# The iPhone relays the guide feed to the Session watch app over
+# WatchConnectivity (iOS only; elsewhere the readings are kept, unused).
+watch-link = ["session/watch-link"]
 # The browser: the same widgets, hosted in <canvas> elements under
 # dioxus-web and drawn with vello_hybrid's WebGL renderer (keyflow-ui's
 # `wasm-graphics` pattern). See `web_host`.
