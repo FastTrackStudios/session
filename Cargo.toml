@@ -689,7 +689,7 @@ libc = "0.2"
 #   / collection-proto  → apps/site (the fasttrackstudio.app website)
 #   collection-proto     → apps/desktop (optional, `session` feature)
 #   attachments-proto    → features/song (optional, `attachments` feature)
-editor = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+editor = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 # The editor itself, from its own repo — what the Organize view's keyflow
 # editor is built on (Blitz-native: `editor-view/native`). The core only:
 # no Typst / Mermaid fence renderers (`default-features = false`).
@@ -702,29 +702,29 @@ editor-crdt = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.
 # Renamed because task's older `editor-keyflow-lang` (above, for the site)
 # has the same package name.
 keyflow-editor-lang = { package = "editor-keyflow-lang", git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
-editor-keyflow = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-editor-keyflow-lang = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-view-knowledge-graph = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+editor-keyflow = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+editor-keyflow-lang = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+view-knowledge-graph = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 
 # features/ssg — a vault (a directory of markdown notes) published as a
 # static site. apps/web's guide is one: `ssg-build` renders it to HTML in
 # build.rs, `ssg`/`ssg-ui` are the page model and the components, and
 # `dx build --ssg` pre-renders the routes the vault names.
-ssg = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-ssg-ui = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-ssg-build = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-collection-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli", default-features = false }
-attachments-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+ssg = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+ssg-ui = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+ssg-build = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+collection-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main", default-features = false }
+attachments-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 # The song library in Task (FastTrackStudios/session#140): keyflow's model
 # — songs, their charts, songlist collections — and each song's session
 # as a File Root, dialled with the same task-dial the web app uses.
-resources-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-files-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-files-client = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-task-dial = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+resources-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+files-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+files-client = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+task-dial = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 # Live sessions Task keeps: joining a set, the clock, the epochs.
-live-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
-links-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+live-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+links-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 session-library = { path = "crates/session/library" }
 
 # Task's externals not already pinned above (root pins win everywhere
