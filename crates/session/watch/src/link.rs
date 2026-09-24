@@ -15,7 +15,7 @@
 //! the application context instead, for it to show when it opens.
 
 use std::ptr::NonNull;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -25,6 +25,9 @@ use objc2_foundation::{NSData, NSDictionary, NSError, NSObject, NSObjectProtocol
 use objc2_watch_connectivity::{WCSession, WCSessionActivationState, WCSessionDelegate};
 
 use crate::driver::WatchLink;
+
+/// What a send calls once it has an answer (or failed).
+type Done = Box<dyn FnOnce(Option<Vec<u8>>) + Send>;
 
 define_class!(
     // SAFETY: NSObject has no subclassing requirements, and this adds no
@@ -119,27 +122,31 @@ impl WatchLink for WcLink {
         }
     }
 
-    fn send(&self, bytes: Vec<u8>, reply: Option<Box<dyn FnOnce(Vec<u8>) + Send>>) {
+    fn send(&self, bytes: Vec<u8>, done: Done) {
         let data = NSData::with_bytes(&bytes);
-        let reply = reply.map(|once| {
-            let once = Mutex::new(Some(once));
-            RcBlock::new(move |answer: NonNull<NSData>| {
-                // SAFETY: WatchConnectivity hands the reply block a valid
-                // NSData for the duration of the call.
-                let answer = unsafe { answer.as_ref() }.to_vec();
-                if let Some(once) = once.lock().ok().and_then(|mut o| o.take()) {
-                    once(answer);
-                }
-            })
+        // Exactly one of the two blocks runs; whichever does takes `done`.
+        let done = Arc::new(Mutex::new(Some(done)));
+        let take = |done: &Arc<Mutex<Option<Done>>>| done.lock().ok().and_then(|mut d| d.take());
+        let on_reply = Arc::clone(&done);
+        let reply = RcBlock::new(move |answer: NonNull<NSData>| {
+            // SAFETY: WatchConnectivity hands the reply block a valid
+            // NSData for the duration of the call.
+            let answer = unsafe { answer.as_ref() }.to_vec();
+            if let Some(done) = take(&on_reply) {
+                done(Some(answer));
+            }
         });
-        // A failed send is a dropped ping or a feed the next one replaces:
-        // the error handler has nothing to do.
-        let failed = RcBlock::new(|_: NonNull<NSError>| {});
-        // SAFETY: both blocks are 'static and only read what they captured.
+        let on_error = Arc::clone(&done);
+        let failed = RcBlock::new(move |_: NonNull<NSError>| {
+            if let Some(done) = take(&on_error) {
+                done(None);
+            }
+        });
+        // SAFETY: both blocks are 'static and only touch what they captured.
         unsafe {
             self.session.sendMessageData_replyHandler_errorHandler(
                 &data,
-                reply.as_deref(),
+                Some(&reply),
                 Some(&failed),
             );
         }

@@ -19,6 +19,9 @@ pub mod relay;
 pub mod timeline;
 pub mod wire;
 
+// The positions a lead is stamped in, and the per-buffer backends that
+// stamp them — for a host building a `Lead` from its own engine.
+pub use daw_transport_sync;
 pub use driver::{Relay, Snapshot, SongSnapshot, WatchLink};
 pub use relay::{Lead, RelayInput, SongRef, WatchRelay};
 pub use session_guide::midi::TempoMark;
