@@ -101,6 +101,9 @@ pub use setlist::SetlistServiceImpl;
 
 /// Collaboration: the session as a Loro doc, presence, shared transport.
 pub use session_sync as sync;
+/// The Session watch app's guide feed (beats, sections and count-in in the
+/// watch's clock) and the iPhone's relay of it.
+pub use session_watch_guide as watch_guide;
 #[cfg(not(target_arch = "wasm32"))]
 pub use song::SongServiceImpl;
 

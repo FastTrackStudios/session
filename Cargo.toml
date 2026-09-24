@@ -42,6 +42,7 @@ members = [
     "crates/session/proto",
     "crates/session/session",
     "crates/session/sync",
+    "crates/session/watch",
     "crates/session/library",
     "crates/session/ui",
     "features/chord-tool/chord-tool",
@@ -193,6 +194,9 @@ daw-theme-reaper = { path = "features/ui/daw-theme-reaper" }
 session = { path = "crates/session/session" }
 session-proto = { path = "crates/session/proto" }
 session-sync = { path = "crates/session/sync" }
+# The Session watch app's guide feed (beats + sections in the watch's
+# clock), relayed by the iPhone over WatchConnectivity.
+session-watch-guide = { path = "crates/session/watch" }
 session-ui = { path = "crates/session/ui", default-features = false }
 # Portable guide engine (click / count-in / section guide). Optional `tts`
 # feature adds local Chatterbox TTS (its ort/chatterbox pins live in the

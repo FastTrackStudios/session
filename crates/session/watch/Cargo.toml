@@ -1,0 +1,46 @@
+[package]
+name = "session-watch-guide"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+description = "The Session watch app's guide feed: the song's beats, sections and count-in from the guide's own code, in the watch's clock, relayed by the iPhone"
+
+# What the watch shows and taps is decided here, in the Rust the desktop's
+# guide already runs — the watch app (apps/session-watch) only fires what it
+# is sent. Three parts:
+#
+# - `timeline` — every beat of a song, laid from its tempo map with
+#   session-guide's click grid, numbered into bars and sections, with the
+#   guide's count and cues on the beats they land on;
+# - `relay` — the phone's side: the leader's clock-stamped playhead (the
+#   same `SyncPosition` a following desktop locks to), Task's clock, and the
+#   watch's clock (pinged over WatchConnectivity, into a ClockEstimator),
+#   folded into a few seconds of beats in the watch's own clock;
+# - `link` (iOS, feature `link`) — WatchConnectivity itself.
+
+[features]
+default = []
+# WatchConnectivity on iOS (objc2). A no-op elsewhere.
+link = ["dep:objc2", "dep:objc2-foundation", "dep:objc2-watch-connectivity", "dep:block2"]
+
+[dependencies]
+session-proto.workspace = true
+session-guide.workspace = true
+# SyncPosition / SharedTransport and the presence keys they live under.
+session-sync.workspace = true
+daw-transport-sync.workspace = true
+facet.workspace = true
+facet-json.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "NSData", "NSDictionary", "NSError", "NSString", "NSObject"] }
+objc2-watch-connectivity = { version = "0.3", optional = true, default-features = false, features = ["std", "block2", "WCSession"] }
+block2 = { version = "0.6", optional = true }
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true

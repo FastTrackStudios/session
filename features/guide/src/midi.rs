@@ -176,6 +176,73 @@ impl TempoSegment {
     }
 }
 
+/// A tempo or signature change as a tempo map holds it: from here on, this
+/// tempo in this meter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TempoMark {
+    pub at_seconds: f64,
+    pub tempo_bpm: f64,
+    pub time_sig_num: u32,
+    pub time_sig_den: u32,
+}
+
+impl TempoMark {
+    /// The mark in force at `seconds`: the last one at or before it, else
+    /// the first (a map that starts late still has a tempo before it).
+    #[must_use]
+    pub fn in_force(marks: &[Self], seconds: f64) -> Option<Self> {
+        marks
+            .iter()
+            .rev()
+            .find(|m| m.at_seconds <= seconds)
+            .or_else(|| marks.first())
+            .copied()
+    }
+}
+
+/// The click's segments over a song's span `[start, end)`, from its tempo
+/// map.
+///
+/// The one reading of a tempo map both the stamped Click track and the
+/// watch's haptic click are laid from, so they tap the same grid.
+///
+/// A mark before `start` takes effect at `start`; one at or after `end` is
+/// dropped. When no mark lands on `start` itself, `at_start` — the tempo in
+/// force there — seeds the first segment, so a map whose first change comes
+/// mid-song (or a project with none at all) still clicks from the top.
+#[must_use]
+pub fn segments_in_span(
+    marks: &[TempoMark],
+    start: f64,
+    end: f64,
+    at_start: impl FnOnce() -> TempoMark,
+) -> Vec<TempoSegment> {
+    let mut segments: Vec<TempoSegment> = marks
+        .iter()
+        .filter(|m| m.at_seconds < end)
+        .map(|m| TempoSegment {
+            start_seconds: m.at_seconds.max(start),
+            tempo_bpm: m.tempo_bpm,
+            time_sig_num: m.time_sig_num.max(1),
+            time_sig_den: m.time_sig_den.max(1),
+        })
+        .collect();
+    if segments.first().map(|s| s.start_seconds) != Some(start) {
+        let seed = at_start();
+        segments.insert(
+            0,
+            TempoSegment {
+                start_seconds: start,
+                tempo_bpm: seed.tempo_bpm,
+                time_sig_num: seed.time_sig_num.max(1),
+                time_sig_den: seed.time_sig_den.max(1),
+            },
+        );
+    }
+    segments.sort_by(|a, b| a.start_seconds.total_cmp(&b.start_seconds));
+    segments
+}
+
 /// How finely to lay down the click.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ClickSubdivision {
@@ -401,6 +468,21 @@ mod tests {
         let notes = click_notes(&[seg(0.0, 120.0, 6, 8)], 1.5, ClickSubdivision::Beat);
         assert_eq!(notes.len(), 6);
         assert!((notes[1].time_seconds - 0.25).abs() < 1e-10);
+    }
+
+    /// A change before the song counts from its start, one after its end
+    /// is dropped, and a map with nothing at the start is seeded there.
+    #[test]
+    fn segments_in_span_clamps_drops_and_seeds() {
+        let mark = |at: f64, bpm: f64| TempoMark { at_seconds: at, tempo_bpm: bpm, time_sig_num: 4, time_sig_den: 4 };
+        let seed = || mark(10.0, 90.0);
+        let clamped = segments_in_span(&[mark(0.0, 100.0), mark(20.0, 110.0), mark(99.0, 50.0)], 10.0, 60.0, seed);
+        let starts: Vec<(f64, f64)> = clamped.iter().map(|s| (s.start_seconds, s.tempo_bpm)).collect();
+        assert_eq!(starts, vec![(10.0, 100.0), (20.0, 110.0)]);
+        let seeded = segments_in_span(&[mark(20.0, 110.0)], 10.0, 60.0, seed);
+        let starts: Vec<(f64, f64)> = seeded.iter().map(|s| (s.start_seconds, s.tempo_bpm)).collect();
+        assert_eq!(starts, vec![(10.0, 90.0), (20.0, 110.0)]);
+        assert_eq!(TempoMark::in_force(&[mark(0.0, 100.0), mark(20.0, 110.0)], 25.0).map(|m| m.tempo_bpm), Some(110.0));
     }
 
     #[test]

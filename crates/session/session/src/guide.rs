@@ -26,7 +26,10 @@ use daw::service::{
     PositionInSeconds, ProjectContext, Projects, Regions, Takes, TempoMap, TrackRef, Tracks,
 };
 use daw_proto::{DawError, DawResult};
-use session_guide::midi::{ClickSubdivision, GuideMidiNote, TempoSegment, click_notes, cue_notes};
+use session_guide::midi::{
+    ClickSubdivision, GuideMidiNote, TempoMark, TempoSegment, click_notes, cue_notes,
+    segments_in_span,
+};
 use session_guide::{CueSchedule, GuideSongTiming, ScheduleOptions, sections_from_song};
 use session_proto::GuideTrackRole;
 
@@ -427,8 +430,22 @@ impl<D: GuideDaw> Guide<D> {
     /// through a tempo ramp or a time-signature change stays with the
     /// grid instead of drifting off a single nominal BPM.
     fn tempo_segments(&self, project: ProjectContext, start: f64, end: f64) -> Vec<TempoSegment> {
-        let points = self.daw.get_tempo_points(project.clone());
-        let mut segments: Vec<TempoSegment> = points
+        let marks = self.tempo_marks(project.clone(), start, end);
+        // `tempo_marks` already has a mark in force at `start`, so the
+        // seed is never needed; it is the same reading all the same.
+        segments_in_span(&marks, start, end, || self.tempo_at(project, start))
+    }
+
+    /// The song's tempo map as the click reads it: every change before
+    /// `end`, each with the meter in force where it takes effect in the
+    /// song (a change before the song counts from its start), led by the
+    /// tempo at `start` when no change comes at or before it — a project
+    /// with no tempo points still has a tempo. The pure half (clamping,
+    /// dropping) is `session_guide`'s, shared with the watch's haptic click.
+    fn tempo_marks(&self, project: ProjectContext, start: f64, end: f64) -> Vec<TempoMark> {
+        let mut marks: Vec<TempoMark> = self
+            .daw
+            .get_tempo_points(project.clone())
             .iter()
             .filter_map(|point| {
                 let at = point.position.time?.as_seconds();
@@ -438,31 +455,47 @@ impl<D: GuideDaw> Guide<D> {
                 let (num, den) = self
                     .daw
                     .get_time_signature_at(project.clone(), at.max(start));
-                Some(TempoSegment {
-                    start_seconds: at.max(start),
+                Some(TempoMark {
+                    at_seconds: at,
                     tempo_bpm: point.bpm,
                     time_sig_num: u32::try_from(num.max(1)).unwrap_or(4),
                     time_sig_den: u32::try_from(den.max(1)).unwrap_or(4),
                 })
             })
             .collect();
-
-        // A project with no tempo points still has a tempo — seed one
-        // segment from the project default so the click isn't empty.
-        if segments.first().map(|s| s.start_seconds) != Some(start) {
-            let (num, den) = self.daw.get_time_signature_at(project.clone(), start);
-            segments.insert(
-                0,
-                TempoSegment {
-                    start_seconds: start,
-                    tempo_bpm: self.daw.get_tempo_at(project, start),
-                    time_sig_num: u32::try_from(num.max(1)).unwrap_or(4),
-                    time_sig_den: u32::try_from(den.max(1)).unwrap_or(4),
-                },
-            );
+        if !marks.iter().any(|m| m.at_seconds <= start) {
+            marks.insert(0, self.tempo_at(project, start));
         }
-        segments.sort_by(|a, b| a.start_seconds.total_cmp(&b.start_seconds));
-        segments
+        marks
+    }
+
+    /// The tempo and meter the project has at `at`.
+    fn tempo_at(&self, project: ProjectContext, at: f64) -> TempoMark {
+        let (num, den) = self.daw.get_time_signature_at(project.clone(), at);
+        TempoMark {
+            at_seconds: at,
+            tempo_bpm: self.daw.get_tempo_at(project, at),
+            time_sig_num: u32::try_from(num.max(1)).unwrap_or(4),
+            time_sig_den: u32::try_from(den.max(1)).unwrap_or(4),
+        }
+    }
+
+    /// The current song's beat grid for the Session watch app — the same
+    /// song, span and tempo map [`Self::generate`] stamps the Click, Count
+    /// and Guide tracks from, so the tap on the wrist is the click in the
+    /// ear. Build it when a song opens (and again when its tempo map or
+    /// sections change) and hand it to the watch relay.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::generate`]: no song in the project, or one with no length.
+    pub fn watch_timeline(&self) -> DawResult<session_watch_guide::GuideTimeline> {
+        let project = ProjectContext::Current;
+        let mut song = self.current_song()?;
+        let (start, end) = self.song_span(project.clone())?;
+        let marks = self.tempo_marks(project, start, end);
+        song.end_seconds = end;
+        Ok(session_watch_guide::GuideTimeline::build(&song, &marks))
     }
 
     /// One MIDI item per track spanning the song, holding that track's
