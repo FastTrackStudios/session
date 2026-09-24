@@ -735,7 +735,7 @@ async fn join_task_live(set: TaskSet, name: String) -> eyre::Result<Live> {
             collab.seeded = seeded,
             "collab: joined a set Task keeps"
         );
-        let started = start(bridges, Arc::clone(&presence), clock, joined.setlist.clone(), me, name, None);
+        let started = start(bridges, Arc::clone(&presence), clock, joined.title.clone(), me, name, None);
         let _keep = peer;
         Ok::<_, eyre::Report>(started.into_live(set.url.clone(), false, presence))
     }

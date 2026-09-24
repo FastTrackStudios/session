@@ -492,7 +492,11 @@ fn DemoView(engine: crate::web_engine::EngineRef, session: crate::studio::Studio
             TopBar {
                 view,
                 mode,
-                transport: rsx! { crate::transport_bar::WebTransportBar {} },
+                transport: rsx! {
+                    crate::transport_bar::WebTransportBar {}
+                    // The live set this page is in: who is here, together.
+                    crate::collab_bar::CollabBar {}
+                },
             }
             div {
                 style: "position:relative; flex:1; min-height:0;",

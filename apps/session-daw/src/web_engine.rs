@@ -95,6 +95,7 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
                 .find_map(|s| s.files.clone())
                 .ok_or_else(|| eyre::eyre!("the set has no song with files to open"))?;
             tracing::info!(live.setlist = %joined.title, live.songs = joined.songs.len(), live.epoch = joined.epoch, "web: joined a live set");
+            restart_on_next_epoch(&set.url, joined.setlist.clone(), joined.epoch);
             live = Some(crate::collab::TaskSet { setlist: joined.setlist, ..set });
             Some(files)
         }
@@ -233,6 +234,42 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
             planner,
         },
     ))
+}
+
+/// A playground set (the public demo) starts over every few minutes: its
+/// songs' docs are made new, and the ones this page syncs are no longer
+/// served. When the set's epoch moves past `epoch`, the page opens again —
+/// its song from the browser's cache, pristine, and into the new run.
+fn restart_on_next_epoch(url: &str, setlist: String, epoch: u64) {
+    use live_proto::LiveSessionsStreamClient;
+    let url = url.to_owned();
+    wasm_bindgen_futures::spawn_local(async move {
+        let stream: LiveSessionsStreamClient = match task_dial::establish_at(&url, None).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                tracing::warn!(live.error = %e, "web: the set's resets cannot be followed");
+                return;
+            }
+        };
+        let (tx, mut rx) = vox::channel::<live_proto::LiveEpoch>();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = stream.epochs(tx).await;
+        });
+        while let Ok(Some(message)) = rx.recv().await {
+            let mut next = None;
+            let _ = message.map(|e| next = Some((e.setlist.clone(), e.epoch)));
+            if let Some((set, moved)) = next
+                && set == setlist
+                && moved > epoch
+            {
+                tracing::info!(live.epoch = moved, "web: the set starts over; opening it again");
+                if let Some(window) = web_sys::window() {
+                    let _ = window.location().reload();
+                }
+                return;
+            }
+        }
+    });
 }
 
 /// Every take of a shared song attached as its proxy, streaming in — the

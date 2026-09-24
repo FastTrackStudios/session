@@ -20,7 +20,7 @@ pub mod collab;
 pub mod song_stream;
 #[cfg(feature = "native")]
 pub mod stream_in;
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "web"))]
 pub mod collab_bar;
 #[cfg(feature = "native")]
 pub mod collab_pointers;
