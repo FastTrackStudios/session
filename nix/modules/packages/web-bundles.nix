@@ -80,9 +80,9 @@
         });
 
       # The public demo's set: a live share link (`task share live <setlist>
-      # --reset-minutes 5`) on the public Task, baked into the site's /demo.
-      # Empty until the demo set is published there: /demo then says so.
-      sessionDemoLink = "";
+      # --reset-minutes 5`) on the public Task, baked into the site's /demo —
+      # days-to-praise's Worship Set, starting over every five minutes.
+      sessionDemoLink = "https://task.fasttrackstudio.app/org/days-to-praise/share/1e75d7fa11c540ac8dbbd461048e59fc";
 
       # The Session app in a browser (`just web-daw`): what /demo and every
       # live link open, served under the site's /app/. A plain cargo +
