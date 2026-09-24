@@ -214,28 +214,28 @@ song = { path = "features/song" }
 #
 # `keyflow-proto` and `keyflow-syntax` stay in `daw`: expression-editor-core,
 # which daw-reaper hard-depends on, needs them.
-keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
+keyflow = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
 keyflow-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
 keyflow-syntax = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
-keyflow-text = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-chordpro = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-midi = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-live = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-musicxml = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-musx = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-annotate = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-orchestra = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-sync = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-daw-analysis = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-ui = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-cli = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-lsp = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-tree-sitter-keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
+keyflow-text = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-chordpro = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-midi = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-live = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-musicxml = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-musx = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-annotate = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-orchestra = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-sync = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-daw-analysis = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-ui = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-cli = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-lsp = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+tree-sitter-keyflow = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
 # Engraver — defaults OFF at the root (the full `engraver` feature drags
 # wgpu/vello + PDF export); consumers opt into `svg`/`wgpu`/`engraver`.
-engraver = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1", default-features = false }
-engraver-proto = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1", default-features = false }
-engraver-score = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
+engraver = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section", default-features = false }
+engraver-proto = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section", default-features = false }
+engraver-score = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
 
 # ── signal domain (wave 4) ────────────────────────────────────────────
 # `signal` is the facade — the only public API surface for the signal
@@ -358,40 +358,40 @@ inferno-net = { git = "https://codeberg.org/FastTrackStudios/inferno-control", r
 # (FastTrackStudios/architect: the entity/RPC framework, the auth/crdt/
 # permissions stack, architect-ui + architect-story, architect-telemetry).
 # One tag pin shared by every entry so the whole framework moves together.
-architect = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-derive = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-rpc-derive = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-action-derive = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-atom = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-form = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-permissions = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-permissions-proto = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-auth = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-auth = { git = "https://github.com/FastTrackStudios/architect", rev = "5e4bb829674fe8b2d3527c3b65b9ab3a2b6baa86" }
-auth-proto = { git = "https://github.com/FastTrackStudios/architect", rev = "5e4bb829674fe8b2d3527c3b65b9ab3a2b6baa86" }
-auth-db = { git = "https://github.com/FastTrackStudios/architect", rev = "5e4bb829674fe8b2d3527c3b65b9ab3a2b6baa86" }
-auth-client = { git = "https://github.com/FastTrackStudios/architect", rev = "5e4bb829674fe8b2d3527c3b65b9ab3a2b6baa86" }
-crdt = { git = "https://github.com/FastTrackStudios/architect", rev = "5e4bb829674fe8b2d3527c3b65b9ab3a2b6baa86" }
-crdt-derive = { git = "https://github.com/FastTrackStudios/architect", rev = "5e4bb829674fe8b2d3527c3b65b9ab3a2b6baa86" }
-crdt-seaorm = { git = "https://github.com/FastTrackStudios/architect", rev = "5e4bb829674fe8b2d3527c3b65b9ab3a2b6baa86" }
+architect = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-derive = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-rpc-derive = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-action-derive = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-atom = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-form = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-permissions = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-permissions-proto = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-auth = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+auth = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+auth-proto = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+auth-db = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+auth-client = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+crdt = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+crdt-derive = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+crdt-seaorm = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 # The Dioxus primitive library (was libs/ui/fts-ui, renamed on the split).
-architect-ui = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
+architect-ui = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 # The launcher engine, vendored into architect in v0.2.0 (was
 # launcher-core / launcher-ui / providers on dioxus-launcher.git).
-architect-launcher-core = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
+architect-launcher-core = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 # default-features = false lives here, not on the consumer: cargo refuses
 # `default-features = false` on a workspace-inherited dep.
-architect-launcher-ui = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-launcher-providers = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
+architect-launcher-ui = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-launcher-providers = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 # Wide-events telemetry (was crates/task/telemetry).
-architect-telemetry = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
+architect-telemetry = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 # Story/snapshot tooling (was libs/fts-story/*).
-architect-story-core = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-story-macros = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-story-runtime = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-story-shell = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-story-snapshots = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
-architect-story-parity = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.7.4-subscribe-intro" }
+architect-story-core = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-story-macros = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-story-runtime = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-story-shell = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-story-snapshots = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+architect-story-parity = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 
 # Architect's externals, merged from its dissolved workspace table
 # (root pins win — both were already on the rc.5 fleet).
@@ -689,42 +689,42 @@ libc = "0.2"
 #   / collection-proto  → apps/site (the fasttrackstudio.app website)
 #   collection-proto     → apps/desktop (optional, `session` feature)
 #   attachments-proto    → features/song (optional, `attachments` feature)
-editor = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+editor = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
 # The editor itself, from its own repo — what the Organize view's keyflow
 # editor is built on (Blitz-native: `editor-view/native`). The core only:
 # no Typst / Mermaid fence renderers (`default-features = false`).
-editor-view = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.9", default-features = false }
-editor-state = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.9", default-features = false }
+editor-view = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.21", default-features = false }
+editor-state = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.21", default-features = false }
 # Remote edits into the editor as changes (the caret stays put).
-editor-crdt = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.20" }
+editor-crdt = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.21" }
 # Keyflow's language support for it (syntax colours, live diagnostics) —
 # keyflow's own copy, which moved there from task at keyflow v0.2.0.
 # Renamed because task's older `editor-keyflow-lang` (above, for the site)
 # has the same package name.
-keyflow-editor-lang = { package = "editor-keyflow-lang", git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.2" }
-editor-keyflow = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-editor-keyflow-lang = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-view-knowledge-graph = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+keyflow-editor-lang = { package = "editor-keyflow-lang", git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+editor-keyflow = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+editor-keyflow-lang = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+view-knowledge-graph = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
 
 # features/ssg — a vault (a directory of markdown notes) published as a
 # static site. apps/web's guide is one: `ssg-build` renders it to HTML in
 # build.rs, `ssg`/`ssg-ui` are the page model and the components, and
 # `dx build --ssg` pre-renders the routes the vault names.
-ssg = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-ssg-ui = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-ssg-build = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-collection-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main", default-features = false }
-attachments-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+ssg = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+ssg-ui = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+ssg-build = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+collection-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli", default-features = false }
+attachments-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
 # The song library in Task (FastTrackStudios/session#140): keyflow's model
 # — songs, their charts, songlist collections — and each song's session
 # as a File Root, dialled with the same task-dial the web app uses.
-resources-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-files-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-files-client = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-task-dial = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+resources-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+files-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+files-client = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+task-dial = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
 # Live sessions Task keeps: joining a set, the clock, the epochs.
-live-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
-links-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+live-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
+links-proto = { git = "https://github.com/FastTrackStudios/task", branch = "session-share-cli" }
 session-library = { path = "crates/session/library" }
 
 # Task's externals not already pinned above (root pins win everywhere
@@ -862,12 +862,12 @@ pipewire-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git"
 # fix for a drag whose pressed node was removed — it panicked Blitz on every
 # press that re-rendered). Push it to the fork and pin its rev here before
 # this repo is pushed.
-blitz-dom = { path = "../blitz/packages/blitz-dom" }
-blitz-traits = { path = "../blitz/packages/blitz-traits" }
-blitz-paint = { path = "../blitz/packages/blitz-paint" }
-blitz-shell = { path = "../blitz/packages/blitz-shell" }
-blitz-net = { path = "../blitz/packages/blitz-net" }
-blitz-html = { path = "../blitz/packages/blitz-html" }
+blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
+blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
+blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
+blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
+blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
+blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
 # Vendored in-tree rather than patched to a sibling checkout, because a
 # path outside this repo builds on one machine and nowhere else. Three
 # measured changes to the present path — the GPU barrier removed, frame
@@ -893,13 +893,13 @@ styx-format = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.1.
 # FastTrackStudios/vendor): the rc.7 forward-ports are committed there
 # locally but not tagged yet. Replace both with a pinned vendor tag before
 # this repo is pushed, same as the `../daw` paths.
-phon = { path = "../vendor/phon" }
+phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.0" }
 # Vendored facet-core rc.7 with one change: chrono's display fns keep
 # sub-second precision. chrono types are opaque scalars whose only encode
 # path is `display`, so upstream's `SecondsFormat::Secs` rounded EVERY
 # timestamp on every vox RPC to the second — and anything ordered by one
 # could invert when two events shared a second.
-facet-core = { path = "../vendor/facet-core" }
+facet-core = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.0" }
 # Vendored phon-jit rc.5 with a one-line build.rs fix: force the stable,
 # call-based stencils. Upstream's nightly detection can be true while no real
 # nightly is present (the pinned nix toolchain), so it compiled the `become`
@@ -1191,8 +1191,8 @@ installer-core = { path = "../daw/libs/installer-core" }
 # features/proto and features/syntax); daw keeps a copy for the crates
 # below it. Both sources point at keyflow's, so there is ONE keyflow-proto
 # in the graph — two would be two incompatible `Chart` types.
-keyflow-proto = { path = "../keyflow/features/proto" }
-keyflow-syntax = { path = "../keyflow/features/syntax" }
+keyflow-proto = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
+keyflow-syntax = { git = "https://github.com/FastTrackStudios/keyflow", branch = "tag-section" }
 kontrol = { path = "../daw/crates/kontrol/kontrol" }
 level-dsp = { path = "../daw/features/fx/level/level-dsp" }
 meter-dsp = { path = "../daw/crates/audiocore/meter-dsp" }
@@ -1212,31 +1212,6 @@ reaper-launcher = { path = "../daw/features/reaper/reaper-launcher" }
 tune-dsp = { path = "../daw/features/fx/tune/tune-dsp" }
 utils = { path = "../daw/libs/utils" }
 world-sys = { path = "../daw/libs/vendor/world" }
-
-# The processor repo is a sibling checkout too, for the same reason and
-# on the same terms as `../daw` above: the FX and the mixer that embeds
-# them are being built together, and a tag bump between every try is
-# friction with no benefit. Every crate the Tone rack reaches, direct or
-# transitive, is patched — one unpatched copy of a crate that is also
-# patched is the lockfile collision that cost a day last time.
-[patch."https://github.com/FastTrackStudios/keyflow"]
-# Sibling checkout, branch `tag-section`: upstream main (library, live
-# chart editing) plus the local chord/parser work, until keyflow tags a
-# release with it and the pin moves.
-engraver-proto = { path = "../keyflow/features/engraver/proto" }
-editor-keyflow-lang = { path = "../keyflow/features/editor/editor-keyflow-lang" }
-keyflow = { path = "../keyflow/features/keyflow" }
-keyflow-text = { path = "../keyflow/features/text" }
-keyflow-proto = { path = "../keyflow/features/proto" }
-keyflow-syntax = { path = "../keyflow/features/syntax" }
-
-[patch."https://github.com/FastTrackStudios/editor"]
-# Sibling checkout: the fence renderers made features (not yet tagged).
-editor-view = { path = "../editor/features/ui" }
-editor-state = { path = "../editor/crates/editor-state" }
-editor-vim = { path = "../editor/features/vim" }
-editor-syntax = { path = "../editor/features/syntax" }
-editor-crdt = { path = "../editor/features/crdt" }
 
 [patch."https://github.com/FastTrackStudios/processor"]
 # baseview lives in the processor repo's own `vendor/`, which is why it
@@ -1265,52 +1240,3 @@ fts-plug-ui = { path = "../processor/libs/ui/fts-plug-ui" }
 [patch."https://github.com/DioxusLabs/dioxus"]
 dioxus-native-dom = { path = "libs/vendor/dioxus-native-dom" }
 
-[patch."https://github.com/FastTrackStudios/architect"]
-# Sibling checkout, branch `fleet` (v0.8.2 + "an argless subscription can
-# introduce itself"): ONE architect for session, daw, keyflow and task while
-# the fleet is updated together. Replace with a tag pin before pushing.
-architect-action-derive = { path = "../architect/crates/architect-action-derive" }
-architect-derive = { path = "../architect/crates/architect-derive" }
-architect-rpc-derive = { path = "../architect/crates/architect-rpc-derive" }
-architect = { path = "../architect/crates/architect" }
-architect-atom = { path = "../architect/features/atom" }
-architect-auth = { path = "../architect/features/auth/architect-auth" }
-auth-client = { path = "../architect/features/auth/auth-client" }
-auth-db = { path = "../architect/features/auth/auth-db" }
-auth-http = { path = "../architect/features/auth/auth-http" }
-auth-proto = { path = "../architect/features/auth/auth-proto" }
-auth = { path = "../architect/features/auth/auth" }
-crdt-derive = { path = "../architect/features/crdt/crdt-derive" }
-crdt-seaorm = { path = "../architect/features/crdt/crdt-seaorm" }
-crdt = { path = "../architect/features/crdt/crdt" }
-architect-form = { path = "../architect/features/form" }
-architect-launcher-core = { path = "../architect/features/launcher/architect-launcher-core" }
-architect-launcher-providers = { path = "../architect/features/launcher/architect-launcher-providers" }
-architect-launcher-ui = { path = "../architect/features/launcher/architect-launcher-ui" }
-architect-permissions = { path = "../architect/features/permissions" }
-architect-permissions-proto = { path = "../architect/features/permissions/proto" }
-architect-story-core = { path = "../architect/features/story/architect-story-core" }
-architect-story-macros = { path = "../architect/features/story/architect-story-macros" }
-architect-story-parity = { path = "../architect/features/story/architect-story-parity" }
-architect-story-runtime = { path = "../architect/features/story/architect-story-runtime" }
-architect-story-shell = { path = "../architect/features/story/architect-story-shell" }
-architect-story-snapshots = { path = "../architect/features/story/architect-story-snapshots" }
-architect-telemetry = { path = "../architect/features/telemetry" }
-architect-ui = { path = "../architect/features/ui/architect-ui" }
-
-[patch."https://github.com/FastTrackStudios/task"]
-# Sibling checkout, branch `session-share-cli` (the rc.7 fleet): session
-# and task are being built together — the library, sessions as File Roots,
-# streaming (#140). Replace with a tag pin before pushing.
-attachments-proto = { path = "../task/features/attachments/attachments-proto" }
-collection-proto = { path = "../task/features/collection/collection-proto" }
-links-proto = { path = "../task/features/links/links-proto" }
-ssg = { path = "../task/features/ssg/ssg" }
-ssg-build = { path = "../task/features/ssg/ssg-build" }
-ssg-ui = { path = "../task/features/ssg/ssg-ui" }
-ssg-vault = { path = "../task/features/ssg/ssg-vault" }
-resources-proto = { path = "../task/features/resources/resources-proto" }
-files-proto = { path = "../task/features/files/files-proto" }
-files-client = { path = "../task/features/files/files-client" }
-live-proto = { path = "../task/features/live/live-proto" }
-task-dial = { path = "../task/crates/task-dial" }
