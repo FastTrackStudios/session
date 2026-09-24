@@ -14,6 +14,7 @@ files-client.workspace = true
 task-dial.workspace = true
 vox-core.workspace = true
 eyre.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
 
 [lib]
 doctest = false

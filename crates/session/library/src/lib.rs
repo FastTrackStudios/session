@@ -172,7 +172,8 @@ impl Library {
     /// # Errors
     /// No session root for the song, or a transfer failed twice.
     pub async fn pull_session(&self, song: &str, into: &Path, originals: bool) -> eyre::Result<PathBuf> {
-        let TaskSong { mut files, root, entries, .. } = self.song(song).await?;
+        let TaskSong { files, root, entries, .. } = self.song(song).await?;
+        let mut files = files.lock().await.1.clone();
         let dest = into.join(song);
         for (rel, size) in entries {
             // Proxies and the waveform caches are what a set plays and
@@ -240,7 +241,13 @@ impl Library {
             let project = entries.remove(at);
             entries.insert(0, project);
         }
-        Ok(TaskSong { slug: song.to_owned(), files, root: id, entries })
+        Ok(TaskSong {
+            slug: song.to_owned(),
+            library: self.clone(),
+            files: std::sync::Arc::new(tokio::sync::Mutex::new((0, files))),
+            root: id,
+            entries,
+        })
     }
 
     /// The song's main chart (its keyflow source) from the library — THE
@@ -330,26 +337,52 @@ pub fn is_original(rel: &str) -> bool {
 pub struct TaskSong {
     /// The library's song id (`washed`).
     pub slug: String,
-    files: FilesClient,
+    library: Library,
+    /// The connection reads go over, and how many times it has been
+    /// replaced — so a dead one is redialled once, not by every read that
+    /// found it dead.
+    files: std::sync::Arc<tokio::sync::Mutex<(u64, FilesClient)>>,
     root: files_proto::id::RootId,
     /// Every file of the session root, with its size — the project first.
     pub entries: Vec<(String, u64)>,
 }
 
+/// How long one range read may take before its connection is taken for
+/// dead: a stalled read would otherwise hold a fetch slot forever.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 impl TaskSong {
     /// The bytes `range` of `path` in the song's session — a seek, not a
-    /// download.
+    /// download. A read that fails or stalls redials the library and is
+    /// tried once more: a streamed song outlives any one connection.
     ///
     /// # Errors
     ///
-    /// The server refused, or the file is not there.
+    /// The server refused, or the file is not there, twice.
     pub async fn read(&self, path: &str, range: std::ops::Range<u64>) -> eyre::Result<Vec<u8>> {
         if range.is_empty() {
             return Ok(Vec::new());
         }
-        self.files
-            .read_range(self.root, path, range.start, range.end - 1)
+        let (generation, files) = self.files.lock().await.clone();
+        let first = match self.read_on(&files, path, &range).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => e,
+        };
+        let files = {
+            let mut held = self.files.lock().await;
+            if held.0 == generation {
+                let fresh = self.library.files().await.map_err(|e| eyre::eyre!("{first} (and redialling: {e})"))?;
+                *held = (generation + 1, fresh);
+            }
+            held.1.clone()
+        };
+        self.read_on(&files, path, &range).await.map_err(|e| eyre::eyre!("{e} (and before that: {first})"))
+    }
+
+    async fn read_on(&self, files: &FilesClient, path: &str, range: &std::ops::Range<u64>) -> eyre::Result<Vec<u8>> {
+        tokio::time::timeout(READ_TIMEOUT, files.read_range(self.root, path, range.start, range.end - 1))
             .await
+            .map_err(|_| eyre::eyre!("{path} {range:?}: no answer in {}s", READ_TIMEOUT.as_secs()))?
             .map_err(|e| eyre::eyre!("{path} {range:?}: {e}"))
     }
 }
