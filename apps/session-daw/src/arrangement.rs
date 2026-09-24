@@ -264,6 +264,93 @@ pub struct Index {
     /// Content-space x extent of every `lanes` command, indexed the same
     /// way as `lanes.commands`. In seconds, like the recording.
     x: Vec<(f64, f64)>,
+    /// The audio items' waveforms, by the command of the item body they
+    /// are drawn over: built at replay ([`lane_wave_path`]), at about a
+    /// point a pixel and only where on screen, never recorded. Recorded,
+    /// every envelope's every point was a path element at the lanes' one
+    /// pixel a second — tens of megabytes a song, most of a browser
+    /// page — for a picture that at any zoom shows a point a pixel.
+    waves: std::collections::HashMap<u32, LaneWave>,
+}
+
+/// An item's waveform, to draw over its body at replay.
+struct LaneWave {
+    wave: std::sync::Arc<crate::midi::Wave>,
+    /// The item's span, seconds, and the lane's band.
+    x0: f64,
+    x1: f64,
+    top: f64,
+    bottom: f64,
+    color: Color,
+    /// Display gain: the take's loudest peak reaches the band's edge.
+    gain: f64,
+}
+
+/// The display gain for `wave`: its loudest peak to the lane's edge, so a
+/// stem mixed at -20 dB draws as a waveform and not a line. What is drawn
+/// changes, never what plays. Capped, so a stem that is near-silent all
+/// through shows as near-silent rather than as its noise floor blown up
+/// to full height.
+fn wave_gain(wave: &crate::midi::Wave) -> f64 {
+    const MOST_GAIN: f64 = 24.0; // ≈ +27.6 dB
+    let loudest = wave
+        .points
+        .iter()
+        .map(|&(max, min)| f64::from(max.abs().max(min.abs())))
+        .fold(0.0_f64, f64::max);
+    if loudest > 0.0 { (1.0 / loudest).min(MOST_GAIN) } else { 1.0 }
+}
+
+/// A pixel short of the lane at full scale, and never thinner than a hair
+/// either side of the middle.
+const HAIR: f64 = 0.6;
+
+/// The part of `lane`'s waveform between `left` and `right` (seconds), at
+/// about a point for each of `pps` pixels a second: the envelope's points
+/// folded (loudest of each run kept) until there is one per pixel. `None`
+/// when none of it is in view, or the band is too thin to show one.
+fn lane_wave_path(lane: &LaneWave, left: f64, right: f64, pps: f64) -> Option<BezPath> {
+    let wave = &lane.wave;
+    let half = (lane.bottom - lane.top) / 2.0;
+    let (from, to) = (lane.x0.max(left), lane.x1.min(right));
+    if half < 1.5 || wave.step <= 0.0 || from >= to || wave.points.is_empty() {
+        return None;
+    }
+    // Points folded per drawn point, and the runs aligned to it so a
+    // scroll does not shimmer.
+    let fold = crate::num::index((1.0 / (wave.step * pps.max(1e-9))).floor().max(1.0)).max(1);
+    let last = wave.points.len();
+    let first = (crate::num::index(((from - lane.x0) / wave.step).floor().max(0.0)) / fold) * fold;
+    let end = crate::num::index(((to - lane.x0) / wave.step).ceil().max(0.0)).saturating_add(fold).min(last);
+    if first >= end {
+        return None;
+    }
+    let runs: Vec<(f64, f32, f32)> = wave.points[first..end]
+        .chunks(fold)
+        .enumerate()
+        .map(|(r, run)| {
+            let (max, min) = run.iter().fold((0.0_f32, 0.0_f32), |(mx, mn), &(a, b)| (mx.max(a), mn.min(b)));
+            let at = crate::num::coord(first + r * fold) + crate::num::coord(run.len()) / 2.0;
+            (at.mul_add(wave.step, lane.x0).clamp(lane.x0, lane.x1), max, min)
+        })
+        .collect();
+    let mid = (lane.top + lane.bottom) / 2.0;
+    let edge = half - 1.0;
+    let reach = edge * lane.gain;
+    let mut path = BezPath::new();
+    for (i, &(x, max, _)) in runs.iter().enumerate() {
+        let y = mid - (f64::from(max.max(0.0)) * reach).clamp(HAIR, edge.max(HAIR));
+        if i == 0 {
+            path.move_to((x, y));
+        } else {
+            path.line_to((x, y));
+        }
+    }
+    for &(x, _, min) in runs.iter().rev() {
+        path.line_to((x, mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR))));
+    }
+    path.close_path();
+    Some(path)
 }
 
 impl Arrangement {
@@ -670,12 +757,13 @@ impl Arrangement {
                     // Audio: the take's own peaks, once they have been
                     // read — plain until then, for the same reason.
                     None => {
-                        if let Some(path) = wave
-                            .as_deref()
-                            .and_then(|wave| waveform(wave, x0, x1, top, bottom, 0.0))
-                        {
-                            lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &path);
-                            index.x.push((x0, x1));
+                        if let Some(wave) = wave.clone().filter(|w| w.step > 0.0 && !w.points.is_empty()) {
+                            // Over the body just recorded, drawn at replay.
+                            let body = command_index(&lanes).saturating_sub(1);
+                            index.waves.insert(
+                                body,
+                                LaneWave { gain: wave_gain(&wave), wave, x0, x1, top, bottom, color },
+                            );
                         }
                     }
                 }
@@ -1657,22 +1745,7 @@ fn waveform(
             .mul_add(wave.step, x0 - shift)
             .clamp(x0, x1)
     };
-    // A pixel short of the lane at full scale, and never thinner than a
-    // hair either side of the middle.
-    const HAIR: f64 = 0.6;
-    // Normalized for display: the take's loudest peak reaches the lane's
-    // edge, so a stem mixed at -20 dB draws as a waveform and not a line.
-    // What is drawn changes, never what plays. Capped, so a stem that is
-    // near-silent all through shows as near-silent rather than as its
-    // noise floor blown up to full height.
-    const MOST_GAIN: f64 = 24.0; // ≈ +27.6 dB
-    let loudest = wave
-        .points
-        .iter()
-        .map(|&(max, min)| f64::from(max.abs().max(min.abs())))
-        .fold(0.0_f64, f64::max);
-    let gain = if loudest > 0.0 { (1.0 / loudest).min(MOST_GAIN) } else { 1.0 };
-    let reach = (half - 1.0) * gain;
+    let reach = (half - 1.0) * wave_gain(wave);
     let mut path = BezPath::new();
     let edge = half - 1.0;
     for (i, &(max, _)) in span.iter().enumerate() {
@@ -1842,6 +1915,14 @@ impl Arrangement {
                     _ => {}
                 }
                 if submit_command(painter, cmd, transform) {
+                    counts.submitted = counts.submitted.saturating_add(1);
+                }
+                // An item body with a waveform over it: the part on
+                // screen, a point a pixel.
+                if let Some(lane) = u32::try_from(i).ok().and_then(|i| self.index.waves.get(&i))
+                    && let Some(path) = lane_wave_path(lane, left, right, view.pps)
+                {
+                    painter.fill(Fill::NonZero, transform, lane.color, None, &path);
                     counts.submitted = counts.submitted.saturating_add(1);
                 }
             }
@@ -2232,5 +2313,46 @@ mod waveform_tests {
         assert!(slipped.elements().len() < still.elements().len());
         // Past the end of the audio there is nothing left to draw.
         assert!(waveform(&wave(), 0.0, 2.0, 0.0, 20.0, 5.0).is_none());
+    }
+}
+
+#[cfg(test)]
+mod lane_wave_tests {
+    use super::{LaneWave, lane_wave_path};
+    use crate::midi::Wave;
+    use vello::peniko::Color;
+
+    fn lane(points: usize) -> LaneWave {
+        // Forty points a second over 100 s.
+        let wave = Wave { step: 0.025, points: (0..points).map(|i| if i == 2000 { (0.9, -0.9) } else { (0.1, -0.1) }).collect() };
+        LaneWave { wave: std::sync::Arc::new(wave), x0: 0.0, x1: 100.0, top: 0.0, bottom: 40.0, color: Color::WHITE, gain: 1.0 }
+    }
+
+    fn points_of(path: &vello::kurbo::BezPath) -> usize {
+        path.elements().len()
+    }
+
+    #[test]
+    fn a_waveform_is_drawn_a_point_a_pixel_and_only_where_on_screen() {
+        let lane = lane(4000);
+        // Fitted: 100 s across 200 px — two pixels a second, ~200 points
+        // each way, not 4000.
+        let fitted = lane_wave_path(&lane, 0.0, 100.0, 2.0).expect("a path");
+        assert!(points_of(&fitted) < 2 * 210, "{} elements", points_of(&fitted));
+        // Zoomed in on 10 s at 100 px a second: only those seconds, at the
+        // envelope's own resolution (40 a second is under a pixel's worth).
+        let near = lane_wave_path(&lane, 45.0, 55.0, 100.0).expect("a path");
+        assert!(points_of(&near) < 2 * 420 && points_of(&near) > 2 * 380, "{} elements", points_of(&near));
+        // Out of view: nothing.
+        assert!(lane_wave_path(&lane, 200.0, 300.0, 2.0).is_none());
+    }
+
+    #[test]
+    fn a_fold_keeps_a_peak_it_passes_over() {
+        let lane = lane(4000);
+        let fitted = lane_wave_path(&lane, 0.0, 100.0, 2.0).expect("a path");
+        // The spike at point 2000 (50 s) reaches near the band's top edge.
+        let top = fitted.elements().iter().filter_map(|e| e.end_point()).map(|p| p.y).fold(f64::MAX, f64::min);
+        assert!(top < 5.0, "the spike survives the fold: top at {top}");
     }
 }

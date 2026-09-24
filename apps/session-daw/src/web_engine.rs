@@ -121,9 +121,11 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
     // The facade and the engine live as long as the page.
     std::mem::forget(bundle);
     crate::web_audio::install(standalone.clone(), &project_guid);
-    if let Some(song) = streamed {
-        stream_song(&standalone, &project_guid, song);
-    }
+    let streamed = streamed.map(|song| {
+        let song = Rc::new(song);
+        stream_song(&standalone, &project_guid, &song);
+        song
+    });
 
     // Say which step fails: `fetch` answers only yes or no.
     let facade = daw_control::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
@@ -158,6 +160,20 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
                 .collect(),
         )
         .await;
+    // The waveforms: each take's original's peaks, fetched and reduced,
+    // then drawn — the audio need not have arrived.
+    if let Some(song) = streamed {
+        let previews = previews.clone();
+        let items: Vec<String> = daw_standalone::audio_engine::materialize::pending_media(&standalone, &project_guid)
+            .into_iter()
+            .map(|m| m.item_guid)
+            .collect();
+        wasm_bindgen_futures::spawn_local(async move {
+            if song.load_peaks(crate::midi::WAVE_BLOCK).await > 0 {
+                previews.fill_waves(items).await;
+            }
+        });
+    }
     let chart = chart_text.as_deref().and_then(|text| {
         keyflow::parse(text)
             .inspect_err(|e| tracing::error!(error = %e, "chart: could not parse"))
@@ -184,7 +200,7 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
 /// way a streamed song's takes are attached natively (`stream_in`), pumped
 /// by this page's audio loop, fetched in the order they will be heard from
 /// the play cursor.
-fn stream_song(standalone: &daw_standalone::sync::Standalone, project: &str, song: crate::song_stream::StreamedSong) {
+fn stream_song(standalone: &daw_standalone::sync::Standalone, project: &str, song: &crate::song_stream::StreamedSong) {
     let media = daw_standalone::audio_engine::materialize::pending_media(standalone, project);
     let takes: Vec<_> = media.iter().filter_map(|m| song.attach(standalone, project, m)).collect();
     tracing::info!(stream.media = media.len(), stream.attached = takes.len(), "audio: streaming the song's proxies");

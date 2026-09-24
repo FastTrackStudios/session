@@ -101,6 +101,10 @@ pub struct Previews {
     known: Arc<Mutex<HashMap<String, Vec<Note>>>>,
     /// The audio items' waveforms, by item GUID.
     waves: Arc<Mutex<HashMap<String, Arc<Wave>>>>,
+    /// Bumped whenever notes or waveforms arrive — so a picture recorded
+    /// before they did (a browser's waveforms come after the song opens)
+    /// knows to record itself again.
+    generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Previews {
@@ -108,6 +112,17 @@ impl Previews {
     #[must_use]
     pub fn get(&self, guid: &str) -> Option<Vec<Note>> {
         self.known.lock().ok()?.get(guid).cloned()
+    }
+
+    /// How many times notes or waveforms have arrived: a holder of a
+    /// picture drawn from them records it again when this has moved.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn arrived(&self) {
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
 
     /// The waveform for an audio item, if its peaks have been read.
@@ -142,6 +157,7 @@ impl Previews {
                 waves.insert(guid, Arc::new(wave));
             }
         }
+        self.arrived();
     }
 
     /// Read the notes now, on this thread.
@@ -172,6 +188,7 @@ impl Previews {
                 known.insert(guid, notes);
             }
         }
+        self.arrived();
     }
 }
 

@@ -229,6 +229,9 @@ pub struct ArrangementWidget {
     /// What is needed to cut the recording again when an edit changes
     /// what it holds.
     previews: crate::midi::Previews,
+    /// The previews' generation the recording was cut at: when notes or
+    /// waveforms arrive after it (a browser's), it is cut again.
+    previews_seen: u64,
     /// The ruler's own furniture, for hit testing.
     sections: Vec<daw_ui::studio::project::Section>,
     markers: Vec<daw_ui::studio::project::Marker>,
@@ -409,6 +412,7 @@ impl ArrangementWidget {
             sections: project.sections.clone(),
             markers: project.markers.clone(),
             project,
+            previews_seen: previews.generation(),
             previews,
             renaming: None,
             keys: crate::keys::Keys::load(),
@@ -1281,6 +1285,11 @@ impl ArrangementWidget {
     /// returns, and what the web host draws into its canvas.
     pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         self.dirty.set(false);
+        let generation = self.previews.generation();
+        if generation != self.previews_seen {
+            self.previews_seen = generation;
+            self.recut();
+        }
         let scene = self.draw(width, height, scale);
         if std::mem::take(&mut self.fit_on_open) {
             for command in [crate::zoom::Command::FitTracks, crate::zoom::Command::Project] {

@@ -369,6 +369,11 @@ pub struct StreamedSong {
     source: Arc<dyn SongSource>,
     /// Proxies by their file stem, lower-case: (path in the song, size).
     proxies: HashMap<String, (String, u64)>,
+    /// Waveform caches by their original's file name, lower-case
+    /// (`bass.wav`): (path in the song, size). Ours before REAPER's.
+    peaks: HashMap<String, (String, u64)>,
+    /// The streams attached so far, by their original's file name.
+    attached: Mutex<Vec<(String, daw::standalone::audio_engine::streamed::Streamed)>>,
 }
 
 fn safe_name(text: &str) -> String {
@@ -395,9 +400,18 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
     let base = keep.base(&label);
     let project = base.join(&first.0);
     let mut proxies = HashMap::new();
+    let mut peaks: HashMap<String, (String, u64)> = HashMap::new();
     let mut fetched = 0usize;
     for (path, size) in &list {
         let lower = path.to_lowercase();
+        if let Some(cache) = lower.strip_prefix("media/peaks/") {
+            // `bass.wav.sessionpeaks` or `bass.wav.reapeaks`: ours wins.
+            if let Some((original, ext)) = cache.rsplit_once('.')
+                && (ext == "sessionpeaks" || (ext == "reapeaks" && !peaks.contains_key(original)))
+            {
+                peaks.insert(original.to_owned(), (path.clone(), *size));
+            }
+        }
         if lower.starts_with("media/proxies/") && lower.ends_with(".ogg") {
             let stem = Path::new(path).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
             proxies.insert(stem, (path.clone(), *size));
@@ -424,7 +438,7 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
         stream.proxies = proxies.len(),
         "song-stream: mirrored"
     );
-    Ok(StreamedSong { project, folder: keep.folder(), keep, base, source, proxies })
+    Ok(StreamedSong { project, folder: keep.folder(), keep, base, source, proxies, peaks, attached: Mutex::default() })
 }
 
 /// The source's chart, as THE chart beside `project` (the folder's own
@@ -463,6 +477,9 @@ impl StreamedSong {
             Arc::clone(&bytes),
             index.clone(),
         );
+        if let (Ok(mut attached), Some(name)) = (self.attached.lock(), Path::new(&media.path).file_name()) {
+            attached.push((name.to_string_lossy().to_lowercase(), feeder.source().clone()));
+        }
         // Natively the butler thread decodes it; in a browser, the page's
         // audio loop.
         #[cfg(not(target_arch = "wasm32"))]
@@ -480,6 +497,33 @@ impl StreamedSong {
             source_offset: media.source_offset,
             playrate: media.playrate,
         })
+    }
+
+    /// Fetch each attached take's waveform — its original's peaks cache,
+    /// reduced for a view that never draws blocks finer than `block`
+    /// samples ([`daw::standalone::reapeaks::ReaPeaks::coarsened`]) — and
+    /// hand it to the take's stream, one at a time. Returns how many took
+    /// one. For a holder with no disk to find the caches on (a browser); a
+    /// mirror on disk has them where the peak store looks.
+    pub async fn load_peaks(&self, block: u32) -> usize {
+        use daw::standalone::reapeaks::ReaPeaks;
+        let attached = self.attached.lock().map(|a| a.clone()).unwrap_or_default();
+        let mut loaded = 0usize;
+        for (original, streamed) in attached {
+            let Some((path, size)) = self.peaks.get(&original).cloned() else { continue };
+            match self.source.read(path.clone(), 0..size).await {
+                Ok(bytes) => match ReaPeaks::parse(&bytes) {
+                    Ok(peaks) => {
+                        streamed.set_peaks(Arc::new(peaks.coarsened(block)));
+                        loaded = loaded.saturating_add(1);
+                    }
+                    Err(e) => tracing::warn!(media = %path, error = %e, "song-stream: a waveform cache did not parse"),
+                },
+                Err(e) => tracing::warn!(media = %path, error = %e, "song-stream: a waveform cache did not arrive"),
+            }
+        }
+        tracing::info!(stream.source = %self.source.label(), stream.waveforms = loaded, "song-stream: waveforms in");
+        loaded
     }
 
     /// Start fetching `takes`' bytes in the order they will be heard from

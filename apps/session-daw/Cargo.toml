@@ -256,6 +256,8 @@ web = [
     # A shared song, streamed from its share link (song_stream::ShareSource),
     # opened from memory the one way songs open (open_core, folder).
     "dep:reqwest", "dep:serde_json", "daw/standalone-session-file",
+    # Waveforms for streamed takes: their originals' peaks, handed in.
+    "daw-standalone/reapeaks",
     "dep:futures-channel",
 ]
 # The `#[reaper_test]` suites, which need a REAPER to talk to. Behind a
