@@ -168,7 +168,13 @@
         # Dioxus's bare fallback shell, with the build still reporting
         # success. (dioxus#3518.)
         dxArgs = "--ssg --fullstack --force-sequential";
-        env = { SESSION_DEMO_LINK = sessionDemoLink; };
+        env = {
+          SESSION_DEMO_LINK = sessionDemoLink;
+          # The pre-render server is a native binary over the same session
+          # crates the desktop links (Blitz, baseview's X11 window layer):
+          # the desktop's native libraries, not just openssl.
+          buildInputs = config.fts.buildInputs ++ [ pkgs.openssl ];
+        };
       };
 
       # What session.fasttrackstudio.app serves: the site, and the app
