@@ -184,6 +184,8 @@ gloo-timers = { workspace = true, optional = true }
 daw-standalone = { workspace = true, features = ["bootstrap", "rpp-project-wasm"] }
 # The web demo's stems: Ogg proxies decoded a window at a time (`web_audio`).
 fts-sample = { workspace = true, optional = true, features = ["engine-core"] }
+# Streaming a song in from the Task library (song_stream::TaskSource).
+session-library = { workspace = true, optional = true }
 
 [features]
 default = ["native"]
@@ -226,6 +228,7 @@ native = [
     "dep:futures-timer",
     "dep:daw-transport-sync",
     "dep:fts-sample",
+    "dep:session-library",
 ]
 # The browser: the same widgets, hosted in <canvas> elements under
 # dioxus-web and drawn with vello_hybrid's WebGL renderer (keyflow-ui's

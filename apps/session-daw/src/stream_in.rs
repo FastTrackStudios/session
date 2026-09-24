@@ -79,10 +79,10 @@ struct Song {
     total: usize,
     /// Mirrored from the engine this window drives (not on this machine):
     /// its proxies stream in by range.
-    peer: Option<crate::peer_song::PeerSong>,
+    peer: Option<crate::song_stream::StreamedSong>,
     /// The selected takes streaming in, and the fetcher bringing them.
     streamed: Arc<std::sync::Mutex<Vec<daw::standalone::audio_engine::media_fetch::StreamedTake>>>,
-    fetching: Option<crate::peer_song::FetchGuard>,
+    fetching: Option<crate::song_stream::FetchGuard>,
 }
 
 /// What is being followed now.
@@ -132,7 +132,7 @@ async fn run() {
                 let playhead = f.backend.snapshot().map_or(0.0, |s| s.playhead_seconds);
                 load_next(song, playhead).await;
             } else if song.peer.is_some() && song.loaded < song.total {
-                let arrived = crate::peer_song::arrived(&song.streamed);
+                let arrived = crate::song_stream::arrived(&song.streamed);
                 if arrived != song.loaded {
                     song.loaded = arrived;
                     set_assets_progress(song.loaded, song.total);
@@ -169,12 +169,9 @@ async fn follow(remote: &str, selection: &LoadSelection, songs: &mut HashMap<Str
         // then stream in by range).
         let (path, peer) = match local_song_file(remote).await {
             Some(path) => (path, None),
-            None => match crate::peer_song::mirror(remote, &std::env::temp_dir().join("fts-stream")).await {
-                Ok(peer) => (peer.project.clone(), Some(peer)),
-                Err(e) => {
-                    tracing::warn!(stream.song = remote, error = %e, "stream-in: this song is not here, and the engine cannot send it");
-                    return None;
-                }
+            None => match stream_from_elsewhere(remote).await {
+                Some(streamed) => (streamed.project.clone(), Some(streamed)),
+                None => return None,
             },
         };
         let engine = daw.clone();
@@ -212,7 +209,7 @@ async fn follow(remote: &str, selection: &LoadSelection, songs: &mut HashMap<Str
             Arc::new(move || at.snapshot().map_or(0.0, |s| s.playhead_seconds)),
             Arc::clone(&stop),
         );
-        song.fetching = Some(crate::peer_song::FetchGuard(stop));
+        song.fetching = Some(crate::song_stream::FetchGuard(stop));
     }
     let remote_daw = daw::rpc::Daw::try_get()?;
     let project = remote_daw.project(remote).await.ok()?;
@@ -298,14 +295,14 @@ fn select(daw: &Standalone, song: &mut Song, selection: &LoadSelection) {
                 .find(|t| stem(&t.path) == stem(&media.path) && (t.start - media.start).abs() < 1e-9);
             match existing.cloned().or_else(|| peer.attach(daw, &song.local, media)) {
                 Some(take) => streamed.push(take),
-                None => tracing::warn!(stream.media = %media.path, "stream-in: the engine has no indexed proxy for this take"),
+                None => tracing::warn!(stream.media = %media.path, "stream-in: the source has no indexed proxy for this take"),
             }
         }
         song.total = streamed.len();
         if let Ok(mut slot) = song.streamed.lock() {
             *slot = streamed;
         }
-        song.loaded = crate::peer_song::arrived(&song.streamed);
+        song.loaded = crate::song_stream::arrived(&song.streamed);
         song.pending = Vec::new();
     } else {
         song.total = selected.len();
@@ -376,13 +373,61 @@ async fn load_next(song: &mut Song, playhead: f64) {
     }
 }
 
+/// Which source to stream from even when the song is here: `peer` (the
+/// engine this window drives) or `task` (the library).
+const STREAM_SOURCE_ENV: &str = "FTS_STREAM_SOURCE";
+
+/// A song not on this machine, mirrored and streamed from the engine this
+/// window drives, or else from the Task library (the song by its name).
+async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::StreamedSong> {
+    use crate::song_stream::{PeerSource, SongSource, TaskSource, mirror};
+    let only = std::env::var(STREAM_SOURCE_ENV).ok().filter(|v| !v.is_empty());
+    let cache = std::env::temp_dir().join("fts-stream");
+    if only.as_deref() != Some("task") {
+        match PeerSource::new(remote).await {
+            Ok(source) => match mirror(std::sync::Arc::new(source), &cache).await {
+                Ok(streamed) => return Some(streamed),
+                Err(e) => tracing::info!(stream.song = remote, error = %e, "stream-in: the engine cannot send this song"),
+            },
+            Err(e) => tracing::info!(stream.song = remote, error = %e, "stream-in: no engine to stream from"),
+        }
+    }
+    if only.as_deref() == Some("peer") {
+        return None;
+    }
+    let name = song_name(remote).await?;
+    let slug = session_library::slugify(&name);
+    let source: std::sync::Arc<dyn SongSource> = match TaskSource::new(&slug).await {
+        Ok(source) => std::sync::Arc::new(source),
+        Err(e) => {
+            tracing::warn!(stream.song = %name, stream.slug = %slug, error = %e, "stream-in: this song is not here, nor in the library");
+            return None;
+        }
+    };
+    match mirror(source, &cache).await {
+        Ok(streamed) => Some(streamed),
+        Err(e) => {
+            tracing::warn!(stream.song = %name, error = %e, "stream-in: the library's copy could not be mirrored");
+            None
+        }
+    }
+}
+
+/// The remote project's song name: its file's stem, or its name.
+async fn song_name(remote: &str) -> Option<String> {
+    let daw = daw::rpc::Daw::try_get()?;
+    let info = daw.project(remote).await.ok()?.info().await.ok()?;
+    let stem = Path::new(&info.path).file_stem().map(|s| s.to_string_lossy().into_owned());
+    Some(stem.filter(|s| !s.is_empty()).unwrap_or(info.name))
+}
+
 /// The song file on this machine for the remote's project: its own path
 /// when that exists here, else the song of the same name in this machine's
 /// setlist.
 async fn local_song_file(remote: &str) -> Option<PathBuf> {
-    // As if the song were on no disk here: stream it from the engine even
-    // on the machine that has it (a test, a one-machine demo).
-    if crate::collab::env_set("FTS_STREAM_FROM_PEER") {
+    // As if the song were on no disk here: stream it even on the machine
+    // that has it (a test, a one-machine demo).
+    if crate::collab::env_set(STREAM_SOURCE_ENV) {
         return None;
     }
     let daw = daw::rpc::Daw::try_get()?;

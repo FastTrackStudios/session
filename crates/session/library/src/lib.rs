@@ -32,6 +32,27 @@ pub fn session_root_dir(song_slug: &str) -> String {
     format!("session/{song_slug}")
 }
 
+/// A song's library id from its title, the way the library makes one: an
+/// apostrophe drops out (`God, I'm` → `god-im`), any other run of
+/// non-alphanumerics is one dash, lower-case, no dash at either end.
+#[must_use]
+pub fn slugify(title: &str) -> String {
+    let mut out = String::new();
+    let mut dash = false;
+    for c in title.chars().filter(|c| *c != '\'' && *c != '\u{2019}') {
+        if c.is_alphanumeric() {
+            if dash && !out.is_empty() {
+                out.push('-');
+            }
+            dash = false;
+            out.extend(c.to_lowercase());
+        } else {
+            dash = true;
+        }
+    }
+    out
+}
+
 /// The token the `task` CLI stored for `org`:
 /// `$XDG_DATA_HOME/task/session-tokens/<org>.json` (default data home
 /// `~/.local/share`), field `token`.
@@ -151,53 +172,16 @@ impl Library {
     /// # Errors
     /// No session root for the song, or a transfer failed twice.
     pub async fn pull_session(&self, song: &str, into: &Path, originals: bool) -> eyre::Result<PathBuf> {
-        let mut files = self.files().await?;
-        let dir = session_root_dir(song);
-        let roots = files
-            .roots
-            .list()
-            .await
-            .map_err(|e| eyre::eyre!("listing roots: {e:?}"))?;
-        let root = roots
-            .iter()
-            .find(|r| r.path.as_deref().is_some_and(|p| p.trim_end_matches('/').ends_with(&dir)))
-            .ok_or_else(|| eyre::eyre!("no session for song:{song} (no `{dir}` root)"))?;
-        let id = files_client::root_id(root);
+        let TaskSong { mut files, root, entries, .. } = self.song(song).await?;
         let dest = into.join(song);
-        let mut wanted = Vec::new();
-        let mut pending = vec![String::new()];
-        while let Some(folder) = pending.pop() {
-            let path = RootPath::parse(&folder).map_err(|e| eyre::eyre!("path {folder}: {e:?}"))?;
-            let entries = files
-                .tree
-                .browse(id, path)
-                .await
-                .map_err(|e| eyre::eyre!("browsing {folder}: {e:?}"))?;
-            for entry in entries {
-                let rel = if folder.is_empty() { entry.name.clone() } else { format!("{folder}/{}", entry.name) };
-                if entry.is_dir {
-                    pending.push(rel);
-                    continue;
-                }
-                // Proxies and the waveform caches are what a set plays and
-                // draws from; everything else in Media/ is an original.
-                // Case-blind: macOS is, and a root uploaded from it can
-                // carry `Media/peaks/` for the folder the app calls Peaks.
-                let lower = rel.to_ascii_lowercase();
-                let original = lower.starts_with("media/")
-                    && !lower.starts_with("media/proxies/")
-                    && !lower.starts_with("media/peaks/");
-                if original && !originals {
-                    continue;
-                }
-                wanted.push((rel, entry.size));
+        for (rel, size) in entries {
+            // Proxies and the waveform caches are what a set plays and
+            // draws from; everything else in Media/ is an original.
+            if is_original(&rel) && !originals {
+                continue;
             }
-        }
-        for (rel, size) in wanted {
             let local = dest.join(&rel);
-            if let (Ok(meta), Some(size)) = (std::fs::metadata(&local), size)
-                && meta.len() == size
-            {
+            if std::fs::metadata(&local).is_ok_and(|meta| meta.len() == size) {
                 continue;
             }
             if let Some(parent) = local.parent() {
@@ -205,9 +189,9 @@ impl Library {
             }
             // Streamed to disk, never held whole; one retry on a fresh
             // connection, which is what a dropped stream needs.
-            if let Err(first) = fetch_to(&files, id, &rel, &local).await {
+            if let Err(first) = fetch_to(&files, root, &rel, &local).await {
                 files = self.files().await?;
-                fetch_to(&files, id, &rel, &local)
+                fetch_to(&files, root, &rel, &local)
                     .await
                     .map_err(|e| eyre::eyre!("fetching {rel}: {e} (and before that: {first})"))?;
             }
@@ -216,36 +200,80 @@ impl Library {
         Ok(dest)
     }
 
-    /// The song's main chart, written beside its `.RPP` as `<Song>.kf` —
-    /// where the app looks for it. The chart lives in the library, not in
-    /// the session's files: one chart, the same one keyflow edits.
-    async fn pull_chart(&self, song: &str, dest: &Path) -> eyre::Result<()> {
+    /// A song's session where it lies in the library: its files listed
+    /// (the `.RPP` first — what a client opens; the prepared `.session`
+    /// beside it opens instead), readable by range. What a client that
+    /// streams the song in reads from, rather than pulling it whole.
+    ///
+    /// # Errors
+    ///
+    /// The server cannot be reached, or the song has no session root.
+    pub async fn song(&self, song: &str) -> eyre::Result<TaskSong> {
+        let files = self.files().await?;
+        let dir = session_root_dir(song);
+        let roots = files.roots.list().await.map_err(|e| eyre::eyre!("listing roots: {e:?}"))?;
+        let root = roots
+            .iter()
+            .find(|r| r.path.as_deref().is_some_and(|p| p.trim_end_matches('/').ends_with(&dir)))
+            .ok_or_else(|| eyre::eyre!("no session for song:{song} (no `{dir}` root)"))?;
+        let id = files_client::root_id(root);
+        let mut entries = Vec::new();
+        let mut pending = vec![String::new()];
+        while let Some(folder) = pending.pop() {
+            let path = RootPath::parse(&folder).map_err(|e| eyre::eyre!("path {folder}: {e:?}"))?;
+            let listed = files.tree.browse(id, path).await.map_err(|e| eyre::eyre!("browsing {folder}: {e:?}"))?;
+            for entry in listed {
+                let rel = if folder.is_empty() { entry.name.clone() } else { format!("{folder}/{}", entry.name) };
+                if entry.is_dir {
+                    pending.push(rel);
+                } else {
+                    entries.push((rel, entry.size.unwrap_or(0)));
+                }
+            }
+        }
+        // The project first: the top-level `.RPP`.
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        if let Some(at) = entries
+            .iter()
+            .position(|(rel, _)| !rel.contains('/') && rel.to_lowercase().ends_with(".rpp"))
+        {
+            let project = entries.remove(at);
+            entries.insert(0, project);
+        }
+        Ok(TaskSong { slug: song.to_owned(), files, root: id, entries })
+    }
+
+    /// The song's main chart (its keyflow source) from the library — THE
+    /// chart: it replaces whatever `.kf` the session's files carried.
+    /// `None` when the song has none.
+    ///
+    /// # Errors
+    ///
+    /// The server cannot be reached, or refused.
+    pub async fn song_chart(&self, song: &str) -> eyre::Result<Option<String>> {
         let resources: ResourcesServiceClient = self.client().await?;
         let charts = resources
             .list_charts(format!("song:{song}"))
             .await
             .map_err(|e| eyre::eyre!("charts of song:{song}: {e:?}"))?;
         let Some(main) = charts.iter().find(|c| c.is_default).or(charts.first()) else {
-            return Ok(());
+            return Ok(None);
         };
         let chart = resources
             .chart(main.slug.clone())
             .await
             .map_err(|e| eyre::eyre!("chart:{}: {e:?}", main.slug))?;
-        // The library's chart is THE chart: it replaces whatever `.kf`
-        // the session's files carried (the app opens the one `.kf` beside
-        // the song, and refuses to guess between two).
-        let files: Vec<PathBuf> = std::fs::read_dir(dest)?.flatten().map(|e| e.path()).collect();
-        for old in files.iter().filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("kf"))) {
-            std::fs::remove_file(old)?;
-        }
-        let stem = files
-            .iter()
-            .find(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("rpp")))
-            .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| song.to_owned());
-        std::fs::write(dest.join(format!("{stem}.kf")), chart.source)?;
-        Ok(())
+        Ok(Some(chart.source))
+    }
+
+    /// The song's main chart, written beside its `.RPP` as `<Song>.kf` —
+    /// where the app looks for it. The chart lives in the library, not in
+    /// the session's files: one chart, the same one keyflow edits.
+    async fn pull_chart(&self, song: &str, dest: &Path) -> eyre::Result<()> {
+        let Some(chart) = self.song_chart(song).await? else {
+            return Ok(());
+        };
+        write_chart(dest, song, &chart)
     }
 
     /// Pull every song of a setlist and write a `.setlist` beside them
@@ -263,6 +291,66 @@ impl Library {
         let file = into.join(format!("{}.setlist", setlist.title));
         std::fs::write(&file, lines.join("\n") + "\n")?;
         Ok(file)
+    }
+}
+
+/// Write a song's library chart into its folder as `<Song>.kf` (the
+/// `.RPP`'s stem), replacing any other `.kf` there — the app opens the one
+/// `.kf` beside the song, and refuses to guess between two.
+///
+/// # Errors
+///
+/// The folder cannot be read or written.
+pub fn write_chart(dest: &Path, song: &str, chart: &str) -> eyre::Result<()> {
+    let files: Vec<PathBuf> = std::fs::read_dir(dest)?.flatten().map(|e| e.path()).collect();
+    for old in files.iter().filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("kf"))) {
+        std::fs::remove_file(old)?;
+    }
+    let stem = files
+        .iter()
+        .find(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("rpp")))
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| song.to_owned());
+    std::fs::write(dest.join(format!("{stem}.kf")), chart)?;
+    Ok(())
+}
+
+/// Whether a song-root path is an original (the WAVs in `Media/`), not a
+/// proxy or a waveform cache. Case-blind: macOS is, and a root uploaded
+/// from it can carry `Media/peaks/` for the folder the app calls Peaks.
+#[must_use]
+pub fn is_original(rel: &str) -> bool {
+    let lower = rel.to_ascii_lowercase();
+    lower.starts_with("media/") && !lower.starts_with("media/proxies/") && !lower.starts_with("media/peaks/")
+}
+
+/// A song's session in the library, read where it lies (see
+/// [`Library::song`]).
+#[derive(Clone)]
+pub struct TaskSong {
+    /// The library's song id (`washed`).
+    pub slug: String,
+    files: FilesClient,
+    root: files_proto::id::RootId,
+    /// Every file of the session root, with its size — the project first.
+    pub entries: Vec<(String, u64)>,
+}
+
+impl TaskSong {
+    /// The bytes `range` of `path` in the song's session — a seek, not a
+    /// download.
+    ///
+    /// # Errors
+    ///
+    /// The server refused, or the file is not there.
+    pub async fn read(&self, path: &str, range: std::ops::Range<u64>) -> eyre::Result<Vec<u8>> {
+        if range.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.files
+            .read_range(self.root, path, range.start, range.end - 1)
+            .await
+            .map_err(|e| eyre::eyre!("{path} {range:?}: {e}"))
     }
 }
 
@@ -295,4 +383,14 @@ async fn fetch_to(
     drop(out);
     std::fs::rename(&partial, local)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_title_slugs_as_the_library_does() {
+        assert_eq!(super::slugify("God, I'm Just Grateful"), "god-im-just-grateful");
+        assert_eq!(super::slugify("Always On Time"), "always-on-time");
+        assert_eq!(super::slugify("  Thank God I’m Free!"), "thank-god-im-free");
+    }
 }

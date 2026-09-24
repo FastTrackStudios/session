@@ -17,7 +17,7 @@ pub mod chart_panel;
 #[cfg(feature = "native")]
 pub mod collab;
 #[cfg(feature = "native")]
-pub mod peer_song;
+pub mod song_stream;
 #[cfg(feature = "native")]
 pub mod stream_in;
 #[cfg(feature = "native")]
