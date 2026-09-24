@@ -77,6 +77,12 @@ struct Song {
     /// How many of the selected takes are loaded.
     loaded: usize,
     total: usize,
+    /// Mirrored from the engine this window drives (not on this machine):
+    /// its proxies stream in by range.
+    peer: Option<crate::peer_song::PeerSong>,
+    /// The selected takes streaming in, and the fetcher bringing them.
+    streamed: Arc<std::sync::Mutex<Vec<daw::standalone::audio_engine::media_fetch::StreamedTake>>>,
+    fetching: Option<crate::peer_song::FetchGuard>,
 }
 
 /// What is being followed now.
@@ -117,13 +123,24 @@ async fn run() {
                 set_cue_ready(true);
             }
         }
-        // Bring in the next media, what will be heard soonest first.
+        // Bring in the next media, what will be heard soonest first — from
+        // disk here, or (a mirrored song) report what has streamed in.
         if let Some(f) = following.as_ref()
             && let Some(song) = songs.get_mut(&f.remote)
-            && !song.pending.is_empty()
         {
-            let playhead = f.backend.snapshot().map_or(0.0, |s| s.playhead_seconds);
-            load_next(song, playhead).await;
+            if !song.pending.is_empty() {
+                let playhead = f.backend.snapshot().map_or(0.0, |s| s.playhead_seconds);
+                load_next(song, playhead).await;
+            } else if song.peer.is_some() && song.loaded < song.total {
+                let arrived = crate::peer_song::arrived(&song.streamed);
+                if arrived != song.loaded {
+                    song.loaded = arrived;
+                    set_assets_progress(song.loaded, song.total);
+                    if song.loaded == song.total {
+                        tracing::info!(stream.media = song.total, "stream-in: every selected proxy has streamed in");
+                    }
+                }
+            }
         }
         if let Some(f) = following.as_mut() {
             let correction = f.leader.tick(&mut f.follower, f.backend.as_ref());
@@ -148,13 +165,22 @@ async fn run() {
 async fn follow(remote: &str, selection: &LoadSelection, songs: &mut HashMap<String, Song>) -> Option<Following> {
     let daw = crate::open::cue_engine();
     if !songs.contains_key(remote) {
-        let Some(path) = local_song_file(remote).await else {
-            tracing::warn!(stream.song = remote, "stream-in: this song is not on this machine; nothing plays here");
-            return None;
+        // Here, or mirrored from the engine this window drives (its proxies
+        // then stream in by range).
+        let (path, peer) = match local_song_file(remote).await {
+            Some(path) => (path, None),
+            None => match crate::peer_song::mirror(remote, &std::env::temp_dir().join("fts-stream")).await {
+                Ok(peer) => (peer.project.clone(), Some(peer)),
+                Err(e) => {
+                    tracing::warn!(stream.song = remote, error = %e, "stream-in: this song is not here, and the engine cannot send it");
+                    return None;
+                }
+            },
         };
         let engine = daw.clone();
         match tokio::task::spawn_blocking(move || open_song(&engine, &path)).await {
-            Ok(Ok(song)) => {
+            Ok(Ok(mut song)) => {
+                song.peer = peer;
                 songs.insert(remote.to_owned(), song);
             }
             Ok(Err(e)) => {
@@ -174,6 +200,20 @@ async fn follow(remote: &str, selection: &LoadSelection, songs: &mut HashMap<Str
     let local = song.local.clone();
     crate::open::switch_to(daw, &local, true);
     let backend: Arc<dyn TransportBackend + Send + Sync> = Arc::new(daw.sync_backend(&local)?);
+    // A mirrored song: fetch its streamed takes' bytes from this engine's
+    // playhead on.
+    if let Some(peer) = song.peer.as_ref()
+        && song.fetching.is_none()
+    {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let at = Arc::clone(&backend);
+        peer.fetch(
+            Arc::clone(&song.streamed),
+            Arc::new(move || at.snapshot().map_or(0.0, |s| s.playhead_seconds)),
+            Arc::clone(&stop),
+        );
+        song.fetching = Some(crate::peer_song::FetchGuard(stop));
+    }
     let remote_daw = daw::rpc::Daw::try_get()?;
     let project = remote_daw.project(remote).await.ok()?;
     let leader = project.transport_sync().leader(daw::standalone::transport_sync::now_micros);
@@ -221,6 +261,9 @@ fn open_song(daw: &Standalone, path: &Path) -> eyre::Result<Song> {
         pending: Vec::new(),
         loaded: 0,
         total: 0,
+        peer: None,
+        streamed: Arc::new(std::sync::Mutex::new(Vec::new())),
+        fetching: None,
     })
 }
 
@@ -242,15 +285,39 @@ fn select(daw: &Standalone, song: &mut Song, selection: &LoadSelection) {
         .into_iter()
         .filter(|m| song.groups.get(&m.track_guid).is_some_and(|g| selection.includes(g)))
         .collect();
-    song.total = selected.len();
-    song.loaded = selected
-        .iter()
-        .filter(|m| daw::standalone::audio_engine::materialize::is_loaded(daw, &song.local, &m.take_guid))
-        .count();
-    song.pending = selected
-        .into_iter()
-        .filter(|m| !daw::standalone::audio_engine::materialize::is_loaded(daw, &song.local, &m.take_guid))
-        .collect();
+    if let Some(peer) = song.peer.as_ref() {
+        // Mirrored: each selected take streams its proxy (attached once);
+        // the fetcher is told which, and progress is what has fully arrived.
+        let before = song.streamed.lock().map(|s| s.clone()).unwrap_or_default();
+        let stem = |p: &str| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_lowercase());
+        let mut streamed = Vec::new();
+        for media in &selected {
+            // Already streaming (a selection widened), or attach it now.
+            let existing = before
+                .iter()
+                .find(|t| stem(&t.path) == stem(&media.path) && (t.start - media.start).abs() < 1e-9);
+            match existing.cloned().or_else(|| peer.attach(daw, &song.local, media)) {
+                Some(take) => streamed.push(take),
+                None => tracing::warn!(stream.media = %media.path, "stream-in: the engine has no indexed proxy for this take"),
+            }
+        }
+        song.total = streamed.len();
+        if let Ok(mut slot) = song.streamed.lock() {
+            *slot = streamed;
+        }
+        song.loaded = crate::peer_song::arrived(&song.streamed);
+        song.pending = Vec::new();
+    } else {
+        song.total = selected.len();
+        song.loaded = selected
+            .iter()
+            .filter(|m| daw::standalone::audio_engine::materialize::is_loaded(daw, &song.local, &m.take_guid))
+            .count();
+        song.pending = selected
+            .into_iter()
+            .filter(|m| !daw::standalone::audio_engine::materialize::is_loaded(daw, &song.local, &m.take_guid))
+            .collect();
+    }
     song.selection = Some(selection.clone());
     tracing::info!(
         stream.selection = %selection.label(),
@@ -313,6 +380,11 @@ async fn load_next(song: &mut Song, playhead: f64) {
 /// when that exists here, else the song of the same name in this machine's
 /// setlist.
 async fn local_song_file(remote: &str) -> Option<PathBuf> {
+    // As if the song were on no disk here: stream it from the engine even
+    // on the machine that has it (a test, a one-machine demo).
+    if crate::collab::env_set("FTS_STREAM_FROM_PEER") {
+        return None;
+    }
     let daw = daw::rpc::Daw::try_get()?;
     let info = daw.project(remote).await.ok()?.info().await.ok()?;
     let path = PathBuf::from(&info.path);

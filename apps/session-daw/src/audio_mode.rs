@@ -249,8 +249,11 @@ impl ModeState {
     pub fn effective(&self) -> AudioMode {
         // A fully loaded engine plays its own click: for it, cue readiness
         // is only a milestone on the way up.
+        // (Only a local Engine: a streamed one is Remote until its own
+        // engine is up, however little it has to load.)
+        let local_engine = self.requested == AudioMode::Engine && self.target.is_none();
         let possible =
-            if self.assets.complete() && (self.cue_ready || self.requested == AudioMode::Engine) {
+            if self.assets.complete() && (self.cue_ready || local_engine) {
                 AudioMode::Engine
             } else if self.cue_ready {
                 AudioMode::Cue
@@ -490,6 +493,19 @@ mod tests {
     }
 
     #[test]
+    fn a_streamed_engine_is_remote_until_its_own_engine_is_up() {
+        let target = RemoteTarget::Session { address: "fts-engine:x".into() };
+        let mut state = ModeState::streamed(target, session::load_selection::LoadSelection::All);
+        assert_eq!(state.effective(), AudioMode::Remote, "nothing loaded yet is not Engine");
+        state.cue_ready = true;
+        state.assets = Assets { loaded: 0, total: 21 };
+        assert_eq!(state.effective(), AudioMode::Cue);
+        state.assets = Assets { loaded: 21, total: 21 };
+        assert_eq!(state.effective(), AudioMode::Engine);
+        assert!(!state.owns_project() && state.streams_in());
+    }
+
+    #[test]
     fn nothing_said_is_engine_as_before() {
         let state = from_launch(&[], &env_of(&[]), false, None);
         assert_eq!(state, ModeState::engine());
@@ -572,12 +588,13 @@ mod tests {
                 address: "ws://studio:4040/vox".into()
             })
         );
-        let state = from_launch(
-            &args(&["--audio", "engine", "--reaper"]),
-            &env_of(&[]),
-            false,
-            None,
-        );
+        // Engine with somewhere to stream from is a streamed Engine: this
+        // engine plays, what it plays comes from REAPER's song.
+        let state = from_launch(&args(&["--audio", "engine", "--reaper"]), &env_of(&[]), false, None);
+        assert_eq!(state.requested, AudioMode::Engine);
+        assert!(!state.owns_project() && state.streams_in(), "Engine, streamed in from REAPER");
+        // Engine alone owns its project, as it always has.
+        let state = from_launch(&args(&["--audio", "engine"]), &env_of(&[]), false, None);
         assert!(state.owns_project(), "asking for Engine outright is Engine");
     }
 

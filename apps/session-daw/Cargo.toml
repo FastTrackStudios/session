@@ -225,6 +225,7 @@ native = [
     "dep:editor-crdt",
     "dep:futures-timer",
     "dep:daw-transport-sync",
+    "dep:fts-sample",
 ]
 # The browser: the same widgets, hosted in <canvas> elements under
 # dioxus-web and drawn with vello_hybrid's WebGL renderer (keyflow-ui's
