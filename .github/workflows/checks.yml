@@ -1,4 +1,8 @@
-# session — the one PR/push gate.
+# session — the PR gate.
+#
+# Pull requests only (and by hand): a merge to main is the tree its PR
+# already passed, and a second run of it on push held session's one runner
+# for ten minutes while the deploy of that same merge queued behind it.
 #
 # Runs on the org's self-hosted runner (THEBATTLESHIP, label `nix-host` —
 # see fasttrackstudio/.flake modules/selfhost/services/github-runner.nix):
@@ -38,8 +42,6 @@
 name: checks
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
