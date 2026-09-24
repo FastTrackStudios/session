@@ -329,7 +329,7 @@ fn select(daw: &Standalone, song: &mut Song, selection: &LoadSelection) {
             });
             match existing
                 .cloned()
-                .or_else(|| peer.attach(daw, &song.local, media))
+                .or_else(|| peer.attach(daw, &song.local, media).map(|a| a.take))
             {
                 Some(take) => streamed.push(take),
                 None => {
