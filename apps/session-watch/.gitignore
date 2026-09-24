@@ -1,0 +1,4 @@
+SessionWatch.xcodeproj/
+build/
+*.xcresult
+SessionWatch/Info.plist

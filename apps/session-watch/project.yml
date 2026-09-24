@@ -1,0 +1,51 @@
+# XcodeGen manifest for the Session watch app. `xcodegen generate` →
+# SessionWatch.xcodeproj (not committed; regenerate it).
+#
+#   nix run nixpkgs#xcodegen -- generate
+#
+# The companion of the Session iPhone app (app.fasttrackstudio.session): it
+# rides that app's TestFlight build (deploy-testflight.sh with WATCH_APP=…)
+# and talks to it over WatchConnectivity, which only pairs an app with its
+# own companion — hence a watch app of its own rather than a tab of FTSWatch
+# (the Signal rig remote, companion of app.fasttrackstudio).
+name: SessionWatch
+options:
+  bundleIdPrefix: app.fasttrackstudio.session
+  deploymentTarget:
+    watchOS: "11.0"
+  createIntermediateGroups: true
+
+targets:
+  SessionWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - SessionWatch
+    settings:
+      base:
+        # A watch companion's id must extend its iPhone app's.
+        PRODUCT_BUNDLE_IDENTIFIER: app.fasttrackstudio.session.watchkitapp
+        PRODUCT_NAME: Session
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        SWIFT_VERSION: "6.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 28C2G63DA7
+    info:
+      path: SessionWatch/Info.plist
+      properties:
+        CFBundleDisplayName: Session
+        WKApplication: true
+        # The iPhone app that relays the guide feed.
+        WKCompanionAppBundleIdentifier: app.fasttrackstudio.session
+        # Wrist down, the click keeps going: a mindfulness extended runtime
+        # session keeps the app frontmost (timers, haptics, the phone link)
+        # for up to an hour. See README.md for why not a workout session.
+        WKBackgroundModes:
+          - mindfulness
+        # Calibrate measures the Taptic Engine's latency with the
+        # accelerometer.
+        NSMotionUsageDescription: >-
+          Measures how long the wrist tap takes to start, so the click can
+          be sent early by exactly that much.
