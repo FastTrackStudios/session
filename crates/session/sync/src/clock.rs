@@ -74,6 +74,22 @@ impl SharedClock {
     /// this (and every clone) is dropped.
     #[must_use]
     pub fn follow(client: SessionClockClient) -> Self {
+        Self::follow_with(move || {
+            let client = client.clone();
+            async move { client.now().await.ok() }
+        })
+    }
+
+    /// A joiner's, following any clock: `now` asks it the time
+    /// (microseconds; `None` when it did not answer) — the host's
+    /// [`SessionClock`], or Task's (`live_proto::LiveSessions::now`) for a
+    /// set Task keeps.
+    #[must_use]
+    pub fn follow_with<F, Fut>(now: F) -> Self
+    where
+        F: Fn() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Option<f64>> + Send,
+    {
         let offset = Arc::new(AtomicU64::new(UNKNOWN));
         let round_trip = Arc::new(AtomicU64::new(UNKNOWN));
         let (o, r) = (Arc::clone(&offset), Arc::clone(&round_trip));
@@ -84,7 +100,7 @@ impl SharedClock {
             loop {
                 tick.tick().await;
                 let t1 = now_micros_f64();
-                let Ok(host) = client.now().await else { continue };
+                let Some(host) = now().await else { continue };
                 let t4 = now_micros_f64();
                 estimator.record(t1, host, host, t4);
                 if let (Some(off), Some(rtt)) = (estimator.offset_micros(), estimator.round_trip_micros()) {

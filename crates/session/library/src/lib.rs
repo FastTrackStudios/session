@@ -112,7 +112,10 @@ impl Library {
         }
     }
 
-    fn org_url(&self) -> String {
+    /// The org's vox lane — where a member reaches every org service
+    /// (the library, a set's live session).
+    #[must_use]
+    pub fn org_url(&self) -> String {
         format!("{}/org/{}/vox", self.server.trim_end_matches('/'), self.org)
     }
 

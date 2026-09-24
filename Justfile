@@ -1568,10 +1568,11 @@ app PROJECT="" CHART="" MODE="":
     # Collaboration (collab_bar.rs): share on open, or join a ticket / the
     # file a host writes one to. A joining copy is a SECOND window beside
     # the host, so it neither kills the running one nor shares its log.
-    for var in FTS_COLLAB_HOST FTS_COLLAB_JOIN FTS_COLLAB_NAME FTS_COLLAB_TICKET FTS_COLLAB_PUPPET FTS_COLLAB_PUPPET_TRANSPORT FTS_COLLAB_PUPPET_MOUSE FTS_WINDOW_POS FTS_WINDOW_SIZE FTS_SESSION_SONG FTS_AUDIO_MODE FTS_AUDIO_TARGET SESSION_DAW_REAPER FTS_SOCKET FTS_STREAM_SOURCE FTS_SHARE_LINKS FTS_LOAD FTS_TASK_SERVER FTS_TASK_ORG FTS_TASK_TOKEN XDG_DATA_HOME; do
+    for var in FTS_COLLAB_HOST FTS_COLLAB_JOIN FTS_COLLAB_TASK FTS_COLLAB_NAME FTS_COLLAB_TICKET FTS_COLLAB_PUPPET FTS_COLLAB_PUPPET_TRANSPORT FTS_COLLAB_PUPPET_MOUSE FTS_WINDOW_POS FTS_WINDOW_SIZE FTS_SESSION_SONG FTS_AUDIO_MODE FTS_AUDIO_TARGET SESSION_DAW_REAPER FTS_SOCKET FTS_STREAM_SOURCE FTS_SHARE_LINKS FTS_LOAD FTS_TASK_SERVER FTS_TASK_ORG FTS_TASK_TOKEN XDG_DATA_HOME; do
         if [[ -n "${!var:-}" ]]; then envs+=(--env "$var=${!var}"); fi
     done
-    if [[ -n "${FTS_COLLAB_JOIN:-}" ]]; then
+    # FTS_SECOND_WINDOW: the same, for any second window (`duo-task`).
+    if [[ -n "${FTS_COLLAB_JOIN:-}" || -n "${FTS_SECOND_WINDOW:-}" ]]; then
         log="$HOME/Library/Logs/Session Dev/session-dev-joined.log"
         open -n --stdout "$log" --stderr "$log" "${envs[@]}" "$bundle"
         echo "log: $log"
@@ -1627,6 +1628,26 @@ duo PROJECT MODE="live" NAME_A="Cody" NAME_B="Alice":
         FTS_WINDOW_POS="$((X + left)),${Y}" FTS_WINDOW_SIZE="${right}x${H}" \
         just app {{quote(PROJECT)}} "" {{quote(MODE)}}
     echo "sharing: $(cat "$ticket")"
+
+# Two windows meeting in a set Task keeps (`FTS_COLLAB_TASK`): no host —
+# Task keeps the session, the first window on a song seeds its doc, and the
+# second takes it from Task. SETLIST is the set's id in the library's org
+# (`FTS_TASK_*`), or `share:<live share link>` to join as a guest.
+duo-task SETLIST PROJECT MODE="live" NAME_A="Cody" NAME_B="Alice":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --profile release-fast -p session-desktop
+    read -r X Y W H < <(swift -e 'import AppKit; let s = NSScreen.main!; let f = s.visibleFrame; print(Int(f.origin.x), Int(s.frame.height - f.maxY), Int(f.width), Int(f.height))' 2>/dev/null)
+    left=$((W * ${DUO_SPLIT:-44} / 100))
+    right=$((W - left))
+    FTS_COLLAB_TASK={{quote(SETLIST)}} FTS_COLLAB_NAME={{quote(NAME_A)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
+        FTS_WINDOW_POS="${X},${Y}" FTS_WINDOW_SIZE="${left}x${H}" \
+        just app {{quote(PROJECT)}} "" {{quote(MODE)}}
+    # The first seeds; give it the moment it takes before the second looks.
+    sleep "${DUO_TASK_GAP:-8}"
+    FTS_SECOND_WINDOW=1 FTS_SESSION_SONG="${JOIN_SONG:-}" FTS_COLLAB_TASK={{quote(SETLIST)}} FTS_COLLAB_NAME={{quote(NAME_B)}} FTS_SESSION_VIEW="${FTS_SESSION_VIEW:-overview}" \
+        FTS_WINDOW_POS="$((X + left)),${Y}" FTS_WINDOW_SIZE="${right}x${H}" \
+        just app {{quote(PROJECT)}} "" {{quote(MODE)}}
 
 # Prepare songs once — organize, build from the chart, generate the click
 # and guide — and save each as `Song.session` beside its `.RPP`, which the

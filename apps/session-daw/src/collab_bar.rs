@@ -45,12 +45,19 @@ pub fn CollabBar() -> Element {
             std::thread::sleep(Duration::from_millis(1500));
             // The song's own record of its edits, from the first moment —
             // shared or not.
+            let task_set = crate::collab::TaskSet::from_env();
             if !crate::collab::env_set("FTS_COLLAB_JOIN")
+                && task_set.is_none()
                 && let Err(e) = crate::collab::open_local()
             {
                 tracing::warn!(collab.error = %e, "collab: the song's history is not being kept");
             }
-            if crate::collab::env_set("FTS_COLLAB_HOST") {
+            if let Some(set) = task_set {
+                match crate::collab::join_task(&set, display_name()) {
+                    Ok(()) => tracing::info!(collab.setlist = %set.setlist, "collab: in the set Task keeps"),
+                    Err(e) => tracing::warn!(collab.error = %e, "collab: could not join the set Task keeps"),
+                }
+            } else if crate::collab::env_set("FTS_COLLAB_HOST") {
                 match crate::collab::host(display_name()) {
                     Ok(ticket) => {
                         let path = ticket_path();

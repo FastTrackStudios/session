@@ -189,6 +189,9 @@ daw-standalone = { workspace = true, features = ["bootstrap", "rpp-project-wasm"
 fts-sample = { workspace = true, optional = true, features = ["engine-core"] }
 # Streaming a song in from the Task library (song_stream::TaskSource).
 session-library = { workspace = true, optional = true }
+# A set Task keeps: joined through Task, its clock followed.
+live-proto = { workspace = true, optional = true }
+task-dial = { workspace = true, optional = true }
 # A song streamed from a share link (the public demo): its listing, its
 # documents and its proxies over HTTP.
 reqwest = { workspace = true, optional = true }
@@ -236,6 +239,8 @@ native = [
     "dep:daw-transport-sync",
     "dep:fts-sample",
     "dep:session-library",
+    "dep:live-proto",
+    "dep:task-dial",
     "dep:reqwest",
     "dep:serde_json",
 ]
