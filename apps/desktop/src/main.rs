@@ -72,8 +72,9 @@ mod collection_browser;
 mod session_chart_pane;
 #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
 mod updates;
-/// The Session watch app's feed, relayed from this phone (iOS).
-#[cfg(all(feature = "watch", target_os = "ios"))]
+/// The Session watch app's feed, relayed from this phone (iOS). The Blitz
+/// app relays its live set's instead (`session_daw::watch_relay`).
+#[cfg(all(feature = "watch", target_os = "ios", not(feature = "native")))]
 mod watch;
 /// The app on Blitz — see `docs/app-on-blitz.md`.
 #[cfg(all(feature = "native", not(any(target_arch = "wasm32", target_os = "ios"))))]
@@ -231,7 +232,7 @@ fn main() {
     }
 
     // The watch follows what this phone's engine plays.
-    #[cfg(all(feature = "watch", target_os = "ios"))]
+    #[cfg(all(feature = "watch", target_os = "ios", not(feature = "native")))]
     {
         watch::start();
         watch::demo_if_asked();

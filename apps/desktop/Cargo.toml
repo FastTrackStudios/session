@@ -102,8 +102,11 @@ charts = ["dep:keyflow"]
 tts = ["session-guide/tts"]
 # The Session watch app (apps/session-watch): the iPhone relays the guide
 # feed — the playing song's beats, in the watch's clock — over
-# WatchConnectivity (src/watch.rs; iOS only, a no-op elsewhere).
-watch = ["session", "session/watch-link"]
+# WatchConnectivity (iOS only, a no-op elsewhere). One relay per app: the
+# in-process engine's (src/watch.rs), or — with the Blitz app, which ticks
+# a live set even when nobody else is in it — the set's
+# (`session_daw::watch_relay`), which follows a shared transport too.
+watch = ["session", "session/watch-link", "session-daw?/watch-link"]
 
 # Network probe for the engine's SetlistService (the browser remote's wire
 # path, natively): `cargo run -p session-desktop --example setlist_probe`.
