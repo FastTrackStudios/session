@@ -76,15 +76,21 @@ fn main() {
 /// it once, and requests every path it returns — which is what writes
 /// them to disk as HTML.
 ///
-/// The guide, and nothing else. `/demo` is deliberately absent: it boots
-/// a real in-process backend and a transport that runs on a clock, so
-/// there is no meaningful "finished" form of it to write to a file. That
-/// is what makes this *partial* static generation — the documentation is
-/// pre-rendered, the live thing stays live.
+/// Every page the site has: the landing page, the reference, the guide,
+/// and `/demo` — which is a redirect into the Session app now (`/app/`),
+/// not the in-process backend it once booted, so it has a finished form
+/// like any other page.
+///
+/// A path left out is served as the bare shell, and this is a fullstack
+/// build: its client reads the page's hydration data on load, finds none
+/// in the shell, and stops (`atob` on nothing) — a blank page. That is
+/// what the landing page and `/demo` did while only the guide was here.
 #[cfg(feature = "server")]
 #[server(endpoint = "static_routes")]
 async fn static_routes() -> ServerFnResult<Vec<String>> {
-    Ok(guide::VAULT.routes(guide::BASE))
+    let mut routes = vec!["/".to_owned(), "/reference".to_owned(), "/demo".to_owned()];
+    routes.extend(guide::VAULT.routes(guide::BASE));
+    Ok(routes)
 }
 
 #[component]
@@ -95,9 +101,9 @@ fn App() -> Element {
         // (form controls, scrollbars) never flashes light before
         // tailwind.css's `color-scheme: dark` takes over.
         document::Meta { name: "color-scheme", content: "dark" }
-        // The desktop app's own launcher icon (apps/desktop/assets/icon.svg)
-        // — one FTS icon across every surface, not a bespoke site mark.
-        document::Link { rel: "icon", r#type: "image/svg+xml", href: asset!("/assets/favicon.svg") }
+        // Session's own icon — the app's (apps/desktop/ios/icon.svg), served
+        // from public/ at a fixed path so the page shell and /app/ use it too.
+        document::Link { rel: "icon", r#type: "image/svg+xml", href: "/favicon.svg" }
         document::Link { rel: "preconnect", href: "https://fonts.googleapis.com" }
         document::Link {
             rel: "preconnect",

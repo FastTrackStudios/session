@@ -44,6 +44,9 @@ pub fn Demo() -> Element {
         }
     });
     rsx! {
+        // Rendered into the pre-rendered page itself, so the browser goes
+        // even before (or without) the site's script running.
+        document::Meta { http_equiv: "refresh", content: "0; url={url}" }
         div { class: "h-screen w-screen flex flex-col items-center justify-center gap-3 bg-zinc-950 text-zinc-100 text-center px-8",
             span { class: "text-xl font-bold", "Opening the live demo…" }
             a { class: "text-sm text-sky-400 underline", href: "{url}", "Open it" }
