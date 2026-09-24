@@ -4,7 +4,11 @@
 //! each is on, whether everyone plays on their own or together, the
 //! invite, and leaving.
 //!
-//! Also starts a session from the environment, for the two-instance demo
+//! In a page (the public demo) the page has already joined its set by its
+//! link: the card is the people, the transport, the invite (the page's own
+//! address) and leaving.
+//!
+//! Natively it also starts a session from the environment, for the two-instance demo
 //! and tests: `FTS_COLLAB_HOST=1` shares the song once it is open and
 //! writes the ticket to `FTS_COLLAB_TICKET` (default: the temp dir's
 //! `fts-session-ticket`); `FTS_COLLAB_JOIN` joins — a ticket, or a path
@@ -17,11 +21,13 @@ use dioxus::prelude::*;
 use crate::shell::{ACCENT, BAR_BG, DIM, Density, RULE, TEXT};
 
 /// Where an env-started host leaves its ticket.
+#[cfg(feature = "native")]
 fn ticket_path() -> std::path::PathBuf {
     std::env::var_os("FTS_COLLAB_TICKET")
         .map_or_else(|| std::env::temp_dir().join("fts-session-ticket"), std::path::PathBuf::from)
 }
 
+#[cfg(feature = "native")]
 fn display_name() -> String {
     std::env::var("FTS_COLLAB_NAME")
         .ok()
@@ -33,12 +39,14 @@ fn display_name() -> String {
 pub fn CollabBar() -> Element {
     let mut status = use_signal(crate::collab::status);
     let mut error = use_signal(|| None::<String>);
+    #[cfg(feature = "native")]
     let mut joining = use_signal(String::new);
     let mut people = use_signal(crate::ghosts::everyone);
     let mut open = use_signal(|| false);
     let mut copied = use_signal(|| false);
     let density = crate::shell::use_density();
 
+    #[cfg(feature = "native")]
     // The environment's session, once the song is up.
     use_hook(move || {
         std::thread::spawn(move || {
@@ -94,7 +102,7 @@ pub fn CollabBar() -> Element {
     // The status, kept current (peers come and go with nothing clicked).
     use_future(move || async move {
         loop {
-            futures_timer::Delay::new(Duration::from_millis(500)).await;
+            architect::platform::sleep(Duration::from_millis(500)).await;
             let now = crate::collab::status();
             if *status.peek() != now {
                 status.set(now);
@@ -191,6 +199,7 @@ pub fn CollabBar() -> Element {
                         }
                     }
                     match live.clone() {
+                        #[cfg(feature = "native")]
                         None => rsx! {
                             button {
                                 style: primary(),
@@ -216,8 +225,17 @@ pub fn CollabBar() -> Element {
                                 }
                             }
                         },
+                        // A page joins its set by its link, or is not in one.
+                        #[cfg(not(feature = "native"))]
+                        None => rsx! {
+                            span { style: "font-size:12px; color:{DIM};", "Not in a session — open a live link to join one." }
+                        },
                         Some(l) => {
                             let shared = l.shared_transport;
+                            // In a page, the invite is the page itself.
+                            #[cfg(not(feature = "native"))]
+                            let ticket = invite_link().unwrap_or(l.ticket.clone());
+                            #[cfg(feature = "native")]
                             let ticket = l.ticket.clone();
                             let current = crate::open::current_song().and_then(|p| crate::collab::key_of(&p));
                             rsx! {
@@ -320,6 +338,25 @@ fn half(on: bool) -> String {
 }
 
 /// Put the ticket on the clipboard (macOS: `pbcopy`). Whether it went.
+/// This page's address, as an invite: without the name it was opened
+/// with, which is this visitor's, not the next one's.
+#[cfg(not(feature = "native"))]
+fn invite_link() -> Option<String> {
+    let href = web_sys::window()?.location().href().ok()?;
+    let url = web_sys::Url::new(&href).ok()?;
+    url.search_params().delete("name");
+    Some(url.href())
+}
+
+/// The invite, onto the browser's clipboard.
+#[cfg(not(feature = "native"))]
+fn copy(text: &str) -> bool {
+    let Some(window) = web_sys::window() else { return false };
+    let _ = window.navigator().clipboard().write_text(text);
+    true
+}
+
+#[cfg(feature = "native")]
 fn copy(text: &str) -> bool {
     use std::io::Write as _;
     #[cfg(target_os = "macos")]
@@ -409,7 +446,7 @@ pub fn PeerDots(project: String) -> Element {
                 if *here.peek() != now {
                     here.set(now);
                 }
-                futures_timer::Delay::new(Duration::from_millis(300)).await;
+                architect::platform::sleep(Duration::from_millis(300)).await;
             }
         }
     });
@@ -444,6 +481,7 @@ pub fn PeerDots(project: String) -> Element {
     }
 }
 
+#[cfg(any(feature = "native", feature = "web"))]
 /// Open the song the shared transport asks for — playing together, someone
 /// else picked another song of the set.
 ///
@@ -453,7 +491,7 @@ pub fn PeerDots(project: String) -> Element {
 pub fn use_follow_song(mut setlist: Signal<crate::setlist::Setlist>) {
     use_future(move || async move {
         loop {
-            futures_timer::Delay::new(Duration::from_millis(100)).await;
+            architect::platform::sleep(Duration::from_millis(100)).await;
             if !crate::audio_mode::owns_project()
                 && let Some(remote) = crate::open::current_song()
             {

@@ -485,7 +485,7 @@ impl StreamedSong {
         #[cfg(not(target_arch = "wasm32"))]
         daw::standalone::audio_engine::streamed::butler_adopt(feeder);
         #[cfg(all(feature = "web", target_arch = "wasm32"))]
-        crate::web_audio::adopt(feeder.boxed());
+        crate::web_audio::adopt(local, feeder.boxed());
         #[cfg(all(not(feature = "web"), target_arch = "wasm32"))]
         drop(feeder);
         Some(StreamedTake {

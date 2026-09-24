@@ -13,7 +13,7 @@ use dioxus::prelude::*;
 use session::setlist::chart_import::chart_to_layout;
 
 use crate::Route;
-use crate::demo_backend::PRAISE_CHART;
+use crate::praise::PRAISE_CHART;
 
 const STEP: Duration = Duration::from_millis(1600);
 

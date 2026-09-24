@@ -110,17 +110,35 @@ struct Out {
     _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
 }
 
-struct Player {
-    daw: Standalone,
+/// What the player plays of the song on screen: its transport and its mix.
+struct PlayerSong {
+    project: String,
     bundle: Arc<TransportBundle>,
     shared: Arc<TransportShared>,
+    renderer: ProjectRenderer,
+}
+
+impl PlayerSong {
+    fn of(daw: &Standalone, project: &str) -> Self {
+        let bundle = daw.transport_engine_for(project);
+        let shared = Arc::clone(&bundle.shared);
+        shared.set_sample_rate(RATE);
+        Self { project: project.to_owned(), bundle, shared, renderer: ProjectRenderer::new(daw, project, RATE) }
+    }
+}
+
+struct Player {
+    daw: Standalone,
+    /// The song on screen's transport and mix ([`switch`] replaces it).
+    song: RefCell<PlayerSong>,
     /// Whether the device drives the transport — only while its context
     /// runs. A context that never starts (no output device, a browser
     /// holding it suspended) leaves the engine's own clock keeping time,
     /// so the song still moves, silently.
     clocked: Cell<bool>,
-    renderer: ProjectRenderer,
-    feeders: RefCell<Vec<StreamFeeder<Box<dyn Decode + Send>>>>,
+    /// Each song's streamed takes, by project: only the song on screen's
+    /// are decoded.
+    feeders: RefCell<std::collections::HashMap<String, Vec<StreamFeeder<Box<dyn Decode + Send>>>>>,
     /// Which feeder a tick starts with — round robin, so one stem's
     /// catch-up does not starve the rest.
     first: Cell<usize>,
@@ -147,20 +165,16 @@ fn player() -> Option<Rc<Player>> {
 }
 
 /// Start the audio loop for `project` on `daw`. Silent until [`unlock`].
+/// Once it is going, another song is [`switch`]ed to instead.
 pub fn install(daw: Standalone, project: &str) {
-    let bundle = daw.transport_engine_for(project);
-    let shared = Arc::clone(&bundle.shared);
-    shared.set_sample_rate(RATE);
-    let count = daw_proto::Tracks::count(
-        &daw,
-        daw_proto::ProjectContext::Project(project.to_owned()),
-    ) as usize;
-    daw.set_meters(daw_standalone::metering::Meters::new(count));
+    if player().is_some() {
+        switch(project);
+        return;
+    }
+    set_meters(&daw, project);
     let player = Rc::new(Player {
-        renderer: ProjectRenderer::new(&daw, project, RATE),
+        song: RefCell::new(PlayerSong::of(&daw, project)),
         daw,
-        bundle,
-        shared,
         clocked: Cell::new(false),
         feeders: RefCell::default(),
         first: Cell::new(0),
@@ -180,6 +194,34 @@ pub fn install(daw: Standalone, project: &str) {
             gloo_timers::future::TimeoutFuture::new(10).await;
         }
     });
+}
+
+/// The meters for `project`'s tracks.
+fn set_meters(daw: &Standalone, project: &str) {
+    let count = daw_proto::Tracks::count(daw, daw_proto::ProjectContext::Project(project.to_owned())) as usize;
+    daw.set_meters(daw_standalone::metering::Meters::new(count));
+}
+
+/// Play `project` now — a song of the set picked. The one leaving stops
+/// where it is (its own transport keeps its place), and the device's queue
+/// empties so what plays next is the new song's.
+pub fn switch(project: &str) {
+    let Some(player) = player() else { return };
+    if player.song.borrow().project == project {
+        return;
+    }
+    set_meters(&player.daw, project);
+    let next = PlayerSong::of(&player.daw, project);
+    let leaving = player.song.replace(next);
+    leaving
+        .shared
+        .set_play_state(daw_standalone::transport_engine::engine::PlayStateRepr::Stopped);
+    if player.clocked.get() {
+        leaving.bundle.enable_soft_clock();
+        player.song.borrow().bundle.disable_soft_clock();
+    }
+    player.next.set(None);
+    player.flush();
 }
 
 /// A stem streamed from its proxy's bytes, for the take `take` of
@@ -202,7 +244,7 @@ pub fn add_stem(project: &str, take: &str, bytes: Arc<[u8]>) -> Result<(), Strin
         take,
         AudioSource::Streamed(streamed.clone()),
     );
-    adopt(StreamFeeder::new(streamed, stream).boxed());
+    adopt(project, StreamFeeder::new(streamed, stream).boxed());
     Ok(())
 }
 
@@ -210,9 +252,14 @@ pub fn add_stem(project: &str, take: &str, bytes: Arc<[u8]>) -> Result<(), Strin
 /// ([`add_stem`]) or one arriving by range from a share link
 /// (`song_stream::StreamedSong::attach`). Before the player is installed
 /// there is nothing to feed it from; it is dropped.
-pub fn adopt(feeder: StreamFeeder<Box<dyn Decode + Send>>) {
+pub fn adopt(project: &str, feeder: StreamFeeder<Box<dyn Decode + Send>>) {
     if let Some(player) = player() {
-        player.feeders.borrow_mut().push(feeder.with_ahead(DECODED_AHEAD));
+        player
+            .feeders
+            .borrow_mut()
+            .entry(project.to_owned())
+            .or_default()
+            .push(feeder.with_ahead(DECODED_AHEAD));
     }
 }
 
@@ -341,7 +388,9 @@ impl Player {
 
     /// Decode stems toward the playhead, for up to the budget.
     fn feed(&self) {
-        let mut feeders = self.feeders.borrow_mut();
+        let project = self.song.borrow().project.clone();
+        let mut all = self.feeders.borrow_mut();
+        let Some(feeders) = all.get_mut(&project) else { return };
         let count = feeders.len();
         if count == 0 {
             return;
@@ -375,17 +424,18 @@ impl Player {
         // the engine's own clock does, and nothing is queued.
         if !running {
             if self.clocked.replace(false) {
-                self.bundle.enable_soft_clock();
+                self.song.borrow().bundle.enable_soft_clock();
                 self.next.set(None);
                 self.flush();
             }
             return;
         }
+        let song = self.song.borrow();
         if !self.clocked.replace(true) {
-            self.bundle.disable_soft_clock();
+            song.bundle.disable_soft_clock();
             tracing::info!("audio: the device drives the transport");
         }
-        if !self.shared.play_state().is_advancing() {
+        if !song.shared.play_state().is_advancing() {
             if self.next.take().is_some() {
                 self.flush();
                 // Nothing renders while stopped, so nothing would write the
@@ -399,7 +449,7 @@ impl Player {
             }
             return;
         }
-        let playhead = self.shared.playhead_samples().0.max(0) as u64;
+        let playhead = song.shared.playhead_samples().0.max(0) as u64;
         // Anything but the block after the last is a jump: the queue holds
         // audio from somewhere else.
         if self.next.get() != Some(playhead) {
@@ -407,7 +457,7 @@ impl Player {
         }
         let mut at = playhead;
         while self.queued() < self.ahead() {
-            let block = self.renderer.render_block(at, BLOCK);
+            let block = song.renderer.render_block(at, BLOCK);
             let samples = js_sys::Float32Array::from(&block.samples[..]);
             let transfer = js_sys::Array::of1(&samples.buffer());
             if out.post_message_with_transferable(&samples, &transfer).is_err() {
@@ -416,8 +466,8 @@ impl Player {
             self.sent.set(self.sent.get() + BLOCK as u64);
             // `advance` answers where the block started; the playhead is
             // where the next one does (a loop may have wrapped it).
-            self.shared.advance(BLOCK as u32);
-            at = self.shared.playhead_samples().0.max(0) as u64;
+            song.shared.advance(BLOCK as u32);
+            at = song.shared.playhead_samples().0.max(0) as u64;
         }
         self.next.set(Some(at));
     }

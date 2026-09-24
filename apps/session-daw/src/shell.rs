@@ -450,11 +450,16 @@ pub fn SongTabs(
                                     pick.call(index);
                                 }
                             },
-                            // The song's colour; a click here recolours it.
+                            // The song's colour; a click here recolours it —
+                            // where a song can be recoloured, else it picks
+                            // the tab like the rest of it (a page).
                             div {
                                 style: "flex:none; width:9px; height:9px; border-radius:5px; \
                                         background:{color}; cursor:pointer;",
                                 onclick: move |event| {
+                                    if on_color.is_none() {
+                                        return;
+                                    }
                                     event.stop_propagation();
                                     coloring.set(if coloring() == Some(index) { None } else { Some(index) });
                                 },

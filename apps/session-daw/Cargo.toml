@@ -144,7 +144,7 @@ eyre = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"], optional = true }
 # Collaboration (collab.rs, native): hosting/joining over iroh, and the
 # chart editor's remote edits and carets.
-architect = { workspace = true, optional = true, features = ["vox", "iroh"] }
+architect = { workspace = true, optional = true, features = ["vox", "platform"] }
 crdt = { workspace = true, optional = true, features = ["vox"] }
 vox-core = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
@@ -168,6 +168,8 @@ web-sys = { workspace = true, optional = true, features = [
     "AudioNode", "AudioDestinationNode", "MessagePort", "MessageEvent",
     "Blob", "BlobPropertyBag", "Url", "Worklet", "WorkletOptions",
     "KeyboardEvent", "Event", "AddEventListenerOptions",
+    # The live session card's invite, onto the clipboard.
+    "Navigator", "Clipboard", "UrlSearchParams",
     # A shared song's proxies, kept off the wasm heap and across reloads
     # (`song_stream::CachedFetch`).
     "CacheStorage", "Cache",
@@ -191,11 +193,19 @@ fts-sample = { workspace = true, optional = true, features = ["engine-core"] }
 session-library = { workspace = true, optional = true }
 # A set Task keeps: joined through Task, its clock followed.
 live-proto = { workspace = true, optional = true }
+# A page follows its set's resets (live-proto's epochs stream).
+vox = { workspace = true, optional = true }
 task-dial = { workspace = true, optional = true }
 # A song streamed from a share link (the public demo): its listing, its
 # documents and its proxies over HTTP.
 reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+
+# The browser's tokio: channels and `select!` for the live session's loop
+# (collab.rs), no runtime — tasks and timers there are the page's
+# (`architect::platform`).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.48", default-features = false, features = ["sync", "macros"] }
 
 [features]
 default = ["native"]
@@ -231,6 +241,8 @@ native = [
     "dep:futures-util",
     "session/collab",
     "dep:architect",
+    # Hosting and joining a set over iroh, desktop to desktop.
+    "architect/iroh",
     "dep:crdt",
     "dep:vox-core",
     "dep:uuid",
@@ -264,6 +276,9 @@ web = [
     # A shared song, streamed from its share link (song_stream::ShareSource),
     # opened from memory the one way songs open (open_core, folder).
     "dep:reqwest", "dep:serde_json", "daw/standalone-session-file",
+    # The live session (collab.rs): a set Task keeps, joined from the page.
+    "session/collab", "dep:architect", "dep:crdt", "dep:uuid", "dep:daw-transport-sync",
+    "dep:live-proto", "dep:task-dial", "dep:vox",
     # Waveforms for streamed takes: their originals' peaks, handed in.
     "daw-standalone/reapeaks",
     "dep:futures-channel",

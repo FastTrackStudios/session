@@ -666,7 +666,7 @@ pub enum Move {
 /// would be waiting for news the window is already subscribed to.
 pub fn transport(command: Move, seconds: f64) {
     // A press by a person: playing together, everyone's.
-    #[cfg(feature = "native")]
+    #[cfg(any(feature = "native", feature = "web"))]
     if !matches!(command, Move::ToggleLoop | Move::ToggleRecord) {
         crate::collab::transport_pressed();
     }

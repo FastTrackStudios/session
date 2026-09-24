@@ -1,12 +1,11 @@
 //! session.fasttrackstudio.app
 //!
-//! Two things: a landing page that shows what Session is, and a live demo
-//! setlist — the real in-process `session` + `daw-standalone` backend
-//! running in the browser, no server, no account. `/demo` is the same
-//! `PerformanceLayout` the desktop app ships, driven by the real setlist
-//! RPC surface (see [`demo_backend`]) rather than a picture of it.
+//! Two things: a landing page that shows what Session is, and the live
+//! demo — `/demo` opens the Session app itself (served under `/app/`) in
+//! the public playground set Task keeps: everyone who comes is in one
+//! session, which starts over every few minutes.
 
-mod demo_backend;
+mod praise;
 mod guide;
 mod routes;
 

@@ -14,13 +14,13 @@ pub mod art;
 pub mod audio_mode;
 pub mod balance;
 pub mod chart_panel;
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "web"))]
 pub mod collab;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod song_stream;
 #[cfg(feature = "native")]
 pub mod stream_in;
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "web"))]
 pub mod collab_bar;
 #[cfg(feature = "native")]
 pub mod collab_pointers;
@@ -77,6 +77,46 @@ pub mod open {
 
     #[must_use]
     pub fn runtime() -> Option<&'static Runtime> {
+        None
+    }
+
+    /// The song on screen: a page shows one ([`set_current_song`]).
+    #[must_use]
+    pub fn current_song() -> Option<String> {
+        CURRENT.read().ok().and_then(|slot| slot.clone())
+    }
+
+    static CURRENT: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+    /// The page shows `project` now.
+    pub fn set_current_song(project: &str) {
+        if let Ok(mut slot) = CURRENT.write() {
+            *slot = Some(project.to_owned());
+        }
+    }
+
+    /// Make `project_guid` the song on screen — what picking a setlist tab
+    /// does; on a page, [`crate::web_engine::switch_song`].
+    pub fn switch_song(project_guid: &str) {
+        #[cfg(feature = "web")]
+        crate::web_engine::switch_song(project_guid);
+        #[cfg(not(feature = "web"))]
+        set_current_song(project_guid);
+    }
+
+    /// What needs the local engine's own handle (as natively).
+    #[derive(Clone, Copy, Debug)]
+    pub enum LocalOnly {
+        ChartRebuild,
+        SessionSave,
+        /// daw-transport-sync's per-buffer backend: a page's audio loop has
+        /// none yet, so it follows a shared transport by the coarse
+        /// commands (a play, a seek) rather than to the sample.
+        TransportSync,
+    }
+
+    /// The local engine's handle, for what needs it — none on a page yet.
+    pub fn with_local_engine<R>(_what: LocalOnly, _f: impl FnOnce(&daw::standalone::Standalone) -> R) -> Option<R> {
         None
     }
 }

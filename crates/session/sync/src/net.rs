@@ -8,11 +8,14 @@
 //! spoke through the host, which is also a participant: its own engine
 //! edits the very doc it serves.
 
+#[cfg(not(target_arch = "wasm32"))]
 use architect::LayerRouter;
 use crdt::CrdtDoc;
+use crdt::sync::{DocPresenceClient, DocSyncClient, PresenceDriver, PresencePeer, SyncedDoc};
+// Hosting a set is a native thing (a desktop, Task): a browser only joins.
+#[cfg(not(target_arch = "wasm32"))]
 use crdt::sync::{
-    DocPresenceClient, DocPresenceDispatcher, DocSyncClient, DocSyncDispatcher, DocSyncHost,
-    PresenceDriver, PresenceHost, PresencePeer, SyncedDoc, doc_presence_service_descriptor,
+    DocPresenceDispatcher, DocSyncDispatcher, DocSyncHost, PresenceHost, doc_presence_service_descriptor,
     doc_sync_service_descriptor,
 };
 use uuid::Uuid;
@@ -44,6 +47,7 @@ pub fn song_id(set: &str, song: &str) -> Uuid {
 /// id — so people can be on different songs and still see where
 /// everyone is. Built on architect's `DocRegistry`, whose factory hands
 /// out the songs' live docs (history and all).
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct SetHost {
     id: Uuid,
@@ -51,6 +55,7 @@ pub struct SetHost {
     docs: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, loro::LoroDoc>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SetHost {
     /// A set shared under `id` (see [`session_id`]).
     #[must_use]
@@ -112,7 +117,7 @@ impl SetHost {
             .await
             .map_err(|e| eyre::eyre!("in-process presence: {e:?}"))?;
         let (peer, mut driver) = PresencePeer::new(self.id, PRESENCE_TIMEOUT_MS);
-        tokio::spawn(async move {
+        architect::platform::spawn(async move {
             let _server = server;
             if let Err(e) = driver.run(&client).await {
                 tracing::warn!(collab.error = %e, "collab: the host's own presence ended");
@@ -154,7 +159,7 @@ impl SetPeer {
     /// Start the set's presence session.
     pub fn run_presence(&mut self, client: DocPresenceClient) {
         if let Some(mut driver) = self.driver.take() {
-            tokio::spawn(async move {
+            architect::platform::spawn(async move {
                 if let Err(e) = driver.run(&client).await {
                     tracing::warn!(collab.error = %e, "collab: presence ended");
                 }
@@ -167,7 +172,7 @@ impl SetPeer {
     pub fn sync_song(doc_id: Uuid, client: DocSyncClient) -> SessionDoc {
         let doc = SessionDoc::new();
         let mut synced = SyncedDoc::new(doc_id, CrdtDoc::from_loro(doc.loro().clone()));
-        tokio::spawn(async move {
+        architect::platform::spawn(async move {
             if let Err(e) = synced.run(&client).await {
                 tracing::warn!(collab.error = %e, "collab: a song's sync ended");
             }
@@ -186,12 +191,14 @@ pub trait PresenceSink: Send + Sync {
 
 /// This peer, serving its session to others.
 #[derive(Clone)]
+#[cfg(not(target_arch = "wasm32"))]
 pub struct CollabHost {
     id: Uuid,
     sync: DocSyncHost,
     presence: PresenceHost,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl CollabHost {
     /// Serve `doc` — the same Loro doc this peer's own bridge edits.
     #[must_use]
@@ -231,6 +238,7 @@ impl CollabHost {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl PresenceSink for CollabHost {
     fn set(&self, key: &str, value: loro::LoroValue) {
         self.presence.store().set(key, value);
@@ -305,7 +313,7 @@ impl CollabPeer {
         sync: &DocSyncClient,
         presence: &DocPresenceClient,
     ) -> eyre::Result<()> {
-        let (a, b) = tokio::join!(self.synced.run(sync), self.driver.run(presence));
+        let (a, b) = futures::join!(self.synced.run(sync), self.driver.run(presence));
         a.map_err(|e| eyre::eyre!("session sync: {e}"))?;
         b.map_err(|e| eyre::eyre!("session presence: {e}"))?;
         Ok(())

@@ -439,8 +439,8 @@ pub fn WebArrangement(engine: crate::web_engine::EngineRef) -> Element {
     }
 }
 
-/// The web demo: open the page's song (see [`crate::web_engine::WebSource`])
-/// and show it.
+/// The web demo: open the page's songs (see
+/// [`crate::web_engine::WebSource`]) and show them.
 #[component]
 pub fn WebDemo(
     source: crate::web_engine::WebSource,
@@ -463,27 +463,31 @@ pub fn WebDemo(
         Some(Err(e)) => rsx! {
             div { style: "color:#f87171; font:14px system-ui; padding:24px;", "Could not open the session: {e}" }
         },
-        Some(Ok((engine, session))) => rsx! {
-            DemoView { engine: engine.clone(), session: session.clone() }
+        Some(Ok((engine, setlist))) => rsx! {
+            DemoView { engine: engine.clone(), setlist: setlist.clone() }
         },
     }
 }
 
 /// The opened demo: the app's frame — the views, the setlist, the
-/// transport and the mode — over whichever view is up.
+/// transport and the mode — over whichever song is up.
 #[component]
-fn DemoView(engine: crate::web_engine::EngineRef, session: crate::studio::StudioSession) -> Element {
-    use crate::shell::{OverviewLayout, TopBar, View};
+fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setlist) -> Element {
+    use crate::shell::{TopBar, View};
     use session::modes::Mode;
 
-    use_context_provider(|| session.clone());
     // Audio starts on the page's first press or key: the only place a
     // browser allows it.
     use_hook(crate::web_audio::unlock_on_first_gesture);
     let view = use_signal(|| View::Daw);
     let mode = use_signal(|| Mode::Live);
     use_context_provider(|| mode);
-    let engine_for = engine.clone();
+    // The songs — a signal from here on, which the tabs read and a pick
+    // writes.
+    let mut setlist = use_context_provider(|| Signal::new(setlist));
+    // Playing together, a song someone else picked is picked here too.
+    crate::collab_bar::use_follow_song(setlist);
+    let current = setlist.read().current().cloned();
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
@@ -492,27 +496,76 @@ fn DemoView(engine: crate::web_engine::EngineRef, session: crate::studio::Studio
             TopBar {
                 view,
                 mode,
-                transport: rsx! { crate::transport_bar::WebTransportBar {} },
-            }
-            div {
-                style: "position:relative; flex:1; min-height:0;",
-                match view() {
-                    View::Setup => rsx! { crate::setup::SetupView {} },
-                    View::Performance => rsx! { WebPerformance {} },
-                    View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine: engine_for.clone() } },
-                    View::Overview => rsx! {
-                        OverviewLayout {
-                            progress: rsx! { crate::progress::ProgressBar {} },
-                            chart: rsx! { crate::chart_panel::WebChart { paged: true } },
-                            panels: rsx! {
-                                crate::mixer_panel::WebDawPanels {
-                                    engine: engine_for.clone(),
-                                    docked: true,
-                                }
-                            },
+                // The transport reads the song it drives, so it is mounted
+                // per song too — the tabs beside it are not.
+                transport: rsx! {
+                    if let Some(song) = current.clone() {
+                        WithSong {
+                            key: "{song.project}",
+                            session: song.session.clone(),
+                            crate::transport_bar::WebTransportBar {}
                         }
-                    },
-                }
+                    }
+                    // Once, not per song: the live set this page is in —
+                    // who is here, together.
+                    crate::collab_bar::CollabBar {}
+                },
+                // A tab picked: that song is current, and the audio moves to
+                // it. Where the one it replaces had got to is kept on its tab.
+                on_pick: move |index: usize| {
+                    let at = crate::engine::Transport::shared().map_or(0.0, |t| t.read().0);
+                    let picked = setlist.write().pick(index, at).map(|song| song.project.clone());
+                    if let Some(project) = picked {
+                        crate::open::switch_song(&project);
+                        // Playing together, everyone goes with it.
+                        crate::collab::transport_pressed();
+                    }
+                },
+            }
+            if let Some(song) = current {
+                // Keyed by the song: picking another remounts every panel
+                // on that song's session rather than patching the last one's.
+                SongViews { key: "{song.project}", session: song.session.clone(), engine: engine.clone(), view }
+            }
+        }
+    }
+}
+
+/// Whatever it holds, over one song: that song's session, as context.
+#[component]
+fn WithSong(session: crate::studio::StudioSession, children: Element) -> Element {
+    use_context_provider(|| session);
+    children
+}
+
+/// The views, over one song: its session is what every panel below reads.
+#[component]
+fn SongViews(
+    session: crate::studio::StudioSession,
+    engine: crate::web_engine::EngineRef,
+    view: Signal<crate::shell::View>,
+) -> Element {
+    use crate::shell::{OverviewLayout, View};
+    use_context_provider(|| session);
+    rsx! {
+        div {
+            style: "position:relative; flex:1; min-height:0;",
+            match view() {
+                View::Setup => rsx! { crate::setup::SetupView {} },
+                View::Performance => rsx! { WebPerformance {} },
+                View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone() } },
+                View::Overview => rsx! {
+                    OverviewLayout {
+                        progress: rsx! { crate::progress::ProgressBar {} },
+                        chart: rsx! { crate::chart_panel::WebChart { paged: true } },
+                        panels: rsx! {
+                            crate::mixer_panel::WebDawPanels {
+                                engine: engine.clone(),
+                                docked: true,
+                            }
+                        },
+                    }
+                },
             }
         }
     }
