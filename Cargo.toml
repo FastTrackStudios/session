@@ -801,7 +801,13 @@ vox-phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.3.0" 
 # takes `&Self::Window` there — and against the 0.3.0 this rev resolves it
 # does not compile at all. The two workspaces were building the same
 # plugin stack against different window systems.
-baseview = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", package = "baseview" }
+#
+# From the processor sibling directly, not its git tag: a patch that
+# names a git source is resolved against that source's packages, and in
+# an offline (vendored, nix) build a source holds only what the lockfile
+# took from it — the sibling patch below took baseview elsewhere, so the
+# tag's copy was never vendored and the patch could not resolve.
+baseview = { path = "../processor/vendor/baseview" }
 # pipewire-rs one commit past its v0.10.0 release. PipeWire 1.6 rewrote
 # constants like SPA_ID_INVALID from a bare `0xffffffff` into a cast form,
 # `((uint32_t)0xffffffff)`, which bindgen's own macro evaluator cannot fold —

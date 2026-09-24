@@ -1443,7 +1443,6 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "baseview"
 version = "0.3.3"
-source = "git+https://github.com/FastTrackStudios/processor?tag=v0.2.1#b3dbe81936663d52ffe1d8c1d96bc699775fb42f"
 dependencies = [
  "block2 0.6.2",
  "bytemuck",
@@ -18565,6 +18564,10 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -18666,12 +18669,4 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "baseview"
-version = "0.3.3"
-
-[[patch.unused]]
-name = "dsp-golden"
 version = "0.1.0"
