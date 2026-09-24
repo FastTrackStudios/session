@@ -169,28 +169,47 @@ WATCH_BUNDLE_ID=app.fasttrackstudio.session.watchkitapp
 This needs an App Store provisioning profile for that bundle id. Register
 the id first. See `docs/distribution-handoff.md` §7.
 
-## Hooking up the iPhone side
+## The phone and the watch together
 
-The phone runs `session::watch_guide::Relay` once it has joined a live
-set:
+`sim-pair.sh` runs both on a paired iPhone and Apple Watch simulator: the
+phone app plays the demo setlist (`FTS_DEMO=1`) and relays it, and the
+watch follows — the song, the section and its bar, the beat, the tempo.
 
-```rust
-use session::watch_guide::{Lead, Relay, Snapshot, SongSnapshot, link::WcLink};
-
-// Once, on joining a set (iOS, feature `session/watch-link`):
-let relay = WcLink::activate().map(|link| Relay::spawn(Arc::new(link), move || Snapshot {
-    set_title: set.title.clone(),
-    // Rebuilt when a song opens, or when its tempo map or sections change:
-    //   Guide::new(daw).watch_timeline()  — the song generate() stamps from.
-    song: current_song(),                        // Option<SongSnapshot>
-    // Playing together: the leader's stamp, the one a following desktop locks
-    // to. Playing apart: this phone's own engine, carried into Task's clock.
-    lead: Lead::from_presence(&presence.states())
-        .or_else(|| local_snapshot().map(|p| Lead::local(song_key(), p, clock.offset_micros().unwrap_or(0.0)))),
-    shared_offset_us: clock.offset_micros(),
-    shared_round_trip_us: clock.round_trip_micros(),
-}));
+```bash
+apps/session-watch/sim-pair.sh            # the first pair `xcrun simctl list pairs` shows
+xcrun simctl shutdown all                 # afterwards, always
 ```
 
-`collab.rs` is not wired up yet. It is being rewritten for Task-hosted live
-sets in parallel, and this goes in its tick once that lands.
+Two things about the simulator pair:
+
+- **The phone must be running when the watch app is installed.** Installed
+  with the phone app idle, the phone's `WCSession` keeps reporting "Watch
+  app is not installed", and nothing is sent. The script starts the phone
+  app before it installs the watch app. Even then, it takes the phone
+  10–20 s to notice.
+- **Its link is not a device's.** The simulator carries WatchConnectivity
+  messages on a schedule of about one a second, with fixed phases: a ping
+  reaches the watch about 0.35 s after it is sent, and the answer comes
+  back at the next slot. The round trip is 1–2 s and so asymmetric that the
+  offset is wrong by 0.1–0.7 s. The error holds steady rather than drifting,
+  because the relay keeps one message in flight, but it is far bigger than
+  a device's. Use the pair to check that the watch follows. Don't use it to
+  check the click's timing.
+
+## The iPhone side
+
+Two hosts run `session::watch_guide::Relay`, and an app runs one of them:
+
+- **`apps/desktop/src/watch.rs`**: the iPhone app as it ships today (WRY).
+  The phone's in-process engine leads. The watch gets its current song's
+  grid and its transport's per-buffer snapshot. The shared clock is the
+  phone's own.
+- **`session_daw::watch_relay`**: the live set's tick in `collab.rs` feeds
+  it (the Blitz app, and the iPhone once that app runs there). Playing
+  together, the shared transport's leader leads, by the stamp it publishes
+  under its `sync` key. That is the same stamp a following window locks
+  to. Playing apart, this window's own engine leads.
+
+Both name songs by their library slug (`session::sync::slug::slugify`).
+That is the id a set Task keeps uses for its songs, and what a leader's
+`SyncPosition.song` carries.

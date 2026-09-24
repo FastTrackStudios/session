@@ -64,8 +64,12 @@ PLIST
 echo "=== watch app ==="
 # A stale nix eval cache can name an xcodegen .drv a GC removed ("don't know
 # how to recreate store derivation"): drop the cache and try once more.
+# Only when project.yml is newer than the project it generates.
 xcodegen() { ( cd "$ROOT/apps/session-watch" && nix run nixpkgs#xcodegen -- generate >/dev/null ); }
-xcodegen || { rm -rf "$HOME/.cache/nix"; xcodegen; }
+if [ ! -d "$ROOT/apps/session-watch/SessionWatch.xcodeproj" ] \
+    || [ "$ROOT/apps/session-watch/project.yml" -nt "$ROOT/apps/session-watch/SessionWatch.xcodeproj" ]; then
+    xcodegen || { rm -rf "$HOME/.cache/nix"; xcodegen; }
+fi
 xcodebuild -project "$ROOT/apps/session-watch/SessionWatch.xcodeproj" -scheme SessionWatch \
     -destination 'generic/platform=watchOS Simulator' -derivedDataPath "$ROOT/apps/session-watch/build" \
     CODE_SIGNING_ALLOWED=NO build | grep -E "error|BUILD" || true
@@ -86,6 +90,12 @@ xcrun simctl bootstatus "$PHONE" -b >/dev/null
 xcrun simctl bootstatus "$WATCH" -b >/dev/null
 open -a "$DEVELOPER_DIR/Applications/Simulator.app" 2>/dev/null || true
 xcrun simctl install "$PHONE" "$APP"
+# The phone's WatchConnectivity counts the watch app installed only if it
+# lands while the phone app is running (installed with the phone app idle,
+# the phone's session keeps saying "Watch app is not installed"): start it
+# plainly first, install the watch app, then relaunch it below with the demo.
+SIMCTL_CHILD_FTS_NO_AUDIO="${FTS_NO_AUDIO:-1}" xcrun simctl launch "$PHONE" app.fasttrackstudio.session >/dev/null
+sleep 3
 xcrun simctl install "$WATCH" "$WATCH_APP"
 # The measured part is the clock and the timers: no haptic lead, so a tap's
 # timer fires on the beat itself (the Taptic Engine's own latency is a
@@ -93,8 +103,9 @@ xcrun simctl install "$WATCH" "$WATCH_APP"
 xcrun simctl spawn "$WATCH" defaults write app.fasttrackstudio.session.watchkitapp leadClickMs -float 0
 xcrun simctl spawn "$WATCH" defaults write app.fasttrackstudio.session.watchkitapp leadStrongMs -float 0
 xcrun simctl launch --terminate-running-process "$WATCH" app.fasttrackstudio.session.watchkitapp
+# On the Session workspace, the song and its playhead beside the watch's.
 # FTS_NO_AUDIO: the simulator's audio server times out opening RemoteIO on
 # this host (an abort, not an error), so the transport runs on the engine's
 # soft clock — which stamps the same per-buffer sync snapshots.
-SIMCTL_CHILD_FTS_DEMO=1 SIMCTL_CHILD_FTS_NO_AUDIO="${FTS_NO_AUDIO:-1}" SIMCTL_CHILD_RUST_LOG="${RUST_LOG:-info,session_desktop::watch=debug,session_watch_guide=debug}" \
+SIMCTL_CHILD_FTS_DEMO=1 SIMCTL_CHILD_FTS_NO_AUDIO="${FTS_NO_AUDIO:-1}" SIMCTL_CHILD_FTS_OPEN_WORKSPACE="${FTS_OPEN_WORKSPACE:-session}" SIMCTL_CHILD_RUST_LOG="${RUST_LOG:-info,session_desktop::watch=debug,session_watch_guide=debug}" \
     xcrun simctl launch --console-pty --terminate-running-process "$PHONE" app.fasttrackstudio.session
