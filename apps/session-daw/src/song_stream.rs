@@ -283,6 +283,31 @@ impl Keep {
         }
     }
 
+    /// Whether a song-folder file (lower-case path) is mirrored here. A
+    /// browser skips the waveform caches: its peak store reads them by
+    /// disk path, which it has none of, so held in memory they would only
+    /// be weight.
+    fn wants(&self, lower: &str) -> bool {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Disk(_) => true,
+            Self::Memory(_) => !lower.starts_with("media/peaks/"),
+        }
+    }
+
+    /// How the fetcher holds what it brings: all of it on disk; in memory,
+    /// a window around the playhead (the rest is in the browser's cache).
+    fn fetch_config(&self) -> FetchConfig {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Disk(_) => FetchConfig::default(),
+            Self::Memory(_) => FetchConfig {
+                resident: Some(daw::standalone::audio_engine::media_fetch::Resident::BROWSER),
+                ..FetchConfig::default()
+            },
+        }
+    }
+
     /// Where a source labelled `label` is mirrored.
     fn base(&self, label: &str) -> PathBuf {
         match self {
@@ -378,7 +403,7 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
             proxies.insert(stem, (path.clone(), *size));
             continue;
         }
-        if is_media(&lower) || *size == 0 {
+        if is_media(&lower) || *size == 0 || !keep.wants(&lower) {
             continue;
         }
         let local = base.join(path);
@@ -466,14 +491,150 @@ impl StreamedSong {
         stop: Arc<AtomicBool>,
     ) {
         let fetch: Arc<dyn RangeFetch> = Arc::new(SourceFetch(Arc::clone(&self.source)));
+        // In a browser, through its cache: what the window let go comes
+        // back from there, and a reload streams nothing twice.
+        #[cfg(target_arch = "wasm32")]
+        let fetch: Arc<dyn RangeFetch> = {
+            let cached = Arc::new(CachedFetch::new(fetch, &self.source.label(), self.versions()));
+            wasm_bindgen_futures::spawn_local(Arc::clone(&cached).warm(Arc::clone(&stop)));
+            cached
+        };
         let driving =
-            daw::standalone::audio_engine::media_fetch::drive(takes, fetch, playhead, FetchConfig::default(), stop);
+            daw::standalone::audio_engine::media_fetch::drive(takes, fetch, playhead, self.keep.fetch_config(), stop);
         #[cfg(feature = "native")]
         if let Some(runtime) = crate::open::runtime() {
             runtime.spawn(driving);
         }
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(driving);
+    }
+}
+
+impl StreamedSong {
+    /// Each proxy's size and version (its page index's hash: a proxy made
+    /// again is indexed again), by its path in the song.
+    #[cfg(target_arch = "wasm32")]
+    fn versions(&self) -> HashMap<String, (u64, u64)> {
+        self.proxies
+            .values()
+            .map(|(path, size)| {
+                let index = self.folder.read(&OggIndex::path_for(&self.base.join(path))).unwrap_or_default();
+                (path.clone(), (*size, fnv(&index)))
+            })
+            .collect()
+    }
+}
+
+/// FNV-1a: a stable, dependency-free hash for cache keys.
+#[cfg(target_arch = "wasm32")]
+fn fnv(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3))
+}
+
+/// A song's proxies through the browser's Cache Storage — off the wasm
+/// heap, and kept across reloads: each proxy in aligned blocks, a block
+/// answered from the cache when it is there and fetched (then kept) when
+/// not. What the resident window lets go comes back from here, and
+/// [`Self::warm`] fills the cache with the whole song in the background,
+/// so a seek anywhere is local once it has.
+#[cfg(target_arch = "wasm32")]
+pub struct CachedFetch {
+    inner: Arc<dyn RangeFetch>,
+    label: String,
+    /// Size and version by path.
+    files: HashMap<String, (u64, u64)>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl CachedFetch {
+    /// Bytes per cached block.
+    const BLOCK: u64 = 256 * 1024;
+    /// The Cache Storage cache the blocks live in.
+    const CACHE: &'static str = "fts-session-media";
+
+    fn new(inner: Arc<dyn RangeFetch>, label: &str, files: HashMap<String, (u64, u64)>) -> Self {
+        Self { inner, label: safe_name(label), files }
+    }
+
+    /// The cache key of block `block` of `path` (a URL: Cache Storage keys
+    /// are requests; this origin is never fetched).
+    fn key(&self, path: &str, version: u64, block: u64) -> String {
+        let path: String = path.split('/').map(|s| String::from(js_sys::encode_uri_component(s))).collect::<Vec<_>>().join("/");
+        format!("https://fts-cache.invalid/{}/{version:016x}/{path}/{block}", self.label)
+    }
+
+    async fn cache() -> Result<web_sys::Cache, String> {
+        use wasm_bindgen::JsCast as _;
+        let caches = web_sys::window().ok_or("no window")?.caches().map_err(|e| format!("no cache storage: {e:?}"))?;
+        let cache = wasm_bindgen_futures::JsFuture::from(caches.open(Self::CACHE)).await.map_err(|e| format!("{e:?}"))?;
+        cache.dyn_into().map_err(|_| "not a cache".to_owned())
+    }
+
+    /// Block `block` of `path`: from the cache, or fetched and kept.
+    async fn block(&self, cache: &web_sys::Cache, path: &str, block: u64) -> Result<Vec<u8>, String> {
+        use wasm_bindgen::JsCast as _;
+        let (size, version) = self.files.get(path).copied().ok_or_else(|| format!("{path}: not a proxy of this song"))?;
+        let key = self.key(path, version, block);
+        let hit = wasm_bindgen_futures::JsFuture::from(cache.match_with_str(&key)).await.map_err(|e| format!("{e:?}"))?;
+        if let Ok(response) = hit.dyn_into::<web_sys::Response>() {
+            let body = response.array_buffer().map_err(|e| format!("{e:?}"))?;
+            let body = wasm_bindgen_futures::JsFuture::from(body).await.map_err(|e| format!("{e:?}"))?;
+            return Ok(js_sys::Uint8Array::new(&body).to_vec());
+        }
+        let start = block * Self::BLOCK;
+        let mut bytes = self.inner.fetch(path, start..(start + Self::BLOCK).min(size)).await?;
+        if let Ok(response) = web_sys::Response::new_with_opt_u8_array(Some(&mut bytes)) {
+            // A cache that is full or refused only costs a fetch next time.
+            let _ = wasm_bindgen_futures::JsFuture::from(cache.put_with_str(&key, &response)).await;
+        }
+        Ok(bytes)
+    }
+
+    /// Fill the cache with every block of every proxy, one at a time,
+    /// until done or `stop`.
+    async fn warm(self: Arc<Self>, stop: Arc<AtomicBool>) {
+        let Ok(cache) = Self::cache().await else { return };
+        let mut files: Vec<(&String, &(u64, u64))> = self.files.iter().collect();
+        files.sort();
+        let blocks = files.iter().map(|(_, (size, _))| size.div_ceil(Self::BLOCK)).max().unwrap_or(0);
+        // Block by block across every file: the whole band's next stretch
+        // before any one track's end.
+        for block in 0..blocks {
+            for (path, (size, _)) in &files {
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                if block * Self::BLOCK < *size
+                    && let Err(e) = self.block(&cache, path, block).await
+                {
+                    tracing::debug!(media = %path, block, error = %e, "song-stream: warming the cache skipped a block");
+                }
+            }
+        }
+        tracing::info!(stream.source = %self.label, stream.files = files.len(), "song-stream: the song is in the browser's cache");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl RangeFetch for CachedFetch {
+    fn fetch(&self, path: &str, range: std::ops::Range<u64>) -> Fetching {
+        let this = Self { inner: Arc::clone(&self.inner), label: self.label.clone(), files: self.files.clone() };
+        let path = path.to_owned();
+        Box::pin(async move {
+            if range.is_empty() {
+                return Ok(Vec::new());
+            }
+            let cache = Self::cache().await?;
+            let mut out = Vec::with_capacity(usize::try_from(range.end - range.start).unwrap_or(0));
+            for block in range.start / Self::BLOCK..=(range.end - 1) / Self::BLOCK {
+                let bytes = this.block(&cache, &path, block).await?;
+                let at = block * Self::BLOCK;
+                let from = usize::try_from(range.start.saturating_sub(at)).unwrap_or(0);
+                let to = usize::try_from((range.end - at).min(bytes.len() as u64)).unwrap_or(0);
+                out.extend_from_slice(bytes.get(from..to).ok_or_else(|| format!("{path}: block {block} is short"))?);
+            }
+            Ok(out)
+        })
     }
 }
 

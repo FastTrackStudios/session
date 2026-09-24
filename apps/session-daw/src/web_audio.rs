@@ -54,6 +54,12 @@ const AHEAD: u64 = RATE as u64 / 4;
 /// And while it is behind another window, where nothing is being watched
 /// and a throttled timer may not come back for a second.
 const AHEAD_HIDDEN: u64 = RATE as u64 * 2;
+/// Chunks of each stem kept decoded ahead of the playhead (~3 s at
+/// 44.1 kHz; ~1.1 MB of a stereo stem): this loop decodes every few
+/// milliseconds, so it needs far less in hand than the native butler —
+/// and a band's worth of the native ~9 s was most of the page's memory.
+/// It covers [`AHEAD_HIDDEN`]'s two seconds rendered ahead.
+const DECODED_AHEAD: usize = 8;
 /// How long a tick may spend decoding stems before it renders.
 const DECODE_BUDGET_MS: u128 = 6;
 
@@ -206,7 +212,7 @@ pub fn add_stem(project: &str, take: &str, bytes: Arc<[u8]>) -> Result<(), Strin
 /// there is nothing to feed it from; it is dropped.
 pub fn adopt(feeder: StreamFeeder<Box<dyn Decode + Send>>) {
     if let Some(player) = player() {
-        player.feeders.borrow_mut().push(feeder);
+        player.feeders.borrow_mut().push(feeder.with_ahead(DECODED_AHEAD));
     }
 }
 
