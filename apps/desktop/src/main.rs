@@ -72,6 +72,9 @@ mod collection_browser;
 mod session_chart_pane;
 #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
 mod updates;
+/// The Session watch app's feed, relayed from this phone (iOS).
+#[cfg(all(feature = "watch", target_os = "ios"))]
+mod watch;
 /// The app on Blitz — see `docs/app-on-blitz.md`.
 #[cfg(all(feature = "native", not(any(target_arch = "wasm32", target_os = "ios"))))]
 mod native;
@@ -225,6 +228,13 @@ fn main() {
             Ok(()) => tracing::info!("live mode ready (in-process daw-standalone)"),
             Err(e) => tracing::error!("session engine failed to start: {e:?}"),
         }
+    }
+
+    // The watch follows what this phone's engine plays.
+    #[cfg(all(feature = "watch", target_os = "ios"))]
+    {
+        watch::start();
+        watch::demo_if_asked();
     }
 
     launch_app();
@@ -588,10 +598,6 @@ fn App() -> Element {
                     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
                     Some(Workspace::Arrangement) => rsx! {
                         ArrangementWorkspace { current }
-                    },
-                    #[cfg(not(all(feature = "session", not(target_arch = "wasm32"))))]
-                    Some(Workspace::Arrangement) => rsx! {
-                        ArrangementWorkspace {}
                     },
                     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
                     Some(Workspace::Mixer) => rsx! {

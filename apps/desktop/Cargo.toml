@@ -24,7 +24,7 @@ authors = ["FastTrackStudio"]
 [features]
 # Two axes here -- Session and Charts. (The monorepo had a third, Signal;
 # it ships from the signal repo now.)
-default = ["session", "charts", "native"]
+default = ["session", "tts", "charts", "native"]
 # The app on Blitz (dioxus-native): the panels-and-views shell with our own
 # title bar — see docs/app-on-blitz.md. Desktop only for now (iOS follows);
 # without it the desktop build launches the WRY app as before.
@@ -36,16 +36,18 @@ native = ["session-domain", "dep:dioxus-native", "dep:session-daw", "dep:winit",
 # daw-standalone, the guide) is native-only -- those optional deps live
 # exclusively in the `cfg(not(target_arch = "wasm32"))` table below, so
 # enabling them here is a no-op on the web build.
-# `session` = the domain PLUS spoken cues. Split so iOS can take the domain
-# without the TTS backend: `tts` pulls ort/ONNX Runtime, which publishes no
-# prebuilt binary for aarch64-apple-ios (ort-sys' build.rs panics outright
-# with "downloaded binaries not available for target aarch64-apple-ios").
-# Desktop behaviour is unchanged -- `session` still implies `tts`.
-session = ["session-domain", "tts"]
-# Everything Session is except the TTS backend. The iOS build uses this:
-#   dx build --no-default-features --features "session-domain,charts"
-# The guide still runs; spoken section cues fall back to the synthesized
-# guide samples, exactly as they do when FTS_TTS is unset on desktop.
+# `session` = the Session workspaces (the setlist player, arrangement,
+# mixer, lyric sync) over the domain. It no longer implies `tts`: `tts`
+# pulls ort/ONNX Runtime, which publishes no prebuilt binary for
+# aarch64-apple-ios (ort-sys' build.rs panics outright with "downloaded
+# binaries not available for target aarch64-apple-ios"), and the code
+# gates the workspaces on `session` — so an iOS build of `session-domain`
+# alone compiled no Session at all. The desktop default adds `tts` itself;
+# the iOS build is `--no-default-features --features session,charts,watch`.
+# Without `tts`, spoken section cues fall back to the synthesized guide
+# samples, exactly as they do when FTS_TTS is unset on desktop.
+session = ["session-domain"]
+# The domain and its in-process engine, with no workspace of its own.
 session-domain = [
     "dep:session-proto",
     # Wasm-only collection browser dep (no-op on native — see note above).
@@ -98,6 +100,10 @@ charts = ["dep:keyflow"]
 # provides onnxruntime + ORT_DYLIB_PATH). Cached cues keep loading regardless;
 # without it, cues fall back to the synthesized guide samples.
 tts = ["session-guide/tts"]
+# The Session watch app (apps/session-watch): the iPhone relays the guide
+# feed — the playing song's beats, in the watch's clock — over
+# WatchConnectivity (src/watch.rs; iOS only, a no-op elsewhere).
+watch = ["session", "session/watch-link"]
 
 # Network probe for the engine's SetlistService (the browser remote's wire
 # path, natively): `cargo run -p session-desktop --example setlist_probe`.

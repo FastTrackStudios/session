@@ -403,9 +403,18 @@ fn spawn_audio_thread(
             // Attach to a project: returns the live engine on success. On
             // failure, re-enable that project's soft clock so play still
             // advances the playhead silently.
+            // `FTS_NO_AUDIO=1`: never open the device, the soft clock drives
+            // the transport — for a simulator whose audio server times out
+            // opening RemoteIO (it aborts the process rather than failing).
+            let no_audio = std::env::var("FTS_NO_AUDIO").is_ok_and(|v| v == "1");
             let attach = |guid: &str| -> Option<daw_standalone::audio_engine::AudioEngine> {
                 materialize_if_needed(guid);
-                match standalone.attach_audio_engine(guid) {
+                let attached = if no_audio {
+                    Err(eyre::eyre!("audio off (FTS_NO_AUDIO)"))
+                } else {
+                    standalone.attach_audio_engine(guid).map_err(|e| eyre::eyre!("{e}"))
+                };
+                match attached {
                     Ok(engine) => {
                         // Guide (click / count-in / section cues): built at the
                         // device rate, mixed in via the aux post-render hook.
