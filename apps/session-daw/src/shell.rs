@@ -423,7 +423,9 @@ pub fn SongTabs(
         return rsx! { div { style: "flex:1;" } };
     }
     let at = reading().at;
-    let count = list.songs.len();
+    // The songs still on their way have tabs too, so the row keeps its
+    // shape as they arrive.
+    let count = list.songs.len() + list.pending.len();
     let min_w = count * 24 + 6;
     rsx! {
         div {
@@ -494,6 +496,30 @@ pub fn SongTabs(
                                 }
                             }
                         }
+                    }
+                }
+            }
+            // Songs still on their way (a page opens its first song, then
+            // the rest behind it): dim, named, a ring pulsing where the
+            // colour dot will be.
+            if !list.pending.is_empty() {
+                style { "@keyframes fts-tab-pulse {{ 0%, 100% {{ opacity: .3 }} 50% {{ opacity: 1 }} }}" }
+            }
+            for title in list.pending.iter().cloned() {
+                div {
+                    key: "pending-{title}",
+                    title: "{title} — loading",
+                    style: "position:relative; flex:1; min-width:0; display:flex; align-items:center; \
+                            justify-content:center; gap:7px; padding:0 4px; border-radius:7px; \
+                            opacity:0.5; cursor:default; overflow:hidden;",
+                    div {
+                        style: "flex:none; width:9px; height:9px; border-radius:5px; box-sizing:border-box; \
+                                border:1.5px solid {DIM}; animation:fts-tab-pulse 1.2s ease-in-out infinite;",
+                    }
+                    span {
+                        style: "min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \
+                                color:{DIM}; font-size:12px; font-weight:600;",
+                        "{title}"
                     }
                 }
             }

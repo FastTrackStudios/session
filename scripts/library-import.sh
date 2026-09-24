@@ -103,6 +103,10 @@ while IFS= read -r line; do
 
     root="$(run_task files root ensure "session/$slug" --name "$title" | awk '{print $1}')"
     run_task files put "$root" "$rpp"
+    # The chart beside the project, as the song's folder has it: what a
+    # player opening the song from its files reads (its `.kf`), besides the
+    # copy the library keeps as the song's arrangement.
+    run_task files put "$root" "$kf"
     [[ -f "$folder/$name.lrc" ]] && run_task files put "$root" "$folder/$name.lrc"
     [[ -d "$folder/$name.session" ]] && run_task files put "$root" "$folder/$name.session" --to "$name.session"
     run_task files put "$root" "$folder/Media/Proxies" --to Media/Proxies
