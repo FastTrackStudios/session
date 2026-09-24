@@ -175,6 +175,70 @@ guide_daw_bounds!(+ Send + Sync);
 #[cfg(target_arch = "wasm32")]
 guide_daw_bounds!();
 
+/// The Session watch app's beat grid for the song on screen, kept current
+/// for a relay that reads it many times a second.
+///
+/// Built with [`Guide::watch_timeline`] — so the watch taps the grid the
+/// Click track is stamped from — on a thread of its own (a relay must never
+/// wait on the engine), when the song changes, and again every few seconds
+/// while stopped so an edit to the chart or the tempo reaches the watch.
+/// One of these per app, whoever hosts the relay (the desktop's live set,
+/// the iPhone's in-process engine).
+#[cfg(not(target_arch = "wasm32"))]
+pub struct WatchTimelines<D> {
+    daw: D,
+    slot: std::sync::Arc<std::sync::Mutex<Option<BuiltTimeline>>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct BuiltTimeline {
+    project: String,
+    timeline: std::sync::Arc<session_watch_guide::GuideTimeline>,
+    at: std::time::Instant,
+}
+
+/// While stopped, how often the watch's grid is rebuilt.
+#[cfg(not(target_arch = "wasm32"))]
+const WATCH_REBUILD_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<D: GuideDaw + Clone> WatchTimelines<D> {
+    pub fn new(daw: D) -> Self {
+        Self { daw, slot: std::sync::Arc::default() }
+    }
+
+    /// The grid of `project` (the engine's current song), once built;
+    /// starts a rebuild when the song changed or, stopped, one is due.
+    #[must_use]
+    pub fn get(&self, project: &str, playing: bool) -> Option<std::sync::Arc<session_watch_guide::GuideTimeline>> {
+        let mut slot = self.slot.lock().ok()?;
+        let current = slot.as_ref().filter(|b| b.project == project);
+        if current.is_none_or(|b| !playing && b.at.elapsed() >= WATCH_REBUILD_EVERY) {
+            // Claimed now, so the next read does not start another.
+            let keep = current.map(|b| std::sync::Arc::clone(&b.timeline));
+            *slot = Some(BuiltTimeline {
+                project: project.to_owned(),
+                timeline: keep.unwrap_or_default(),
+                at: std::time::Instant::now(),
+            });
+            let (daw, into, project) = (self.daw.clone(), std::sync::Arc::clone(&self.slot), project.to_owned());
+            std::thread::spawn(move || match Guide::new(daw).watch_timeline() {
+                Ok(timeline) => {
+                    if let Ok(mut slot) = into.lock()
+                        && let Some(b) = slot.as_mut().filter(|b| b.project == project)
+                    {
+                        b.timeline = std::sync::Arc::new(timeline);
+                    }
+                }
+                Err(e) => tracing::debug!(watch.error = %e, "watch: no beat grid for this song"),
+            });
+        }
+        slot.as_ref()
+            .filter(|b| b.project == project && !b.timeline.beats.is_empty())
+            .map(|b| std::sync::Arc::clone(&b.timeline))
+    }
+}
+
 impl<D: GuideDaw> session_proto::guide::GuideActions for Guide<D> {
     fn generate_guide_tracks(&self) -> DawResult<()> {
         self.generate(GuideScope::All)
