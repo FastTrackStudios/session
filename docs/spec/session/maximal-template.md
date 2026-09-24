@@ -49,7 +49,7 @@ fixed tree.
 
 - [ ] **Guide/** Click, Guide, Shaker at the top of the session, to the
       headphone mixes only (`flow.scenes.guide-folder`).
-- [ ] **Keyflow/** KEY, CHORD, LINES, HITS as MIDI items
+- [ ] **Keyflow/** KEY, CHORD, LINES, Lyrics, HITS as MIDI items
       (`flow.scenes.keyflow-folder`).
 
 ### Percussion — `Percussion/`

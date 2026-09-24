@@ -43,7 +43,9 @@ fn fixture() -> (Standalone, MidiTakeLocation) {
             length_ppq: PPQ,
         })
         .collect();
-    Midi::add_notes(&daw, location.clone(), notes);
+    // In the units `notes()` reads back (what the session edits);
+    // `add_notes` takes REAPER's tick lengths.
+    Midi::add_notes_ppq(&daw, location.clone(), notes);
     (daw, location)
 }
 
