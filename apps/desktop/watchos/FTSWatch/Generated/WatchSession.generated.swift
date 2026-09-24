@@ -1,7 +1,7 @@
 // GENERATED — do not edit. Mirrors the facet shapes in
 // crates/session/proto/src/watch.rs (the `/watch/v1` wire DTOs).
 // Regenerate: cargo run -p session-proto --example gen_watch_swift
-//   > apps/fasttrackstudio/watchos/FTSWatch/Generated/WatchSession.generated.swift
+//   > apps/desktop/watchos/FTSWatch/Generated/WatchSession.generated.swift
 
 import Foundation
 
