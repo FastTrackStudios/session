@@ -1226,3 +1226,26 @@ mod task_set_tests {
         assert_eq!(set.setlist, "", "the link's own set");
     }
 }
+
+#[cfg(test)]
+mod task_set_probe {
+    /// Probe: join a live share link's set on a real Task
+    /// (`FTS_PROBE_LIVE=<link> cargo test -p session-daw --lib live_probe -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "needs a live Task link"]
+    fn live_probe() {
+        use live_proto::LiveSessionsClient;
+        let link = std::env::var("FTS_PROBE_LIVE").unwrap();
+        let set = super::TaskSet::parse(&format!("share:{link}"));
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let lane: LiveSessionsClient = task_dial::establish_at(&set.url, None).await.unwrap();
+            let joined = lane.join(String::new()).await.unwrap();
+            eprintln!("set {} epoch {} resets {:?}", joined.title, joined.epoch, joined.resets_every_secs);
+            for song in &joined.songs {
+                eprintln!("  {} {} files={:?}", song.slug, song.title, song.files);
+            }
+            eprintln!("clock {}", lane.now().await.unwrap());
+        });
+    }
+}
