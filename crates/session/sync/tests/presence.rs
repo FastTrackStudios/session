@@ -25,7 +25,11 @@ fn state_round_trips() {
 
 #[test]
 fn a_pointer_is_in_timeline_coordinates_and_round_trips() {
-    let p = Pointer::Timeline { at: 3.25, track: Some("bass".into()), y: 0.5 };
+    let p = Pointer::Timeline {
+        at: 3.25,
+        track: Some("bass".into()),
+        y: 0.5,
+    };
     assert_eq!(Pointer::decode(&p.encode(1000.0)), Some((p, 1000.0)));
     let c = Pointer::Chart { x: 0.5, y: 0.25 };
     assert_eq!(Pointer::decode(&c.encode(5.0)), Some((c, 5.0)));
@@ -64,12 +68,20 @@ fn a_remote_pointer_glides_between_samples() {
     let mut trail = PointerTrail::default();
     // Sender clock is 5 s ahead of ours; samples 50 ms apart.
     trail.push(
-        Pointer::Timeline { at: 0.0, track: None, y: 0.5 },
+        Pointer::Timeline {
+            at: 0.0,
+            track: None,
+            y: 0.5,
+        },
         5000.0,
         0.0,
     );
     trail.push(
-        Pointer::Timeline { at: 1.0, track: None, y: 0.5 },
+        Pointer::Timeline {
+            at: 1.0,
+            track: None,
+            y: 0.5,
+        },
         5050.0,
         50.0,
     );
@@ -78,12 +90,20 @@ fn a_remote_pointer_glides_between_samples() {
     let now = 50.0 + INTERPOLATION_DELAY_MS - 25.0;
     assert_eq!(
         trail.at(now),
-        Some(Pointer::Timeline { at: 0.5, track: None, y: 0.5 })
+        Some(Pointer::Timeline {
+            at: 0.5,
+            track: None,
+            y: 0.5
+        })
     );
     // After the last sample, it rests there.
     assert_eq!(
         trail.at(10_000.0),
-        Some(Pointer::Timeline { at: 1.0, track: None, y: 0.5 })
+        Some(Pointer::Timeline {
+            at: 1.0,
+            track: None,
+            y: 0.5
+        })
     );
 }
 
@@ -101,7 +121,11 @@ fn the_roster_tracks_others_and_forgets_those_who_leave() {
         Some(&PeerState::default().encode()),
         0.0,
     );
-    let p = Pointer::Timeline { at: 2.0, track: None, y: 0.5 };
+    let p = Pointer::Timeline {
+        at: 2.0,
+        track: None,
+        y: 0.5,
+    };
     roster.apply("me", &key("alice", POINTER), Some(&p.encode(0.0)), 0.0);
     let play = PlayState {
         playing: true,
@@ -145,48 +169,114 @@ fn a_session_wide_entry_is_not_a_peer() {
 
 #[test]
 fn a_pointer_over_a_panel_is_where_in_that_panel() {
-    let p = Pointer::Region { region: "lyrics".into(), x: 0.25, y: 0.75 };
+    let p = Pointer::Region {
+        region: "lyrics".into(),
+        x: 0.25,
+        y: 0.75,
+    };
     assert_eq!(Pointer::decode(&p.encode(9.0)), Some((p, 9.0)));
     let mut trail = PointerTrail::default();
-    trail.push(Pointer::Region { region: "chart".into(), x: 0.0, y: 0.0 }, 0.0, 0.0);
-    trail.push(Pointer::Region { region: "chart".into(), x: 1.0, y: 0.5 }, 100.0, 100.0);
+    trail.push(
+        Pointer::Region {
+            region: "chart".into(),
+            x: 0.0,
+            y: 0.0,
+        },
+        0.0,
+        0.0,
+    );
+    trail.push(
+        Pointer::Region {
+            region: "chart".into(),
+            x: 1.0,
+            y: 0.5,
+        },
+        100.0,
+        100.0,
+    );
     assert_eq!(
         trail.at(50.0 + INTERPOLATION_DELAY_MS),
-        Some(Pointer::Region { region: "chart".into(), x: 0.5, y: 0.25 })
+        Some(Pointer::Region {
+            region: "chart".into(),
+            x: 0.5,
+            y: 0.25
+        })
     );
     // Across panels it jumps: halfway between the chart and the mixer is
     // on neither.
-    trail.push(Pointer::Region { region: "panels".into(), x: 0.9, y: 0.9 }, 200.0, 200.0);
+    trail.push(
+        Pointer::Region {
+            region: "panels".into(),
+            x: 0.9,
+            y: 0.9,
+        },
+        200.0,
+        200.0,
+    );
     assert_eq!(
         trail.at(150.0 + INTERPOLATION_DELAY_MS),
-        Some(Pointer::Region { region: "panels".into(), x: 0.9, y: 0.9 })
+        Some(Pointer::Region {
+            region: "panels".into(),
+            x: 0.9,
+            y: 0.9
+        })
     );
 }
 
 #[test]
 fn a_pointer_is_free_in_xy_and_glides_between_tracks_on_screen() {
     let mut trail = PointerTrail::default();
-    trail.push(Pointer::Timeline { at: 0.0, track: Some("kick".into()), y: 0.9 }, 0.0, 0.0);
-    trail.push(Pointer::Timeline { at: 1.0, track: Some("snare".into()), y: 0.1 }, 100.0, 100.0);
+    trail.push(
+        Pointer::Timeline {
+            at: 0.0,
+            track: Some("kick".into()),
+            y: 0.9,
+        },
+        0.0,
+        0.0,
+    );
+    trail.push(
+        Pointer::Timeline {
+            at: 1.0,
+            track: Some("snare".into()),
+            y: 0.1,
+        },
+        100.0,
+        100.0,
+    );
     // Rows 20 px high: kick at 100..120, snare at 120..140; 50 px a second.
     let place = |p: &Pointer| match p {
         Pointer::Timeline { at, track, y } => {
-            let top = if track.as_deref() == Some("kick") { 100.0 } else { 120.0 };
+            let top = if track.as_deref() == Some("kick") {
+                100.0
+            } else {
+                120.0
+            };
             Some((at * 50.0, top + y * 20.0))
         }
         _ => None,
     };
     // Halfway: from (0, 118) to (50, 122) — on the line between, not
     // snapped to either row's middle.
-    let (x, y) = trail.screen_at(50.0 + INTERPOLATION_DELAY_MS, place).unwrap();
-    assert!((x - 25.0).abs() < 1e-9 && (y - 120.0).abs() < 1e-9, "{x},{y}");
+    let (x, y) = trail
+        .screen_at(50.0 + INTERPOLATION_DELAY_MS, place)
+        .unwrap();
+    assert!(
+        (x - 25.0).abs() < 1e-9 && (y - 120.0).abs() < 1e-9,
+        "{x},{y}"
+    );
 }
 
 #[test]
 fn a_pointer_can_be_anchored_to_what_it_is_over() {
     // Measure 40, three quarters through (beat 4 of 4), a little above
     // the staff — the same wherever each person's chart has scrolled to.
-    let p = Pointer::Anchor { panel: "chart".into(), key: "39".into(), u: 0.75, v: -0.2 };
+    let p = Pointer::Anchor {
+        panel: "chart".into(),
+        key: "39".into(),
+        u: 0.75,
+        v: -0.2,
+    };
     assert_eq!(Pointer::decode(&p.encode(1.0)), Some((p, 1.0)));
 }
 
@@ -197,7 +287,12 @@ fn a_pointer_moving_where_this_view_cannot_show_is_gone_not_left_behind() {
         Pointer::Anchor { key, u, v, .. } if key == "3" => Some((u * 100.0, v * 40.0)),
         _ => None,
     };
-    let anchor = |key: &str| Pointer::Anchor { panel: "chart".into(), key: key.into(), u: 0.5, v: 0.5 };
+    let anchor = |key: &str| Pointer::Anchor {
+        panel: "chart".into(),
+        key: key.into(),
+        u: 0.5,
+        v: 0.5,
+    };
     let mut trail = PointerTrail::default();
     trail.push(anchor("3"), 0.0, 0.0);
     trail.push(anchor("40"), 100.0, 100.0);
@@ -207,5 +302,8 @@ fn a_pointer_moving_where_this_view_cannot_show_is_gone_not_left_behind() {
     assert_eq!(trail.screen_at(500.0 + INTERPOLATION_DELAY_MS, place), None);
     // And back on page 1, it is drawn again.
     trail.push(anchor("3"), 200.0, 200.0);
-    assert_eq!(trail.screen_at(900.0 + INTERPOLATION_DELAY_MS, place), Some((50.0, 20.0)));
+    assert_eq!(
+        trail.screen_at(900.0 + INTERPOLATION_DELAY_MS, place),
+        Some((50.0, 20.0))
+    );
 }

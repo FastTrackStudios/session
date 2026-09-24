@@ -272,7 +272,12 @@ pub struct Arranged {
 
 impl<D: Tracks + Routing + Items> DawTarget<D> {
     fn has_items(&self, guid: &str) -> bool {
-        !Items::get_items(&self.daw, self.project.clone(), TrackRef::Guid(guid.to_owned())).is_empty()
+        !Items::get_items(
+            &self.daw,
+            self.project.clone(),
+            TrackRef::Guid(guid.to_owned()),
+        )
+        .is_empty()
     }
 
     /// Put every content track into the group folder the template's
@@ -308,8 +313,15 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         // 1. Unwrap: a folder with no media that is not a bus or a group
         //    only held a multitrack together. Its children stay.
         for track in &all {
-            if track.folder_depth > 0 && !is_known_folder(&track.name) && !self.has_items(&track.guid) {
-                Tracks::remove(&self.daw, project.clone(), TrackRef::Guid(track.guid.clone()))?;
+            if track.folder_depth > 0
+                && !is_known_folder(&track.name)
+                && !self.has_items(&track.guid)
+            {
+                Tracks::remove(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(track.guid.clone()),
+                )?;
                 arranged.unwrapped.push(track.name.clone());
             }
         }
@@ -353,14 +365,17 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             .map_err(|e| eyre::eyre!("grouping: {e}"))?;
 
         // 3. The desired layout: (guid, depth change) in order.
-        let mut unused: Vec<(String, String)> =
-            content.iter().map(|t| (t.name.clone(), t.guid.clone())).collect();
+        let mut unused: Vec<(String, String)> = content
+            .iter()
+            .map(|t| (t.name.clone(), t.guid.clone()))
+            .collect();
         let mut claim = |name: &str| -> Option<String> {
             let at = unused.iter().position(|(n, _)| n == name)?;
             Some(unused.remove(at).1)
         };
         let mut layout: Vec<(String, i32)> = Vec::new();
-        let mut folders_in_use: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut folders_in_use: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for node in &hierarchy.tracks {
             let depth = node.folder_depth_change.to_raw_value();
             if node.is_folder || node.items.is_empty() {
@@ -394,7 +409,8 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         }
 
         // 4. Everything else keeps its order and depth, after the groups.
-        let placed: std::collections::HashSet<&str> = layout.iter().map(|(g, _)| g.as_str()).collect();
+        let placed: std::collections::HashSet<&str> =
+            layout.iter().map(|(g, _)| g.as_str()).collect();
         let rest: Vec<(String, i32)> = Tracks::all(&self.daw, project.clone())
             .into_iter()
             .filter(|t| !placed.contains(t.guid.as_str()))
@@ -417,8 +433,14 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 continue;
             }
             Tracks::clear_selection(&self.daw, project.clone())?;
-            Tracks::set_selected(&self.daw, project.clone(), TrackRef::Guid(guid.clone()), true)?;
-            Tracks::reorder_selected(&self.daw, 
+            Tracks::set_selected(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(guid.clone()),
+                true,
+            )?;
+            Tracks::reorder_selected(
+                &self.daw,
                 project.clone(),
                 u32::try_from(i).unwrap_or(u32::MAX),
                 ReorderTracksBehavior::Normal,
@@ -428,7 +450,12 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         // The order is right; now say exactly where every folder opens
         // and closes, whatever the moves did to it on the way.
         for (guid, depth) in layout {
-            Tracks::set_folder_depth(&self.daw, project.clone(), TrackRef::Guid(guid.clone()), *depth)?;
+            Tracks::set_folder_depth(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(guid.clone()),
+                *depth,
+            )?;
         }
         Ok(())
     }

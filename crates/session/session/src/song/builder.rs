@@ -1101,7 +1101,11 @@ impl SongBuilder {
         Ok(snapped)
     }
 
-    fn snap_to_next_barline_native<D: SongDaw>(daw: &D, project: ProjectContext, seconds: f64) -> f64 {
+    fn snap_to_next_barline_native<D: SongDaw>(
+        daw: &D,
+        project: ProjectContext,
+        seconds: f64,
+    ) -> f64 {
         let (measure, beat, fraction) = daw.time_to_musical(project.clone(), seconds);
         if beat <= 1 && fraction < 0.001 {
             return seconds;

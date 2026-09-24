@@ -8,7 +8,7 @@
 //! played by the guide instrument, and are what is heard.
 
 use daw::service::{ItemRef, Items, ProjectContext, Takes, TrackRef, Tracks};
-use dynamic_template::apply::{organize, DawTarget};
+use dynamic_template::apply::{DawTarget, organize};
 use session::guide::{Guide, GuideScope};
 use session::keyflow::from_chart::build_from_chart;
 use session::song::SongBuilder;
@@ -68,7 +68,9 @@ static ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn a_multitrack_is_organized_built_and_guided() {
-    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _engine = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("song.rpp");
     std::fs::write(&file, RPP).expect("write");
@@ -93,7 +95,13 @@ fn a_multitrack_is_organized_built_and_guided() {
     let tracks = Tracks::all(&daw, project.clone());
     if std::env::var_os("FTS_SHOW_TRACKS").is_some() {
         for t in &tracks {
-            eprintln!("{:>2} {:>2} {} {}", t.index, t.folder_depth, if t.muted { "M" } else { " " }, t.name);
+            eprintln!(
+                "{:>2} {:>2} {} {}",
+                t.index,
+                t.folder_depth,
+                if t.muted { "M" } else { " " },
+                t.name
+            );
         }
     }
     let has_audio = |guid: &str| {
@@ -104,9 +112,8 @@ fn a_multitrack_is_organized_built_and_guided() {
                     .is_some_and(|t| !t.is_midi)
             })
     };
-    let item_count = |guid: &str| {
-        Items::get_items(&daw, project.clone(), TrackRef::Guid(guid.into())).len()
-    };
+    let item_count =
+        |guid: &str| Items::get_items(&daw, project.clone(), TrackRef::Guid(guid.into())).len();
 
     // Where each track sits: the running folder depth before it.
     let mut depth = 0i32;
@@ -138,13 +145,21 @@ fn a_multitrack_is_organized_built_and_guided() {
             .iter()
             .find(|t| t.name == role && t.folder_depth <= 0 && !has_audio(&t.guid))
             .unwrap_or_else(|| panic!("a generated {role} track"));
-        assert!(item_count(&generated.guid) > 0, "the generated {role} has MIDI in it");
+        assert!(
+            item_count(&generated.guid) > 0,
+            "the generated {role} has MIDI in it"
+        );
         assert!(!generated.muted, "the generated {role} plays");
         let chain = daw::service::FxChainContext::Track(generated.guid.clone());
         assert!(
             daw::service::Effects::list(&daw, project.clone(), chain)
                 .iter()
-                .any(|f| f.name == format!("{}:{}", session_daw::guide_instrument::IDENT, role.to_lowercase())),
+                .any(|f| f.name
+                    == format!(
+                        "{}:{}",
+                        session_daw::guide_instrument::IDENT,
+                        role.to_lowercase()
+                    )),
             "the generated {role} is played by the guide instrument"
         );
     }
@@ -155,19 +170,23 @@ fn a_multitrack_is_organized_built_and_guided() {
             .iter()
             .find(|t| t.name == role && t.folder_depth <= 0 && !has_audio(&t.guid))
             .expect("generated");
-        let notes: Vec<_> = Items::get_items(&daw, project.clone(), TrackRef::Guid(generated.guid.clone()))
-            .iter()
-            .flat_map(|item| {
-                daw::service::Midi::notes(
-                    &daw,
-                    daw::service::MidiTakeLocation::new(
-                        project.clone(),
-                        ItemRef::Guid(item.guid.clone()),
-                        daw::service::TakeRef::Active,
-                    ),
-                )
-            })
-            .collect();
+        let notes: Vec<_> = Items::get_items(
+            &daw,
+            project.clone(),
+            TrackRef::Guid(generated.guid.clone()),
+        )
+        .iter()
+        .flat_map(|item| {
+            daw::service::Midi::notes(
+                &daw,
+                daw::service::MidiTakeLocation::new(
+                    project.clone(),
+                    ItemRef::Guid(item.guid.clone()),
+                    daw::service::TakeRef::Active,
+                ),
+            )
+        })
+        .collect();
         assert!(!notes.is_empty());
         for n in &notes {
             assert!(
@@ -178,13 +197,23 @@ fn a_multitrack_is_organized_built_and_guided() {
         }
         for pair in notes.windows(2) {
             if let [a, b] = pair {
-                assert!(a.start_ppq + a.length_ppq < b.start_ppq, "{role} notes touch: {a:?} {b:?}");
+                assert!(
+                    a.start_ppq + a.length_ppq < b.start_ppq,
+                    "{role} notes touch: {a:?} {b:?}"
+                );
             }
         }
     }
     assert_eq!(
         inside_click_guide,
-        ["Click", "Shaker", "Count", "Guide", "Click Audio", "Guide Audio"],
+        [
+            "Click",
+            "Shaker",
+            "Count",
+            "Guide",
+            "Click Audio",
+            "Guide Audio"
+        ],
         "the Guide folder, in order, and it closes after them"
     );
     let total: i32 = tracks.iter().map(|t| t.folder_depth).sum();
@@ -217,7 +246,9 @@ fn a_multitrack_is_organized_built_and_guided() {
 /// at: `FTS_CHART_PROJECT=song.rpp FTS_CHART=song.kf`.
 #[test]
 fn a_real_session_prepared_when_one_is_given() {
-    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _engine = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (Some(project_file), Some(chart)) = (
         std::env::var_os("FTS_CHART_PROJECT"),
         std::env::var_os("FTS_CHART"),
@@ -280,8 +311,13 @@ fn a_real_session_prepared_when_one_is_given() {
 /// the audio: "Intro, 2, 3, 4". Mute the Guide track and the "1" is back.
 #[test]
 fn a_cue_takes_the_counts_one_unless_the_guide_is_muted() {
-    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !session_daw::guide_instrument::samples_dir().join("Guide").is_dir() {
+    let _engine = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !session_daw::guide_instrument::samples_dir()
+        .join("Guide")
+        .is_dir()
+    {
         return; // cues are silent without the library
     }
     let dir = tempfile::tempdir().expect("tempdir");
@@ -305,20 +341,37 @@ fn a_cue_takes_the_counts_one_unless_the_guide_is_muted() {
     let role = |name: &str| {
         Tracks::all(&daw, project.clone())
             .into_iter()
-            .find(|t| t.name == name && t.folder_depth <= 0 && Items::get_items(&daw, project.clone(), TrackRef::Guid(t.guid.clone())).iter().all(|i| Takes::get_active_take(&daw, project.clone(), ItemRef::Guid(i.guid.clone())).is_some_and(|t| t.is_midi)))
+            .find(|t| {
+                t.name == name
+                    && t.folder_depth <= 0
+                    && Items::get_items(&daw, project.clone(), TrackRef::Guid(t.guid.clone()))
+                        .iter()
+                        .all(|i| {
+                            Takes::get_active_take(
+                                &daw,
+                                project.clone(),
+                                ItemRef::Guid(i.guid.clone()),
+                            )
+                            .is_some_and(|t| t.is_midi)
+                        })
+            })
             .map(|t| t.guid)
             .unwrap_or_else(|| panic!("generated {name}"))
     };
     let (click, count, guide) = (role("Click"), role("Count"), role("Guide"));
     let mute = |guid: &str, on: bool| {
-        Tracks::set_muted(&daw, project.clone(), TrackRef::Guid(guid.to_owned()), on).expect("mute");
+        Tracks::set_muted(&daw, project.clone(), TrackRef::Guid(guid.to_owned()), on)
+            .expect("mute");
     };
     // Only the count and the cues: everything with audio off.
     mute(&click, true);
     for t in Tracks::all(&daw, project.clone()) {
         let audio = Items::get_items(&daw, project.clone(), TrackRef::Guid(t.guid.clone()))
             .iter()
-            .any(|i| Takes::get_active_take(&daw, project.clone(), ItemRef::Guid(i.guid.clone())).is_some_and(|t| !t.is_midi));
+            .any(|i| {
+                Takes::get_active_take(&daw, project.clone(), ItemRef::Guid(i.guid.clone()))
+                    .is_some_and(|t| !t.is_midi)
+            });
         if audio {
             mute(&t.guid, true);
         }
@@ -330,7 +383,11 @@ fn a_cue_takes_the_counts_one_unless_the_guide_is_muted() {
     let beat_at = |seconds: f64| (seconds * f64::from(RATE)) as u64;
     let (from, to) = (beat_at(8.0 / 3.0), beat_at(8.0 / 3.0 + 60.0 / 90.0));
     let render = || {
-        let renderer = daw::standalone::audio_engine::render::ProjectRenderer::new(&daw, &opened.project_guid, RATE);
+        let renderer = daw::standalone::audio_engine::render::ProjectRenderer::new(
+            &daw,
+            &opened.project_guid,
+            RATE,
+        );
         // Exactly the frames [from, to), interleaved stereo.
         let mut out = Vec::new();
         let mut at = 0u64;
@@ -355,8 +412,17 @@ fn a_cue_takes_the_counts_one_unless_the_guide_is_muted() {
     let count_only = render();
 
     let loud = |x: &[f32]| x.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-    let diff = both.iter().zip(&cue_only).fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+    let diff = both
+        .iter()
+        .zip(&cue_only)
+        .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
     assert!(loud(&cue_only) > 0.01, "the Intro cue sounds");
-    assert!(diff < 1e-4, "with both playing it is the cue alone — the count's 1 gave way (diff {diff})");
-    assert!(loud(&count_only) > 0.01, "with the Guide muted, the count's 1 is back");
+    assert!(
+        diff < 1e-4,
+        "with both playing it is the cue alone — the count's 1 gave way (diff {diff})"
+    );
+    assert!(
+        loud(&count_only) > 0.01,
+        "with the Guide muted, the count's 1 is back"
+    );
 }

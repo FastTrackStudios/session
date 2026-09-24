@@ -34,8 +34,14 @@ impl Prepare {
     /// [`Self::for_song`] for a song in `folder`.
     #[must_use]
     pub fn for_song_in(folder: &dyn crate::folder::Folder, path: &std::path::Path) -> Self {
-        let chart = path.parent().and_then(|dir| folder.only_with_extension(dir, "kf"));
-        Self { organize: true, chart, guide: true }
+        let chart = path
+            .parent()
+            .and_then(|dir| folder.only_with_extension(dir, "kf"));
+        Self {
+            organize: true,
+            chart,
+            guide: true,
+        }
     }
 
     /// From `FTS_BLITZ_ORGANIZE=1`, `FTS_BLITZ_CHART=<file.kf>` and
@@ -72,7 +78,11 @@ impl Prepare {
     /// # Errors
     ///
     /// The step that failed, and why.
-    pub fn run_in(&self, folder: &dyn crate::folder::Folder, opened: &crate::open::Opened) -> eyre::Result<()> {
+    pub fn run_in(
+        &self,
+        folder: &dyn crate::folder::Folder,
+        opened: &crate::open::Opened,
+    ) -> eyre::Result<()> {
         // This window's runtime when it has one; otherwise whatever
         // runtime the caller runs on (`session-desktop --engine`).
         #[cfg(feature = "native")]
@@ -95,7 +105,9 @@ impl Prepare {
         // The song's synced lyrics, when a `.lrc` sits beside its chart:
         // onto the LINES track, from where the song starts.
         if let (Some(path), Some(text)) = (&self.chart, chart.as_deref())
-            && let Some(lrc) = path.parent().and_then(|dir| folder.only_with_extension(dir, "lrc"))
+            && let Some(lrc) = path
+                .parent()
+                .and_then(|dir| folder.only_with_extension(dir, "lrc"))
         {
             let lyrics = folder
                 .read_to_string(&lrc)
@@ -130,7 +142,8 @@ pub fn stamp_lyrics(
     let layout = session::setlist::chart_import::chart_to_layout(chart)
         .map_err(|e| eyre::eyre!("chart: {e:?}"))?;
     let text = lrc;
-    let mut lyrics = session::lyrics::Lyrics::from_lrc(text, layout.song_start_seconds, layout.song_end_seconds);
+    let mut lyrics =
+        session::lyrics::Lyrics::from_lrc(text, layout.song_start_seconds, layout.song_end_seconds);
     let project = ProjectContext::Project(project_guid.to_owned());
     // Pinned to the song where the `.lrc` says (see `lyrics::Anchor`): its
     // section's downbeat, from the regions the chart just laid out, and
@@ -144,8 +157,15 @@ pub fn stamp_lyrics(
             .map(|r| r.time_range.start_seconds())
             .reduce(f64::min);
         let placed = downbeat.is_some_and(|downbeat| {
-            let at = anchor.beats.mul_add(60.0 / layout.tempo_bpm.max(1.0), downbeat);
-            lyrics.align(&anchor.line, at, anchor.drop_before, layout.song_end_seconds)
+            let at = anchor
+                .beats
+                .mul_add(60.0 / layout.tempo_bpm.max(1.0), downbeat);
+            lyrics.align(
+                &anchor.line,
+                at,
+                anchor.drop_before,
+                layout.song_end_seconds,
+            )
         });
         if !placed {
             tracing::warn!(

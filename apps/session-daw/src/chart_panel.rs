@@ -150,10 +150,15 @@ impl crate::ghosts::Anchor for ChartAnchor {
         // run past 0..1 and keep the offset.
         let distance = |b: &keyflow::engraver::renderer::view::MeasureBox| {
             let dx = (b.x0 - px).max(px - b.x1).max(0.0);
-            let dy = (b.staff_y - py).max(py - (b.staff_y + b.staff_height)).max(0.0);
+            let dy = (b.staff_y - py)
+                .max(py - (b.staff_y + b.staff_height))
+                .max(0.0);
             dx.hypot(dy)
         };
-        let hit = live.boxes.iter().min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
+        let hit = live
+            .boxes
+            .iter()
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
         Some((
             hit.measure.to_string(),
             (px - hit.x0) / (hit.x1 - hit.x0).max(f64::EPSILON),
@@ -166,7 +171,10 @@ impl crate::ghosts::Anchor for ChartAnchor {
         let (k, scroll) = self.view()?;
         let live = self.live.borrow();
         let b = live.boxes.iter().find(|b| b.measure == measure)?;
-        let (px, py) = (u.mul_add(b.x1 - b.x0, b.x0), v.mul_add(b.staff_height, b.staff_y));
+        let (px, py) = (
+            u.mul_add(b.x1 - b.x0, b.x0),
+            v.mul_add(b.staff_height, b.staff_y),
+        );
         Some(((px - scroll.0) * k, (py - scroll.1) * k))
     }
 }
@@ -199,7 +207,14 @@ impl ChartWidget {
 
         let mut out = Scene::new();
         let content_pt = self.view.paint(
-            &mut out, &self.chart, self.key, w, scale, zoom, scroll_pt, chart_secs,
+            &mut out,
+            &self.chart,
+            self.key,
+            w,
+            scale,
+            zoom,
+            scroll_pt,
+            chart_secs,
         );
         let mut live = self.live.borrow_mut();
         live.content_pt = content_pt;
@@ -250,7 +265,9 @@ impl ChartWidget {
         let across = self
             .view
             .page(self.page + 1)
-            .map_or(page_w, |(next_x, ..)| (next_x - x) + page_w * NEXT_PAGE_PEEK);
+            .map_or(page_w, |(next_x, ..)| {
+                (next_x - x) + page_w * NEXT_PAGE_PEEK
+            });
         let zoom = (w / (across * per_pt)).min(h / (page_h * per_pt));
         let mut live = self.live.borrow_mut();
         live.zoom = zoom;
@@ -297,7 +314,12 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
     // The Overview's chart (the paged one) is the `chart` pane others'
     // pointers are placed in.
     if paged {
-        crate::ghosts::register_anchor("chart", Rc::new(ChartAnchor { live: Rc::clone(&live) }));
+        crate::ghosts::register_anchor(
+            "chart",
+            Rc::new(ChartAnchor {
+                live: Rc::clone(&live),
+            }),
+        );
     }
     let widget = ChartWidget {
         chart,
@@ -380,7 +402,10 @@ pub fn WebChart(
         let (ctrl, drag) = input.get();
         match event {
             PanelEvent::Modifiers(mods) => input.set((mods.ctrl, drag)),
-            PanelEvent::Button { button: Button::Middle, pressed } => {
+            PanelEvent::Button {
+                button: Button::Middle,
+                pressed,
+            } => {
                 input.set((ctrl, pressed.then_some((f64::NAN, f64::NAN))));
             }
             PanelEvent::Pointer { x, y } => {
@@ -468,7 +493,12 @@ pub fn Chart(
             winit::event::WindowEvent::ModifiersChanged(state) => {
                 ctrl.set(state.state().control_key());
             }
-            winit::event::WindowEvent::PointerButton { state, button, position, .. } => {
+            winit::event::WindowEvent::PointerButton {
+                state,
+                button,
+                position,
+                ..
+            } => {
                 let which = match button {
                     winit::event::ButtonSource::Mouse(button) => *button,
                     _ => winit::event::MouseButton::Left,
@@ -516,7 +546,8 @@ pub fn Chart(
                     measured.set(Some(web_time::Instant::now()));
                     spawn(async move {
                         if let Ok(got) = node.get_client_rect().await {
-                            let next = (got.origin.x, got.origin.y, got.size.width, got.size.height);
+                            let next =
+                                (got.origin.x, got.origin.y, got.size.width, got.size.height);
                             if next != *rect.peek() {
                                 rect.set(next);
                             }
@@ -582,14 +613,23 @@ fn live_since(seen: u64) -> Option<(std::sync::Arc<keyflow::Chart>, Option<f64>,
     let current: Option<String> = None;
     let slot = LIVE.lock().ok()?;
     let live = slot.as_ref()?;
-    (live.number > seen && current.as_deref() == Some(live.project.as_str()))
-        .then(|| (std::sync::Arc::clone(&live.chart), live.songstart, live.number))
+    (live.number > seen && current.as_deref() == Some(live.project.as_str())).then(|| {
+        (
+            std::sync::Arc::clone(&live.chart),
+            live.songstart,
+            live.number,
+        )
+    })
 }
 
 /// Where the MARKS lane's SONGSTART marker sits, in project seconds — the
 /// chart's own time zero. `None` when the session has no such marker.
 fn songstart_secs(project: &daw_ui::studio::project::Project) -> Option<f64> {
-    project.markers.iter().find(|m| m.name == "SONGSTART").map(|m| m.at)
+    project
+        .markers
+        .iter()
+        .find(|m| m.name == "SONGSTART")
+        .map(|m| m.at)
 }
 
 #[cfg(test)]
@@ -607,7 +647,11 @@ mod tests {
         let mut view = ChartView::new().expect("the fonts load");
         let mut scene = anyrender::Scene::new();
         view.paint(&mut scene, &chart, 1, 800.0, 1.0, 1.0, (0.0, 0.0), None);
-        assert!(view.pages() > 1, "{} page(s): not long enough", view.pages());
+        assert!(
+            view.pages() > 1,
+            "{} page(s): not long enough",
+            view.pages()
+        );
 
         assert_eq!(view.page_number_at_time(0.5), Some(1));
         let last = view

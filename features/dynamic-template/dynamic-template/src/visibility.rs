@@ -95,9 +95,21 @@ mod tests {
 
     #[test]
     fn tracks_fall_into_their_groups() {
-        let names = ["Kick", "Snare", "Bass", "Piano"].map(str::to_owned).to_vec();
+        let names = ["Kick", "Snare", "Bass", "Piano"]
+            .map(str::to_owned)
+            .to_vec();
         let groups = groups(names).expect("the sort runs");
-        assert!(groups.get("drums").is_some_and(|d| d.contains(&"Kick".to_owned())), "{groups:?}");
-        assert!(groups.get("bass").is_some_and(|b| b.contains(&"Bass".to_owned())), "{groups:?}");
+        assert!(
+            groups
+                .get("drums")
+                .is_some_and(|d| d.contains(&"Kick".to_owned())),
+            "{groups:?}"
+        );
+        assert!(
+            groups
+                .get("bass")
+                .is_some_and(|b| b.contains(&"Bass".to_owned())),
+            "{groups:?}"
+        );
     }
 }

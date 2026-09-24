@@ -37,7 +37,12 @@ impl Bridge {
         let mut shown = engine::read(&project, &media).await?;
         shown.chart = chart;
         doc.write(&shown, ORIGIN_LOCAL)?;
-        Ok(Self { doc, project, media, shown })
+        Ok(Self {
+            doc,
+            project,
+            media,
+            shown,
+        })
     }
 
     /// Join a session: `doc` already holds the host's state (imported
@@ -48,7 +53,12 @@ impl Bridge {
     /// When the engine cannot be read or an engine call fails.
     pub async fn join(project: Project, media: MediaRoot, doc: SessionDoc) -> eyre::Result<Self> {
         let current = engine::read(&project, &media).await?;
-        let mut bridge = Self { doc, project, media, shown: current };
+        let mut bridge = Self {
+            doc,
+            project,
+            media,
+            shown: current,
+        };
         bridge.remote_changed().await?;
         Ok(bridge)
     }

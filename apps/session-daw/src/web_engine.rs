@@ -57,7 +57,11 @@ pub enum WebSource {
     /// its proxies streamed by range, what will be heard first first.
     Shared { link: String },
     /// A copy bundled with the page: its project and chart by URL; silent.
-    Bundled { name: String, rpp_url: String, chart_url: Option<String> },
+    Bundled {
+        name: String,
+        rpp_url: String,
+        chart_url: Option<String>,
+    },
     /// A live share link to a set Task keeps (`live-proto`): the page joins
     /// it — its first song opened from that song's files link, everyone in
     /// the set in one session with it (`collab::join_task`), by `name`.
@@ -114,7 +118,10 @@ thread_local! {
 ///
 /// No song could be fetched or opened, the facade did not come up, or a
 /// project could not be read back.
-pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(EngineRef, crate::setlist::Setlist)> {
+pub async fn open(
+    source: &WebSource,
+    guide: Option<&str>,
+) -> eyre::Result<(EngineRef, crate::setlist::Setlist)> {
     use crate::folder::Memory;
     use crate::song_stream::{Keep, ShareSource, mirror};
 
@@ -125,9 +132,13 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
         WebSource::Live { link, .. } => {
             use live_proto::LiveSessionsClient;
             let set = crate::collab::TaskSet::parse(&format!("share:{link}"));
-            let lane: LiveSessionsClient =
-                task_dial::establish_at(&set.url, None).await.map_err(|e| eyre::eyre!("dialling the set: {e}"))?;
-            let joined = lane.join(String::new()).await.map_err(|e| eyre::eyre!("joining the set: {e:?}"))?;
+            let lane: LiveSessionsClient = task_dial::establish_at(&set.url, None)
+                .await
+                .map_err(|e| eyre::eyre!("dialling the set: {e}"))?;
+            let joined = lane
+                .join(String::new())
+                .await
+                .map_err(|e| eyre::eyre!("joining the set: {e:?}"))?;
             tracing::info!(live.setlist = %joined.title, live.songs = joined.songs.len(), live.epoch = joined.epoch, "web: joined a live set");
             restart_on_next_epoch(&set.url, joined.setlist.clone(), joined.epoch);
             let links = joined
@@ -135,22 +146,40 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
                 .iter()
                 .filter_map(|s| Some((Some(s.title.clone()), s.files.clone()?)))
                 .collect();
-            live = Some(crate::collab::TaskSet { setlist: joined.setlist, ..set });
+            live = Some(crate::collab::TaskSet {
+                setlist: joined.setlist,
+                ..set
+            });
             links
         }
         WebSource::Shared { link } => vec![(None, link.clone())],
         WebSource::Bundled { .. } => Vec::new(),
     };
     let fetched: Vec<Fetched> = match source {
-        WebSource::Bundled { name, rpp_url, chart_url } => {
+        WebSource::Bundled {
+            name,
+            rpp_url,
+            chart_url,
+        } => {
             let memory = Memory::new();
             let dir = std::path::Path::new("/bundled");
             let rpp = dir.join(format!("{name}.RPP"));
-            memory.insert(&rpp, fetch_bytes(rpp_url).await.map_err(|e| eyre::eyre!(e))?);
+            memory.insert(
+                &rpp,
+                fetch_bytes(rpp_url).await.map_err(|e| eyre::eyre!(e))?,
+            );
             if let Some(url) = chart_url {
-                memory.insert(dir.join(format!("{name}.kf")), fetch_bytes(url).await.map_err(|e| eyre::eyre!(e))?);
+                memory.insert(
+                    dir.join(format!("{name}.kf")),
+                    fetch_bytes(url).await.map_err(|e| eyre::eyre!(e))?,
+                );
             }
-            vec![Fetched { title: None, folder: Arc::new(memory), path: rpp, streamed: None }]
+            vec![Fetched {
+                title: None,
+                folder: Arc::new(memory),
+                path: rpp,
+                streamed: None,
+            }]
         }
         _ => {
             // Every song's files together: the projects are small, and the
@@ -174,7 +203,11 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
                     }
                 }
             });
-            futures_util::future::join_all(mirrors).await.into_iter().flatten().collect()
+            futures_util::future::join_all(mirrors)
+                .await
+                .into_iter()
+                .flatten()
+                .collect()
         }
     };
 
@@ -202,7 +235,8 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
             crate::open_core::Media::Deferred,
         )
         .and_then(|(opened, plan)| {
-            let rpp_text = crate::open_core::project_text_in(song.folder.as_ref(), &plan.open)?.text;
+            let rpp_text =
+                crate::open_core::project_text_in(song.folder.as_ref(), &plan.open)?.text;
             Ok((opened, plan, rpp_text))
         });
         let (opened, plan, rpp_text) = match opened {
@@ -212,7 +246,10 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
                 continue;
             }
         };
-        let chart_text = prepare.chart.as_ref().and_then(|p| song.folder.read_to_string(p).ok());
+        let chart_text = prepare
+            .chart
+            .as_ref()
+            .and_then(|p| song.folder.read_to_string(p).ok());
         // The chart a live set's doc for this song is seeded with.
         if let Some(chart) = &chart_text {
             crate::collab::remember_chart(&plan.open, chart);
@@ -225,7 +262,10 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
             streamed: song.streamed,
         });
     }
-    let first = loaded.first().map(|s| s.project.clone()).ok_or_else(|| eyre::eyre!("none of the songs opened"))?;
+    let first = loaded
+        .first()
+        .map(|s| s.project.clone())
+        .ok_or_else(|| eyre::eyre!("none of the songs opened"))?;
 
     let bundle = daw_standalone::bootstrap::build_in_process_daw(standalone.clone())
         .await
@@ -261,7 +301,10 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
         eyre::bail!("none of the songs could be read back");
     }
     WEB.with(|web| {
-        *web.borrow_mut() = Some(Web { standalone: standalone.clone(), songs: kept });
+        *web.borrow_mut() = Some(Web {
+            standalone: standalone.clone(),
+            songs: kept,
+        });
     });
     crate::web_audio::install(standalone.clone(), &first);
     switch_song(&songs[0].project);
@@ -284,7 +327,8 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
 /// current project, which it must be.
 async fn read_back(song: &Loaded) -> eyre::Result<StudioSession> {
     // Say which step fails: `fetch` answers only yes or no.
-    let facade = daw_control::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
+    let facade =
+        daw_control::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
     let current = facade
         .current_project()
         .await
@@ -343,19 +387,24 @@ pub fn switch_song(project: &str) {
         web.standalone.set_current_project(project);
         crate::open::set_current_song(project);
         crate::web_audio::switch(project);
-        let Some(song) = web.songs.get(project) else { return };
+        let Some(song) = web.songs.get(project) else {
+            return;
+        };
         if song.started.replace(true) {
             return;
         }
-        let Some(streamed) = song.streamed.clone() else { return };
+        let Some(streamed) = song.streamed.clone() else {
+            return;
+        };
         stream_song(&web.standalone, project, &streamed);
         // The waveforms: each take's original's peaks, fetched and reduced,
         // then drawn — the audio need not have arrived.
         let previews = song.previews.clone();
-        let items: Vec<String> = daw_standalone::audio_engine::materialize::pending_media(&web.standalone, project)
-            .into_iter()
-            .map(|m| m.item_guid)
-            .collect();
+        let items: Vec<String> =
+            daw_standalone::audio_engine::materialize::pending_media(&web.standalone, project)
+                .into_iter()
+                .map(|m| m.item_guid)
+                .collect();
         wasm_bindgen_futures::spawn_local(async move {
             if streamed.load_peaks(crate::midi::WAVE_BLOCK).await > 0 {
                 previews.fill_waves(items).await;
@@ -390,7 +439,10 @@ fn restart_on_next_epoch(url: &str, setlist: String, epoch: u64) {
                 && set == setlist
                 && moved > epoch
             {
-                tracing::info!(live.epoch = moved, "web: the set starts over; opening it again");
+                tracing::info!(
+                    live.epoch = moved,
+                    "web: the set starts over; opening it again"
+                );
                 if let Some(window) = web_sys::window() {
                     let _ = window.location().reload();
                 }
@@ -404,10 +456,21 @@ fn restart_on_next_epoch(url: &str, setlist: String, epoch: u64) {
 /// way a streamed song's takes are attached natively (`stream_in`), pumped
 /// by this page's audio loop, fetched in the order they will be heard from
 /// the play cursor.
-fn stream_song(standalone: &daw_standalone::sync::Standalone, project: &str, song: &crate::song_stream::StreamedSong) {
+fn stream_song(
+    standalone: &daw_standalone::sync::Standalone,
+    project: &str,
+    song: &crate::song_stream::StreamedSong,
+) {
     let media = daw_standalone::audio_engine::materialize::pending_media(standalone, project);
-    let takes: Vec<_> = media.iter().filter_map(|m| song.attach(standalone, project, m)).collect();
-    tracing::info!(stream.media = media.len(), stream.attached = takes.len(), "audio: streaming the song's proxies");
+    let takes: Vec<_> = media
+        .iter()
+        .filter_map(|m| song.attach(standalone, project, m))
+        .collect();
+    tracing::info!(
+        stream.media = media.len(),
+        stream.attached = takes.len(),
+        "audio: streaming the song's proxies"
+    );
     let takes = Arc::new(std::sync::Mutex::new(takes));
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     song.fetch(

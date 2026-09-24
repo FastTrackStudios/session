@@ -1486,16 +1486,19 @@ pub fn row_meters(
         let (Some((track, depth)), Some(live)) = (rows.get(index), map.live(tracks, index)) else {
             continue;
         };
-        let Some(level) = usize::try_from(live.index)
-            .ok()
-            .and_then(|i| levels.get(i))
-        else {
+        let Some(level) = usize::try_from(live.index).ok().and_then(|i| levels.get(i)) else {
             continue;
         };
         let Some((top, height)) = scene.row_band(index, view) else {
             continue;
         };
-        let row = Row::new(top, height, i32::try_from(*depth).unwrap_or(0), track.is_folder, scene.tcp);
+        let row = Row::new(
+            top,
+            height,
+            i32::try_from(*depth).unwrap_or(0),
+            track.is_folder,
+            scene.tcp,
+        );
         let Some(field) = row.rect(Control::Name) else {
             continue;
         };

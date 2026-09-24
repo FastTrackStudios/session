@@ -19,8 +19,8 @@ use std::str::FromStr as _;
 
 use anyrender::PaintScene as _;
 use blitz_traits::events::{
-    BlitzKeyEvent, BlitzPointerEvent, BlitzPointerId, Code, Key, KeyState, Location,
-    Modifiers, MouseEventButton, MouseEventButtons, PointerCoords, PointerDetails, UiEvent,
+    BlitzKeyEvent, BlitzPointerEvent, BlitzPointerId, Code, Key, KeyState, Location, Modifiers,
+    MouseEventButton, MouseEventButtons, PointerCoords, PointerDetails, UiEvent,
 };
 use dioxus::prelude::*;
 use vello::kurbo::Affine;
@@ -102,8 +102,14 @@ impl Gpu {
     }
 
     fn scene_at(width: u32, height: u32) -> vello_hybrid::Scene {
-        #[expect(clippy::cast_possible_truncation, reason = "a canvas is well under 65k px")]
-        let (w, h) = (width.min(u32::from(u16::MAX)) as u16, height.min(u32::from(u16::MAX)) as u16);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a canvas is well under 65k px"
+        )]
+        let (w, h) = (
+            width.min(u32::from(u16::MAX)) as u16,
+            height.min(u32::from(u16::MAX)) as u16,
+        );
         vello_hybrid::Scene::new_with(w, h, vello_hybrid::RenderSettings::default())
     }
 
@@ -122,14 +128,18 @@ impl Gpu {
                 &mut self.resources,
                 &mut self.images,
             );
-            let mut painter = anyrender_vello_hybrid::WebGlScenePainter::new(&mut self.scene, images);
+            let mut painter =
+                anyrender_vello_hybrid::WebGlScenePainter::new(&mut self.scene, images);
             painter.append_scene(scene, Affine::scale(dpr));
         }
         let size = vello_hybrid::RenderSize {
             width: self.size.0,
             height: self.size.1,
         };
-        if let Err(e) = self.renderer.render(&self.scene, &mut self.resources, &size) {
+        if let Err(e) = self
+            .renderer
+            .render(&self.scene, &mut self.resources, &size)
+        {
             tracing::error!(error = ?e, "canvas render failed");
         }
         self.scene.reset();
@@ -359,11 +369,17 @@ fn start_painting(
             again.borrow_mut().take();
             return;
         }
-        let Some(window) = web_sys::window() else { return };
+        let Some(window) = web_sys::window() else {
+            return;
+        };
         let dpr = window.device_pixel_ratio().max(1.0);
         let rect = canvas.get_bounding_client_rect();
         let (css_w, css_h) = (rect.width().max(1.0), rect.height().max(1.0));
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a canvas size")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a canvas size"
+        )]
         let (px_w, px_h) = ((css_w * dpr).round() as u32, (css_h * dpr).round() as u32);
         if canvas.width() != px_w || canvas.height() != px_h {
             canvas.set_width(px_w);
@@ -379,7 +395,11 @@ fn start_painting(
             }
             return;
         }
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a canvas size")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a canvas size"
+        )]
         let scene = widget.0.borrow_mut().paint(css_w as u32, css_h as u32, 1.0);
         let mut gpu = gpu.borrow_mut();
         let gpu = gpu.get_or_insert_with(|| Gpu::new(&canvas, px_w, px_h));

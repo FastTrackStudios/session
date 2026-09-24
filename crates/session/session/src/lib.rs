@@ -53,10 +53,10 @@ pub mod strip_width;
 #[cfg(all(not(target_arch = "wasm32"), feature = "reaper"))]
 pub mod color;
 pub mod guide;
-pub mod load_selection;
 pub mod key;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod key_actions;
+pub mod load_selection;
 // NOT gated, deliberately: `chart_import`, `setlist::service::demo` and
 // `task-player-ui` (the browser setlist engine) all reach into
 // `keyflow::actions`. Adding gated modules directly above this line once
@@ -440,8 +440,8 @@ pub mod host {
             + daw::service::TempoMap
             + daw::service::Tracks
             + daw::service::Items
-        + daw::service::Takes
-        + daw::service::Effects
+            + daw::service::Takes
+            + daw::service::Effects
             + daw::service::Midi
             + daw::service::PositionConversion
             + daw::service::UiDialogs

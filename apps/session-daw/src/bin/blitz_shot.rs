@@ -201,7 +201,10 @@ fn main() {
         std::process::exit(1);
     };
     image.save(&out).expect("write the picture");
-    println!("wrote {out} — {width}x{height}, scroll ({}, {})", scroll.0, scroll.1);
+    println!(
+        "wrote {out} — {width}x{height}, scroll ({}, {})",
+        scroll.0, scroll.1
+    );
 }
 
 /// Open the project the way the app does and read it back as the panels
@@ -267,9 +270,9 @@ fn open(path: &std::path::Path, audio: bool) -> StudioSession {
 fn tick(document: &mut DioxusDocument, panel: &ArrangementPanel) {
     // No transport in a headless shot: nothing is playing, so the
     // playhead is at the start.
-    document
-        .vdom
-        .in_scope(ScopeId::ROOT, || panel.handle(PanelEvent::Frame { play_at: 0.0 }));
+    document.vdom.in_scope(ScopeId::ROOT, || {
+        panel.handle(PanelEvent::Frame { play_at: 0.0 })
+    });
     document.poll(None);
     document.inner_mut().resolve(0.0);
 }
@@ -469,7 +472,8 @@ fn log_frame(
         // Split at the hand-off to the GPU. A window that draws too much
         // and one that draws little and waits on the compositor are the
         // same frame time and want opposite fixes. See #119.
-        let encode = ms(blitz_traits::LAST_ENCODE_MICROS.load(std::sync::atomic::Ordering::Relaxed));
+        let encode =
+            ms(blitz_traits::LAST_ENCODE_MICROS.load(std::sync::atomic::Ordering::Relaxed));
         let present =
             ms(blitz_traits::LAST_PRESENT_MICROS.load(std::sync::atomic::Ordering::Relaxed));
         tracing::info!(
@@ -684,9 +688,9 @@ fn pan(
             )]
             let t = frame as f64 / frames as f64;
             drive(document, panel, gesture, t);
-            document
-                .vdom
-                .in_scope(ScopeId::ROOT, || panel.handle(PanelEvent::Frame { play_at: 0.0 }));
+            document.vdom.in_scope(ScopeId::ROOT, || {
+                panel.handle(PanelEvent::Frame { play_at: 0.0 })
+            });
             let at = Instant::now();
             document.poll(None);
             diff.push_ms(at.elapsed().as_secs_f64() * 1000.0);

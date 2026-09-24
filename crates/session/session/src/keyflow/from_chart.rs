@@ -24,7 +24,9 @@ use daw::service::{
 };
 
 use crate::setlist::chart_import::{ChartLayout, chart_to_layout};
-use crate::setlist::service::demo::{chart_layout_to_demo_song, stamp_song_with_default_tempo_native};
+use crate::setlist::service::demo::{
+    chart_layout_to_demo_song, stamp_song_with_default_tempo_native,
+};
 
 /// What [`build_from_chart`] put into the project.
 #[derive(Debug, Clone)]
@@ -40,7 +42,15 @@ pub struct ChartBuilt {
 
 /// The backend surface [`build_from_chart`] needs.
 pub trait ChartDaw:
-    Projects + TransportService + Markers + Regions + TempoMap + Tracks + Items + Midi + PositionConversion
+    Projects
+    + TransportService
+    + Markers
+    + Regions
+    + TempoMap
+    + Tracks
+    + Items
+    + Midi
+    + PositionConversion
 {
 }
 impl<T> ChartDaw for T where
@@ -154,7 +164,10 @@ fn clear_chart_structure<D: ChartDaw>(
         if region.lane.is_some_and(|lane| owned_lanes.contains(&lane))
             && let Some(id) = region.id
         {
-            cover(region.time_range.start_seconds(), region.time_range.end_seconds());
+            cover(
+                region.time_range.start_seconds(),
+                region.time_range.end_seconds(),
+            );
             Regions::remove(daw, project.clone(), id)?;
         }
     }
@@ -258,7 +271,10 @@ fn keyflow_child<D: ChartDaw>(daw: &D, project: &ProjectContext, name: &str) -> 
     let folder = keyflow_folder(daw, project)?;
     Tracks::all(daw, project.clone())
         .into_iter()
-        .find(|t| t.parent_guid.as_deref() == Some(folder.as_str()) && t.name.trim().eq_ignore_ascii_case(name))
+        .find(|t| {
+            t.parent_guid.as_deref() == Some(folder.as_str())
+                && t.name.trim().eq_ignore_ascii_case(name)
+        })
         .map(|t| t.guid)
 }
 
@@ -273,7 +289,8 @@ fn stamp_keyflow_tracks<D: ChartDaw>(
     chart_text: &str,
     layout: &ChartLayout,
 ) -> eyre::Result<()> {
-    let chart = keyflow::text::chart::parse_chart(chart_text).map_err(|e| eyre::eyre!("chart: {e}"))?;
+    let chart =
+        keyflow::text::chart::parse_chart(chart_text).map_err(|e| eyre::eyre!("chart: {e}"))?;
     if let Some(key) = &chart.initial_key {
         crate::key::set_key_at(daw, project.clone(), 0.0, key)?;
     }

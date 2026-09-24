@@ -626,7 +626,9 @@ impl Transport {
     /// Everything the last poll read.
     #[must_use]
     pub fn reading(&self) -> Reading {
-        self.state.lock().map_or_else(|_| Reading::default(), |slot| *slot)
+        self.state
+            .lock()
+            .map_or_else(|_| Reading::default(), |slot| *slot)
     }
 }
 

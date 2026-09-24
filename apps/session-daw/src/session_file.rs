@@ -23,5 +23,10 @@ pub fn save_session(
     #[cfg(not(feature = "native"))]
     let live = None;
     let history = live.or_else(|| load_session_history(dir));
-    daw::standalone::session_file::save_session_with_history(daw, project_guid, dir, history.as_ref())
+    daw::standalone::session_file::save_session_with_history(
+        daw,
+        project_guid,
+        dir,
+        history.as_ref(),
+    )
 }

@@ -126,8 +126,8 @@ fn press(button: Button, shift: bool) {
 }
 
 fn press_local(daw: &daw::standalone::Standalone, button: Button, shift: bool) {
-    use daw::service::transport::service::Transport as _;
     use daw::service::ProjectContext;
+    use daw::service::transport::service::Transport as _;
     let project = ProjectContext::Current;
     if let Some(edit) = crate::cursor::current() {
         let handed = match edit.selection {
@@ -146,7 +146,9 @@ fn press_local(daw: &daw::standalone::Standalone, button: Button, shift: bool) {
             session::keyflow::actions::dispatch(daw, KeyflowAction::InsertSection(kind));
         }
         Button::TimeSig(num, den) => {
-            if let Err(e) = session::keyflow::time_signature::insert_time_signature(daw, num, den, shift) {
+            if let Err(e) =
+                session::keyflow::time_signature::insert_time_signature(daw, num, den, shift)
+            {
                 tracing::warn!(error = %e, num, den, "organize: the time signature was refused");
             }
         }
@@ -215,11 +217,16 @@ fn press_remote(button: Button, shift: bool) -> eyre::Result<()> {
             transport.set_position(edit.at).await?;
         }
         match button {
-            Button::TimeSig(num, den) => insert_time_signature_remote(&project, num, den, shift).await?,
+            Button::TimeSig(num, den) => {
+                insert_time_signature_remote(&project, num, den, shift).await?
+            }
             _ => {
-                let id = command_id(button).ok_or_else(|| eyre::eyre!("{button:?} has no session action"))?;
+                let id = command_id(button)
+                    .ok_or_else(|| eyre::eyre!("{button:?} has no session action"))?;
                 if !project.run_command(id).await? {
-                    eyre::bail!("the remote does not know {id} — is the FTS session extension loaded?");
+                    eyre::bail!(
+                        "the remote does not know {id} — is the FTS session extension loaded?"
+                    );
                 }
             }
         }
@@ -253,9 +260,14 @@ async fn insert_time_signature_remote(
     let start = tempo.musical_to_time(measure, 0, 0.0).await?;
     upsert_signature_remote(&tempo, start, num, den).await?;
     if single_measure && before != (num, den) {
-        let next = tempo.musical_to_time(measure.saturating_add(1), 0, 0.0).await?;
+        let next = tempo
+            .musical_to_time(measure.saturating_add(1), 0, 0.0)
+            .await?;
         let already = tempo.points().await?.iter().any(|p| {
-            p.time_signature.is_some() && p.position.seconds().is_some_and(|s| (s - next).abs() < 1e-6)
+            p.time_signature.is_some()
+                && p.position
+                    .seconds()
+                    .is_some_and(|s| (s - next).abs() < 1e-6)
         });
         if !already {
             upsert_signature_remote(&tempo, next, before.0, before.1).await?;
@@ -273,9 +285,11 @@ async fn upsert_signature_remote(
     den: i32,
 ) -> eyre::Result<()> {
     let points = tempo.points().await?;
-    let existing = points
-        .iter()
-        .position(|p| p.position.seconds().is_some_and(|s| (s - seconds).abs() < 1e-6));
+    let existing = points.iter().position(|p| {
+        p.position
+            .seconds()
+            .is_some_and(|s| (s - seconds).abs() < 1e-6)
+    });
     let index = match existing {
         Some(index) => u32::try_from(index)?,
         None => {
@@ -301,8 +315,15 @@ mod tests {
             .collect();
         for (button, label) in STRUCTURE {
             let id = command_id(button).unwrap_or_else(|| panic!("{label} has no command id"));
-            assert!(registered.contains(&id), "{label}: {id} is not a registered session action");
+            assert!(
+                registered.contains(&id),
+                "{label}: {id} is not a registered session action"
+            );
         }
-        assert_eq!(command_id(Button::TimeSig(4, 4)), None, "a signature is written, not run");
+        assert_eq!(
+            command_id(Button::TimeSig(4, 4)),
+            None,
+            "a signature is written, not run"
+        );
     }
 }

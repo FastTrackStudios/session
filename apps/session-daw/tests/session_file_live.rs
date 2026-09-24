@@ -28,11 +28,18 @@ fn a_saved_session_opens_as_it_was_saved() {
     std::fs::write(&rpp, EMPTY).expect("write project");
 
     let opened = session_daw::open::open_silent(&rpp).expect("open");
-    let _runtime = session_daw::open::runtime().expect("engine runtime").enter();
-    session_daw::prepare::apply_chart(&opened.daw, &opened.project_guid, CHART, true).expect("prepare");
+    let _runtime = session_daw::open::runtime()
+        .expect("engine runtime")
+        .enter();
+    session_daw::prepare::apply_chart(&opened.daw, &opened.project_guid, CHART, true)
+        .expect("prepare");
     let saved = rpp.with_extension("session");
-    session_daw::session_file::save_session(&opened.daw, &opened.project_guid, &saved).expect("save");
-    let before = snapshot(&opened.daw, &ProjectContext::Project(opened.project_guid.clone()));
+    session_daw::session_file::save_session(&opened.daw, &opened.project_guid, &saved)
+        .expect("save");
+    let before = snapshot(
+        &opened.daw,
+        &ProjectContext::Project(opened.project_guid.clone()),
+    );
 
     // Opened again, into a fresh engine, from the saved text.
     let again = daw::standalone::Standalone::new();
@@ -40,14 +47,27 @@ fn a_saved_session_opens_as_it_was_saved() {
         &again,
         session_daw::guide_instrument::Library::Folder(session_daw::guide_instrument::samples_dir()),
     );
-    let text = session_daw::open::project_text(&saved).expect("read the session").text;
-    let loaded = daw::standalone::project_loader::load_rpp_text(&again, "Saved Song", &saved.to_string_lossy(), &text)
-        .expect("load");
-    let after = snapshot(&again, &ProjectContext::Project(loaded.project_guid.clone()));
+    let text = session_daw::open::project_text(&saved)
+        .expect("read the session")
+        .text;
+    let loaded = daw::standalone::project_loader::load_rpp_text(
+        &again,
+        "Saved Song",
+        &saved.to_string_lossy(),
+        &text,
+    )
+    .expect("load");
+    let after = snapshot(
+        &again,
+        &ProjectContext::Project(loaded.project_guid.clone()),
+    );
 
     assert_eq!(before, after);
     assert!(
-        before.fx.iter().any(|(track, fx)| track == "Click" && fx.iter().any(|f| f.starts_with("fts.guide"))),
+        before
+            .fx
+            .iter()
+            .any(|(track, fx)| track == "Click" && fx.iter().any(|f| f.starts_with("fts.guide"))),
         "the click plays through the guide instrument: {:?}",
         before.fx
     );
@@ -66,11 +86,22 @@ struct Snapshot {
 fn snapshot(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Snapshot {
     let ms = |s: f64| (s * 1000.0).round() as i64;
     let tracks = Tracks::all(daw, project.clone());
-    let name_of = |guid: &str| tracks.iter().find(|t| t.guid == guid).map(|t| t.name.clone());
+    let name_of = |guid: &str| {
+        tracks
+            .iter()
+            .find(|t| t.guid == guid)
+            .map(|t| t.name.clone())
+    };
     Snapshot {
         tracks: tracks
             .iter()
-            .map(|t| (t.name.clone(), t.parent_guid.as_deref().and_then(name_of), t.is_folder))
+            .map(|t| {
+                (
+                    t.name.clone(),
+                    t.parent_guid.as_deref().and_then(name_of),
+                    t.is_folder,
+                )
+            })
             .collect(),
         markers: Markers::all(daw, project.clone())
             .into_iter()
@@ -81,7 +112,14 @@ fn snapshot(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Snap
         regions: {
             let mut regions: Vec<_> = Regions::all(daw, project.clone())
                 .into_iter()
-                .map(|r| (r.name, ms(r.time_range.start_seconds()), ms(r.time_range.end_seconds()), r.lane))
+                .map(|r| {
+                    (
+                        r.name,
+                        ms(r.time_range.start_seconds()),
+                        ms(r.time_range.end_seconds()),
+                        r.lane,
+                    )
+                })
                 .collect();
             regions.sort_by_key(|(_, start, end, lane)| (*lane, *start, *end));
             regions
@@ -90,7 +128,8 @@ fn snapshot(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Snap
         fx: tracks
             .iter()
             .map(|t| {
-                let chain = Effects::list(daw, project.clone(), FxChainContext::Track(t.guid.clone()));
+                let chain =
+                    Effects::list(daw, project.clone(), FxChainContext::Track(t.guid.clone()));
                 (t.name.clone(), chain.into_iter().map(|f| f.name).collect())
             })
             .filter(|(_, fx): &(String, Vec<String>)| !fx.is_empty())

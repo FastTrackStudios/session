@@ -396,7 +396,8 @@ pub fn paint_edit(
 
 /// The edit cursor's colour: blue (blue-500), where YOU are — against the
 /// play cursor's yellow, where the audio is.
-pub const EDIT_CURSOR: vello::peniko::Color = vello::peniko::Color::from_rgba8(0x3b, 0x82, 0xf6, 0xff);
+pub const EDIT_CURSOR: vello::peniko::Color =
+    vello::peniko::Color::from_rgba8(0x3b, 0x82, 0xf6, 0xff);
 
 /// How the play cursor looks.
 ///
@@ -805,7 +806,7 @@ mod look_tests {
 mod trail_tests {
     use super::Trail;
     use std::time::Duration;
-use web_time::Instant;
+    use web_time::Instant;
 
     const PPS: f64 = 100.0;
     const FULL: f64 = 90.0;
@@ -836,9 +837,16 @@ use web_time::Instant;
         let (now, pos) = roll(&mut trail, rest, 4.0, 0.3);
         let early = trail.length(now, PPS, FULL);
         // As far as it has come, and no further: it was never behind 4.0.
-        assert!((early - (pos - 4.0) * PPS).abs() < 1.5, "{early} vs {}", (pos - 4.0) * PPS);
+        assert!(
+            (early - (pos - 4.0) * PPS).abs() < 1.5,
+            "{early} vs {}",
+            (pos - 4.0) * PPS
+        );
         let (now, _) = roll(&mut trail, now, pos, 1.0);
-        assert!((trail.length(now, PPS, FULL) - FULL).abs() < 1.5, "not at full length");
+        assert!(
+            (trail.length(now, PPS, FULL) - FULL).abs() < 1.5,
+            "not at full length"
+        );
     }
 
     #[test]
@@ -851,7 +859,10 @@ use web_time::Instant;
         now += Duration::from_millis(300);
         trail.record(now, pos);
         let shrinking = trail.length(now, PPS, FULL);
-        assert!(shrinking > 0.0 && shrinking < playing, "{shrinking} of {playing}");
+        assert!(
+            shrinking > 0.0 && shrinking < playing,
+            "{shrinking} of {playing}"
+        );
         now += Trail::MAX_LAG;
         trail.record(now, pos);
         assert!(trail.length(now, PPS, FULL) < 1e-9);

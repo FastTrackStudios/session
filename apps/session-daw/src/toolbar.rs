@@ -35,8 +35,19 @@ enum Toggle {
 
 impl Toggle {
     const ROWS: [&'static [Self]; 2] = [
-        &[Self::Metronome, Self::AutoCrossfade, Self::Grouping, Self::Ripple],
-        &[Self::Grid, Self::Snap, Self::Lock, Self::Follow, Self::Compact],
+        &[
+            Self::Metronome,
+            Self::AutoCrossfade,
+            Self::Grouping,
+            Self::Ripple,
+        ],
+        &[
+            Self::Grid,
+            Self::Snap,
+            Self::Lock,
+            Self::Follow,
+            Self::Compact,
+        ],
     ];
 
     const fn title(self) -> &'static str {
@@ -70,7 +81,11 @@ impl Toggle {
     const fn paths(self) -> &'static [&'static str] {
         match self {
             // A metronome: the body and the arm.
-            Self::Metronome => &["M8 21 L10.5 3 H13.5 L16 21 Z", "M12 16 L17.5 6.5", "M6 21 H18"],
+            Self::Metronome => &[
+                "M8 21 L10.5 3 H13.5 L16 21 Z",
+                "M12 16 L17.5 6.5",
+                "M6 21 H18",
+            ],
             // Two fades crossing.
             Self::AutoCrossfade => &["M3 19 C9 19 15 5 21 5", "M3 5 C9 5 15 19 21 19"],
             // Two links of a chain.
@@ -80,13 +95,15 @@ impl Toggle {
                 "M9 15 L15 9",
             ],
             // An item pushing the ones after it along one track.
-            Self::Ripple => &[
-                "M3 9 H9 V15 H3 Z",
-                "M12 12 H20",
-                "M17 9 L20 12 L17 15",
-            ],
+            Self::Ripple => &["M3 9 H9 V15 H3 Z", "M12 12 H20", "M17 9 L20 12 L17 15"],
             // Grid lines.
-            Self::Grid => &["M4 4 V20", "M10 4 V20", "M16 4 V20", "M4 8 H20", "M4 16 H20"],
+            Self::Grid => &[
+                "M4 4 V20",
+                "M10 4 V20",
+                "M16 4 V20",
+                "M4 8 H20",
+                "M4 16 H20",
+            ],
             // A magnet.
             Self::Snap => &[
                 "M6 4 V11 A6 6 0 0 0 18 11 V4",
@@ -221,7 +238,11 @@ fn Icon(toggle: Toggle, on: bool) -> Element {
 }
 
 fn button_style(on: bool) -> String {
-    let (bg, rule) = if on { (ON_BG, ON_BG) } else { ("transparent", HOVER_RULE) };
+    let (bg, rule) = if on {
+        (ON_BG, ON_BG)
+    } else {
+        ("transparent", HOVER_RULE)
+    };
     format!(
         "flex:0 1 30px; min-width:0; height:26px; padding:0; display:flex; align-items:center; \
          justify-content:center; border-radius:4px; border:1px solid {rule}; background:{bg};"

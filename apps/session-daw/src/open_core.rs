@@ -50,7 +50,11 @@ pub fn song_plan(path: &Path, prepare: &crate::prepare::Prepare) -> SongPlan {
 /// [`song_plan`] for a song in `folder`. A folder that cannot be written
 /// (a browser's copy) prepares in memory and saves nothing.
 #[must_use]
-pub fn song_plan_in(folder: &dyn Folder, path: &Path, prepare: &crate::prepare::Prepare) -> SongPlan {
+pub fn song_plan_in(
+    folder: &dyn Folder,
+    path: &Path,
+    prepare: &crate::prepare::Prepare,
+) -> SongPlan {
     let reprepare = std::env::var("FTS_SESSION_REPREPARE").is_ok_and(|v| v == "1");
     song_plan_with(folder, path, prepare, reprepare)
 }
@@ -62,21 +66,38 @@ pub(crate) fn song_plan_with(
     reprepare: bool,
 ) -> SongPlan {
     if is_session(path) {
-        return SongPlan { open: path.to_path_buf(), prepare: false, save_to: None };
+        return SongPlan {
+            open: path.to_path_buf(),
+            prepare: false,
+            save_to: None,
+        };
     }
     let saved = path.with_extension("session");
     if folder.is_dir(&saved) && !reprepare {
-        return SongPlan { open: saved, prepare: false, save_to: None };
+        return SongPlan {
+            open: saved,
+            prepare: false,
+            save_to: None,
+        };
     }
     let prepare = !prepare.is_empty();
-    SongPlan { open: path.to_path_buf(), prepare, save_to: (prepare && folder.writable()).then_some(saved) }
+    SongPlan {
+        open: path.to_path_buf(),
+        prepare,
+        save_to: (prepare && folder.writable()).then_some(saved),
+    }
 }
 
 /// After a song's file is open: prepare it if its plan says so, and save
 /// the prepared song as its `.session` — so the next open is the prepared
 /// one. A preparation that fails saves nothing (a half-prepared session
 /// would open as prepared next time).
-pub fn prepare_and_save(folder: &dyn Folder, opened: &Opened, plan: &SongPlan, prepare: &crate::prepare::Prepare) {
+pub fn prepare_and_save(
+    folder: &dyn Folder,
+    opened: &Opened,
+    plan: &SongPlan,
+    prepare: &crate::prepare::Prepare,
+) {
     let mut save_to = plan.save_to.clone();
     if plan.prepare
         && let Err(e) = prepare.run_in(folder, opened)
@@ -199,7 +220,12 @@ pub fn load_into_with(daw: &Standalone, path: &Path, media: Media) -> eyre::Resu
 /// # Errors
 ///
 /// As [`load_into_with`].
-pub fn load_in(folder: &dyn Folder, daw: &Standalone, path: &Path, media: Media) -> eyre::Result<Opened> {
+pub fn load_in(
+    folder: &dyn Folder,
+    daw: &Standalone,
+    path: &Path,
+    media: Media,
+) -> eyre::Result<Opened> {
     let ProjectText { text, media_dir } = project_text_in(folder, path)?;
     let daw = daw.clone();
     daw.media_bay().set_file_resolver(Box::new(
@@ -228,7 +254,11 @@ pub fn load_in(folder: &dyn Folder, daw: &Standalone, path: &Path, media: Media)
         }
     }
 
-    let track_count = daw::service::Tracks::all(&daw, daw::service::ProjectContext::Project(summary.project_guid.clone())).len();
+    let track_count = daw::service::Tracks::all(
+        &daw,
+        daw::service::ProjectContext::Project(summary.project_guid.clone()),
+    )
+    .len();
     Ok(Opened {
         daw,
         name,
@@ -283,4 +313,3 @@ pub fn project_text_in(folder: &dyn Folder, path: &Path) -> eyre::Result<Project
     let media_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
     Ok(ProjectText { text, media_dir })
 }
-

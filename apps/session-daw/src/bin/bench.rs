@@ -171,7 +171,13 @@ fn main() {
     if let Ok(out) = std::env::var("FTS_BENCH_DOCK") {
         // The arrangement with the editor docked under it, as the
         // studio benchmark draws its first frame.
-        dock_shot(&session, &palette, &std::path::PathBuf::from(out), width, height);
+        dock_shot(
+            &session,
+            &palette,
+            &std::path::PathBuf::from(out),
+            width,
+            height,
+        );
         return;
     }
 
@@ -264,7 +270,14 @@ fn main() {
         // window's opening view and writes it to a PNG, which is the
         // fastest way to tell a culling bug (geometry missing) from a
         // palette bug (geometry there, wrong colour).
-        shot(&session, &scene, &palette, &std::path::PathBuf::from(out), width, height);
+        shot(
+            &session,
+            &scene,
+            &palette,
+            &std::path::PathBuf::from(out),
+            width,
+            height,
+        );
         return;
     }
 
@@ -327,7 +340,8 @@ fn main() {
                 };
                 painted += renderer
                     .frame(|painter| {
-                        painter.append_scene(widget.paint_scene(width, height, 1.0), Affine::IDENTITY);
+                        painter
+                            .append_scene(widget.paint_scene(width, height, 1.0), Affine::IDENTITY);
                     })
                     .expect("render a frame");
                 counts = drawn(&widget);
@@ -1542,10 +1556,7 @@ fn dock_split(width: u32, height: u32) -> (vello::kurbo::Rect, u32) {
         reason = "a height inside a frame of u32 pixels"
     )]
     let above = (h - dock).floor() as u32;
-    (
-        vello::kurbo::Rect::new(0.0, f64::from(above), w, h),
-        above,
-    )
+    (vello::kurbo::Rect::new(0.0, f64::from(above), w, h), above)
 }
 
 /// The docked editor, in its box: the ground, the editor, and the rule
@@ -1579,13 +1590,7 @@ fn paint_dock(
 /// `FTS_BENCH_DOCK=/tmp/dock.png`. The arrangement is the widget the
 /// window mounts, at rest; the editor is the demo groove in the dock
 /// under it.
-fn dock_shot(
-    session: &Session,
-    palette: &Palette,
-    out: &std::path::Path,
-    width: u32,
-    height: u32,
-) {
+fn dock_shot(session: &Session, palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
     let (dock_box, above) = dock_split(width, height);
     let mut editor = session_daw::expression::Expression::demo(
         (dock_box.x0, dock_box.y0),
@@ -1618,7 +1623,11 @@ fn dock_shot(
 
 /// A pointer event at a point in the widget's own coordinates, with the
 /// main button and these modifiers — what Blitz hands the widget.
-fn pointer_at(x: f64, y: f64, mods: blitz_traits::events::Modifiers) -> blitz_traits::events::BlitzPointerEvent {
+fn pointer_at(
+    x: f64,
+    y: f64,
+    mods: blitz_traits::events::Modifiers,
+) -> blitz_traits::events::BlitzPointerEvent {
     use blitz_traits::events::{
         BlitzPointerEvent, BlitzPointerId, MouseEventButton, MouseEventButtons, Point,
         PointerCoords, PointerDetails,
@@ -1653,15 +1662,18 @@ fn pointer_at(x: f64, y: f64, mods: blitz_traits::events::Modifiers) -> blitz_tr
 /// widget's own coordinates, which are the ones its events arrive in.
 fn slip_grip(scene: &Arrangement, span: (f64, f64)) -> Option<(View, (f64, f64))> {
     let item = scene.item_boxes().first()?;
-    let (top, band) = scene.row_band(item.row, Viewport {
-        scroll_x: 0.0,
-        scroll_y: 0.0,
-        pps: PPS,
-        zoom_y: 1.0,
-        width: 0.0,
-        height: 0.0,
-        panel_w: TCP_WIDTH,
-    })?;
+    let (top, band) = scene.row_band(
+        item.row,
+        Viewport {
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            pps: PPS,
+            zoom_y: 1.0,
+            width: 0.0,
+            height: 0.0,
+            panel_w: TCP_WIDTH,
+        },
+    )?;
     let at = View {
         scroll_x: (item.x0 * PPS - 200.0).clamp(0.0, span.0),
         scroll_y: (top - 100.0).clamp(0.0, span.1),
@@ -1792,7 +1804,9 @@ fn studio(
     }
 
     println!();
-    println!("  studio        arrangement {width}x{above} with the editor docked ({dock:.0}px) under it,");
+    println!(
+        "  studio        arrangement {width}x{above} with the editor docked ({dock:.0}px) under it,"
+    );
     println!("                mixer {mixer_w}x{mixer_h} on a second display, both every frame");
     println!(
         "  scene         {} rows, {} items; {} strips; a {bars}-bar kit in the dock",
@@ -1842,13 +1856,16 @@ fn studio(
                     );
                     // No further than the session reaches at the new
                     // zoom, and never before its start.
-                    let reach = |span: f64, lane: f64, zoom: f64| ((span + lane) * zoom - lane).max(0.0);
-                    at.scroll_x = session_daw::panel::zoom_about(press.0, at.scroll_x, at.zoom_x, to.0)
-                        .min(reach(span_x, lanes.0, to.0))
-                        .max(0.0);
-                    at.scroll_y = session_daw::panel::zoom_about(press.1, at.scroll_y, at.zoom_y, to.1)
-                        .min(reach(span_y, lanes.1, to.1))
-                        .max(0.0);
+                    let reach =
+                        |span: f64, lane: f64, zoom: f64| ((span + lane) * zoom - lane).max(0.0);
+                    at.scroll_x =
+                        session_daw::panel::zoom_about(press.0, at.scroll_x, at.zoom_x, to.0)
+                            .min(reach(span_x, lanes.0, to.0))
+                            .max(0.0);
+                    at.scroll_y =
+                        session_daw::panel::zoom_about(press.1, at.scroll_y, at.zoom_y, to.1)
+                            .min(reach(span_y, lanes.1, to.1))
+                            .max(0.0);
                     (at.zoom_x, at.zoom_y) = to;
                     if frame_index == 0 {
                         editor.key("z", Default::default());
@@ -1911,7 +1928,8 @@ fn studio(
                             None,
                             &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
                         );
-                        painter.append_scene(widget.paint_scene(width, above, 1.0), Affine::IDENTITY);
+                        painter
+                            .append_scene(widget.paint_scene(width, above, 1.0), Affine::IDENTITY);
                         paint_dock(painter, palette, &mut editor, dock_box);
                     })
                     .expect("render the arrangement");
@@ -1963,7 +1981,9 @@ fn studio(
             .iter()
             .any(|edit| matches!(edit, session_daw::engine::Edit::SlipItem(..)));
         if !slipped {
-            tracing::warn!("the slip drag never took hold of its item; its row measured a still view");
+            tracing::warn!(
+                "the slip drag never took hold of its item; its row measured a still view"
+            );
         }
     }
     let verdict = if worst_p99 <= BUDGET_MS {

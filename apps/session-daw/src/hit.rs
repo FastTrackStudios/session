@@ -140,12 +140,7 @@ pub fn arrangement(
     let seconds = seconds_at(x - rail_x, panel_w, view);
     // An item under the pointer narrows the empty arrange area to one
     // of the item contexts: its body, an edge, a fade's handle.
-    if let Some((index, zone)) = scene.item_at(
-        view,
-        row,
-        x - rail_x - panel_w,
-        content_y,
-    ) {
+    if let Some((index, zone)) = scene.item_at(view, row, x - rail_x - panel_w, content_y) {
         use crate::arrangement::ItemZone as Z;
         let context = match zone {
             Z::Body => Context::MediaItemBottomHalf,

@@ -157,7 +157,10 @@ impl Lyrics {
                 .filter(|(_, w)| !w.text.trim().is_empty())
                 .map(|(k, w)| Word {
                     start: at + f64::from(w.start),
-                    end: line.words.get(k + 1).map_or(until, |next| at + f64::from(next.start)),
+                    end: line
+                        .words
+                        .get(k + 1)
+                        .map_or(until, |next| at + f64::from(next.start)),
                     text: w.text.trim().to_owned(),
                     syllables: Vec::new(),
                 })
@@ -181,7 +184,11 @@ impl Lyrics {
         if self.lines.is_empty() {
             None
         } else if syllables().next().is_none() {
-            Some(if words().next().is_some() { Layer::Word } else { Layer::Line })
+            Some(if words().next().is_some() {
+                Layer::Word
+            } else {
+                Layer::Line
+            })
         } else if syllables().all(|s| s.pitch.is_some()) {
             Some(Layer::SyllableMidi)
         } else {
@@ -192,8 +199,9 @@ impl Lyrics {
     /// Every layer these lyrics can show: the deepest, and all above it.
     #[must_use]
     pub fn layers(&self) -> Vec<Layer> {
-        self.deepest()
-            .map_or_else(Vec::new, |deepest| Layer::ALL.into_iter().filter(|l| *l <= deepest).collect())
+        self.deepest().map_or_else(Vec::new, |deepest| {
+            Layer::ALL.into_iter().filter(|l| *l <= deepest).collect()
+        })
     }
 
     /// The line being sung at `at`, if any.
@@ -300,7 +308,9 @@ impl Anchor {
             || (name.len() == wanted.len() + 1
                 && name.is_char_boundary(wanted.len())
                 && name[..wanted.len()].eq_ignore_ascii_case(wanted)
-                && name[wanted.len()..].chars().all(|c| c.is_ascii_alphabetic()))
+                && name[wanted.len()..]
+                    .chars()
+                    .all(|c| c.is_ascii_alphabetic()))
     }
 
     /// The anchor a `.lrc` carries, if it has one.
@@ -325,7 +335,9 @@ impl Anchor {
 
 /// Text as a line is matched: lower case, curly apostrophes straight.
 fn matchable(text: &str) -> String {
-    text.trim().to_lowercase().replace(['\u{2019}', '\u{2018}'], "'")
+    text.trim()
+        .to_lowercase()
+        .replace(['\u{2019}', '\u{2018}'], "'")
 }
 
 impl Lyrics {
@@ -335,7 +347,11 @@ impl Lyrics {
     /// begins that way.
     pub fn align(&mut self, line: &str, at: f64, drop_before: bool, end: f64) -> bool {
         let wanted = matchable(line);
-        let Some(index) = self.lines.iter().position(|l| matchable(&l.text).starts_with(&wanted)) else {
+        let Some(index) = self
+            .lines
+            .iter()
+            .position(|l| matchable(&l.text).starts_with(&wanted))
+        else {
             return false;
         };
         let shift = at - self.lines[index].start;
@@ -429,7 +445,10 @@ where
                 Duration::from_seconds((line.end - line.start).max(0.05)),
             )
             .ok_or_else(|| {
-                daw_proto::DawError::OperationFailed(format!("could not create a line at {:.2} s", line.start))
+                daw_proto::DawError::OperationFailed(format!(
+                    "could not create a line at {:.2} s",
+                    line.start
+                ))
             })?;
         daw.set_label(project.clone(), ItemRef::Guid(guid), &line.text)?;
     }
@@ -458,27 +477,45 @@ mod tests {
         );
         let mut lyrics = Lyrics::from_lrc(text, 0.0, 60.0);
         assert!(lyrics.align(&anchor.line, 10.0, anchor.drop_before, 60.0));
-        let got: Vec<(f64, &str)> = lyrics.lines.iter().map(|l| (l.start, l.text.as_str())).collect();
+        let got: Vec<(f64, &str)> = lyrics
+            .lines
+            .iter()
+            .map(|l| (l.start, l.text.as_str()))
+            .collect();
         assert_eq!(got.len(), 2);
         assert!((got[0].0 - 10.0).abs() < 1e-6 && got[0].1 == "And I'm clean");
         assert!((got[1].0 - 11.56).abs() < 1e-6);
         assert!((lyrics.lines[1].end - 60.0).abs() < 1e-9);
         assert!(!lyrics.align("Not a line", 0.0, false, 60.0));
-        assert!(anchor.names("VS 1") && anchor.names("vs 1a") && !anchor.names("VS 10") && !anchor.names("VS 2A"));
+        assert!(
+            anchor.names("VS 1")
+                && anchor.names("vs 1a")
+                && !anchor.names("VS 10")
+                && !anchor.names("VS 2A")
+        );
     }
 
     /// A track's labelled items read back as the lines they were.
     #[test]
     fn lines_read_back_from_a_track() {
-        let lyrics = Lyrics::from_items([(9.0, 2.0, "Second"), (7.0, 2.0, "First"), (12.0, 1.0, "  ")]);
-        let got: Vec<(f64, f64, &str)> = lyrics.lines.iter().map(|l| (l.start, l.end, l.text.as_str())).collect();
+        let lyrics =
+            Lyrics::from_items([(9.0, 2.0, "Second"), (7.0, 2.0, "First"), (12.0, 1.0, "  ")]);
+        let got: Vec<(f64, f64, &str)> = lyrics
+            .lines
+            .iter()
+            .map(|l| (l.start, l.end, l.text.as_str()))
+            .collect();
         assert_eq!(got, [(7.0, 9.0, "First"), (9.0, 11.0, "Second")]);
     }
 
     const LRC: &str = "[ti:Song]\n[00:01.00]First line\n[00:03.00]Second line\n[00:05.00]\n[00:08.00]Third line\n[00:10.00]Fourth line\n";
 
     fn span(name: &str, start: f64, end: f64) -> SectionSpan {
-        SectionSpan { name: name.into(), start, end }
+        SectionSpan {
+            name: name.into(),
+            start,
+            end,
+        }
     }
 
     /// Lines land at the song's start plus their stamp; each holds until
@@ -486,8 +523,11 @@ mod tests {
     #[test]
     fn synced_lines_land_on_the_songs_timeline() {
         let lyrics = Lyrics::from_lrc(LRC, 6.0, 20.0);
-        let spans: Vec<(f64, f64, &str)> =
-            lyrics.lines.iter().map(|l| (l.start, l.end, l.text.as_str())).collect();
+        let spans: Vec<(f64, f64, &str)> = lyrics
+            .lines
+            .iter()
+            .map(|l| (l.start, l.end, l.text.as_str()))
+            .collect();
         assert_eq!(
             spans,
             [
@@ -507,11 +547,17 @@ mod tests {
     fn a_deeper_layer_gives_every_layer_above_it() {
         let lines = Lyrics::from_lrc(LRC, 0.0, 20.0);
         assert_eq!(lines.deepest(), Some(Layer::Line));
-        assert_eq!(lines.layers(), [Layer::Song, Layer::Section, Layer::Slide, Layer::Line]);
+        assert_eq!(
+            lines.layers(),
+            [Layer::Song, Layer::Section, Layer::Slide, Layer::Line]
+        );
         let words = Lyrics::from_lrc("[00:01.00]<00:01.00>Holy <00:01.50>forever\n", 0.0, 4.0);
         assert_eq!(words.deepest(), Some(Layer::Word));
-        let w: Vec<(f64, f64, &str)> =
-            words.lines[0].words.iter().map(|w| (w.start, w.end, w.text.as_str())).collect();
+        let w: Vec<(f64, f64, &str)> = words.lines[0]
+            .words
+            .iter()
+            .map(|w| (w.start, w.end, w.text.as_str()))
+            .collect();
         assert_eq!(w, [(1.0, 1.5, "Holy"), (1.5, 4.0, "forever")]);
         assert_eq!(Lyrics::default().deepest(), None);
     }
@@ -528,12 +574,25 @@ mod tests {
             span("Inst", 5.0, 8.0),
             span("Chorus", 8.0, 12.0),
         ]);
-        let lines: Vec<(&str, Range<usize>)> =
-            sections.iter().map(|s| (s.name.as_str(), s.lines.clone())).collect();
-        assert_eq!(lines, [("Intro", 0..0), ("Verse", 0..2), ("Inst", 0..0), ("Chorus", 2..4)]);
+        let lines: Vec<(&str, Range<usize>)> = sections
+            .iter()
+            .map(|s| (s.name.as_str(), s.lines.clone()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("Intro", 0..0),
+                ("Verse", 0..2),
+                ("Inst", 0..0),
+                ("Chorus", 2..4)
+            ]
+        );
 
         let slides = lyrics.slides(&sections, 1);
-        let each: Vec<(usize, Range<usize>)> = slides.iter().map(|s| (s.section, s.lines.clone())).collect();
+        let each: Vec<(usize, Range<usize>)> = slides
+            .iter()
+            .map(|s| (s.section, s.lines.clone()))
+            .collect();
         assert_eq!(each, [(1, 0..1), (1, 1..2), (3, 2..3), (3, 3..4)]);
         let two = lyrics.slides(&sections, SLIDE_LINES);
         assert_eq!(two.len(), 2);

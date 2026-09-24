@@ -19,9 +19,9 @@
 //! a node's `cursor` only when the pointer crosses into another node, and
 //! the whole arrangement is one node.
 
+use cursor_icon::CursorIcon;
 use std::cell::RefCell;
 use std::rc::Rc;
-use cursor_icon::CursorIcon;
 
 use input_config_proto::MouseModifierContext as Context;
 
@@ -212,7 +212,10 @@ mod tests {
         };
         assert_eq!(icon_for(Tool::Map, None, body, chord), CursorIcon::EwResize);
         let empty = Over::Map(Context::ArrangeView);
-        assert_eq!(icon_for(Tool::Map, None, empty, CTRL), CursorIcon::Crosshair);
+        assert_eq!(
+            icon_for(Tool::Map, None, empty, CTRL),
+            CursorIcon::Crosshair
+        );
     }
 
     #[test]
@@ -239,7 +242,13 @@ mod tests {
 
     #[test]
     fn a_knob_turns_up_and_down() {
-        assert_eq!(icon_for(Tool::Map, None, Over::Knob, NONE), CursorIcon::NsResize);
-        assert_eq!(icon_for(Tool::Map, None, Over::Button, NONE), CursorIcon::Default);
+        assert_eq!(
+            icon_for(Tool::Map, None, Over::Knob, NONE),
+            CursorIcon::NsResize
+        );
+        assert_eq!(
+            icon_for(Tool::Map, None, Over::Button, NONE),
+            CursorIcon::Default
+        );
     }
 }

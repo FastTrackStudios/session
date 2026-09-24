@@ -10,10 +10,10 @@
 
 use std::path::Path;
 
-use daw_proto::ProjectContext;
 use daw::service::Tracks;
+use daw_proto::ProjectContext;
 use dynamic_template::apply::chunk::RChunkTarget;
-use dynamic_template::apply::{organize, DawTarget, TemplateTarget};
+use dynamic_template::apply::{DawTarget, TemplateTarget, organize};
 
 const GOLDEN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -51,7 +51,10 @@ fn a_live_organize_matches_the_file_organize() {
     let live_buses: Vec<&str> = live.buses.iter().map(|b| b.name.as_str()).collect();
     let file_buses: Vec<&str> = file.buses.iter().map(|b| b.name.as_str()).collect();
     assert_eq!(live_buses, file_buses, "the same bus tree");
-    assert_eq!(live.justified, file.justified, "the same tracks justify each bus");
+    assert_eq!(
+        live.justified, file.justified,
+        "the same tracks justify each bus"
+    );
     assert_eq!(live.unclassified, file.unclassified);
     assert_eq!(live.painted, file.painted);
     assert_eq!(live.routing.unrouted, file.routing.unrouted);
@@ -67,9 +70,23 @@ fn a_live_organize_matches_the_file_organize() {
         for name in f {
             eprintln!("only file: {name}");
         }
-        eprintln!("live gathered: {:?}", live.gathered.as_ref().map(|g| (g.moved.len(), g.skipped.len())));
-        eprintln!("file gathered: {:?}", file.gathered.as_ref().map(|g| (g.moved.len(), g.skipped.len())));
-        eprintln!("unsorted live {} file {}", live.unsorted.len(), file.unsorted.len());
+        eprintln!(
+            "live gathered: {:?}",
+            live.gathered
+                .as_ref()
+                .map(|g| (g.moved.len(), g.skipped.len()))
+        );
+        eprintln!(
+            "file gathered: {:?}",
+            file.gathered
+                .as_ref()
+                .map(|g| (g.moved.len(), g.skipped.len()))
+        );
+        eprintln!(
+            "unsorted live {} file {}",
+            live.unsorted.len(),
+            file.unsorted.len()
+        );
     }
     assert_eq!(
         live_tracks.len(),
@@ -81,7 +98,10 @@ fn a_live_organize_matches_the_file_organize() {
     }
 
     // And idempotent live, as it is on disk: a second pass adds nothing.
-    let mut again = DawTarget::on(opened.daw.clone(), ProjectContext::Project(opened.project_guid));
+    let mut again = DawTarget::on(
+        opened.daw.clone(),
+        ProjectContext::Project(opened.project_guid),
+    );
     let second = organize(&mut again).expect("second organize");
     assert!(second.applied.created.is_empty(), "no bus created twice");
 }

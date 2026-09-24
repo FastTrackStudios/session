@@ -34,7 +34,10 @@ pub enum Command {
     Back,
     Forward,
     /// `+` / `-` and `Shift` with them: a step in or out, on one axis.
-    Step { vertical: bool, inward: bool },
+    Step {
+        vertical: bool,
+        inward: bool,
+    },
 }
 
 impl Command {
@@ -51,10 +54,22 @@ impl Command {
             "_SWS_ITEMZOOMMIN" => Self::Items,
             "40848" => Self::Back,
             "40762" => Self::Forward,
-            "1012" => Self::Step { vertical: false, inward: true },
-            "1011" => Self::Step { vertical: false, inward: false },
-            "40111" => Self::Step { vertical: true, inward: true },
-            "40112" => Self::Step { vertical: true, inward: false },
+            "1012" => Self::Step {
+                vertical: false,
+                inward: true,
+            },
+            "1011" => Self::Step {
+                vertical: false,
+                inward: false,
+            },
+            "40111" => Self::Step {
+                vertical: true,
+                inward: true,
+            },
+            "40112" => Self::Step {
+                vertical: true,
+                inward: false,
+            },
             _ => return None,
         })
     }
@@ -75,7 +90,10 @@ pub enum Request {
     Back,
     Forward,
     /// Multiply one axis's zoom by `by`, about the middle of the lanes.
-    Scale { vertical: bool, by: f64 },
+    Scale {
+        vertical: bool,
+        by: f64,
+    },
 }
 
 /// The queue from the widget to the panel, drained once a frame.
@@ -118,12 +136,7 @@ pub struct Frame {
 /// starting from `now` for any axis left as it is. A span too small to
 /// fill it stops at the zoom limit, starting where the span starts.
 #[must_use]
-pub fn frame(
-    now: Target,
-    at: Frame,
-    time: Option<(f64, f64)>,
-    rows: Option<(f64, f64)>,
-) -> Target {
+pub fn frame(now: Target, at: Frame, time: Option<(f64, f64)>, rows: Option<(f64, f64)>) -> Target {
     let mut to = now;
     if let Some((t0, t1)) = time
         && t1 > t0
@@ -154,7 +167,12 @@ pub struct History {
 impl History {
     /// Where to go for `request` from `now`, remembering where it was.
     /// `None` when there is nowhere to go.
-    pub fn go(&mut self, now: Target, request: Request, framed: impl Fn() -> Target) -> Option<Target> {
+    pub fn go(
+        &mut self,
+        now: Target,
+        request: Request,
+        framed: impl Fn() -> Target,
+    ) -> Option<Target> {
         match request {
             Request::Back => {
                 let to = self.back.pop()?;
@@ -168,9 +186,7 @@ impl History {
                 self.toggled = None;
                 Some(to)
             }
-            Request::Frame { toggle: true, .. }
-                if self.toggled.is_some_and(|t| t.near(&now)) =>
-            {
+            Request::Frame { toggle: true, .. } if self.toggled.is_some_and(|t| t.near(&now)) => {
                 self.toggled = None;
                 let to = self.back.pop()?;
                 self.forward.push(now);
@@ -261,7 +277,10 @@ mod tests {
     #[test]
     fn back_and_forward_walk_the_zooms() {
         let mut history = History::default();
-        let a = Target { zoom_x: 2.0, ..HOME };
+        let a = Target {
+            zoom_x: 2.0,
+            ..HOME
+        };
         let frame_a = Request::Frame {
             time: Some((0.0, 1.0)),
             rows: None,
@@ -275,7 +294,10 @@ mod tests {
 
     #[test]
     fn the_profile_ids_are_the_zooms() {
-        assert_eq!(Command::of("_SWS_TOGZOOMTTMIN"), Some(Command::ToggleTracks));
+        assert_eq!(
+            Command::of("_SWS_TOGZOOMTTMIN"),
+            Some(Command::ToggleTracks)
+        );
         assert_eq!(Command::of("_SWS_VZOOMFITMIN"), Some(Command::FitTracks));
         assert_eq!(Command::of("40848"), Some(Command::Back));
         assert_eq!(Command::of("_SWS_ZOOMPREFS"), None, "not this window's");

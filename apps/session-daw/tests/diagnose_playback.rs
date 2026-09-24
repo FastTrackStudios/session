@@ -20,9 +20,13 @@ fn a_prepared_session_renders_in_time_and_clicks_on_the_grid() {
         return;
     };
     let opened = session_daw::open::open_silent(std::path::Path::new(&project_file)).expect("open");
-    session_daw::prepare::Prepare { organize: true, chart: Some(chart.into()), guide: true }
-        .run(&opened)
-        .expect("prepare");
+    session_daw::prepare::Prepare {
+        organize: true,
+        chart: Some(chart.into()),
+        guide: true,
+    }
+    .run(&opened)
+    .expect("prepare");
     let _rt = session_daw::open::runtime().expect("runtime").enter();
     let daw = opened.daw.clone();
     let project = ProjectContext::Project(opened.project_guid.clone());
@@ -67,15 +71,26 @@ fn a_prepared_session_renders_in_time_and_clicks_on_the_grid() {
     // Only other tracks with media: the buses the click routes through
     // must stay on.
     for t in &tracks {
-        let has_media = !daw::service::Items::get_items(&daw, project.clone(), TrackRef::Guid(t.guid.clone())).is_empty();
+        let has_media =
+            !daw::service::Items::get_items(&daw, project.clone(), TrackRef::Guid(t.guid.clone()))
+                .is_empty();
         if t.guid != click && has_media {
             let _ = Tracks::set_muted(&daw, project.clone(), TrackRef::Guid(t.guid.clone()), true);
         }
     }
-    let route: Vec<String> = daw::service::Routing::sends(&daw, project.clone(), TrackRef::Guid(click.clone()))
-        .iter()
-        .map(|r| format!("{:?}", r.dest_track_guid.as_ref().and_then(|g| tracks.iter().find(|t| &t.guid == g)).map(|t| t.name.clone())))
-        .collect();
+    let route: Vec<String> =
+        daw::service::Routing::sends(&daw, project.clone(), TrackRef::Guid(click.clone()))
+            .iter()
+            .map(|r| {
+                format!(
+                    "{:?}",
+                    r.dest_track_guid
+                        .as_ref()
+                        .and_then(|g| tracks.iter().find(|t| &t.guid == g))
+                        .map(|t| t.name.clone())
+                )
+            })
+            .collect();
     eprintln!("click sends: {route:?}");
     let renderer = ProjectRenderer::new(&daw, &opened.project_guid, RATE);
     let mut env: Vec<f32> = Vec::new();
@@ -99,9 +114,15 @@ fn a_prepared_session_renders_in_time_and_clicks_on_the_grid() {
     }
     let bpm = TempoMap::get_tempo_at(&daw, project, 0.0);
     let step = 60.0 / bpm / 2.0;
-    eprintln!("click: {bpm} bpm, eighth = {step:.4} s, peak {peak:.3}, {} onsets in 12 s", onsets.len());
+    eprintln!(
+        "click: {bpm} bpm, eighth = {step:.4} s, peak {peak:.3}, {} onsets in 12 s",
+        onsets.len()
+    );
     for (i, t) in onsets.iter().take(24).enumerate() {
         let nearest = (t / step).round() * step;
-        eprintln!("  #{i:<2} {t:>8.4} s  grid {nearest:>8.4}  off {:>+7.1} ms", (t - nearest) * 1000.0);
+        eprintln!(
+            "  #{i:<2} {t:>8.4} s  grid {nearest:>8.4}  off {:>+7.1} ms",
+            (t - nearest) * 1000.0
+        );
     }
 }

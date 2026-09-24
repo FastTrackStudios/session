@@ -26,7 +26,10 @@ pub fn CollabPointers() -> Element {
             crate::ghosts::local_window_pointer(
                 position.x / scale,
                 position.y / scale,
-                (f64::from(size.width) / scale, f64::from(size.height) / scale),
+                (
+                    f64::from(size.width) / scale,
+                    f64::from(size.height) / scale,
+                ),
             );
         }
         winit::event::WindowEvent::PointerLeft { .. } => crate::ghosts::local_window_left(),
@@ -52,7 +55,10 @@ pub fn CollabPointers() -> Element {
                 // over the whole window, through the same anchoring a real
                 // one goes through.
                 if crate::collab::env_set("FTS_COLLAB_PUPPET_MOUSE") {
-                    let (w, h) = (f64::from(size.width) / scale, f64::from(size.height) / scale);
+                    let (w, h) = (
+                        f64::from(size.width) / scale,
+                        f64::from(size.height) / scale,
+                    );
                     let t = crate::ghosts::now_ms() / 1000.0;
                     let x = w * (0.5 + 0.45 * (t * 0.23).sin());
                     let y = h * (0.5 + 0.45 * (t * 0.37).sin());

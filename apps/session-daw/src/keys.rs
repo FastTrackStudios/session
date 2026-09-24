@@ -259,9 +259,14 @@ impl Keys {
                         let label = self.labels.get(&path).cloned();
                         (label.unwrap_or_else(|| id.as_str().to_owned()), done)
                     }
-                    KeyTrie::Leaf(_) => (self.labels.get(&path).cloned().unwrap_or_default(), false),
+                    KeyTrie::Leaf(_) => {
+                        (self.labels.get(&path).cloned().unwrap_or_default(), false)
+                    }
                     KeyTrie::Node(n) => (
-                        self.labels.get(&path).cloned().unwrap_or_else(|| n.name.clone()),
+                        self.labels
+                            .get(&path)
+                            .cloned()
+                            .unwrap_or_else(|| n.name.clone()),
                         true,
                     ),
                 };
@@ -275,12 +280,13 @@ impl Keys {
             .collect();
         entries.sort_by(|a, b| a.key.cmp(&b.key));
         Some(WhichKey {
-            title: self
-                .labels
-                .get(&self.pending)
-                .cloned()
-                .unwrap_or_default(),
-            typed: self.pending.iter().map(chord_label).collect::<Vec<_>>().join(" "),
+            title: self.labels.get(&self.pending).cloned().unwrap_or_default(),
+            typed: self
+                .pending
+                .iter()
+                .map(chord_label)
+                .collect::<Vec<_>>()
+                .join(" "),
             entries,
         })
     }
@@ -396,7 +402,10 @@ mod tests {
     fn z_opens_the_zoom_tree_and_t_zooms_to_the_tracks() {
         let mut keys = Keys::load();
         let z = KeyCode::Character("z".into());
-        assert!(keys.press(z, Modifiers::NONE).is_empty(), "z alone is a prefix");
+        assert!(
+            keys.press(z, Modifiers::NONE).is_empty(),
+            "z alone is a prefix"
+        );
         let which = keys.which_key().expect("the popup shows");
         assert_eq!(which.title, "Zoom");
         assert_eq!(which.typed, "z");
@@ -406,7 +415,11 @@ mod tests {
             .find(|e| e.key == "t")
             .expect("z t is in the tree");
         assert!(t.available, "and this window does it");
-        assert!(!t.label.is_empty() && !t.label.starts_with('_'), "{:?}", t.label);
+        assert!(
+            !t.label.is_empty() && !t.label.starts_with('_'),
+            "{:?}",
+            t.label
+        );
         assert!(
             which.entries.iter().any(|e| !e.available),
             "the bindings this window does not do are listed too"

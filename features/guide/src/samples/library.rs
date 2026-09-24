@@ -148,7 +148,11 @@ mod tests {
         assert!(files.contains(&"Guide/English Female - Chorus.wav".to_owned()));
         assert!(files.contains(&"Guide/English Female - Pre Chorus.wav".to_owned()));
         assert!(files.iter().all(|f| !f.contains('\\')), "slash-separated");
-        assert!(files.len() < 40, "a fraction of the library: {}", files.len());
+        assert!(
+            files.len() < 40,
+            "a fraction of the library: {}",
+            files.len()
+        );
         assert!(files.contains(&"Guide/English Female - Ending.wav".to_owned()));
         // Every section note finds its cue under the key its trigger asks
         // for.
@@ -183,18 +187,29 @@ mod tests {
             let mut writer =
                 hound::WavWriter::new(std::io::Cursor::new(&mut wav), spec).expect("wav");
             for i in 0..4800 {
-                writer.write_sample(((i % 100) * 100) as i16).expect("sample");
+                writer
+                    .write_sample(((i % 100) * 100) as i16)
+                    .expect("sample");
             }
             writer.finalize().expect("finalize");
         }
         let mut library = HashMap::new();
         library.insert("Guide/English Female - Chorus.wav".to_owned(), wav);
         let mut bank = SampleBank::default();
-        bank.load_bytes(&library, "wav", ClickSound::Cowbell, "English Female", 48_000);
+        bank.load_bytes(
+            &library,
+            "wav",
+            ClickSound::Cowbell,
+            "English Female",
+            48_000,
+        );
         let Some(crate::GuideTrigger::Guide(key)) = crate::midi::trigger_for_midi_note(85) else {
             panic!("note 85 is a section cue");
         };
-        let cue = bank.guides.get(&key).expect("the chorus cue, by its note's key");
+        let cue = bank
+            .guides
+            .get(&key)
+            .expect("the chorus cue, by its note's key");
         assert_eq!(cue.data[0].len(), 4800);
         assert!(bank.beat.is_none(), "nothing fetched, nothing loaded");
     }

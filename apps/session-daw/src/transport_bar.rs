@@ -155,7 +155,11 @@ fn TransportBarView(reading: crate::engine::Reading) -> Element {
 /// One labelled number in the tempo/key card.
 #[component]
 fn Reading(label: &'static str, value: String, #[props(default)] mono: bool) -> Element {
-    let family = if mono { "ui-monospace, monospace" } else { "system-ui, sans-serif" };
+    let family = if mono {
+        "ui-monospace, monospace"
+    } else {
+        "system-ui, sans-serif"
+    };
     rsx! {
         div {
             style: "display:flex; flex-direction:column; justify-content:center; align-items:flex-start; \

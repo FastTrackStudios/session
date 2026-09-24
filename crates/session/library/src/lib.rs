@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use collection_proto::{CollectionKind, CollectionServiceClient};
 use files_client::FilesClient;
 use files_proto::{
-    MediaServiceClient, MediaServiceStreamClient, RootPath, RootsServiceClient,
-    TreeServiceClient, UploadServiceClient,
+    MediaServiceClient, MediaServiceStreamClient, RootPath, RootsServiceClient, TreeServiceClient,
+    UploadServiceClient,
 };
 use links_proto::NodeKind;
 use resources_proto::ResourcesServiceClient;
@@ -43,7 +43,9 @@ fn task_cli_token(org: &str) -> Option<String> {
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    let text = std::fs::read_to_string(data.join("task/session-tokens").join(format!("{org}.json"))).ok()?;
+    let text =
+        std::fs::read_to_string(data.join("task/session-tokens").join(format!("{org}.json")))
+            .ok()?;
     // `"token":"…"` — a JWT, so no escapes to undo.
     let rest = text.split("\"token\"").nth(1)?;
     let start = rest.find('"')? + 1;
@@ -135,13 +137,27 @@ impl Library {
             for item in list.items.iter().filter(|i| i.node.kind == NodeKind::Song) {
                 let slug = item.node.id.clone();
                 let song = match resources.song(slug.clone()).await {
-                    Ok(doc) => Song { slug, title: doc.title, writers: doc.writers, key: doc.key },
+                    Ok(doc) => Song {
+                        slug,
+                        title: doc.title,
+                        writers: doc.writers,
+                        key: doc.key,
+                    },
                     // A dangling reference still has a place in the order.
-                    Err(_) => Song { title: slug.clone(), slug, writers: Vec::new(), key: String::new() },
+                    Err(_) => Song {
+                        title: slug.clone(),
+                        slug,
+                        writers: Vec::new(),
+                        key: String::new(),
+                    },
                 };
                 songs.push(song);
             }
-            out.push(Setlist { id: list.id, title: list.title, songs });
+            out.push(Setlist {
+                id: list.id,
+                title: list.title,
+                songs,
+            });
         }
         Ok(out)
     }
@@ -157,8 +173,18 @@ impl Library {
     ///
     /// # Errors
     /// No session root for the song, or a transfer failed twice.
-    pub async fn pull_session(&self, song: &str, into: &Path, originals: bool) -> eyre::Result<PathBuf> {
-        let TaskSong { files, root, entries, .. } = self.song(song).await?;
+    pub async fn pull_session(
+        &self,
+        song: &str,
+        into: &Path,
+        originals: bool,
+    ) -> eyre::Result<PathBuf> {
+        let TaskSong {
+            files,
+            root,
+            entries,
+            ..
+        } = self.song(song).await?;
         let mut files = files.lock().await.1.clone();
         let dest = into.join(song);
         for (rel, size) in entries {
@@ -198,19 +224,35 @@ impl Library {
     pub async fn song(&self, song: &str) -> eyre::Result<TaskSong> {
         let files = self.files().await?;
         let dir = session_root_dir(song);
-        let roots = files.roots.list().await.map_err(|e| eyre::eyre!("listing roots: {e:?}"))?;
+        let roots = files
+            .roots
+            .list()
+            .await
+            .map_err(|e| eyre::eyre!("listing roots: {e:?}"))?;
         let root = roots
             .iter()
-            .find(|r| r.path.as_deref().is_some_and(|p| p.trim_end_matches('/').ends_with(&dir)))
+            .find(|r| {
+                r.path
+                    .as_deref()
+                    .is_some_and(|p| p.trim_end_matches('/').ends_with(&dir))
+            })
             .ok_or_else(|| eyre::eyre!("no session for song:{song} (no `{dir}` root)"))?;
         let id = files_client::root_id(root);
         let mut entries = Vec::new();
         let mut pending = vec![String::new()];
         while let Some(folder) = pending.pop() {
             let path = RootPath::parse(&folder).map_err(|e| eyre::eyre!("path {folder}: {e:?}"))?;
-            let listed = files.tree.browse(id, path).await.map_err(|e| eyre::eyre!("browsing {folder}: {e:?}"))?;
+            let listed = files
+                .tree
+                .browse(id, path)
+                .await
+                .map_err(|e| eyre::eyre!("browsing {folder}: {e:?}"))?;
             for entry in listed {
-                let rel = if folder.is_empty() { entry.name.clone() } else { format!("{folder}/{}", entry.name) };
+                let rel = if folder.is_empty() {
+                    entry.name.clone()
+                } else {
+                    format!("{folder}/{}", entry.name)
+                };
                 if entry.is_dir {
                     pending.push(rel);
                 } else {
@@ -274,9 +316,15 @@ impl Library {
     ///
     /// # Errors
     /// As [`Self::pull_session`].
-    pub async fn pull_setlist(&self, setlist: &Setlist, into: &Path, originals: bool) -> eyre::Result<PathBuf> {
+    pub async fn pull_setlist(
+        &self,
+        setlist: &Setlist,
+        into: &Path,
+        originals: bool,
+    ) -> eyre::Result<PathBuf> {
         std::fs::create_dir_all(into)?;
-        let mut lines = vec!["# Pulled from the Task library. One song folder per line.".to_owned()];
+        let mut lines =
+            vec!["# Pulled from the Task library. One song folder per line.".to_owned()];
         for song in &setlist.songs {
             self.pull_session(&song.slug, into, originals).await?;
             lines.push(song.slug.clone());
@@ -295,8 +343,14 @@ impl Library {
 ///
 /// The folder cannot be read or written.
 pub fn write_chart(dest: &Path, song: &str, chart: &str) -> eyre::Result<()> {
-    let files: Vec<PathBuf> = std::fs::read_dir(dest)?.flatten().map(|e| e.path()).collect();
-    for old in files.iter().filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("kf"))) {
+    let files: Vec<PathBuf> = std::fs::read_dir(dest)?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    for old in files
+        .iter()
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("kf")))
+    {
         std::fs::remove_file(old)?;
     }
     let stem = files
@@ -314,7 +368,9 @@ pub fn write_chart(dest: &Path, song: &str, chart: &str) -> eyre::Result<()> {
 #[must_use]
 pub fn is_original(rel: &str) -> bool {
     let lower = rel.to_ascii_lowercase();
-    lower.starts_with("media/") && !lower.starts_with("media/proxies/") && !lower.starts_with("media/peaks/")
+    lower.starts_with("media/")
+        && !lower.starts_with("media/proxies/")
+        && !lower.starts_with("media/peaks/")
 }
 
 /// A song's session in the library, read where it lies (see
@@ -357,19 +413,33 @@ impl TaskSong {
         let files = {
             let mut held = self.files.lock().await;
             if held.0 == generation {
-                let fresh = self.library.files().await.map_err(|e| eyre::eyre!("{first} (and redialling: {e})"))?;
+                let fresh = self
+                    .library
+                    .files()
+                    .await
+                    .map_err(|e| eyre::eyre!("{first} (and redialling: {e})"))?;
                 *held = (generation + 1, fresh);
             }
             held.1.clone()
         };
-        self.read_on(&files, path, &range).await.map_err(|e| eyre::eyre!("{e} (and before that: {first})"))
+        self.read_on(&files, path, &range)
+            .await
+            .map_err(|e| eyre::eyre!("{e} (and before that: {first})"))
     }
 
-    async fn read_on(&self, files: &FilesClient, path: &str, range: &std::ops::Range<u64>) -> eyre::Result<Vec<u8>> {
-        architect::platform::timeout(READ_TIMEOUT, files.read_range(self.root, path, range.start, range.end - 1))
-            .await
-            .map_err(|_| eyre::eyre!("{path} {range:?}: no answer in {}s", READ_TIMEOUT.as_secs()))?
-            .map_err(|e| eyre::eyre!("{path} {range:?}: {e}"))
+    async fn read_on(
+        &self,
+        files: &FilesClient,
+        path: &str,
+        range: &std::ops::Range<u64>,
+    ) -> eyre::Result<Vec<u8>> {
+        architect::platform::timeout(
+            READ_TIMEOUT,
+            files.read_range(self.root, path, range.start, range.end - 1),
+        )
+        .await
+        .map_err(|_| eyre::eyre!("{path} {range:?}: no answer in {}s", READ_TIMEOUT.as_secs()))?
+        .map_err(|e| eyre::eyre!("{path} {range:?}: {e}"))
     }
 }
 
@@ -408,7 +478,10 @@ async fn fetch_to(
 mod tests {
     #[test]
     fn a_title_slugs_as_the_library_does() {
-        assert_eq!(super::slugify("God, I'm Just Grateful"), "god-im-just-grateful");
+        assert_eq!(
+            super::slugify("God, I'm Just Grateful"),
+            "god-im-just-grateful"
+        );
         assert_eq!(super::slugify("Always On Time"), "always-on-time");
         assert_eq!(super::slugify("  Thank God I’m Free!"), "thank-god-im-free");
     }

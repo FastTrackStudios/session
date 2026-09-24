@@ -53,7 +53,9 @@ fn open_songs(engine: &SessionEngine, songs: &[PathBuf]) -> eyre::Result<usize> 
                 opened = opened.saturating_add(1);
                 first.get_or_insert(guid);
             }
-            Err(e) => tracing::error!(engine.song = %path.display(), error = %e, "--engine: a song did not open; the set goes on without it"),
+            Err(e) => {
+                tracing::error!(engine.song = %path.display(), error = %e, "--engine: a song did not open; the set goes on without it")
+            }
         }
     }
     let first = first.ok_or_else(|| eyre::eyre!("none of the {} songs opened", songs.len()))?;

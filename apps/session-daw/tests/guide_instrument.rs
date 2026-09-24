@@ -4,7 +4,7 @@
 
 use daw::plugin::{PluginEvents, PluginInstance, PluginMidiEvent};
 use daw_proto::live_midi::{Channel, KeyNumber, MidiEvent, Velocity};
-use session_daw::guide_instrument::{samples_dir, GuideInstrument};
+use session_daw::guide_instrument::{GuideInstrument, samples_dir};
 
 const RATE: f64 = 48_000.0;
 
@@ -31,7 +31,10 @@ fn render(note: u8) -> Vec<f32> {
     let mut left = Vec::new();
     for block in 0..(2 * 48_000 / 512) {
         let events = if block == 0 {
-            PluginEvents { midi: &on, ..PluginEvents::EMPTY }
+            PluginEvents {
+                midi: &on,
+                ..PluginEvents::EMPTY
+            }
         } else {
             PluginEvents::EMPTY
         };
@@ -48,8 +51,15 @@ fn render(note: u8) -> Vec<f32> {
 fn crossings_per_second(note: u8) -> f64 {
     let x = render(note);
     let peak = x.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-    let loud: Vec<f32> = x.into_iter().skip_while(|s| s.abs() < peak * 0.1).take(2_400).collect();
-    let crossings = loud.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+    let loud: Vec<f32> = x
+        .into_iter()
+        .skip_while(|s| s.abs() < peak * 0.1)
+        .take(2_400)
+        .collect();
+    let crossings = loud
+        .windows(2)
+        .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+        .count();
     crossings as f64 / (loud.len() as f64 / RATE)
 }
 
@@ -58,15 +68,28 @@ fn on_beats_sound_higher_than_off_beats_and_the_one_matches_the_beat() {
     if !samples_dir().join("Click").is_dir() {
         return;
     }
-    let (one, beat, off) = (crossings_per_second(60), crossings_per_second(61), crossings_per_second(62));
+    let (one, beat, off) = (
+        crossings_per_second(60),
+        crossings_per_second(61),
+        crossings_per_second(62),
+    );
     eprintln!("zero crossings/s — one {one:.0}, beat {beat:.0}, off-beat {off:.0}");
-    assert!((one - beat).abs() < 1.0, "the bar's one is the beat's sound");
+    assert!(
+        (one - beat).abs() < 1.0,
+        "the bar's one is the beat's sound"
+    );
     assert!(beat > off, "the on-beat tick is the higher one");
 }
 
 #[test]
 fn the_click_and_count_sound() {
-    for (what, note) in [("accent", 60), ("beat", 61), ("eighth", 62), ("count 1", 72), ("count 4", 75)] {
+    for (what, note) in [
+        ("accent", 60),
+        ("beat", 61),
+        ("eighth", 62),
+        ("count 1", 72),
+        ("count 4", 75),
+    ] {
         assert!(peak_of(note) > 0.01, "{what} (note {note}) is silent");
     }
 }
@@ -78,10 +101,22 @@ fn every_section_cue_sounds_when_the_library_is_installed() {
         return;
     }
     let cues = [
-        ("Verse", 84), ("Chorus", 85), ("Bridge", 86), ("Intro", 87), ("Outro", 88),
-        ("Instrumental", 89), ("Pre-Chorus", 90), ("Post-Chorus", 91), ("Breakdown", 92),
-        ("Interlude", 93), ("Tag", 94), ("End", 95), ("Solo", 96), ("Vamp", 97),
-        ("Turnaround", 98), ("Refrain", 99),
+        ("Verse", 84),
+        ("Chorus", 85),
+        ("Bridge", 86),
+        ("Intro", 87),
+        ("Outro", 88),
+        ("Instrumental", 89),
+        ("Pre-Chorus", 90),
+        ("Post-Chorus", 91),
+        ("Breakdown", 92),
+        ("Interlude", 93),
+        ("Tag", 94),
+        ("End", 95),
+        ("Solo", 96),
+        ("Vamp", 97),
+        ("Turnaround", 98),
+        ("Refrain", 99),
     ];
     let silent: Vec<&str> = cues
         .iter()

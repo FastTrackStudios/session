@@ -418,15 +418,27 @@ mod tests {
             slow_end + 2.0,
             ClickSubdivision::Auto,
         );
-        let slow: Vec<_> = notes.iter().filter(|n| n.time_seconds < slow_end - 1e-9).collect();
-        let fast: Vec<_> = notes.iter().filter(|n| n.time_seconds >= slow_end - 1e-9).collect();
+        let slow: Vec<_> = notes
+            .iter()
+            .filter(|n| n.time_seconds < slow_end - 1e-9)
+            .collect();
+        let fast: Vec<_> = notes
+            .iter()
+            .filter(|n| n.time_seconds >= slow_end - 1e-9)
+            .collect();
         assert_eq!(slow.len(), 8, "eighths at 68");
         assert_eq!(slow[1].pitch, MIDI_NOTE_CLICK_EIGHTH);
         assert_eq!(fast.len(), 4, "quarters at 120");
         assert!(fast.iter().all(|n| n.pitch != MIDI_NOTE_CLICK_EIGHTH));
         // The line itself is quarters.
-        assert_eq!(ClickSubdivision::Auto.at_tempo(75.0), ClickSubdivision::Beat);
-        assert_eq!(ClickSubdivision::Auto.at_tempo(74.9), ClickSubdivision::Eighth);
+        assert_eq!(
+            ClickSubdivision::Auto.at_tempo(75.0),
+            ClickSubdivision::Beat
+        );
+        assert_eq!(
+            ClickSubdivision::Auto.at_tempo(74.9),
+            ClickSubdivision::Eighth
+        );
     }
 
     #[test]

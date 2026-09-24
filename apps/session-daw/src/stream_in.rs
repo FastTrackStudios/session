@@ -39,7 +39,9 @@ use std::time::Duration;
 use daw::standalone::sync::Standalone;
 use daw_transport_sync::{Correction, Follower, TransportBackend};
 
-use daw::standalone::audio_engine::materialize::{PendingMedia, materialize_take_via_bay, pending_media};
+use daw::standalone::audio_engine::materialize::{
+    PendingMedia, materialize_take_via_bay, pending_media,
+};
 use session::load_selection::{LoadSelection, group_of};
 
 use crate::open::{Media, begin_asset_load, set_assets_progress, set_cue_ready};
@@ -108,15 +110,21 @@ async fn run() {
         if !mode.streams_in() {
             // Not streaming in (any more): let go, and be silent.
             if let Some(was) = following.take() {
-                was.backend.stop(was.backend.snapshot().map_or(0.0, |s| s.playhead_seconds));
+                was.backend
+                    .stop(was.backend.snapshot().map_or(0.0, |s| s.playhead_seconds));
                 set_cue_ready(false);
                 tracing::info!(stream.song = %was.remote, "stream-in: stopped");
             }
             continue;
         }
-        let Some(remote) = crate::open::current_song() else { continue };
+        let Some(remote) = crate::open::current_song() else {
+            continue;
+        };
         let selection = mode.selection.clone();
-        if following.as_ref().is_none_or(|f| f.remote != remote || f.selection != selection) {
+        if following
+            .as_ref()
+            .is_none_or(|f| f.remote != remote || f.selection != selection)
+        {
             set_cue_ready(false);
             following = follow(&remote, &selection, &mut songs).await;
             if following.is_some() {
@@ -137,7 +145,10 @@ async fn run() {
                     song.loaded = arrived;
                     set_assets_progress(song.loaded, song.total);
                     if song.loaded == song.total {
-                        tracing::info!(stream.media = song.total, "stream-in: every selected proxy has streamed in");
+                        tracing::info!(
+                            stream.media = song.total,
+                            "stream-in: every selected proxy has streamed in"
+                        );
                     }
                 }
             }
@@ -162,7 +173,11 @@ async fn run() {
 /// deferred), apply `selection`, queue its selected media, put the audio on
 /// it, and lock its transport to the remote's. `None` when the song is not
 /// on this machine (logged).
-async fn follow(remote: &str, selection: &LoadSelection, songs: &mut HashMap<String, Song>) -> Option<Following> {
+async fn follow(
+    remote: &str,
+    selection: &LoadSelection,
+    songs: &mut HashMap<String, Song>,
+) -> Option<Following> {
     let daw = crate::open::cue_engine();
     if !songs.contains_key(remote) {
         // Here, or mirrored from the engine this window drives (its proxies
@@ -213,7 +228,9 @@ async fn follow(remote: &str, selection: &LoadSelection, songs: &mut HashMap<Str
     }
     let remote_daw = daw::rpc::Daw::try_get()?;
     let project = remote_daw.project(remote).await.ok()?;
-    let leader = project.transport_sync().leader(daw::standalone::transport_sync::now_micros);
+    let leader = project
+        .transport_sync()
+        .leader(daw::standalone::transport_sync::now_micros);
     tracing::info!(stream.song = remote, stream.local = %local, stream.selection = %selection.label(), "stream-in: following the remote");
     Some(Following {
         selection: selection.clone(),
@@ -232,7 +249,8 @@ fn open_song(daw: &Standalone, path: &Path) -> eyre::Result<Song> {
     let (opened, plan) = crate::open::open_song_into_with(daw, path, &prepare, Media::Deferred)?;
     let ctx = daw::service::ProjectContext::Project(opened.project_guid.clone());
     let tracks = daw::service::Tracks::all(daw, ctx);
-    let by_guid: HashMap<&str, &daw::service::Track> = tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let by_guid: HashMap<&str, &daw::service::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
     let mut groups = HashMap::new();
     let mut own_mutes = HashMap::new();
     for track in &tracks {
@@ -246,7 +264,10 @@ fn open_song(daw: &Standalone, path: &Path) -> eyre::Result<Song> {
             at = parent.parent_guid.as_deref();
         }
         ancestors.reverse();
-        groups.insert(track.guid.clone(), group_of(&ancestors, &track.name, track.is_folder));
+        groups.insert(
+            track.guid.clone(),
+            group_of(&ancestors, &track.name, track.is_folder),
+        );
         own_mutes.insert(track.guid.clone(), track.muted);
     }
     tracing::info!(stream.song = %opened.name, stream.opened = %plan.open.display(), stream.tracks = tracks.len(), "stream-in: song open, media deferred");
@@ -274,28 +295,46 @@ fn select(daw: &Standalone, song: &mut Song, selection: &LoadSelection) {
     for (guid, group) in &song.groups {
         let own = song.own_mutes.get(guid).copied().unwrap_or(false);
         let muted = if selection.includes(group) { own } else { true };
-        if let Err(e) = daw::service::Tracks::set_muted(daw, ctx.clone(), daw::service::TrackRef::Guid(guid.clone()), muted) {
+        if let Err(e) = daw::service::Tracks::set_muted(
+            daw,
+            ctx.clone(),
+            daw::service::TrackRef::Guid(guid.clone()),
+            muted,
+        ) {
             tracing::warn!(stream.track = %guid, error = %e, "stream-in: a track's mute could not be set");
         }
     }
     let selected: Vec<PendingMedia> = pending_media(daw, &song.local)
         .into_iter()
-        .filter(|m| song.groups.get(&m.track_guid).is_some_and(|g| selection.includes(g)))
+        .filter(|m| {
+            song.groups
+                .get(&m.track_guid)
+                .is_some_and(|g| selection.includes(g))
+        })
         .collect();
     if let Some(peer) = song.peer.as_ref() {
         // Mirrored: each selected take streams its proxy (attached once);
         // the fetcher is told which, and progress is what has fully arrived.
         let before = song.streamed.lock().map(|s| s.clone()).unwrap_or_default();
-        let stem = |p: &str| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_lowercase());
+        let stem = |p: &str| {
+            Path::new(p)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase())
+        };
         let mut streamed = Vec::new();
         for media in &selected {
             // Already streaming (a selection widened), or attach it now.
-            let existing = before
-                .iter()
-                .find(|t| stem(&t.path) == stem(&media.path) && (t.start - media.start).abs() < 1e-9);
-            match existing.cloned().or_else(|| peer.attach(daw, &song.local, media)) {
+            let existing = before.iter().find(|t| {
+                stem(&t.path) == stem(&media.path) && (t.start - media.start).abs() < 1e-9
+            });
+            match existing
+                .cloned()
+                .or_else(|| peer.attach(daw, &song.local, media))
+            {
                 Some(take) => streamed.push(take),
-                None => tracing::warn!(stream.media = %media.path, "stream-in: the source has no indexed proxy for this take"),
+                None => {
+                    tracing::warn!(stream.media = %media.path, "stream-in: the source has no indexed proxy for this take")
+                }
             }
         }
         song.total = streamed.len();
@@ -308,11 +347,23 @@ fn select(daw: &Standalone, song: &mut Song, selection: &LoadSelection) {
         song.total = selected.len();
         song.loaded = selected
             .iter()
-            .filter(|m| daw::standalone::audio_engine::materialize::is_loaded(daw, &song.local, &m.take_guid))
+            .filter(|m| {
+                daw::standalone::audio_engine::materialize::is_loaded(
+                    daw,
+                    &song.local,
+                    &m.take_guid,
+                )
+            })
             .count();
         song.pending = selected
             .into_iter()
-            .filter(|m| !daw::standalone::audio_engine::materialize::is_loaded(daw, &song.local, &m.take_guid))
+            .filter(|m| {
+                !daw::standalone::audio_engine::materialize::is_loaded(
+                    daw,
+                    &song.local,
+                    &m.take_guid,
+                )
+            })
             .collect();
     }
     song.selection = Some(selection.clone());
@@ -354,13 +405,18 @@ async fn load_next(song: &mut Song, playhead: f64) {
     let daw = crate::open::cue_engine().clone();
     let take = media.take_guid.clone();
     let path = media.path.clone();
-    let done = tokio::task::spawn_blocking(move || materialize_take_via_bay(&daw, &local, &take, &path)).await;
+    let done =
+        tokio::task::spawn_blocking(move || materialize_take_via_bay(&daw, &local, &take, &path))
+            .await;
     match done {
         Ok(Ok(())) => {
             song.loaded = song.loaded.saturating_add(1);
             set_assets_progress(song.loaded, song.total);
             if song.pending.is_empty() {
-                tracing::info!(stream.media = song.total, "stream-in: every selected take is in");
+                tracing::info!(
+                    stream.media = song.total,
+                    "stream-in: every selected take is in"
+                );
             }
         }
         Ok(Err(e)) => {
@@ -386,7 +442,10 @@ const SHARE_LINKS_ENV: &str = "FTS_SHARE_LINKS";
 fn share_link_for(links: &str, slug: &str) -> Option<String> {
     let mut any = None;
     for entry in links.split_whitespace() {
-        match entry.split_once('=').filter(|(k, _)| !k.contains('/') && !k.contains(':')) {
+        match entry
+            .split_once('=')
+            .filter(|(k, _)| !k.contains('/') && !k.contains(':'))
+        {
             Some((song, url)) if song == slug => return Some(url.to_owned()),
             Some(_) => {}
             None => any = any.or_else(|| Some(entry.to_owned())),
@@ -399,15 +458,26 @@ fn share_link_for(links: &str, slug: &str) -> Option<String> {
 /// window drives, or else from the Task library (the song by its name).
 async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::StreamedSong> {
     use crate::song_stream::{PeerSource, ShareSource, SongSource, TaskSource, mirror};
-    let only = std::env::var(STREAM_SOURCE_ENV).ok().filter(|v| !v.is_empty());
+    let only = std::env::var(STREAM_SOURCE_ENV)
+        .ok()
+        .filter(|v| !v.is_empty());
     let cache = std::env::temp_dir().join("fts-stream");
     if only.as_deref().is_none_or(|o| o == "peer") {
         match PeerSource::new(remote).await {
-            Ok(source) => match mirror(std::sync::Arc::new(source), crate::song_stream::Keep::Disk(cache.clone())).await {
+            Ok(source) => match mirror(
+                std::sync::Arc::new(source),
+                crate::song_stream::Keep::Disk(cache.clone()),
+            )
+            .await
+            {
                 Ok(streamed) => return Some(streamed),
-                Err(e) => tracing::info!(stream.song = remote, error = %e, "stream-in: the engine cannot send this song"),
+                Err(e) => {
+                    tracing::info!(stream.song = remote, error = %e, "stream-in: the engine cannot send this song")
+                }
             },
-            Err(e) => tracing::info!(stream.song = remote, error = %e, "stream-in: no engine to stream from"),
+            Err(e) => {
+                tracing::info!(stream.song = remote, error = %e, "stream-in: no engine to stream from")
+            }
         }
     }
     if only.as_deref() == Some("peer") {
@@ -415,16 +485,27 @@ async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::Strea
     }
     let name = song_name(remote).await?;
     let slug = session_library::slugify(&name);
-    let link = std::env::var(SHARE_LINKS_ENV).ok().and_then(|links| share_link_for(&links, &slug));
+    let link = std::env::var(SHARE_LINKS_ENV)
+        .ok()
+        .and_then(|links| share_link_for(&links, &slug));
     if only.as_deref() != Some("task")
         && let Some(link) = link
     {
         match ShareSource::new(&link) {
-            Ok(source) => match mirror(std::sync::Arc::new(source), crate::song_stream::Keep::Disk(cache.clone())).await {
+            Ok(source) => match mirror(
+                std::sync::Arc::new(source),
+                crate::song_stream::Keep::Disk(cache.clone()),
+            )
+            .await
+            {
                 Ok(streamed) => return Some(streamed),
-                Err(e) => tracing::warn!(stream.song = %name, error = %e, "stream-in: the share link's copy could not be mirrored"),
+                Err(e) => {
+                    tracing::warn!(stream.song = %name, error = %e, "stream-in: the share link's copy could not be mirrored")
+                }
             },
-            Err(e) => tracing::warn!(stream.song = %name, error = %e, "stream-in: the share link is not a URL"),
+            Err(e) => {
+                tracing::warn!(stream.song = %name, error = %e, "stream-in: the share link is not a URL")
+            }
         }
     }
     if only.as_deref() == Some("share") {
@@ -450,7 +531,9 @@ async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::Strea
 async fn song_name(remote: &str) -> Option<String> {
     let daw = daw::rpc::Daw::try_get()?;
     let info = daw.project(remote).await.ok()?.info().await.ok()?;
-    let stem = Path::new(&info.path).file_stem().map(|s| s.to_string_lossy().into_owned());
+    let stem = Path::new(&info.path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned());
     Some(stem.filter(|s| !s.is_empty()).unwrap_or(info.name))
 }
 
@@ -469,12 +552,17 @@ async fn local_song_file(remote: &str) -> Option<PathBuf> {
     if !info.path.is_empty() && path.exists() {
         return Some(path);
     }
-    let name = path.file_stem().map_or_else(|| info.name.clone(), |s| s.to_string_lossy().into_owned());
+    let name = path
+        .file_stem()
+        .map_or_else(|| info.name.clone(), |s| s.to_string_lossy().into_owned());
     let setlist = std::env::var_os("FTS_SESSION_SETLIST")?;
     crate::setlist::read_setlist(Path::new(&setlist))
         .ok()?
         .into_iter()
-        .find(|song| song.file_stem().is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&name)))
+        .find(|song| {
+            song.file_stem()
+                .is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&name))
+        })
 }
 
 #[cfg(test)]
@@ -484,8 +572,14 @@ mod tests {
     #[test]
     fn a_song_takes_its_own_share_link_before_the_catch_all() {
         let links = "http://t/org/d/share/any washed=http://t/org/d/share/w";
-        assert_eq!(share_link_for(links, "washed").as_deref(), Some("http://t/org/d/share/w"));
-        assert_eq!(share_link_for(links, "who-else").as_deref(), Some("http://t/org/d/share/any"));
+        assert_eq!(
+            share_link_for(links, "washed").as_deref(),
+            Some("http://t/org/d/share/w")
+        );
+        assert_eq!(
+            share_link_for(links, "who-else").as_deref(),
+            Some("http://t/org/d/share/any")
+        );
         assert_eq!(share_link_for("washed=http://t/x", "who-else"), None);
     }
 }

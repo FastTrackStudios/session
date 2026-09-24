@@ -1691,7 +1691,13 @@ pub mod tcp {
     /// bypass toggle keeps its traced 16 at the right end; the labelled
     /// half takes the rest, with "FX" centred in it.
     #[must_use]
-    pub fn fx_pill_wide(chrome: &Chrome, lit: Lit, chain: Chain, at: Interaction, w: f64) -> Drawing {
+    pub fn fx_pill_wide(
+        chrome: &Chrome,
+        lit: Lit,
+        chain: Chain,
+        at: Interaction,
+        w: f64,
+    ) -> Drawing {
         let (w, h) = (w.max(36.0), 22.0);
         let split = w - 16.0;
         let plate = ink_in(chrome, None, at, true, 0.35);

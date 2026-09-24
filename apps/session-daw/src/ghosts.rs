@@ -78,7 +78,12 @@ pub fn everyone() -> Vec<Person> {
 pub fn on_song(project: &str) -> Vec<(String, u32)> {
     EVERYONE
         .lock()
-        .map(|all| all.iter().filter(|p| p.project == project).map(|p| (p.name.clone(), p.color)).collect())
+        .map(|all| {
+            all.iter()
+                .filter(|p| p.project == project)
+                .map(|p| (p.name.clone(), p.color))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -166,13 +171,18 @@ pub fn region_mounted(id: &str, node: std::rc::Rc<dioxus::prelude::MountedData>)
 
 /// Re-measure every panel (they move with the window and the layout).
 pub async fn measure_regions() {
-    let nodes: Vec<(String, std::rc::Rc<dioxus::prelude::MountedData>)> =
-        REGION_NODES.with(|n| n.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+    let nodes: Vec<(String, std::rc::Rc<dioxus::prelude::MountedData>)> = REGION_NODES.with(|n| {
+        n.borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    });
     for (id, node) in nodes {
         match node.get_client_rect().await {
             Ok(r) if r.size.width > 0.0 && r.size.height > 0.0 => {
                 REGION_RECTS.with(|m| {
-                    m.borrow_mut().insert(id, (r.origin.x, r.origin.y, r.size.width, r.size.height))
+                    m.borrow_mut()
+                        .insert(id, (r.origin.x, r.origin.y, r.size.width, r.size.height))
                 });
             }
             // Unmounted, or laid out to nothing: not somewhere to point.
@@ -231,25 +241,35 @@ pub fn local_window_pointer(x: f64, y: f64, window: (f64, f64)) {
         None if OVER_LANES.load(std::sync::atomic::Ordering::Relaxed) => return,
         None => {}
     }
-    let hit = REGION_RECTS.with(|m| {
-        m.borrow()
-            .iter()
-            .filter(|(id, _)| id.as_str() != ARRANGEMENT)
-            .filter(|(_, (rx, ry, rw, rh))| x >= *rx && y >= *ry && x < rx + rw && y < ry + rh)
-            // The smallest panel under the point is the one it is in.
-            .min_by(|a, b| (a.1.2 * a.1.3).total_cmp(&(b.1.2 * b.1.3)))
-            .map(|(id, rect)| (id.clone(), *rect))
-    })
-    .map(|(id, (rx, ry, rw, rh))| {
-        // Anchored to the content when the panel can say what is there;
-        // else a place in the panel.
-        anchor_for(&id)
-            .and_then(|a| a.anchor(x - rx, y - ry, (rw, rh)))
-            .map_or_else(
-                || Pointer::Region { region: id.clone(), x: (x - rx) / rw, y: (y - ry) / rh },
-                |(key, u, v)| Pointer::Anchor { panel: id.clone(), key, u, v },
-            )
-    });
+    let hit = REGION_RECTS
+        .with(|m| {
+            m.borrow()
+                .iter()
+                .filter(|(id, _)| id.as_str() != ARRANGEMENT)
+                .filter(|(_, (rx, ry, rw, rh))| x >= *rx && y >= *ry && x < rx + rw && y < ry + rh)
+                // The smallest panel under the point is the one it is in.
+                .min_by(|a, b| (a.1.2 * a.1.3).total_cmp(&(b.1.2 * b.1.3)))
+                .map(|(id, rect)| (id.clone(), *rect))
+        })
+        .map(|(id, (rx, ry, rw, rh))| {
+            // Anchored to the content when the panel can say what is there;
+            // else a place in the panel.
+            anchor_for(&id)
+                .and_then(|a| a.anchor(x - rx, y - ry, (rw, rh)))
+                .map_or_else(
+                    || Pointer::Region {
+                        region: id.clone(),
+                        x: (x - rx) / rw,
+                        y: (y - ry) / rh,
+                    },
+                    |(key, u, v)| Pointer::Anchor {
+                        panel: id.clone(),
+                        key,
+                        u,
+                        v,
+                    },
+                )
+        });
     let pointer = hit.unwrap_or_else(|| Pointer::Region {
         region: "window".into(),
         x: x / window.0.max(1.0),
@@ -272,8 +292,12 @@ pub fn local_window_left() {
 /// arrangement draws), placed in this window: (x, y, name, colour).
 #[must_use]
 pub fn window_pointers(window: (f64, f64)) -> Vec<(f64, f64, String, u32)> {
-    let Ok(slot) = ROSTER.lock() else { return Vec::new() };
-    let Some(published) = slot.as_ref() else { return Vec::new() };
+    let Ok(slot) = ROSTER.lock() else {
+        return Vec::new();
+    };
+    let Some(published) = slot.as_ref() else {
+        return Vec::new();
+    };
     let now = now_ms();
     published
         .roster
@@ -322,12 +346,18 @@ fn drawn_by_arrangement(pointer: &Pointer) -> bool {
 }
 
 /// The selection, as drawn this frame.
-pub fn local_selection(items: &std::collections::HashSet<String>, rows: &[(daw_proto::Track, u32)]) {
+pub fn local_selection(
+    items: &std::collections::HashSet<String>,
+    rows: &[(daw_proto::Track, u32)],
+) {
     if let Ok(mut local) = LOCAL.lock() {
         let mut items: Vec<String> = items.iter().cloned().collect();
         items.sort();
-        let tracks: Vec<String> =
-            rows.iter().filter(|(t, _)| t.selected).map(|(t, _)| t.guid.clone()).collect();
+        let tracks: Vec<String> = rows
+            .iter()
+            .filter(|(t, _)| t.selected)
+            .map(|(t, _)| t.guid.clone())
+            .collect();
         if local.selected_items != items {
             local.selected_items = items;
         }
@@ -528,7 +558,8 @@ pub fn paint(
                     };
                     let lanes_top = if key.is_empty() { 0.0 } else { oy };
                     let x = u * left;
-                    ((0.0..=left).contains(&x) && (lanes_top..=height).contains(&y)).then_some((x, y))
+                    ((0.0..=left).contains(&x) && (lanes_top..=height).contains(&y))
+                        .then_some((x, y))
                 }
                 Pointer::Timeline { at, track, y } => {
                     let (x, y) = match track {
@@ -543,7 +574,8 @@ pub fn paint(
                         None => (x_of(*at), y * crate::ruler::ruler_h()),
                     };
                     let lanes_top = if track.is_some() { oy } else { 0.0 };
-                    ((left..=view.width).contains(&x) && (lanes_top..=height).contains(&y)).then_some((x, y))
+                    ((left..=view.width).contains(&x) && (lanes_top..=height).contains(&y))
+                        .then_some((x, y))
                 }
                 _ => None,
             })

@@ -68,13 +68,16 @@ mod session_remote_view;
 mod collection_browser;
 // The browser chart pane: the active song's keyflow chart (CPU engraver →
 // SVG) with a playhead highlight driven by the transport streams.
+/// The app on Blitz — see `docs/app-on-blitz.md`.
+#[cfg(all(
+    feature = "native",
+    not(any(target_arch = "wasm32", target_os = "ios"))
+))]
+mod native;
 #[cfg(all(feature = "session", target_arch = "wasm32"))]
 mod session_chart_pane;
 #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
 mod updates;
-/// The app on Blitz — see `docs/app-on-blitz.md`.
-#[cfg(all(feature = "native", not(any(target_arch = "wasm32", target_os = "ios"))))]
-mod native;
 
 fn main() {
     // NVIDIA + Wayland: force the WebKitGTK webview through XWayland before
@@ -178,7 +181,9 @@ fn main() {
             #[cfg(not(feature = "native"))]
             let opened: eyre::Result<()> = {
                 let _ = (engine, target);
-                Err(eyre::eyre!("this build opens no songs: built without the app (feature `native`)"))
+                Err(eyre::eyre!(
+                    "this build opens no songs: built without the app (feature `native`)"
+                ))
             };
             if let Err(e) = opened {
                 tracing::error!("--engine: could not open {target:?}: {e:?}");
@@ -195,7 +200,10 @@ fn main() {
     // The Blitz app opens its session on the studio's engine itself (see
     // `native::launch`); bringing the WRY app's engine up as well would put
     // two daw-standalone facades in one process.
-    #[cfg(all(feature = "native", not(any(target_arch = "wasm32", target_os = "ios"))))]
+    #[cfg(all(
+        feature = "native",
+        not(any(target_arch = "wasm32", target_os = "ios"))
+    ))]
     {
         native::launch();
         return;

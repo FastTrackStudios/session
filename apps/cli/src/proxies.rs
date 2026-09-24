@@ -16,7 +16,10 @@ pub(crate) fn proxy_of(media: &Path) -> Option<PathBuf> {
     if dir.file_name().is_some_and(|n| n == "Proxies") {
         return None;
     }
-    Some(dir.join("Proxies").join(format!("{}.ogg", media.file_stem()?.to_string_lossy())))
+    Some(
+        dir.join("Proxies")
+            .join(format!("{}.ogg", media.file_stem()?.to_string_lossy())),
+    )
 }
 
 /// The session's `.RPP`: the path itself, or the one `.RPP` in a folder.
@@ -87,14 +90,17 @@ pub fn write(session: &Path, quality: f32, force: bool) -> eyre::Result<()> {
             if index.exists() {
                 println!("{}  up to date", proxy.display());
             } else {
-                fts_sample::cache::write_ogg_index(&proxy, INDEX_STEP).map_err(|e| eyre::eyre!("{e}"))?;
+                fts_sample::cache::write_ogg_index(&proxy, INDEX_STEP)
+                    .map_err(|e| eyre::eyre!("{e}"))?;
                 println!("{}  up to date; indexed", proxy.display());
             }
         } else {
             todo.push((media, proxy));
         }
     }
-    let workers = std::thread::available_parallelism().map_or(4, usize::from).min(8);
+    let workers = std::thread::available_parallelism()
+        .map_or(4, usize::from)
+        .min(8);
     let queue = std::sync::Mutex::new(todo.into_iter());
     let failures = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
@@ -111,8 +117,9 @@ pub fn write(session: &Path, quality: f32, force: bool) -> eyre::Result<()> {
                             // Written aside and moved into place, so a sync
                             // agent never picks up half a proxy.
                             let partial = proxy.with_extension("ogg.partial");
-                            let frames = fts_sample::cache::write_ogg_proxy(&media, &partial, quality)
-                                .map_err(|e| eyre::eyre!("{e}"))?;
+                            let frames =
+                                fts_sample::cache::write_ogg_proxy(&media, &partial, quality)
+                                    .map_err(|e| eyre::eyre!("{e}"))?;
                             std::fs::rename(&partial, &proxy)?;
                             // Its page index was written beside the partial
                             // name: it moves with the proxy.
@@ -138,7 +145,11 @@ pub fn write(session: &Path, quality: f32, force: bool) -> eyre::Result<()> {
     if failures.is_empty() {
         Ok(())
     } else {
-        Err(eyre::eyre!("{} proxies failed:\n{}", failures.len(), failures.join("\n")))
+        Err(eyre::eyre!(
+            "{} proxies failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        ))
     }
 }
 
@@ -209,7 +220,10 @@ mod tests {
              <SOURCE WAVE\n    FILE \"Media/Bass.wav\"\n  >\n  <SOURCE MIDI\n    FILE \"\"\n  >\n>\n",
         )
         .expect("rpp");
-        assert_eq!(sources(&rpp).expect("sources"), vec![dir.join("Media/Bass.wav")]);
+        assert_eq!(
+            sources(&rpp).expect("sources"),
+            vec![dir.join("Media/Bass.wav")]
+        );
         assert_eq!(project_file(&dir).expect("project"), rpp);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -423,17 +423,35 @@ mod key_tests {
 
     #[test]
     fn two_word_sections_are_one_name_and_only_numbers_number() {
-        assert_eq!(filename_to_key("English Female - Pre Chorus.wav"), "Pre Chorus_None");
-        assert_eq!(filename_to_key("English Female - Pre Chorus 2.wav"), "Pre Chorus_2");
+        assert_eq!(
+            filename_to_key("English Female - Pre Chorus.wav"),
+            "Pre Chorus_None"
+        );
+        assert_eq!(
+            filename_to_key("English Female - Pre Chorus 2.wav"),
+            "Pre Chorus_2"
+        );
         assert_eq!(filename_to_key("English Female - Verse 3.wav"), "Verse_3");
         assert_eq!(filename_to_key("English Female - Tag.wav"), "Tag_None");
     }
 
     #[test]
     fn a_cues_key_finds_the_librarys_file() {
-        assert_eq!(get_guide_key("Pre-Chorus", None), filename_to_key("English Female - Pre Chorus.wav"));
-        assert_eq!(get_guide_key("Post-Chorus", None), filename_to_key("English Female - Post Chorus.wav"));
-        assert_eq!(get_guide_key("End", None), filename_to_key("English Female - Ending.wav"));
-        assert_eq!(get_guide_key("Tag", None), filename_to_key("English Female - Tag.wav"));
+        assert_eq!(
+            get_guide_key("Pre-Chorus", None),
+            filename_to_key("English Female - Pre Chorus.wav")
+        );
+        assert_eq!(
+            get_guide_key("Post-Chorus", None),
+            filename_to_key("English Female - Post Chorus.wav")
+        );
+        assert_eq!(
+            get_guide_key("End", None),
+            filename_to_key("English Female - Ending.wav")
+        );
+        assert_eq!(
+            get_guide_key("Tag", None),
+            filename_to_key("English Female - Tag.wav")
+        );
     }
 }

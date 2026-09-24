@@ -23,8 +23,10 @@ use crate::shell::{ACCENT, BAR_BG, DIM, Density, RULE, TEXT};
 /// Where an env-started host leaves its ticket.
 #[cfg(feature = "native")]
 fn ticket_path() -> std::path::PathBuf {
-    std::env::var_os("FTS_COLLAB_TICKET")
-        .map_or_else(|| std::env::temp_dir().join("fts-session-ticket"), std::path::PathBuf::from)
+    std::env::var_os("FTS_COLLAB_TICKET").map_or_else(
+        || std::env::temp_dir().join("fts-session-ticket"),
+        std::path::PathBuf::from,
+    )
 }
 
 #[cfg(feature = "native")]
@@ -64,8 +66,12 @@ pub fn CollabBar() -> Element {
             }
             if let Some(set) = task_set {
                 match crate::collab::join_task(&set, display_name()) {
-                    Ok(()) => tracing::info!(collab.setlist = %set.setlist, "collab: in the set Task keeps"),
-                    Err(e) => tracing::warn!(collab.error = %e, "collab: could not join the set Task keeps"),
+                    Ok(()) => {
+                        tracing::info!(collab.setlist = %set.setlist, "collab: in the set Task keeps")
+                    }
+                    Err(e) => {
+                        tracing::warn!(collab.error = %e, "collab: could not join the set Task keeps")
+                    }
                 }
             } else if crate::collab::env_set("FTS_COLLAB_HOST") {
                 match crate::collab::host(display_name()) {
@@ -78,14 +84,17 @@ pub fn CollabBar() -> Element {
                     }
                     Err(e) => tracing::warn!(collab.error = %e, "collab: could not host"),
                 }
-            } else if let Some(join) = std::env::var_os("FTS_COLLAB_JOIN").filter(|v| !v.is_empty()) {
+            } else if let Some(join) = std::env::var_os("FTS_COLLAB_JOIN").filter(|v| !v.is_empty())
+            {
                 let join = join.to_string_lossy().into_owned();
                 let ticket = if join.starts_with("fts-session:") {
                     Some(join)
                 } else {
                     // A file the host writes: wait for it.
                     (0..120).find_map(|_| {
-                        let t = std::fs::read_to_string(&join).ok().filter(|t| t.starts_with("fts-session:"));
+                        let t = std::fs::read_to_string(&join)
+                            .ok()
+                            .filter(|t| t.starts_with("fts-session:"));
                         if t.is_none() {
                             std::thread::sleep(Duration::from_millis(500));
                         }
@@ -106,10 +115,10 @@ pub fn CollabBar() -> Element {
         loop {
             architect::platform::sleep(Duration::from_millis(500)).await;
             let now = crate::collab::status();
-            let left = now
-                .as_ref()
-                .and_then(|s| s.resets_at)
-                .map(|at| at.saturating_duration_since(architect::platform::Instant::now()).as_secs());
+            let left = now.as_ref().and_then(|s| s.resets_at).map(|at| {
+                at.saturating_duration_since(architect::platform::Instant::now())
+                    .as_secs()
+            });
             if *resets_in.peek() != left {
                 resets_in.set(left);
             }
@@ -157,7 +166,11 @@ pub fn CollabBar() -> Element {
         },
     };
     let title = match &live {
-        Some(l) => format!("{} · {}", if l.hosting { "Sharing" } else { "Joined" }, who(l.peers)),
+        Some(l) => format!(
+            "{} · {}",
+            if l.hosting { "Sharing" } else { "Joined" },
+            who(l.peers)
+        ),
         None => "Share this set, or join someone's".to_owned(),
     };
     rsx! {
@@ -353,7 +366,11 @@ fn secondary() -> String {
 }
 
 fn half(on: bool) -> String {
-    let (bg, fg) = if on { (ACCENT, "#0b0c0e") } else { ("transparent", DIM) };
+    let (bg, fg) = if on {
+        (ACCENT, "#0b0c0e")
+    } else {
+        ("transparent", DIM)
+    };
     format!(
         "flex:1; height:24px; border:none; border-radius:5px; background:{bg}; color:{fg}; \
          font-size:12px; font-weight:600; cursor:pointer;"
@@ -374,7 +391,9 @@ fn invite_link() -> Option<String> {
 /// The invite, onto the browser's clipboard.
 #[cfg(not(feature = "native"))]
 fn copy(text: &str) -> bool {
-    let Some(window) = web_sys::window() else { return false };
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
     let _ = window.navigator().clipboard().write_text(text);
     true
 }
@@ -383,12 +402,17 @@ fn copy(text: &str) -> bool {
 fn copy(text: &str) -> bool {
     use std::io::Write as _;
     #[cfg(target_os = "macos")]
-    let child = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn();
+    let child = std::process::Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn();
     #[cfg(not(target_os = "macos"))]
     let child: std::io::Result<std::process::Child> =
         Err(std::io::Error::other("no clipboard here yet"));
     let Ok(mut child) = child else { return false };
-    let wrote = child.stdin.take().is_some_and(|mut stdin| stdin.write_all(text.as_bytes()).is_ok());
+    let wrote = child
+        .stdin
+        .take()
+        .is_some_and(|mut stdin| stdin.write_all(text.as_bytes()).is_ok());
     child.wait().is_ok_and(|s| s.success()) && wrote
 }
 
@@ -421,7 +445,11 @@ fn Row(name: String, color: u32, note: String) -> Element {
 #[component]
 pub fn Avatar(name: String, color: u32, size: f64, overlap: bool) -> Element {
     let (r, g, b) = ((color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
-    let initial = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+    let initial = name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
     let margin = if overlap { -size * 0.3 } else { 0.0 };
     let font = (size * 0.5).round();
     let radius = size / 2.0;
@@ -529,8 +557,14 @@ pub fn use_follow_song(mut setlist: Signal<crate::setlist::Setlist>) {
                     setlist.write().pick(index, at);
                 }
             }
-            let Some(project) = crate::collab::take_song_request() else { continue };
-            let index = setlist.peek().songs.iter().position(|s| s.project == project);
+            let Some(project) = crate::collab::take_song_request() else {
+                continue;
+            };
+            let index = setlist
+                .peek()
+                .songs
+                .iter()
+                .position(|s| s.project == project);
             let at = crate::engine::Transport::shared().map_or(0.0, |t| t.read().0);
             if let Some(index) = index
                 && setlist.write().pick(index, at).is_some()

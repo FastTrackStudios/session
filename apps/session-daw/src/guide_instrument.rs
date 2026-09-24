@@ -28,11 +28,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use daw_proto::live_midi::MidiEventExt;
 use daw_standalone::plugin::{
     FxFactory, PluginDescriptor, PluginError, PluginEvents, PluginFormat, PluginInstance,
     PluginParamInfo,
 };
-use daw_proto::live_midi::MidiEventExt;
 use session_guide::{BlockClock, ClickSound, GuideConfig, GuideEngine, TriggerSource};
 
 /// The FX ident the guide generator puts on its tracks.
@@ -263,7 +263,10 @@ impl PluginInstance for GuideInstrument {
                 continue;
             };
             let under_cue = velocity == session_guide::midi::COUNT_UNDER_CUE_VELOCITY;
-            if matches!(trigger, session_guide::GuideTrigger::Count(_)) && under_cue && guide_playing {
+            if matches!(trigger, session_guide::GuideTrigger::Count(_))
+                && under_cue
+                && guide_playing
+            {
                 continue; // the cue says it instead
             }
             engine.trigger(event.offset as usize, trigger);
@@ -400,6 +403,9 @@ mod tests {
         };
         let mut guide = GuideInstrument::for_role(Role::Any, Arc::default(), empty);
         guide.prepare(f64::from(RATE), 512).expect("prepare");
-        assert!(late_energy(&mut guide, 61) < 1e-3, "a synthesized tick is short");
+        assert!(
+            late_energy(&mut guide, 61) < 1e-3,
+            "a synthesized tick is short"
+        );
     }
 }

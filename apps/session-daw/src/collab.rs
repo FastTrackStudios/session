@@ -32,12 +32,12 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use session::sync::clock::SharedClock;
 use session::sync::engine::MediaRoot;
+use session::sync::net::{PresenceSink, SetPeer};
 #[cfg(feature = "native")]
 use session::sync::net::{SetHost, session_id, song_id};
-use session::sync::net::{PresenceSink, SetPeer};
 use session::sync::presence::{self, PeerState, PlayState, Pointer, Roster, Throttle};
-use session::sync::clock::SharedClock;
 use session::sync::transport::{
     self, Command, LocalTransport, SharedTransport, SyncPosition, TransportMode, TransportSync,
 };
@@ -131,7 +131,11 @@ pub fn join_in_background(ticket: String, name: String) {
 /// The session's status, if one is live.
 #[must_use]
 pub fn status() -> Option<Status> {
-    LIVE.lock().ok()?.as_ref().filter(|l| l.shared).map(|l| l.status.clone())
+    LIVE.lock()
+        .ok()?
+        .as_ref()
+        .filter(|l| l.shared)
+        .map(|l| l.status.clone())
 }
 
 fn song_where(pick: impl Fn(&Song) -> bool) -> Option<(Song, Arc<dyn PresenceSink>, String)> {
@@ -180,15 +184,20 @@ impl PresenceSink for Alone {
 /// two copies of one song never share it. The file's stem is the same on
 /// every machine (`Washed`); once songs live in the Task library this is
 /// the library's song id.
-async fn open_songs() -> eyre::Result<Vec<(daw_control::Project, MediaRoot, String, std::path::PathBuf)>> {
+async fn open_songs()
+-> eyre::Result<Vec<(daw_control::Project, MediaRoot, String, std::path::PathBuf)>> {
     let daw = daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
     let mut out = Vec::new();
     for project in daw.projects().await? {
         let path = std::path::PathBuf::from(project.info().await?.path);
-        let folder = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
-        let key = path
-            .file_stem()
-            .map_or_else(|| project.guid().to_owned(), |s| s.to_string_lossy().into_owned());
+        let folder = path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        let key = path.file_stem().map_or_else(
+            || project.guid().to_owned(),
+            |s| s.to_string_lossy().into_owned(),
+        );
         out.push((project, MediaRoot(folder), key, path));
     }
     Ok(out)
@@ -199,7 +208,11 @@ async fn open_songs() -> eyre::Result<Vec<(daw_control::Project, MediaRoot, Stri
 /// song — that song's.
 fn set_key(songs: &[(daw_control::Project, MediaRoot, String, std::path::PathBuf)]) -> String {
     std::env::var_os("FTS_SESSION_SETLIST")
-        .and_then(|p| std::path::Path::new(&p).file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .and_then(|p| {
+            std::path::Path::new(&p)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+        })
         .or_else(|| songs.first().map(|s| s.2.clone()))
         .unwrap_or_else(|| "session".into())
 }
@@ -212,7 +225,12 @@ fn chart_for(path: &std::path::Path, doc: &SessionDoc) -> String {
     #[cfg(not(feature = "native"))]
     let beside: Option<String> = None;
     beside
-        .or_else(|| CHARTS.lock().ok().and_then(|c| c.as_ref()?.get(path).cloned()))
+        .or_else(|| {
+            CHARTS
+                .lock()
+                .ok()
+                .and_then(|c| c.as_ref()?.get(path).cloned())
+        })
         .unwrap_or_else(|| doc.read().chart)
 }
 
@@ -223,7 +241,9 @@ static CHARTS: Mutex<Option<HashMap<std::path::PathBuf, String>>> = Mutex::new(N
 /// The chart `path`'s song was opened with (a page's song, from its files).
 pub fn remember_chart(path: &std::path::Path, chart: &str) {
     if let Ok(mut charts) = CHARTS.lock() {
-        charts.get_or_insert_with(HashMap::new).insert(path.to_path_buf(), chart.to_owned());
+        charts
+            .get_or_insert_with(HashMap::new)
+            .insert(path.to_path_buf(), chart.to_owned());
     }
 }
 
@@ -246,14 +266,26 @@ fn open_local_with(mut docs: HashMap<String, SessionDoc>) -> eyre::Result<()> {
         let open = open_songs().await?;
         // Already keeping exactly these songs: nothing to do.
         let keeping = |l: &Live| {
-            l.songs.len() == open.len() && open.iter().all(|(p, ..)| l.songs.iter().any(|s| s.project == p.guid()))
+            l.songs.len() == open.len()
+                && open
+                    .iter()
+                    .all(|(p, ..)| l.songs.iter().any(|s| s.project == p.guid()))
         };
         // …or sharing: a shared set is changed by leaving it.
-        if docs.is_empty() && LIVE.lock().ok().is_some_and(|l| l.as_ref().is_some_and(|l| l.shared || keeping(l))) {
+        if docs.is_empty()
+            && LIVE
+                .lock()
+                .ok()
+                .is_some_and(|l| l.as_ref().is_some_and(|l| l.shared || keeping(l)))
+        {
             return Ok(None);
         }
         if docs.is_empty() {
-            docs = LIVE.lock().ok().map(|mut l| stop(l.take())).unwrap_or_default();
+            docs = LIVE
+                .lock()
+                .ok()
+                .map(|mut l| stop(l.take()))
+                .unwrap_or_default();
         }
         let mut bridges = Vec::new();
         for (project, media, key, path) in open {
@@ -266,10 +298,25 @@ fn open_local_with(mut docs: HashMap<String, SessionDoc>) -> eyre::Result<()> {
             let chart = chart_for(&path, &doc);
             let guid = project.guid().to_owned();
             let bridge = Bridge::host(project, media, doc, chart).await?;
-            bridges.push((Song { project: guid, key, doc: bridge.doc().clone() }, bridge));
+            bridges.push((
+                Song {
+                    project: guid,
+                    key,
+                    doc: bridge.doc().clone(),
+                },
+                bridge,
+            ));
         }
         let presence: Arc<dyn PresenceSink> = Arc::new(Alone);
-        let started = start(bridges, Arc::clone(&presence), SharedClock::owned(), String::new(), "local".into(), String::new(), None);
+        let started = start(
+            bridges,
+            Arc::clone(&presence),
+            SharedClock::owned(),
+            String::new(),
+            "local".into(),
+            String::new(),
+            None,
+        );
         let mut live = started.into_live(String::new(), false, presence);
         live.shared = false;
         Ok::<_, eyre::Report>(Some(live))
@@ -285,7 +332,9 @@ fn open_local_with(mut docs: HashMap<String, SessionDoc>) -> eyre::Result<()> {
 
 /// Stop whatever is keeping the set, handing back its songs' docs.
 fn stop(live: Option<Live>) -> HashMap<String, SessionDoc> {
-    let Some(live) = live else { return HashMap::new() };
+    let Some(live) = live else {
+        return HashMap::new();
+    };
     let _ = live.stop.send(true);
     live.songs.into_iter().map(|s| (s.key, s.doc)).collect()
 }
@@ -308,7 +357,9 @@ pub fn chart_context() -> Option<(SessionDoc, Arc<dyn PresenceSink>, String)> {
 
 /// The chart was edited here (the song on screen).
 pub fn local_chart(text: &str) {
-    let Some((song, _, _)) = current() else { return };
+    let Some((song, _, _)) = current() else {
+        return;
+    };
     // The bridge owns doc writes; a chart edit is recorded straight into
     // the text, which the next local reconcile leaves alone.
     let mut model = song.doc.read();
@@ -325,7 +376,11 @@ pub fn local_chart(text: &str) {
 pub fn set_shared_transport(shared: bool) {
     let Ok(mut live) = LIVE.lock() else { return };
     let Some(l) = live.as_mut() else { return };
-    let mode = if shared { TransportMode::Shared } else { TransportMode::Independent };
+    let mode = if shared {
+        TransportMode::Shared
+    } else {
+        TransportMode::Independent
+    };
     let local = local_transport(&l.songs);
     let Ok(mut sync) = l.sync.lock() else { return };
     let entry = sync.set_mode(mode, &local, crate::ghosts::now_ms());
@@ -353,7 +408,9 @@ pub fn transport_pressed() {
 pub fn following() -> bool {
     let Ok(live) = LIVE.lock() else { return false };
     let Some(l) = live.as_ref() else { return false };
-    let Ok(sync) = l.sync.lock() else { return false };
+    let Ok(sync) = l.sync.lock() else {
+        return false;
+    };
     sync.mode() == TransportMode::Shared && sync.current().is_some_and(|c| c.by != l.me)
 }
 
@@ -372,7 +429,11 @@ fn local_transport(songs: &[Song]) -> LocalTransport {
     let (position, playing) = crate::engine::Transport::shared().map_or((0.0, false), |t| t.read());
     let song = crate::open::current_song()
         .and_then(|p| songs.iter().find(|s| s.project == p).map(|s| s.key.clone()));
-    LocalTransport { playing, position, song }
+    LocalTransport {
+        playing,
+        position,
+        song,
+    }
 }
 
 /// Leave the session (or stop hosting it). The songs keep their docs —
@@ -380,7 +441,11 @@ fn local_transport(songs: &[Song]) -> LocalTransport {
 pub fn leave() {
     let docs = LIVE.lock().ok().map(|mut live| {
         let shared = live.as_ref().is_some_and(|l| l.shared);
-        if shared { stop(live.take()) } else { HashMap::new() }
+        if shared {
+            stop(live.take())
+        } else {
+            HashMap::new()
+        }
     });
     crate::ghosts::publish(None, 0.0, false);
     crate::ghosts::publish_everyone(Vec::new());
@@ -400,11 +465,14 @@ pub fn leave() {
 
 fn next_seq() -> u64 {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let base = u64::try_from(web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis()))
+    let base = u64::try_from(
+        web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis()),
+    )
     .unwrap_or(0);
-    base.saturating_mul(1000).saturating_add(SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1000)
+    base.saturating_mul(1000)
+        .saturating_add(SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1000)
 }
 
 #[cfg(feature = "native")]
@@ -432,7 +500,11 @@ fn host_inner(name: String) -> eyre::Result<String> {
         let set = set_key(&open);
         let id = session_id(&set);
         // The songs' own docs, history and all, are what go on the network.
-        let mut docs = LIVE.lock().ok().map(|mut l| stop(l.take())).unwrap_or_default();
+        let mut docs = LIVE
+            .lock()
+            .ok()
+            .map(|mut l| stop(l.take()))
+            .unwrap_or_default();
         let host = SetHost::new(id);
         let mut bridges = Vec::new();
         for (project, media, key, path) in open {
@@ -441,7 +513,14 @@ fn host_inner(name: String) -> eyre::Result<String> {
             let guid = project.guid().to_owned();
             let bridge = Bridge::host(project, media, doc, chart).await?;
             host.add(song_id(&set, &key), bridge.doc());
-            bridges.push((Song { project: guid, key, doc: bridge.doc().clone() }, bridge));
+            bridges.push((
+                Song {
+                    project: guid,
+                    key,
+                    doc: bridge.doc().clone(),
+                },
+                bridge,
+            ));
         }
         let endpoint = architect::iroh_link::bind_endpoint(secret_key())
             .await
@@ -453,7 +532,15 @@ fn host_inner(name: String) -> eyre::Result<String> {
 
         let me = format!("host-{}", &endpoint.id().to_string()[..8]);
         let presence: Arc<dyn PresenceSink> = Arc::new(host.own_presence().await?);
-        let started = start(bridges, Arc::clone(&presence), SharedClock::owned(), set, me, name, Some(Box::new((host, endpoint))));
+        let started = start(
+            bridges,
+            Arc::clone(&presence),
+            SharedClock::owned(),
+            set,
+            me,
+            name,
+            Some(Box::new((host, endpoint))),
+        );
         Ok::<_, eyre::Report>((ticket.clone(), started.into_live(ticket, true, presence)))
     })?;
     if let Ok(mut slot) = LIVE.lock() {
@@ -512,7 +599,12 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
         // Every song, replicated from the host.
         let replicas: Vec<(SessionDoc, _)> = open
             .into_iter()
-            .map(|song| (SetPeer::sync_song(song_id(&set, &song.2), sync.clone()), song))
+            .map(|song| {
+                (
+                    SetPeer::sync_song(song_id(&set, &song.2), sync.clone()),
+                    song,
+                )
+            })
             .collect();
         // The host's songs arrive first; only then may each bridge make
         // its project match. A song the host does not have keeps this
@@ -523,7 +615,11 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        let mut docs = LIVE.lock().ok().map(|mut l| stop(l.take())).unwrap_or_default();
+        let mut docs = LIVE
+            .lock()
+            .ok()
+            .map(|mut l| stop(l.take()))
+            .unwrap_or_default();
         let mut bridges = Vec::new();
         for (doc, (project, media, key, path)) in replicas {
             let guid = project.guid().to_owned();
@@ -534,11 +630,26 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
                 let chart = chart_for(&path, &own);
                 Bridge::host(project, media, own, chart).await?
             };
-            bridges.push((Song { project: guid, key, doc: bridge.doc().clone() }, bridge));
+            bridges.push((
+                Song {
+                    project: guid,
+                    key,
+                    doc: bridge.doc().clone(),
+                },
+                bridge,
+            ));
         }
         crate::studio::request_resync();
         let me = format!("peer-{}", &endpoint.id().to_string()[..8]);
-        let started = start(bridges, Arc::clone(&presence), clock, set, me, name, Some(Box::new(endpoint)));
+        let started = start(
+            bridges,
+            Arc::clone(&presence),
+            clock,
+            set,
+            me,
+            name,
+            Some(Box::new(endpoint)),
+        );
         let _keep = peer;
         Ok::<_, eyre::Report>(started.into_live(ticket.to_string(), false, presence))
     })?;
@@ -555,9 +666,13 @@ fn parse_ticket(ticket: &str) -> eyre::Result<(architect::iroh_link::iroh::Endpo
         .trim()
         .strip_prefix("fts-session:")
         .ok_or_else(|| eyre::eyre!("not a session ticket"))?;
-    let (endpoint, id) = rest.split_once('/').ok_or_else(|| eyre::eyre!("not a session ticket"))?;
+    let (endpoint, id) = rest
+        .split_once('/')
+        .ok_or_else(|| eyre::eyre!("not a session ticket"))?;
     Ok((
-        endpoint.parse().map_err(|e| eyre::eyre!("endpoint id: {e}"))?,
+        endpoint
+            .parse()
+            .map_err(|e| eyre::eyre!("endpoint id: {e}"))?,
         id.parse().map_err(|e| eyre::eyre!("session id: {e}"))?,
     ))
 }
@@ -584,7 +699,9 @@ impl TaskSet {
     /// The set `FTS_COLLAB_TASK` names, if it names one.
     #[must_use]
     pub fn from_env() -> Option<Self> {
-        let value = std::env::var(TASK_SET_ENV).ok().filter(|v| !v.trim().is_empty())?;
+        let value = std::env::var(TASK_SET_ENV)
+            .ok()
+            .filter(|v| !v.trim().is_empty())?;
         Some(Self::parse(value.trim()))
     }
 
@@ -595,17 +712,31 @@ impl TaskSet {
             Some(link) => {
                 let link = link.trim_end_matches('/');
                 let base = link.split('?').next().unwrap_or(link);
-                let url = base.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
-                Self { url: format!("{url}/vox"), token: None, setlist: String::new() }
+                let url = base
+                    .replacen("https://", "wss://", 1)
+                    .replacen("http://", "ws://", 1);
+                Self {
+                    url: format!("{url}/vox"),
+                    token: None,
+                    setlist: String::new(),
+                }
             }
             #[cfg(feature = "native")]
             None => {
                 let library = session_library::Library::from_env();
-                Self { url: library.org_url(), token: library.token, setlist: value.to_owned() }
+                Self {
+                    url: library.org_url(),
+                    token: library.token,
+                    setlist: value.to_owned(),
+                }
             }
             // A page joins by link: a member's lane is the app's.
             #[cfg(not(feature = "native"))]
-            None => Self { url: String::new(), token: None, setlist: value.to_owned() },
+            None => Self {
+                url: String::new(),
+                token: None,
+                setlist: value.to_owned(),
+            },
         }
     }
 }
@@ -651,7 +782,9 @@ fn join_task_inner(set: &TaskSet, name: String) -> eyre::Result<()> {
                     *slot = Some(live);
                 }
             }
-            Err(e) => tracing::warn!(collab.error = %e, "collab: could not join the set Task keeps"),
+            Err(e) => {
+                tracing::warn!(collab.error = %e, "collab: could not join the set Task keeps")
+            }
         }
     });
     Ok(())
@@ -681,15 +814,19 @@ async fn join_task_live(set: TaskSet, name: String) -> eyre::Result<Live> {
         let sync: crdt::sync::DocSyncClient = task_dial::establish_at(&set.url, token)
             .await
             .map_err(|e| eyre::eyre!("session sync: {e}"))?;
-        let presence_client: crdt::sync::DocPresenceClient = task_dial::establish_at(&set.url, token)
-            .await
-            .map_err(|e| eyre::eyre!("session presence: {e}"))?;
+        let presence_client: crdt::sync::DocPresenceClient =
+            task_dial::establish_at(&set.url, token)
+                .await
+                .map_err(|e| eyre::eyre!("session presence: {e}"))?;
         // Task's clock is the session's.
         let clock = SharedClock::follow_with(move || {
             let lane = lane.clone();
             async move { lane.now().await.ok() }
         });
-        let presence_id: Uuid = joined.presence_id.parse().map_err(|e| eyre::eyre!("presence id: {e}"))?;
+        let presence_id: Uuid = joined
+            .presence_id
+            .parse()
+            .map_err(|e| eyre::eyre!("presence id: {e}"))?;
         let mut peer = SetPeer::new(presence_id);
         peer.run_presence(presence_client);
         let presence: Arc<dyn PresenceSink> = Arc::new(peer.presence().clone());
@@ -712,12 +849,19 @@ async fn join_task_live(set: TaskSet, name: String) -> eyre::Result<Live> {
         // What Task has arrives at once; a song still empty after that is
         // this peer's to seed.
         for _ in 0..80 {
-            if replicas.iter().all(|(doc, _)| doc.as_ref().is_none_or(SessionDoc::has_session)) {
+            if replicas
+                .iter()
+                .all(|(doc, _)| doc.as_ref().is_none_or(SessionDoc::has_session))
+            {
                 break;
             }
             architect::platform::sleep(Duration::from_millis(25)).await;
         }
-        let mut docs = LIVE.lock().ok().map(|mut l| stop(l.take())).unwrap_or_default();
+        let mut docs = LIVE
+            .lock()
+            .ok()
+            .map(|mut l| stop(l.take()))
+            .unwrap_or_default();
         let mut bridges = Vec::new();
         let mut seeded = 0usize;
         for (doc, (project, media, key, path)) in replicas {
@@ -735,7 +879,14 @@ async fn join_task_live(set: TaskSet, name: String) -> eyre::Result<Live> {
                     Bridge::host(project, media, own, chart).await?
                 }
             };
-            bridges.push((Song { project: guid, key, doc: bridge.doc().clone() }, bridge));
+            bridges.push((
+                Song {
+                    project: guid,
+                    key,
+                    doc: bridge.doc().clone(),
+                },
+                bridge,
+            ));
         }
         crate::studio::request_resync();
         let me = format!("peer-{}", &Uuid::new_v4().simple().to_string()[..8]);
@@ -746,7 +897,15 @@ async fn join_task_live(set: TaskSet, name: String) -> eyre::Result<Live> {
             collab.seeded = seeded,
             "collab: joined a set Task keeps"
         );
-        let started = start(bridges, Arc::clone(&presence), clock, joined.title.clone(), me, name, None);
+        let started = start(
+            bridges,
+            Arc::clone(&presence),
+            clock,
+            joined.title.clone(),
+            me,
+            name,
+            None,
+        );
         let _keep = peer;
         let mut live = started.into_live(set.url.clone(), false, presence);
         live.status.resets_at = resets_at;
@@ -1068,12 +1227,17 @@ impl Lock {
             }
             self.role = role;
         }
-        let (Some(backend), Some(offset)) = (backend, clock.offset_micros()) else { return false };
+        let (Some(backend), Some(offset)) = (backend, clock.offset_micros()) else {
+            return false;
+        };
         match role {
             Role::Apart => false,
             Role::Leading => {
                 if let Some(snapshot) = backend.snapshot() {
-                    let stamped = SyncPosition { song: here.cloned(), position: snapshot.position().shifted(offset) };
+                    let stamped = SyncPosition {
+                        song: here.cloned(),
+                        position: snapshot.position().shifted(offset),
+                    };
                     presence.set(&transport::sync_key(me), stamped.encode());
                 }
                 false
@@ -1090,7 +1254,9 @@ impl Lock {
                     return false;
                 }
                 let now = daw_transport_sync::clock::now_micros_f64();
-                let correction = self.follower.tick(backend.as_ref(), &lead.position, offset, now);
+                let correction = self
+                    .follower
+                    .tick(backend.as_ref(), &lead.position, offset, now);
                 if !matches!(correction, daw_transport_sync::Correction::Hold) {
                     tracing::debug!(
                         sync.correction = ?correction,
@@ -1107,7 +1273,9 @@ impl Lock {
 
 /// A song's sync backend (daw-transport-sync), by project — made once:
 /// making one stands up the project's transport engine.
-fn sync_backend(project: &str) -> Option<Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>> {
+fn sync_backend(
+    project: &str,
+) -> Option<Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>> {
     type Backends = HashMap<String, Arc<dyn daw_transport_sync::TransportBackend + Send + Sync>>;
     static BACKENDS: Mutex<Option<Backends>> = Mutex::new(None);
     let mut cache = BACKENDS.lock().ok()?;
@@ -1118,8 +1286,10 @@ fn sync_backend(project: &str) -> Option<Arc<dyn daw_transport_sync::TransportBa
     // Remote: None — the per-buffer backend is the local engine's; locking a
     // follower to a remote transport over the facade is its own issue.
     let backend: Arc<dyn daw_transport_sync::TransportBackend + Send + Sync> = Arc::new(
-        crate::open::with_local_engine(crate::open::LocalOnly::TransportSync, |daw| daw.sync_backend(project))
-            .flatten()?,
+        crate::open::with_local_engine(crate::open::LocalOnly::TransportSync, |daw| {
+            daw.sync_backend(project)
+        })
+        .flatten()?,
     );
     backends.insert(project.to_owned(), Arc::clone(&backend));
     Some(backend)
@@ -1168,7 +1338,16 @@ struct Outbox {
 impl Outbox {
     fn new(me: String, name: String) -> Self {
         let color = presence::color_for(&me);
-        Self { me, name, color, state: None, pointer: Throttle::new(33.0), pointer_sent: None, play: None, puppet_beat: None }
+        Self {
+            me,
+            name,
+            color,
+            state: None,
+            pointer: Throttle::new(33.0),
+            pointer_sent: None,
+            play: None,
+            puppet_beat: None,
+        }
     }
 
     fn publish(&mut self, sink: &dyn PresenceSink, now: f64, song: Option<String>) {
@@ -1197,7 +1376,10 @@ impl Outbox {
             self.state = Some(state);
         }
 
-        let pointer = self.pointer.offer(local.pointer, now).or_else(|| self.pointer.flush(now));
+        let pointer = self
+            .pointer
+            .offer(local.pointer, now)
+            .or_else(|| self.pointer.flush(now));
         if let Some(pointer) = pointer
             && self.pointer_sent.as_ref() != Some(&pointer)
         {
@@ -1217,7 +1399,12 @@ impl Outbox {
                 last.playing != playing || (last.position_at(now) - at).abs() > JUMP
             });
             if changed {
-                let play = PlayState { playing, position: at, at_ms: now, rate: 1.0 };
+                let play = PlayState {
+                    playing,
+                    position: at,
+                    at_ms: now,
+                    rate: 1.0,
+                };
                 sink.set(&presence::key(&self.me, presence::PLAY), play.encode());
                 self.play = Some(play);
             }
@@ -1229,7 +1416,11 @@ impl Outbox {
     /// time selection and an item selected, playing. For the two-window
     /// test (`FTS_COLLAB_PUPPET=1` on one of them) and a demo's "someone
     /// else is here" — never set in normal use.
-    #[allow(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a small, positive time
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )] // a small, positive time
     fn puppet(&mut self, sink: &dyn PresenceSink, now: f64, song: Option<String>) {
         let t = (now / 1000.0) % 8.0;
         let at = 4.0 + t * 7.0;
@@ -1244,12 +1435,20 @@ impl Outbox {
                 edit_cursor: Some(24.0),
                 time_selection: Some((32.0, 48.0)),
                 selected_tracks: tracks.iter().take(1).cloned().collect(),
-                selected_items: crate::ghosts::local_item_guids().into_iter().take(2).collect(),
+                selected_items: crate::ghosts::local_item_guids()
+                    .into_iter()
+                    .take(2)
+                    .collect(),
                 chart_caret: None,
             };
             sink.set(&presence::key(&self.me, presence::STATE), state.encode());
             self.state = Some(state);
-            let play = PlayState { playing: true, position: 10.0, at_ms: now, rate: 1.0 };
+            let play = PlayState {
+                playing: true,
+                position: 10.0,
+                at_ms: now,
+                rate: 1.0,
+            };
             sink.set(&presence::key(&self.me, presence::PLAY), play.encode());
         }
         // And an edit, through this engine like any other: every few
@@ -1262,7 +1461,11 @@ impl Outbox {
             if self.puppet_beat.is_some() && env_set("FTS_COLLAB_PUPPET_TRANSPORT") {
                 let together = beat % 4 == 0;
                 let press = SharedTransport {
-                    mode: if together { TransportMode::Shared } else { TransportMode::Independent },
+                    mode: if together {
+                        TransportMode::Shared
+                    } else {
+                        TransportMode::Independent
+                    },
                     playing: together,
                     position: 20.0,
                     at_ms: now,
@@ -1295,8 +1498,12 @@ impl Outbox {
             }) {
                 let guid = guid.clone();
                 architect::platform::spawn(async move {
-                    let Some(daw) = daw::rpc::Daw::try_get() else { return };
-                    let Ok(project) = daw.current_project().await else { return };
+                    let Some(daw) = daw::rpc::Daw::try_get() else {
+                        return;
+                    };
+                    let Ok(project) = daw.current_project().await else {
+                        return;
+                    };
                     if let Ok(Some(track)) = project.tracks().by_guid(&guid).await {
                         let _ = track.toggle_mute().await;
                     }
@@ -1307,11 +1514,22 @@ impl Outbox {
         // over the lyrics: every kind of place a pointer can be.
         let place = match (now / 3000.0) as u64 % 3 {
             0 => Pointer::Timeline { at, track, y: 0.5 },
-            1 => Pointer::Region { region: "chart".into(), x: 0.2 + 0.6 * (t % 1.0), y: 0.3 + 0.05 * t },
-            _ => Pointer::Region { region: "lyrics".into(), x: 0.15 + 0.7 * (t % 1.0), y: 0.5 },
+            1 => Pointer::Region {
+                region: "chart".into(),
+                x: 0.2 + 0.6 * (t % 1.0),
+                y: 0.3 + 0.05 * t,
+            },
+            _ => Pointer::Region {
+                region: "lyrics".into(),
+                x: 0.15 + 0.7 * (t % 1.0),
+                y: 0.5,
+            },
         };
         if let Some(Some(pointer)) = self.pointer.offer(Some(place), now) {
-            sink.set(&presence::key(&self.me, presence::POINTER), pointer.encode(now));
+            sink.set(
+                &presence::key(&self.me, presence::POINTER),
+                pointer.encode(now),
+            );
         }
     }
 }
@@ -1323,7 +1541,10 @@ mod task_set_tests {
     #[test]
     fn a_share_link_is_joined_on_its_guest_lane() {
         let set = TaskSet::parse("share:https://task.example/org/days-to-praise/share/abc123?pw=x");
-        assert_eq!(set.url, "wss://task.example/org/days-to-praise/share/abc123/vox");
+        assert_eq!(
+            set.url,
+            "wss://task.example/org/days-to-praise/share/abc123/vox"
+        );
         assert_eq!(set.token, None);
         assert_eq!(set.setlist, "", "the link's own set");
     }
@@ -1339,11 +1560,17 @@ mod task_set_probe {
         use live_proto::LiveSessionsClient;
         let link = std::env::var("FTS_PROBE_LIVE").unwrap();
         let set = super::TaskSet::parse(&format!("share:{link}"));
-        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         rt.block_on(async {
             let lane: LiveSessionsClient = task_dial::establish_at(&set.url, None).await.unwrap();
             let joined = lane.join(String::new()).await.unwrap();
-            eprintln!("set {} epoch {} resets {:?}", joined.title, joined.epoch, joined.resets_every_secs);
+            eprintln!(
+                "set {} epoch {} resets {:?}",
+                joined.title, joined.epoch, joined.resets_every_secs
+            );
             for song in &joined.songs {
                 eprintln!("  {} {} files={:?}", song.slug, song.title, song.files);
             }

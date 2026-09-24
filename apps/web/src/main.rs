@@ -5,8 +5,8 @@
 //! the public playground set Task keeps: everyone who comes is in one
 //! session, which starts over every few minutes.
 
-mod praise;
 mod guide;
+mod praise;
 mod routes;
 
 use dioxus::prelude::*;

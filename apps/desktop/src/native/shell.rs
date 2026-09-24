@@ -45,7 +45,11 @@ pub fn Shell() -> Element {
     let mode = use_signal(|| {
         std::env::var("FTS_SESSION_MODE")
             .ok()
-            .and_then(|name| Mode::ALL.into_iter().find(|m| m.display_name().eq_ignore_ascii_case(&name)))
+            .and_then(|name| {
+                Mode::ALL
+                    .into_iter()
+                    .find(|m| m.display_name().eq_ignore_ascii_case(&name))
+            })
             .unwrap_or(Mode::Live)
     });
     // The mode, for the panels that change with it (the mixer's strips
@@ -72,9 +76,14 @@ pub fn Shell() -> Element {
     // start somewhere other than the top, or (the collaboration demo) to
     // put a second window on a different song from the first.
     use_hook(move || {
-        let index = std::env::var("FTS_SESSION_SONG").ok().and_then(|n| n.parse::<usize>().ok());
+        let index = std::env::var("FTS_SESSION_SONG")
+            .ok()
+            .and_then(|n| n.parse::<usize>().ok());
         if let Some(index) = index.and_then(|n| n.checked_sub(1)) {
-            let picked = setlist.write().pick(index, 0.0).map(|song| song.project.clone());
+            let picked = setlist
+                .write()
+                .pick(index, 0.0)
+                .map(|song| song.project.clone());
             if let Some(project) = picked {
                 session_daw::open::switch_song(&project);
             }
@@ -91,7 +100,11 @@ pub fn Shell() -> Element {
     let mut width = use_signal(|| logical(&window));
     let measuring = window.clone();
     dioxus_native::use_window_event(move |event, _| {
-        if matches!(event, winit::event::WindowEvent::SurfaceResized(_) | winit::event::WindowEvent::ScaleFactorChanged { .. }) {
+        if matches!(
+            event,
+            winit::event::WindowEvent::SurfaceResized(_)
+                | winit::event::WindowEvent::ScaleFactorChanged { .. }
+        ) {
             let now = logical(&measuring);
             if (*width.peek() - now).abs() > 0.5 {
                 width.set(now);
@@ -225,9 +238,15 @@ fn use_live_advance(mut setlist: Signal<session_daw::setlist::Setlist>, mode: Si
             }
         };
         let Some(next) = next else { return };
-        let picked = setlist.write().pick(next, at).map(|song| song.project.clone());
+        let picked = setlist
+            .write()
+            .pick(next, at)
+            .map(|song| song.project.clone());
         if let Some(project) = picked {
-            tracing::info!(setlist.next = next, "live: the song ended; the next one plays");
+            tracing::info!(
+                setlist.next = next,
+                "live: the song ended; the next one plays"
+            );
             session_daw::open::switch_song(&project);
             session_daw::engine::transport(session_daw::engine::Move::PlayFrom, 0.0);
         }

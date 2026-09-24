@@ -134,7 +134,11 @@ pub fn chords_h() -> f64 {
 #[must_use]
 pub fn row_top(row: usize) -> f64 {
     let lanes = LANE_H * crate::num::coord(row);
-    if row >= MARKS_ROW { lanes + chords_h() } else { lanes }
+    if row >= MARKS_ROW {
+        lanes + chords_h()
+    } else {
+        lanes
+    }
 }
 
 /// The whole top strip: the lanes, the chords, then the tempo and the
@@ -487,7 +491,15 @@ pub fn lanes(
             palette.tcp_rule,
             Rect::new(left - LABEL_W, top + LANE_H - 1.0, right, top + LANE_H),
         );
-        label(painter, font, palette.text_faint, left, name, top + LANE_H - 4.0, SIZE);
+        label(
+            painter,
+            font,
+            palette.text_faint,
+            left,
+            name,
+            top + LANE_H - 4.0,
+            SIZE,
+        );
     }
     // Regions: a band, clipped to the timeline, named where it starts
     // — or where the view starts, if the band began off screen, so a
@@ -602,7 +614,15 @@ pub fn chord_lane(
         palette.tcp_rule,
         Rect::new(left - LABEL_W, top + CHORD_H - 1.0, right, top + CHORD_H),
     );
-    label(painter, font, palette.text_faint, left, "CHORDS", top + CHORD_H - 4.0, 8.0);
+    label(
+        painter,
+        font,
+        palette.text_faint,
+        left,
+        "CHORDS",
+        top + CHORD_H - 4.0,
+        8.0,
+    );
     // Where each key tag ends, so a chord starting under one is written
     // after it rather than through it.
     let tags: Vec<(f64, f64, &str)> = chart

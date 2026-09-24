@@ -118,7 +118,12 @@ impl MixerMemory {
     fn wanted(memory: Option<Self>, docked: bool, mode: Option<session::modes::Mode>) -> bool {
         let fallback = docked && mode != Some(session::modes::Mode::Organize);
         match (memory, mode) {
-            (Some(memory), Some(mode)) => memory.0.peek().get(&(docked, mode)).copied().unwrap_or(fallback),
+            (Some(memory), Some(mode)) => memory
+                .0
+                .peek()
+                .get(&(docked, mode))
+                .copied()
+                .unwrap_or(fallback),
             _ => fallback,
         }
     }
@@ -212,7 +217,10 @@ pub fn Mixer() -> Element {
         let strips: Rc<RefCell<Strips>> = Rc::default();
         crate::ghosts::register_anchor(
             "mixer",
-            Rc::new(MixerAnchor { strips: Rc::clone(&strips), scroll: Rc::clone(&scroll) }),
+            Rc::new(MixerAnchor {
+                strips: Rc::clone(&strips),
+                scroll: Rc::clone(&scroll),
+            }),
         );
         strips
     });
@@ -579,7 +587,8 @@ impl MixerWidget {
                     // `drag_fraction` takes the screen delta and makes up
                     // positive itself.
                     let fraction = crate::gesture::drag_fraction(y - turn.from_y, travel);
-                    let edit = crate::engine::drag(turn.spot.control, &turn.was.guid, &turn.was, fraction);
+                    let edit =
+                        crate::engine::drag(turn.spot.control, &turn.was.guid, &turn.was, fraction);
                     if let Some(edit) = edit {
                         // Shown now, sent once a frame: a drag moves the
                         // pointer many times a frame, and every edit sent

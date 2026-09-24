@@ -71,7 +71,11 @@ pub enum Pointer {
     /// `y` is where in that track's row, 0 (top) to 1 (bottom) — the
     /// pointer is wherever the hand is, not snapped to the row's middle —
     /// or, with no track (over the ruler), 0..1 down the ruler.
-    Timeline { at: f64, track: Option<String>, y: f64 },
+    Timeline {
+        at: f64,
+        track: Option<String>,
+        y: f64,
+    },
     /// Over the chart: a position on its page, 0..1 each way.
     Chart { x: f64, y: f64 },
     /// Anywhere else in the window: a named part of it (`chart`,
@@ -85,7 +89,12 @@ pub enum Pointer {
     /// `key`, `u` and `v` mean — the chart: a measure, how far through it
     /// and how high against its staff; the mixer: a track's strip and
     /// where on it; the progress bar: the song, and a time.
-    Anchor { panel: String, key: String, u: f64, v: f64 },
+    Anchor {
+        panel: String,
+        key: String,
+        u: f64,
+        v: f64,
+    },
 }
 
 /// A peer's transport, at a moment.
@@ -203,11 +212,15 @@ impl PeerState {
             ("items", strings(&self.selected_items)),
             (
                 "caret_anchor",
-                self.chart_caret.as_ref().map_or(LoroValue::Null, |c| LoroValue::from(c.0.clone())),
+                self.chart_caret
+                    .as_ref()
+                    .map_or(LoroValue::Null, |c| LoroValue::from(c.0.clone())),
             ),
             (
                 "caret_head",
-                self.chart_caret.as_ref().map_or(LoroValue::Null, |c| LoroValue::from(c.1.clone())),
+                self.chart_caret
+                    .as_ref()
+                    .map_or(LoroValue::Null, |c| LoroValue::from(c.1.clone())),
             ),
         ])
     }
@@ -437,7 +450,9 @@ impl PointerTrail {
             // Into a place this view cannot show: gone at once, not left
             // where it last was.
             return match (place(&prev.1), place(&sample.1)) {
-                (Some(a), Some(b)) => Some(((b.0 - a.0).mul_add(k, a.0), (b.1 - a.1).mul_add(k, a.1))),
+                (Some(a), Some(b)) => {
+                    Some(((b.0 - a.0).mul_add(k, a.0), (b.1 - a.1).mul_add(k, a.1)))
+                }
                 (_, b) => b,
             };
         }
@@ -475,8 +490,16 @@ fn lerp(a: &Pointer, b: &Pointer, k: f64) -> Pointer {
         // Within one track, both ways; across tracks the screen-space
         // path ([`PointerTrail::screen_at`]) is what glides.
         (
-            Pointer::Timeline { at: a_at, track: ta, y: ay },
-            Pointer::Timeline { at: b_at, track, y: by },
+            Pointer::Timeline {
+                at: a_at,
+                track: ta,
+                y: ay,
+            },
+            Pointer::Timeline {
+                at: b_at,
+                track,
+                y: by,
+            },
         ) => Pointer::Timeline {
             at: mix(*a_at, *b_at),
             track: track.clone(),
@@ -487,8 +510,18 @@ fn lerp(a: &Pointer, b: &Pointer, k: f64) -> Pointer {
             y: mix(*ay, *by),
         },
         (
-            Pointer::Anchor { panel: pa, key: ka, u: ua, v: va },
-            Pointer::Anchor { panel: pb, key: kb, u: ub, v: vb },
+            Pointer::Anchor {
+                panel: pa,
+                key: ka,
+                u: ua,
+                v: va,
+            },
+            Pointer::Anchor {
+                panel: pb,
+                key: kb,
+                u: ub,
+                v: vb,
+            },
         ) if pa == pb && ka == kb => Pointer::Anchor {
             panel: pb.clone(),
             key: kb.clone(),
@@ -497,8 +530,16 @@ fn lerp(a: &Pointer, b: &Pointer, k: f64) -> Pointer {
         },
         // Across panels it jumps: halfway between two is on neither.
         (
-            Pointer::Region { region: ra, x: ax, y: ay },
-            Pointer::Region { region: rb, x: bx, y: by },
+            Pointer::Region {
+                region: ra,
+                x: ax,
+                y: ay,
+            },
+            Pointer::Region {
+                region: rb,
+                x: bx,
+                y: by,
+            },
         ) if ra == rb => Pointer::Region {
             region: rb.clone(),
             x: mix(*ax, *bx),

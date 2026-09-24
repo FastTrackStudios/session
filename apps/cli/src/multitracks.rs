@@ -67,7 +67,9 @@ pub fn stem_name(file: &str) -> String {
 pub fn title_from_stems(files: &[String]) -> Option<String> {
     let mut prefix: Option<String> = None;
     for file in files {
-        let stem = file.rsplit_once('.').map_or(file.as_str(), |(name, _)| name);
+        let stem = file
+            .rsplit_once('.')
+            .map_or(file.as_str(), |(name, _)| name);
         let (before, _) = stem.split_once(" - ")?;
         // A track number is not a name.
         if before.trim().chars().all(|c| c.is_ascii_digit()) {
@@ -103,7 +105,10 @@ fn role(name: &str) -> Option<&'static str> {
 pub fn read_name(name: &str) -> (String, Option<f64>, Option<(u32, u32)>, Option<String>) {
     let (mut bpm, mut sig, mut key) = (None, None, None);
     let mut words: Vec<String> = Vec::new();
-    for raw in name.split(['_', '-', ' ']).filter(|part| !part.trim().is_empty()) {
+    for raw in name
+        .split(['_', '-', ' '])
+        .filter(|part| !part.trim().is_empty())
+    {
         let part = raw.trim();
         let upper = part.to_uppercase();
         if let Ok(number) = part.parse::<f64>() {
@@ -148,7 +153,11 @@ pub fn read_name(name: &str) -> (String, Option<f64>, Option<(u32, u32)>, Option
 #[must_use]
 pub fn musical_tempo(bpm: f64, sig: (u32, u32)) -> (f64, (u32, u32)) {
     // A 2/4 vendor bar is half of the 4/4 one everybody counts.
-    let (mut bpm, sig) = if sig == (2, 4) { (bpm / 2.0, (4, 4)) } else { (bpm, sig) };
+    let (mut bpm, sig) = if sig == (2, 4) {
+        (bpm / 2.0, (4, 4))
+    } else {
+        (bpm, sig)
+    };
     // And a click in eighths (or sixteenths) is that again.
     while bpm > 160.0 {
         bpm /= 2.0;
@@ -174,7 +183,10 @@ pub fn tidy_title(raw: &str) -> String {
         .char_indices()
         .map(|(i, c)| {
             let between_letters = c == '_'
-                && raw[..i].chars().next_back().is_some_and(char::is_alphabetic)
+                && raw[..i]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_alphabetic)
                 && raw[i + 1..].chars().next().is_some_and(char::is_alphabetic);
             if between_letters { '\'' } else { c }
         })
@@ -184,9 +196,7 @@ pub fn tidy_title(raw: &str) -> String {
     let mut spaced = String::new();
     for (i, c) in raw.char_indices() {
         let previous = raw[..i].chars().next_back();
-        if c.is_uppercase()
-            && previous.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit())
-        {
+        if c.is_uppercase() && previous.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit()) {
             spaced.push(' ');
         }
         spaced.push(c);
@@ -216,8 +226,12 @@ pub fn stems(folder: &Path) -> eyre::Result<Vec<Stem>> {
     let multi: Vec<PathBuf> = found
         .iter()
         .filter(|p| {
-            p.components()
-                .any(|c| c.as_os_str().to_string_lossy().to_lowercase().contains("multitrack"))
+            p.components().any(|c| {
+                c.as_os_str()
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .contains("multitrack")
+            })
         })
         .cloned()
         .collect();
@@ -225,17 +239,23 @@ pub fn stems(folder: &Path) -> eyre::Result<Vec<Stem>> {
     let mut stems: Vec<Stem> = Vec::new();
     for path in chosen {
         // A single stereo mix is not a stem.
-        if path
-            .components()
-            .any(|c| c.as_os_str().to_string_lossy().to_lowercase().contains("singletrack"))
-        {
+        if path.components().any(|c| {
+            c.as_os_str()
+                .to_string_lossy()
+                .to_lowercase()
+                .contains("singletrack")
+        }) {
             continue;
         }
         let name = stem_name(&path.file_name().unwrap_or_default().to_string_lossy());
         let seconds = PcmFile::open(&path).map_or(0.0, |pcm: PcmFile| {
             pcm.frames() as f64 / f64::from(pcm.sample_rate().max(1))
         });
-        stems.push(Stem { path, name, seconds });
+        stems.push(Stem {
+            path,
+            name,
+            seconds,
+        });
     }
     stems.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(stems)
@@ -336,7 +356,8 @@ pub fn settle_tempo(named: Option<f64>, clicked: Option<f64>) -> Option<f64> {
     match (named, clicked) {
         (Some(named), Some(clicked)) => {
             let close = |a: f64, b: f64| (a - b).abs() / b < 0.03;
-            if close(named, clicked) || !(close(named, clicked * 2.0) || close(named, clicked / 2.0))
+            if close(named, clicked)
+                || !(close(named, clicked * 2.0) || close(named, clicked / 2.0))
             {
                 Some(clicked)
             } else {
@@ -381,8 +402,7 @@ pub fn analyse(folder: &Path) -> eyre::Result<(Song, Vec<Stem>)> {
             if !entry.path().is_dir() {
                 continue;
             }
-            let (_, bpm, inner_sig, inner_key) =
-                read_name(&entry.file_name().to_string_lossy());
+            let (_, bpm, inner_sig, inner_key) = read_name(&entry.file_name().to_string_lossy());
             if bpm.is_some() {
                 named_bpm = bpm;
                 sig = sig.or(inner_sig);
@@ -448,7 +468,11 @@ pub fn analyse(folder: &Path) -> eyre::Result<(Song, Vec<Stem>)> {
 
     Ok((
         Song {
-            title: if title.trim().is_empty() { tidy_title(&name) } else { title },
+            title: if title.trim().is_empty() {
+                tidy_title(&name)
+            } else {
+                title
+            },
             bpm,
             time_sig,
             key,
@@ -527,14 +551,23 @@ fn named_bpm_of(folder: &Path) -> Option<f64> {
 /// with the chords still to write.
 #[must_use]
 pub fn chart_text(song: &Song) -> String {
-    let mut out = format!("{}\n{}bpm {}/{}", song.title, round(song.bpm), song.time_sig.0, song.time_sig.1);
+    let mut out = format!(
+        "{}\n{}bpm {}/{}",
+        song.title,
+        round(song.bpm),
+        song.time_sig.0,
+        song.time_sig.1
+    );
     if let Some(key) = &song.key {
         out.push_str(&format!(" #{key}"));
     }
     out.push('\n');
     let bar = 60.0 / song.bpm * f64::from(song.time_sig.0);
     if song.songstart > bar / 2.0 {
-        out.push_str(&format!("In {}\n", ((song.songstart / bar).round() as u32).max(1)));
+        out.push_str(&format!(
+            "In {}\n",
+            ((song.songstart / bar).round() as u32).max(1)
+        ));
     }
     for (index, start) in song.sections.iter().enumerate() {
         let next = song
@@ -603,7 +636,9 @@ pub fn import(folder: &Path, out: &Path, force: bool) -> eyre::Result<PathBuf> {
     // session opening, and the tempo is already in the project.
     match keyflow::parse(&chart) {
         Ok(_) => std::fs::write(session.join(format!("{}.kf", song.title)), chart)?,
-        Err(e) => tracing::warn!(title = song.title, error = %e, "the starting chart did not parse"),
+        Err(e) => {
+            tracing::warn!(title = song.title, error = %e, "the starting chart did not parse")
+        }
     }
     println!(
         "{}  {} bpm {}/{}{}  {} stems  first beat {:.3}s  songstart {:.2}s  {} cues",
@@ -611,7 +646,10 @@ pub fn import(folder: &Path, out: &Path, force: bool) -> eyre::Result<PathBuf> {
         round(song.bpm),
         song.time_sig.0,
         song.time_sig.1,
-        song.key.as_ref().map(|k| format!(" {k}")).unwrap_or_default(),
+        song.key
+            .as_ref()
+            .map(|k| format!(" {k}"))
+            .unwrap_or_default(),
         stems.len(),
         song.first_beat,
         song.songstart,
@@ -621,7 +659,10 @@ pub fn import(folder: &Path, out: &Path, force: bool) -> eyre::Result<PathBuf> {
         && (named - song.bpm).abs() > 0.5
     {
         // The vendor counts the click; the chart counts the song.
-        println!("    (its folder counts {named} — the same grid, {} in 4/4)", round(song.bpm));
+        println!(
+            "    (its folder counts {named} — the same grid, {} in 4/4)",
+            round(song.bpm)
+        );
     }
     Ok(session)
 }
@@ -639,7 +680,10 @@ mod tests {
         assert!(title.contains("AlwaysOnTime"), "{title}");
 
         let (_, bpm, sig, key) = read_name("4-4  _  127 BPM  _  A Major");
-        assert_eq!((bpm, sig, key.as_deref()), (Some(127.0), Some((4, 4)), Some("A")));
+        assert_eq!(
+            (bpm, sig, key.as_deref()),
+            (Some(127.0), Some((4, 4)), Some("A"))
+        );
 
         let (title, bpm, _, key) = read_name("Holy Forever _ Bethel Music _ Bb");
         assert_eq!((bpm, key.as_deref()), (None, Some("Bb")));
@@ -658,11 +702,17 @@ mod tests {
 
     #[test]
     fn a_title_reads_as_a_title() {
-        assert_eq!(tidy_title("AlwaysOnTime ElevationWorship"), "Always On Time");
+        assert_eq!(
+            tidy_title("AlwaysOnTime ElevationWorship"),
+            "Always On Time"
+        );
         assert_eq!(tidy_title("Holy Forever Bethel Music"), "Holy Forever");
         assert_eq!(tidy_title("Elevation Worship Praise"), "Praise");
         assert_eq!(tidy_title("Who Else Gateway Worship"), "Who Else");
-        assert_eq!(tidy_title("God, I_m Just Grateful"), "God, I'm Just Grateful");
+        assert_eq!(
+            tidy_title("God, I_m Just Grateful"),
+            "God, I'm Just Grateful"
+        );
     }
 
     #[test]

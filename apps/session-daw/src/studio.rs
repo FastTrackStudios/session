@@ -27,7 +27,6 @@ use dioxus::prelude::*;
 
 use daw_ui::studio::{ProjectRef, RowsRef};
 
-
 /// Pixels a second at zoom 1 — the studio's base scale.
 pub const PPS: f64 = 40.0;
 
@@ -163,12 +162,18 @@ impl StudioSession {
     /// # Errors
     ///
     /// The project could not be read back.
-    pub fn read_current(path: Option<&std::path::Path>, chart: Option<std::path::PathBuf>) -> eyre::Result<Self> {
+    pub fn read_current(
+        path: Option<&std::path::Path>,
+        chart: Option<std::path::PathBuf>,
+    ) -> eyre::Result<Self> {
         const SCENE: &str = "drum-mixing";
         let raw = fetch().ok_or_else(|| {
             eyre::eyre!(
                 "could not read {} back",
-                path.map_or_else(|| "the current project".to_owned(), |p| p.display().to_string())
+                path.map_or_else(
+                    || "the current project".to_owned(),
+                    |p| p.display().to_string()
+                )
             )
         })?;
         let planner = Planner {
@@ -583,8 +588,14 @@ mod source_tests {
             prepare: false,
             save_to: None,
         };
-        assert_eq!(crate::open::song_plan_with(crate::folder::disk(), &rpp, &prepared(), false), as_saved);
-        assert_eq!(crate::open::song_plan_with(crate::folder::disk(), &saved, &prepared(), false), as_saved);
+        assert_eq!(
+            crate::open::song_plan_with(crate::folder::disk(), &rpp, &prepared(), false),
+            as_saved
+        );
+        assert_eq!(
+            crate::open::song_plan_with(crate::folder::disk(), &saved, &prepared(), false),
+            as_saved
+        );
         // Asked to, the multitrack is prepared afresh over it.
         assert_eq!(
             crate::open::song_plan_with(crate::folder::disk(), &rpp, &prepared(), true),

@@ -29,9 +29,10 @@ impl MediaRoot {
     /// A path as the doc stores it: relative when it is under the root.
     #[must_use]
     pub fn to_doc(&self, path: &str) -> String {
-        Path::new(path)
-            .strip_prefix(&self.0)
-            .map_or_else(|_| path.to_string(), |rel| rel.to_string_lossy().into_owned())
+        Path::new(path).strip_prefix(&self.0).map_or_else(
+            |_| path.to_string(),
+            |rel| rel.to_string_lossy().into_owned(),
+        )
     }
 
     /// A doc path as this machine opens it.
@@ -53,8 +54,10 @@ impl MediaRoot {
 /// When a daw call fails.
 pub async fn read(project: &Project, media: &MediaRoot) -> daw_control::Result<SessionModel> {
     let tracks = project.tracks().all().await?;
-    let parents: HashMap<String, Option<String>> =
-        tracks.iter().map(|t| (t.guid.clone(), t.parent_guid.clone())).collect();
+    let parents: HashMap<String, Option<String>> = tracks
+        .iter()
+        .map(|t| (t.guid.clone(), t.parent_guid.clone()))
+        .collect();
     let tracks = tracks
         .into_iter()
         .map(|t| TrackState {
@@ -86,7 +89,10 @@ pub async fn read(project: &Project, media: &MediaRoot) -> daw_control::Result<S
                 playrate: take.play_rate,
             },
             // An item with no take (a label-only KEY item, say).
-            Err(_) => TakeState { playrate: 1.0, ..TakeState::default() },
+            Err(_) => TakeState {
+                playrate: 1.0,
+                ..TakeState::default()
+            },
         };
         items.insert(
             item.guid.clone(),
@@ -148,8 +154,9 @@ pub async fn read(project: &Project, media: &MediaRoot) -> daw_control::Result<S
         .await?
         .into_iter()
         .map(|p| {
-            let (beats_per_bar, beat_unit) =
-                p.time_signature.map_or((4, 4), |s| (s.numerator, s.denominator));
+            let (beats_per_bar, beat_unit) = p
+                .time_signature
+                .map_or((4, 4), |s| (s.numerator, s.denominator));
             TempoPoint {
                 at: p.position.time.map_or(0.0, |t| t.as_seconds()),
                 bpm: p.bpm,
@@ -159,7 +166,14 @@ pub async fn read(project: &Project, media: &MediaRoot) -> daw_control::Result<S
         })
         .collect();
 
-    Ok(SessionModel { tracks, items, markers, regions, tempo, chart: String::new() })
+    Ok(SessionModel {
+        tracks,
+        items,
+        markers,
+        regions,
+        tempo,
+        chart: String::new(),
+    })
 }
 
 /// Apply `changes` (from [`crate::diff`]) to the engine. `target` is the
@@ -185,7 +199,10 @@ pub async fn apply(
                 structure = true;
                 let index = target.tracks.iter().position(|t| t.guid == track.guid);
                 let at = index.and_then(|i| u32::try_from(i).ok());
-                project.tracks().add_with_guid(&track.guid, &track.name, at).await?;
+                project
+                    .tracks()
+                    .add_with_guid(&track.guid, &track.name, at)
+                    .await?;
                 set_track_fields(project, track, ALL_TRACK_FIELDS).await?;
             }
             Change::TrackMoved { .. } => structure = true,
@@ -193,7 +210,10 @@ pub async fn apply(
                 set_track_fields(project, track, fields).await?;
             }
             Change::TrackRemoved { guid } => {
-                project.tracks().remove(TrackRef::Guid(guid.clone())).await?;
+                project
+                    .tracks()
+                    .remove(TrackRef::Guid(guid.clone()))
+                    .await?;
             }
             Change::ItemAdded { guid, item } => {
                 let handle = project
@@ -249,8 +269,13 @@ pub async fn apply(
 /// folder, -n closes n of them).
 async fn apply_structure(project: &Project, tracks: &[TrackState]) -> daw_control::Result<()> {
     for (index, track) in tracks.iter().enumerate() {
-        let Ok(index) = u32::try_from(index) else { break };
-        project.tracks().move_to(TrackRef::Guid(track.guid.clone()), index).await?;
+        let Ok(index) = u32::try_from(index) else {
+            break;
+        };
+        project
+            .tracks()
+            .move_to(TrackRef::Guid(track.guid.clone()), index)
+            .await?;
     }
     for (track, depth) in tracks.iter().zip(folder_depths(tracks)) {
         if let Some(handle) = project.tracks().by_guid(&track.guid).await? {
@@ -319,7 +344,8 @@ async fn set_track_fields(
             TrackField::PhaseInverted => h.set_phase_inverted(track.phase_inverted).await?,
             TrackField::ParentSend => h.set_parent_send(track.parent_send).await?,
             TrackField::VisibleInTcp | TrackField::VisibleInMixer => {
-                h.set_visibility(track.visible_in_tcp, track.visible_in_mixer).await?;
+                h.set_visibility(track.visible_in_tcp, track.visible_in_mixer)
+                    .await?;
             }
         }
     }
@@ -351,7 +377,8 @@ async fn set_item_fields(
         match field {
             ItemField::Track => h.move_to_track(TrackRef::Guid(item.track.clone())).await?,
             ItemField::Position => {
-                h.set_position(PositionInSeconds::from_seconds(item.position)).await?;
+                h.set_position(PositionInSeconds::from_seconds(item.position))
+                    .await?;
             }
             ItemField::Length => h.set_length(Duration::from_seconds(item.length)).await?,
             // No setter on the handle yet; rides along with position.
@@ -362,8 +389,11 @@ async fn set_item_fields(
             ItemField::Locked => h.unlock().await?,
             ItemField::Volume => h.set_volume(item.volume).await?,
             ItemField::FadeIn | ItemField::FadeInShape => {
-                h.set_fade_in(Duration::from_seconds(item.fade_in), fade_shape(&item.fade_in_shape))
-                    .await?;
+                h.set_fade_in(
+                    Duration::from_seconds(item.fade_in),
+                    fade_shape(&item.fade_in_shape),
+                )
+                .await?;
             }
             ItemField::FadeOut | ItemField::FadeOutShape => {
                 h.set_fade_out(
@@ -380,7 +410,8 @@ async fn set_item_fields(
                 if let Some(source) = &item.take.source {
                     take.set_source_file(&media.to_local(source)).await?;
                 }
-                take.set_start_offset(Duration::from_seconds(item.take.start_offset)).await?;
+                take.set_start_offset(Duration::from_seconds(item.take.start_offset))
+                    .await?;
                 take.set_play_rate(item.take.playrate).await?;
             }
         }

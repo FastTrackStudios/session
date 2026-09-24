@@ -120,7 +120,11 @@ impl Words {
             .find(|t| session::lyrics::is_lyrics_track(&t.name))
             .map(|track| {
                 Lyrics::from_items(project.lane(&track.guid).iter().filter_map(|item| {
-                    Some((item.position.as_seconds(), item.length.as_seconds(), project.title(item)?))
+                    Some((
+                        item.position.as_seconds(),
+                        item.length.as_seconds(),
+                        project.title(item)?,
+                    ))
                 }))
             })
             .unwrap_or_default();
@@ -181,7 +185,9 @@ impl Words {
     /// The slide showing at `at`: up [`SWITCH_EARLY`] before it is sung,
     /// and held through a gap after it until the section changes.
     fn slide_at(&self, at: f64) -> Option<usize> {
-        self.slides.iter().rposition(|s| s.start <= at + SWITCH_EARLY)
+        self.slides
+            .iter()
+            .rposition(|s| s.start <= at + SWITCH_EARLY)
     }
 
     /// The line lit at `at`, [`LINE_EARLY`] ahead of the singer.
@@ -190,7 +196,10 @@ impl Words {
     }
 
     fn color(&self, section: usize) -> String {
-        self.colors.get(section).cloned().unwrap_or_else(|| ACCENT.to_owned())
+        self.colors
+            .get(section)
+            .cloned()
+            .unwrap_or_else(|| ACCENT.to_owned())
     }
 }
 
@@ -199,7 +208,8 @@ impl Words {
     /// through a breath, gone in an instrumental; `None` before the words.
     fn slide_on_screen(&self, at: f64) -> Option<usize> {
         let section = self.section_at(at);
-        self.slide_at(at).filter(|&i| Some(self.slides[i].section) == section)
+        self.slide_at(at)
+            .filter(|&i| Some(self.slides[i].section) == section)
     }
 
     /// The slide after `at`'s: the next to go up.
@@ -211,7 +221,11 @@ impl Words {
     /// A slide's lines' texts.
     fn texts(&self, slide: Option<usize>) -> Vec<String> {
         slide.map_or_else(Vec::new, |i| {
-            self.slides[i].lines.clone().map(|k| self.lyrics.lines[k].text.clone()).collect()
+            self.slides[i]
+                .lines
+                .clone()
+                .map(|k| self.lyrics.lines[k].text.clone())
+                .collect()
         })
     }
 }
@@ -220,9 +234,16 @@ impl Words {
 /// shared by the lines, the width by the longest of them (a character is
 /// about half an em of this face).
 fn fit(lines: &[String], w: f64, h: f64, max: f64) -> f64 {
-    let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1).max(8) as f64;
+    let longest = lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(1)
+        .max(8) as f64;
     let count = lines.len().max(1) as f64;
-    ((h * 0.82) / (count * 1.18)).min((w * 0.9) / (longest * 0.52)).clamp(14.0, max)
+    ((h * 0.82) / (count * 1.18))
+        .min((w * 0.9) / (longest * 0.52))
+        .clamp(14.0, max)
 }
 
 /// The Confidence Monitor's yellow: ProPresenter's for the next slide,
@@ -281,7 +302,11 @@ fn spelled(name: &str) -> String {
         "END" | "ENDING" => "Ending",
         _ => return name.trim().to_owned(),
     };
-    if rest.is_empty() { full.to_owned() } else { format!("{full} {rest}") }
+    if rest.is_empty() {
+        full.to_owned()
+    } else {
+        format!("{full} {rest}")
+    }
 }
 
 /// The Confidence Monitor's left edge: the slide's section as a strip of
@@ -304,12 +329,22 @@ fn SectionRail(color: String, name: String) -> Element {
 /// A section's colour as the next slide's text: itself, unless it is
 /// whitish (bright and barely tinted) or not a `#rrggbb` — then yellow.
 fn next_color(color: &str) -> String {
-    let channel = |at: usize| color.get(at..at + 2).and_then(|h| u8::from_str_radix(h, 16).ok());
+    let channel = |at: usize| {
+        color
+            .get(at..at + 2)
+            .and_then(|h| u8::from_str_radix(h, 16).ok())
+    };
     let rgb = (color.len() == 7 && color.starts_with('#'))
         .then(|| Some((channel(1)?, channel(3)?, channel(5)?)))
         .flatten();
-    let Some((r, g, b)) = rgb else { return NEXT_YELLOW.to_owned() };
-    let (r, g, b) = (f64::from(r) / 255.0, f64::from(g) / 255.0, f64::from(b) / 255.0);
+    let Some((r, g, b)) = rgb else {
+        return NEXT_YELLOW.to_owned();
+    };
+    let (r, g, b) = (
+        f64::from(r) / 255.0,
+        f64::from(g) / 255.0,
+        f64::from(b) / 255.0,
+    );
     let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     let (hi, lo) = (r.max(g).max(b), r.min(g).min(b));
     let saturation = if hi > 0.0 { (hi - lo) / hi } else { 0.0 };
@@ -345,7 +380,9 @@ fn use_size() -> (Signal<(f64, f64)>, Signal<Option<Rc<MountedData>>>) {
             }
         });
         while ticks.next().await.is_some() {
-            let Some(node) = node.peek().clone() else { continue };
+            let Some(node) = node.peek().clone() else {
+                continue;
+            };
             if let Ok(rect) = node.get_client_rect().await {
                 let now = (rect.size.width, rect.size.height);
                 if *size.peek() != now {
@@ -364,7 +401,10 @@ pub fn LyricsPanel() -> Element {
     let words = use_hook(|| Words::of(&session));
     let reading = crate::progress::use_reading();
     let own = use_hook(LyricsChoice::new);
-    let LyricsChoice { mut view, mut layer } = try_use_context::<LyricsChoice>().unwrap_or(own);
+    let LyricsChoice {
+        mut view,
+        mut layer,
+    } = try_use_context::<LyricsChoice>().unwrap_or(own);
     let (size, mut node) = use_size();
     let mut open = use_signal(|| false);
     let (mut awake, mut moved) = use_controls(open);
@@ -502,7 +542,6 @@ fn MenuRow(label: String, on: bool, available: bool, pick: EventHandler<()>) -> 
     }
 }
 
-
 /// The room's view: the words and nothing else, as large as the panel
 /// allows, centred, on a dark field lit by the section's colour.
 #[component]
@@ -510,13 +549,21 @@ fn Audience(words: Words, layer: Layer, at: f64, size: (f64, f64)) -> Element {
     let lines = &words.lyrics.lines;
     let section = words.section_at(at);
     let color = section.map_or_else(|| ACCENT.to_owned(), |i| words.color(i));
-    let before_words = lines.first().is_some_and(|first| at + SWITCH_EARLY < first.start);
+    let before_words = lines
+        .first()
+        .is_some_and(|first| at + SWITCH_EARLY < first.start);
     let shown: Vec<usize> = if before_words {
         Vec::new()
     } else {
         match layer {
-            Layer::Section => section.map(|i| words.sections[i].lines.clone().collect()).unwrap_or_default(),
-            Layer::Line => words.lyrics.line_at(at + SWITCH_EARLY).into_iter().collect(),
+            Layer::Section => section
+                .map(|i| words.sections[i].lines.clone().collect())
+                .unwrap_or_default(),
+            Layer::Line => words
+                .lyrics
+                .line_at(at + SWITCH_EARLY)
+                .into_iter()
+                .collect(),
             // A slide holds through a breath, but not into the next
             // section's instrumental: then the screen goes dark.
             _ => words
@@ -529,9 +576,16 @@ fn Audience(words: Words, layer: Layer, at: f64, size: (f64, f64)) -> Element {
     let (w, h) = (size.0.max(1.0), size.1.max(1.0));
     // As large as fits: the height shared by the lines, the width by the
     // longest of them (a character is about half an em of this face).
-    let longest = shown.iter().map(|&k| lines[k].text.chars().count()).max().unwrap_or(1).max(8) as f64;
+    let longest = shown
+        .iter()
+        .map(|&k| lines[k].text.chars().count())
+        .max()
+        .unwrap_or(1)
+        .max(8) as f64;
     let count = shown.len().max(1) as f64;
-    let font = ((h * 0.78) / (count * 1.2)).min((w * 0.86) / (longest * 0.52)).clamp(18.0, 140.0);
+    let font = ((h * 0.78) / (count * 1.2))
+        .min((w * 0.86) / (longest * 0.52))
+        .clamp(18.0, 140.0);
     let glow = tint(&color, 0x38);
     let title_size = (font * 0.9).min(72.0);
     let artist_gap = (font * 0.25).min(18.0);
@@ -584,10 +638,13 @@ enum Row {
 #[component]
 fn Performer(words: Words, at: f64, size: (f64, f64)) -> Element {
     let lines = &words.lyrics.lines;
-    let Some(i) = words.section_at(at) else { return rsx! {} };
+    let Some(i) = words.section_at(at) else {
+        return rsx! {};
+    };
     let section = &words.sections[i];
     let color = words.color(i);
-    let through = ((at - section.start) / (section.end - section.start).max(1e-6)).clamp(0.0, 1.0) * 100.0;
+    let through =
+        ((at - section.start) / (section.end - section.start).max(1e-6)).clamp(0.0, 1.0) * 100.0;
     let lit = words.line_lit(at);
     // The line the prompter is on: the one lit, or else the next to come.
     let focus = lit.or_else(|| lines.iter().position(|l| l.start > at + LINE_EARLY));
@@ -611,12 +668,24 @@ fn Performer(words: Words, at: f64, size: (f64, f64)) -> Element {
         .and_then(|f| rows.iter().position(|r| *r == Row::Line(f)))
         .or_else(|| rows.iter().position(|r| *r == Row::Heading(i)))
         .unwrap_or(0);
-    let from = at_row.saturating_sub(if matches!(rows.get(at_row.wrapping_sub(1)), Some(Row::Heading(_))) { 2 } else { 1 });
+    let from = at_row.saturating_sub(
+        if matches!(rows.get(at_row.wrapping_sub(1)), Some(Row::Heading(_))) {
+            2
+        } else {
+            1
+        },
+    );
     let w = size.0.max(1.0);
     let big = (w / 19.0).clamp(20.0, 40.0);
     let mid = (big * 0.66).max(15.0);
     let small = (big * 0.52).max(13.0);
-    let next = words.sections.get(i + 1).map(|s| (s.name.clone(), (words.shows_from(s) - at).max(0.0), words.color(i + 1)));
+    let next = words.sections.get(i + 1).map(|s| {
+        (
+            s.name.clone(),
+            (words.shows_from(s) - at).max(0.0),
+            words.color(i + 1),
+        )
+    });
     let strip_words = words.clone();
     let row = |r: Row, n: usize| -> Element {
         match r {
@@ -643,7 +712,13 @@ fn Performer(words: Words, at: f64, size: (f64, f64)) -> Element {
                         "font-size:{big}px; line-height:1.16; font-weight:800; color:{}; margin:2px 0 8px 0; \
                          padding-left:8px; border-left:3px solid {};",
                         if lit == Some(k) { "#ffffff" } else { "#cfd3da" },
-                        words.color(words.sections.iter().position(|s| s.lines.contains(&k)).unwrap_or(i)),
+                        words.color(
+                            words
+                                .sections
+                                .iter()
+                                .position(|s| s.lines.contains(&k))
+                                .unwrap_or(i)
+                        ),
                     ),
                     Some(f) if k == f + 1 => format!(
                         "font-size:{mid}px; line-height:1.22; font-weight:700; color:#a9afba; margin:0 0 7px 0; padding-left:11px;"
@@ -712,7 +787,10 @@ fn Confidence(words: Words, at: f64, size: (f64, f64)) -> Element {
     let next = words.texts(next_slide);
     // Each half's section, for its rail: the slide's own, or — with no
     // slide up (an instrumental, the count) — the section the song is in.
-    let now_section = words.slide_on_screen(at).map(|n| words.slides[n].section).or_else(|| words.section_at(at));
+    let now_section = words
+        .slide_on_screen(at)
+        .map(|n| words.slides[n].section)
+        .or_else(|| words.section_at(at));
     let now_rail = now_section.map(|s| (words.color(s), spelled(&words.sections[s].name)));
     let next_rail = next_slide.map(|n| {
         let s = words.slides[n].section;

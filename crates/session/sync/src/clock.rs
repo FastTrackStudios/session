@@ -55,7 +55,9 @@ pub struct SharedClock {
 
 impl std::fmt::Debug for SharedClock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SharedClock").field("offset_micros", &self.offset_micros()).finish()
+        f.debug_struct("SharedClock")
+            .field("offset_micros", &self.offset_micros())
+            .finish()
     }
 }
 
@@ -105,14 +107,20 @@ impl SharedClock {
                 };
                 let t4 = now_micros_f64();
                 estimator.record(t1, host, host, t4);
-                if let (Some(off), Some(rtt)) = (estimator.offset_micros(), estimator.round_trip_micros()) {
+                if let (Some(off), Some(rtt)) =
+                    (estimator.offset_micros(), estimator.round_trip_micros())
+                {
                     o.store(off.to_bits(), Ordering::Relaxed);
                     r.store(rtt.to_bits(), Ordering::Relaxed);
                 }
                 architect::platform::sleep(PING).await;
             }
         });
-        Self { offset, round_trip, pinger: Some(Arc::new(pinger)) }
+        Self {
+            offset,
+            round_trip,
+            pinger: Some(Arc::new(pinger)),
+        }
     }
 
     /// Shared minus local, µs — `None` until the first ping is back.

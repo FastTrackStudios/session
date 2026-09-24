@@ -123,7 +123,12 @@ impl PlayerSong {
         let bundle = daw.transport_engine_for(project);
         let shared = Arc::clone(&bundle.shared);
         shared.set_sample_rate(RATE);
-        Self { project: project.to_owned(), bundle, shared, renderer: ProjectRenderer::new(daw, project, RATE) }
+        Self {
+            project: project.to_owned(),
+            bundle,
+            shared,
+            renderer: ProjectRenderer::new(daw, project, RATE),
+        }
     }
 }
 
@@ -198,7 +203,9 @@ pub fn install(daw: Standalone, project: &str) {
 
 /// The meters for `project`'s tracks.
 fn set_meters(daw: &Standalone, project: &str) {
-    let count = daw_proto::Tracks::count(daw, daw_proto::ProjectContext::Project(project.to_owned())) as usize;
+    let count =
+        daw_proto::Tracks::count(daw, daw_proto::ProjectContext::Project(project.to_owned()))
+            as usize;
     daw.set_meters(daw_standalone::metering::Meters::new(count));
 }
 
@@ -335,8 +342,7 @@ pub fn unlock() {
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
             move |event: web_sys::MessageEvent| {
                 let report = js_sys::Array::from(&event.data());
-                let (Some(tag), Some(count)) =
-                    (report.get(0).as_f64(), report.get(1).as_f64())
+                let (Some(tag), Some(count)) = (report.get(0).as_f64(), report.get(1).as_f64())
                 else {
                     return;
                 };
@@ -367,7 +373,11 @@ impl Player {
 
     /// How much audio to keep queued ahead of the device.
     fn ahead(&self) -> u64 {
-        if self.hidden.get() { AHEAD_HIDDEN } else { AHEAD }
+        if self.hidden.get() {
+            AHEAD_HIDDEN
+        } else {
+            AHEAD
+        }
     }
 
     /// Empty the device's queue: a jump, a stop.
@@ -390,7 +400,9 @@ impl Player {
     fn feed(&self) {
         let project = self.song.borrow().project.clone();
         let mut all = self.feeders.borrow_mut();
-        let Some(feeders) = all.get_mut(&project) else { return };
+        let Some(feeders) = all.get_mut(&project) else {
+            return;
+        };
         let count = feeders.len();
         if count == 0 {
             return;
@@ -460,7 +472,10 @@ impl Player {
             let block = song.renderer.render_block(at, BLOCK);
             let samples = js_sys::Float32Array::from(&block.samples[..]);
             let transfer = js_sys::Array::of1(&samples.buffer());
-            if out.post_message_with_transferable(&samples, &transfer).is_err() {
+            if out
+                .post_message_with_transferable(&samples, &transfer)
+                .is_err()
+            {
                 break;
             }
             self.sent.set(self.sent.get() + BLOCK as u64);
@@ -476,11 +491,16 @@ impl Player {
 /// Unlock audio on the page's first press or key — a gesture is the only
 /// place a browser lets a context start.
 pub fn unlock_on_first_gesture() {
-    let Some(window) = web_sys::window() else { return };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
     let handler = Closure::<dyn FnMut(web_sys::Event)>::new(|_event: web_sys::Event| unlock());
     for kind in ["pointerdown", "keydown"] {
-        let _ = window
-            .add_event_listener_with_callback_and_bool(kind, handler.as_ref().unchecked_ref(), true);
+        let _ = window.add_event_listener_with_callback_and_bool(
+            kind,
+            handler.as_ref().unchecked_ref(),
+            true,
+        );
     }
     // The page's lifetime: `unlock` is idempotent, so the listener stays.
     handler.forget();

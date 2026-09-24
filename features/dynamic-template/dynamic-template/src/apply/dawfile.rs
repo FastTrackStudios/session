@@ -84,9 +84,7 @@ impl<'a> RppTarget<'a> {
             })
             .collect()
     }
-
 }
-
 
 /// This backend edits an in-memory project; nothing here can fail, so the
 /// error type is uninhabited and `?` on it is free.

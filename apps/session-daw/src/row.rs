@@ -297,22 +297,37 @@ mod tests {
     /// same place from its top.
     #[test]
     fn the_name_and_its_buttons_keep_their_size_at_every_height() {
-        let name_at = |h: f64| Row::new(100.0, h, 1, false, Tcp::FULL).rect(Control::Name).unwrap();
+        let name_at = |h: f64| {
+            Row::new(100.0, h, 1, false, Tcp::FULL)
+                .rect(Control::Name)
+                .unwrap()
+        };
         let reference = name_at(70.0);
         for h in [40.0, 57.0, 58.0, 70.0, 120.0, 300.0] {
             let name = name_at(h);
-            assert!((name.height() - reference.height()).abs() < 1e-9, "{h}: {name:?}");
+            assert!(
+                (name.height() - reference.height()).abs() < 1e-9,
+                "{h}: {name:?}"
+            );
             assert!((name.y0 - reference.y0).abs() < 1e-9, "{h}: {name:?}");
             let row = Row::new(100.0, h, 1, false, Tcp::FULL);
             let mute = row.rect(Control::Mute).unwrap();
             let solo = row.rect(Control::Solo).unwrap();
             let middle = |r: Rect| (r.y0 + r.y1) / 2.0;
-            assert!((middle(mute) - middle(name)).abs() < 1e-9, "{h}: mute off the name's line");
-            assert!((middle(solo) - middle(name)).abs() < 1e-9, "{h}: solo off the name's line");
+            assert!(
+                (middle(mute) - middle(name)).abs() < 1e-9,
+                "{h}: mute off the name's line"
+            );
+            assert!(
+                (middle(solo) - middle(name)).abs() < 1e-9,
+                "{h}: solo off the name's line"
+            );
         }
         // A row too short for the whole band shrinks it, and keeps it
         // inside the row.
-        let short = Row::new(100.0, 20.0, 0, false, Tcp::FULL).rect(Control::Name).unwrap();
+        let short = Row::new(100.0, 20.0, 0, false, Tcp::FULL)
+            .rect(Control::Name)
+            .unwrap();
         assert!(short.y0 >= 101.0 && short.y1 <= 119.0, "{short:?}");
     }
 

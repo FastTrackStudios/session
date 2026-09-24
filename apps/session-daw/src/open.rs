@@ -51,7 +51,8 @@ use daw::standalone::Standalone;
 pub use crate::open_core::*;
 
 pub use crate::audio_mode::{
-    AudioMode, Assets, ModeState, RemoteTarget, begin_asset_load, set_assets_progress, set_cue_ready,
+    Assets, AudioMode, ModeState, RemoteTarget, begin_asset_load, set_assets_progress,
+    set_cue_ready,
 };
 
 /// Keeps the in-process link's acceptor alive for the process's
@@ -142,7 +143,10 @@ fn refuse_unless_local(path: &Path) -> eyre::Result<()> {
     if state.owns_project() {
         return Ok(());
     }
-    let target = state.target.as_ref().map_or_else(|| "another system".to_owned(), RemoteTarget::describe);
+    let target = state
+        .target
+        .as_ref()
+        .map_or_else(|| "another system".to_owned(), RemoteTarget::describe);
     eyre::bail!(
         "{} is not opened here: this window is in {} mode, driving {target}",
         path.display(),
@@ -179,7 +183,11 @@ pub fn switch_to(daw: &Standalone, project_guid: &str, audio: bool) {
 pub fn switch_song(project_guid: &str) {
     let state = mode();
     if state.owns_project() {
-        switch_to(engine(), project_guid, AUDIBLE.load(std::sync::atomic::Ordering::Relaxed));
+        switch_to(
+            engine(),
+            project_guid,
+            AUDIBLE.load(std::sync::atomic::Ordering::Relaxed),
+        );
         return;
     }
     set_remote_current(Some(project_guid.to_owned()));
@@ -204,7 +212,10 @@ pub fn switch_song(project_guid: &str) {
 /// task ([`crate::stream_in`]) watches the remote's current song, whoever changed
 /// it (a pick here, a tab in REAPER).
 fn cue_follow_song(project_guid: &str) {
-    tracing::debug!(song.project = project_guid, "cue: the song changed; the Cue task follows");
+    tracing::debug!(
+        song.project = project_guid,
+        "cue: the song changed; the Cue task follows"
+    );
 }
 
 /// The engine a Cue window plays its click and guide on: this process's
@@ -320,7 +331,9 @@ fn watch_remote_current(rt: &'static tokio::runtime::Runtime) {
             if crate::audio_mode::owns_project() {
                 continue;
             }
-            let Some(daw) = daw::rpc::Daw::try_get() else { continue };
+            let Some(daw) = daw::rpc::Daw::try_get() else {
+                continue;
+            };
             let picks = REMOTE_PICKS.load(std::sync::atomic::Ordering::SeqCst);
             // A gone REAPER is the reattach loop's business; the last
             // known song stays until it answers again.
@@ -344,7 +357,8 @@ where
     Fut: std::future::Future<Output = Result<T, daw::rpc::Error>> + Send,
     T: Send,
 {
-    let daw = daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("{what}: the daw facade is not up"))?;
+    let daw =
+        daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("{what}: the daw facade is not up"))?;
     let call = f(daw);
     block_on_engine(async {
         tokio::time::timeout(std::time::Duration::from_secs(3), call)
@@ -358,7 +372,9 @@ where
 /// Run `future` to completion on the engine runtime from sync code — on a
 /// scoped thread of its own when the caller is already inside a runtime,
 /// where blocking on another would panic. `None` before there is one.
-pub(crate) fn block_on_engine<T: Send>(future: impl std::future::Future<Output = T> + Send) -> Option<T> {
+pub(crate) fn block_on_engine<T: Send>(
+    future: impl std::future::Future<Output = T> + Send,
+) -> Option<T> {
     let rt = runtime()?;
     if tokio::runtime::Handle::try_current().is_err() {
         return Some(rt.block_on(future));
@@ -380,7 +396,11 @@ pub fn set_song_color(project_guid: &str, rgb: u32, saved: Option<&Path>) {
             let guid = project_guid.to_owned();
             async move {
                 let regions = daw.project(guid).await?.regions();
-                let region = regions.all().await?.into_iter().find(|r| r.lane == Some(song_lane));
+                let region = regions
+                    .all()
+                    .await?
+                    .into_iter()
+                    .find(|r| r.lane == Some(song_lane));
                 match region.and_then(|r| r.id) {
                     Some(id) => regions.set_color(id, rgb).await.map(|()| true),
                     None => Ok(false),
@@ -511,7 +531,9 @@ fn attach_audio(daw: &Standalone, project_guid: &str) {
         return;
     };
     let _guard = rt.enter();
-    let mut slot = AUDIO.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut slot = AUDIO
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // Close the old stream before opening the device again.
     drop(slot.take());
     match daw.attach_audio_engine(project_guid) {
@@ -625,7 +647,12 @@ pub fn attach_to_reaper(socket: Option<std::path::PathBuf>) -> eyre::Result<Atta
     // window that prints the project it asked for, instead of the one it
     // got, is how an attached-to-the-wrong-REAPER bug survives a whole
     // session unnoticed.
-    read_back(rt, RemoteTarget::Reaper { socket: socket_for_mode })
+    read_back(
+        rt,
+        RemoteTarget::Reaper {
+            socket: socket_for_mode,
+        },
+    )
 }
 
 // ── which of the two ways in ─────────────────────────────────────────
@@ -693,9 +720,13 @@ pub fn set_mode(state: ModeState) {
 pub fn launch_mode() -> ModeState {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let env = |key: &str| std::env::var(key).ok();
-    let named = ["FTS_SESSION_PROJECT", "FTS_SESSION_SETLIST", "SESSION_DAW_PROJECT"]
-        .iter()
-        .any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty()))
+    let named = [
+        "FTS_SESSION_PROJECT",
+        "FTS_SESSION_SETLIST",
+        "SESSION_DAW_PROJECT",
+    ]
+    .iter()
+    .any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty()))
         || args
             .first()
             .is_some_and(|a| !a.starts_with("--") && Path::new(a).exists());
@@ -777,7 +808,8 @@ pub type EngineDialer = fn(
 static ENGINE_DIALER: OnceLock<EngineDialer> = OnceLock::new();
 
 /// The connection to the Session engine this window is attached to.
-static ENGINE_CONNECTION: std::sync::RwLock<Option<EngineConnection>> = std::sync::RwLock::new(None);
+static ENGINE_CONNECTION: std::sync::RwLock<Option<EngineConnection>> =
+    std::sync::RwLock::new(None);
 
 /// Install how this app dials a Session engine (once, at launch).
 pub fn set_engine_dialer(dialer: EngineDialer) {
@@ -803,12 +835,21 @@ pub fn attach_to_engine(address: &str) -> eyre::Result<Attached> {
     let (daw, connection) = rt
         .block_on(dial(address.to_owned()))
         .map_err(|e| eyre::eyre!("could not reach the Session engine at {address}: {e}"))?;
-    let block_on_rt = Arc::new(tokio::runtime::Builder::new_current_thread().enable_all().build()?);
+    let block_on_rt = Arc::new(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?,
+    );
     daw::init_from_parts(daw, block_on_rt);
     if let Ok(mut slot) = ENGINE_CONNECTION.write() {
         *slot = Some(connection);
     }
-    read_back(rt, RemoteTarget::Session { address: address.to_owned() })
+    read_back(
+        rt,
+        RemoteTarget::Session {
+            address: address.to_owned(),
+        },
+    )
 }
 
 /// After an attach: read the project back (never report what was hoped

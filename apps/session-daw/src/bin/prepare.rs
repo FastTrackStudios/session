@@ -23,7 +23,9 @@ fn main() -> eyre::Result<()> {
     let rpp = args
         .next()
         .ok_or_else(|| eyre::eyre!("usage: prepare <Song.RPP> [Song.kf]"))?;
-    let chart = args.next().or_else(|| session_daw::prepare::chart_beside(&rpp));
+    let chart = args
+        .next()
+        .or_else(|| session_daw::prepare::chart_beside(&rpp));
     let saved = session_daw::prepare::prepare_and_save(&rpp, chart)?;
     tracing::info!(session.saved = %saved.display(), "prepared");
     Ok(())

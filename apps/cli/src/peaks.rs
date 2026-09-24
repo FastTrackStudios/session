@@ -81,10 +81,7 @@ fn one(media: &Path, force: bool) -> eyre::Result<(Outcome, PathBuf)> {
         let bytes: std::sync::Arc<[u8]> = std::fs::read(&proxy)?.into();
         (proxy, sessionpeaks::build_from_ogg(bytes)?)
     } else {
-        return Ok((
-            Outcome::Skipped("no media and no proxy".to_owned()),
-            cache,
-        ));
+        return Ok((Outcome::Skipped("no media and no proxy".to_owned()), cache));
     };
     peaks.source_stamp = sessionpeaks::media_stamp(media).unwrap_or(peaks.source_stamp);
     let at = sessionpeaks::write(media, &peaks)?;
@@ -143,7 +140,9 @@ pub fn write(session: &Path, force: bool) -> eyre::Result<()> {
             }
             Outcome::Built(from) => {
                 built += 1;
-                let name = from.file_name().map_or_else(String::new, |n| n.to_string_lossy().into());
+                let name = from
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into());
                 println!("{}  {} KB, scanned {name}", cache.display(), size / 1024);
             }
             Outcome::Skipped(why) => {
@@ -267,7 +266,10 @@ mod tests {
         assert!(matches!(outcome, Outcome::Adopted(_)), "did not adopt");
         let peaks = ReaPeaks::read(&cache).expect("parses");
         let (max, _) = peaks.levels[0].pair(1, 0, 10);
-        assert!((max - 0.25).abs() < 2e-3, "recomputed instead of adopted: {max}");
+        assert!(
+            (max - 0.25).abs() < 2e-3,
+            "recomputed instead of adopted: {max}"
+        );
 
         // `--force` scans anyway, and then the real audio shows up.
         let (outcome, cache) = one(&media, true).expect("force");
@@ -276,7 +278,10 @@ mod tests {
         // Over the whole second, not one 147-frame window: at 220 Hz a
         // single window need not contain a crest.
         let (max, min) = peaks.columns(0, 0.0, 1.0, 1)[0];
-        assert!(max > 0.75 && min < -0.75, "forced scan carries the real audio: {max}/{min}");
+        assert!(
+            max > 0.75 && min < -0.75,
+            "forced scan carries the real audio: {max}/{min}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

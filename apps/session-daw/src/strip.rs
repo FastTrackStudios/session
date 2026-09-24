@@ -604,13 +604,19 @@ mod tests {
         let live = Strip::laid_out(86.0, 371.0, 371.0, 0.0, 0.0, false, true);
         assert!(full.rect(Control::Fx).is_some());
         assert!(live.rect(Control::Fx).is_some(), "the FX row stays");
-        assert!((live.band_top() - full.band_top()).abs() < 1e-9, "under it, as ever");
+        assert!(
+            (live.band_top() - full.band_top()).abs() < 1e-9,
+            "under it, as ever"
+        );
         let band = live.band_bottom() - live.band_top();
         assert!(
             (band - f64::from(daw_theme_art::collapse::PAN_SECTION_UNLABELLED)).abs() < 1e-9,
             "{band}"
         );
-        assert!(band < full.band_bottom() - full.band_top(), "shorter than the full band");
+        assert!(
+            band < full.band_bottom() - full.band_top(),
+            "shorter than the full band"
+        );
         assert!(live.stretch() > full.stretch(), "and the fader has it");
         let pan = live.rect(Control::Pan).expect("the pan knob");
         assert!(pan.y1 <= live.band_bottom() + 1e-9, "{pan:?}");

@@ -15,8 +15,8 @@ use crdt::sync::{DocPresenceClient, DocSyncClient, PresenceDriver, PresencePeer,
 // Hosting a set is a native thing (a desktop, Task): a browser only joins.
 #[cfg(not(target_arch = "wasm32"))]
 use crdt::sync::{
-    DocPresenceDispatcher, DocSyncDispatcher, DocSyncHost, PresenceHost, doc_presence_service_descriptor,
-    doc_sync_service_descriptor,
+    DocPresenceDispatcher, DocSyncDispatcher, DocSyncHost, PresenceHost,
+    doc_presence_service_descriptor, doc_sync_service_descriptor,
 };
 use uuid::Uuid;
 

@@ -123,7 +123,11 @@ pub fn TopBar(
             shared.set(density);
         }
     }));
-    let mode_label = if density == Density::Narrow { "" } else { "Mode" };
+    let mode_label = if density == Density::Narrow {
+        ""
+    } else {
+        "Mode"
+    };
     rsx! {
         div {
             style: "position:relative; height:{BAR_H}px; flex:none; display:flex; \
@@ -264,16 +268,25 @@ pub fn AudioBadge(density: Density) -> Element {
     let _ = revision();
     let state = crate::audio_mode::state();
     let effective = state.effective();
-    let loading = state.requested == crate::audio_mode::AudioMode::Engine && !state.assets.complete();
+    let loading =
+        state.requested == crate::audio_mode::AudioMode::Engine && !state.assets.complete();
     let label = match density {
         Density::Full => state.label(2),
-        Density::Compact if loading => format!("{} {}/{}", effective.name(), state.assets.loaded, state.assets.total),
+        Density::Compact if loading => format!(
+            "{} {}/{}",
+            effective.name(),
+            state.assets.loaded,
+            state.assets.total
+        ),
         Density::Compact => state.label(1),
         Density::Narrow if loading => format!("{}/{}", state.assets.loaded, state.assets.total),
         Density::Narrow => String::new(),
     };
     let dot = effective.color();
-    let target = state.target.as_ref().map(crate::audio_mode::RemoteTarget::describe);
+    let target = state
+        .target
+        .as_ref()
+        .map(crate::audio_mode::RemoteTarget::describe);
     let title = match &target {
         Some(target) => format!("Audio: {} — driving {target}", state.label(2)),
         None => format!("Audio: {}", state.label(2)),
@@ -553,11 +566,18 @@ pub fn OverviewLayout(
     // The chart takes the column's full width, and — with something under
     // it — the larger share of its height; the rest goes under it.
     let chart_h = if under_chart.is_some() {
-        format!("aspect-ratio:{};", crate::chart_panel::FITTED_WIDTH_OVER_HEIGHT)
+        format!(
+            "aspect-ratio:{};",
+            crate::chart_panel::FITTED_WIDTH_OVER_HEIGHT
+        )
     } else {
         "height:100%;".to_owned()
     };
-    let chart_w = if editor.is_some() { "width:30%; min-width:240px;" } else { "width:38%; min-width:280px;" };
+    let chart_w = if editor.is_some() {
+        "width:30%; min-width:240px;"
+    } else {
+        "width:38%; min-width:280px;"
+    };
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; \
@@ -629,7 +649,11 @@ fn region(id: &str, event: &Event<MountedData>) {
 /// A view button, on or off.
 #[must_use]
 pub fn segment(on: bool) -> String {
-    let (bg, fg) = if on { (ACCENT, "#0b0c0e") } else { ("transparent", DIM) };
+    let (bg, fg) = if on {
+        (ACCENT, "#0b0c0e")
+    } else {
+        ("transparent", DIM)
+    };
     format!(
         "height:24px; padding:0 12px; border:none; border-radius:5px; cursor:pointer; \
          background:{bg}; color:{fg}; font-size:12px; font-weight:600;"
@@ -639,6 +663,12 @@ pub fn segment(on: bool) -> String {
 /// A row in the mode menu.
 #[must_use]
 pub fn option(on: bool) -> String {
-    let (bg, fg) = if on { ("#23262c", TEXT) } else { ("transparent", DIM) };
-    format!("padding:6px 10px; border-radius:5px; cursor:pointer; background:{bg}; color:{fg}; font-size:12px;")
+    let (bg, fg) = if on {
+        ("#23262c", TEXT)
+    } else {
+        ("transparent", DIM)
+    };
+    format!(
+        "padding:6px 10px; border-radius:5px; cursor:pointer; background:{bg}; color:{fg}; font-size:12px;"
+    )
 }

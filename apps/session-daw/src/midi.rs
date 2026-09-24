@@ -122,7 +122,8 @@ impl Previews {
     }
 
     fn arrived(&self) {
-        self.generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
 
     /// The waveform for an audio item, if its peaks have been read.

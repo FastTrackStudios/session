@@ -391,7 +391,9 @@ impl ArrangementWidget {
             read_back: Rc::default(),
             mixer: None,
             content_h: Rc::new(std::cell::Cell::new(
-                rows.iter().map(|(track, _)| layout.height_of(track.height)).sum(),
+                rows.iter()
+                    .map(|(track, _)| layout.height_of(track.height))
+                    .sum(),
             )),
             scene,
             palette,
@@ -552,7 +554,10 @@ impl ArrangementWidget {
             }
         };
         let in_group = |key: &str| -> std::collections::HashSet<String> {
-            groups.get(key).map(|n| n.iter().cloned().collect()).unwrap_or_default()
+            groups
+                .get(key)
+                .map(|n| n.iter().cloned().collect())
+                .unwrap_or_default()
         };
         let (targets, show): (std::collections::HashSet<String>, bool) = match change {
             Visibility::ShowAll => (raw.tracks.iter().map(|t| t.name.clone()).collect(), true),
@@ -720,9 +725,7 @@ impl ArrangementWidget {
             })
         };
         let rows_of = |rows: &mut dyn Iterator<Item = usize>| {
-            span(&mut rows.filter_map(|row| {
-                self.scene.row_box(row).map(|(top, h)| (top, top + h))
-            }))
+            span(&mut rows.filter_map(|row| self.scene.row_box(row).map(|(top, h)| (top, top + h))))
         };
         let selected_rows =
             || rows_of(&mut (0..self.rows.len()).filter(|&row| self.rows[row].0.selected));
@@ -1056,7 +1059,9 @@ impl ArrangementWidget {
             &rows,
             self.layout,
             &self.previews,
-            crate::tcp::Tcp { compact: self.compact.get() },
+            crate::tcp::Tcp {
+                compact: self.compact.get(),
+            },
         );
         self.scene.lettering = lettering;
         self.sections = self.project.sections.clone();
@@ -1236,7 +1241,10 @@ impl ArrangementWidget {
 }
 
 /// The MIDI items of `fresh` whose notes `previews` has not read.
-fn unread_midi(fresh: &daw_ui::studio::project::Project, previews: &crate::midi::Previews) -> Vec<(String, f64)> {
+fn unread_midi(
+    fresh: &daw_ui::studio::project::Project,
+    previews: &crate::midi::Previews,
+) -> Vec<(String, f64)> {
     fresh
         .items
         .values()
@@ -1329,7 +1337,10 @@ impl ArrangementWidget {
         }
         let scene = self.draw(width, height, scale);
         if std::mem::take(&mut self.fit_on_open) {
-            for command in [crate::zoom::Command::FitTracks, crate::zoom::Command::Project] {
+            for command in [
+                crate::zoom::Command::FitTracks,
+                crate::zoom::Command::Project,
+            ] {
                 if let Some(request) = self.zoom_request(command) {
                     self.zooms.borrow_mut().push(request);
                 }
@@ -1586,7 +1597,7 @@ impl ArrangementWidget {
         crate::ghosts::local_shown(&self.rows, &self.scene);
         // The engine changed the session under us (a toolbar insert, an
         // edited chart): read it back before drawing it.
-            if crate::studio::take_resync() {
+        if crate::studio::take_resync() {
             self.resync();
         }
         // A page's read-back, once it has arrived.
@@ -1873,7 +1884,9 @@ impl ArrangementWidget {
                 let look = crate::cursor::Look::default();
                 look.trailing(self.trail.length(now, view.pps, look.trail))
             },
-            at_now.play_at.mul_add(view.pps, self.scene.tcp.width() - view.scroll_x),
+            at_now
+                .play_at
+                .mul_add(view.pps, self.scene.tcp.width() - view.scroll_x),
             0.0,
             view.height,
             self.scene.tcp.width(),
@@ -2158,7 +2171,11 @@ mod tests {
         let (x, y) = at(&widget, 1, C::Mute);
         widget.handle_event(&UiEvent::PointerDown(button(pointer(x, y), Auxiliary)));
         widget.handle_event(&UiEvent::PointerUp(button(pointer(x, y), Auxiliary)));
-        assert!(widget.edits.borrow().is_empty(), "{:?}", widget.edits.borrow());
+        assert!(
+            widget.edits.borrow().is_empty(),
+            "{:?}",
+            widget.edits.borrow()
+        );
         assert!(!widget.rows[1].0.muted);
     }
 
@@ -2170,8 +2187,15 @@ mod tests {
         let (x, y) = at(&widget, 1, C::Mute);
         widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
         widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
-        assert!(widget.edits.borrow().is_empty(), "{:?}", widget.edits.borrow());
-        assert_eq!(widget.pointing.borrow().icon(), cursor_icon::CursorIcon::ZoomIn);
+        assert!(
+            widget.edits.borrow().is_empty(),
+            "{:?}",
+            widget.edits.borrow()
+        );
+        assert_eq!(
+            widget.pointing.borrow().icon(),
+            cursor_icon::CursorIcon::ZoomIn
+        );
     }
 
     /// A press made before the tool went up still ends: its release comes
@@ -2184,7 +2208,10 @@ mod tests {
         widget.pointing.borrow_mut().tool = crate::tool::Tool::Zoom;
         widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
         let queued = widget.edits.borrow().clone();
-        assert!(matches!(queued.as_slice(), [Edit::ToggleMute(_)]), "{queued:?}");
+        assert!(
+            matches!(queued.as_slice(), [Edit::ToggleMute(_)]),
+            "{queued:?}"
+        );
     }
 
     /// The pointer's shape follows what is under it.
@@ -2220,12 +2247,16 @@ mod tests {
     fn z_t_asks_the_panel_to_frame_the_selected_track() {
         let mut widget = widget();
         widget.rows[2].0.selected = true;
-        widget.handle_event(&UiEvent::KeyDown(key(blitz_traits::events::Key::Character("z".into()))));
+        widget.handle_event(&UiEvent::KeyDown(key(
+            blitz_traits::events::Key::Character("z".into()),
+        )));
         assert!(widget.which.borrow().is_some(), "the popup is up");
         let mut up = key(blitz_traits::events::Key::Character("z".into()));
         up.state = blitz_traits::events::KeyState::Released;
         widget.handle_event(&UiEvent::KeyUp(up));
-        widget.handle_event(&UiEvent::KeyDown(key(blitz_traits::events::Key::Character("t".into()))));
+        widget.handle_event(&UiEvent::KeyDown(key(
+            blitz_traits::events::Key::Character("t".into()),
+        )));
         assert!(widget.which.borrow().is_none(), "and down again");
         let (top, h) = widget.scene.row_box(2).unwrap();
         let asked = widget.zooms.borrow().clone();
@@ -2243,7 +2274,9 @@ mod tests {
     #[test]
     fn z_used_as_the_tool_closes_the_tree_on_release() {
         let mut widget = widget();
-        widget.handle_event(&UiEvent::KeyDown(key(blitz_traits::events::Key::Character("z".into()))));
+        widget.handle_event(&UiEvent::KeyDown(key(
+            blitz_traits::events::Key::Character("z".into()),
+        )));
         widget.pointing.borrow_mut().tool_used = true;
         let mut up = key(blitz_traits::events::Key::Character("z".into()));
         up.state = blitz_traits::events::KeyState::Released;
@@ -2283,13 +2316,19 @@ mod tests {
         widget.restructure((*project.0).clone(), rows.as_slice().to_vec());
         let before = content_h.get();
         let names_shown = |w: &ArrangementWidget| {
-            w.rows.iter().map(|(t, _)| t.name.clone()).collect::<Vec<_>>()
+            w.rows
+                .iter()
+                .map(|(t, _)| t.name.clone())
+                .collect::<Vec<_>>()
         };
         assert_eq!(names_shown(&widget), names);
 
         assert!(widget.visibility(&Visibility::Toggle("DRUMS".into())));
         let shown = names_shown(&widget);
-        assert!(!shown.contains(&"Kick".to_owned()) && !shown.contains(&"Snare".to_owned()), "{shown:?}");
+        assert!(
+            !shown.contains(&"Kick".to_owned()) && !shown.contains(&"Snare".to_owned()),
+            "{shown:?}"
+        );
         assert!(shown.contains(&"Bass".to_owned()), "{shown:?}");
         assert!(content_h.get() < before, "the scroll range shrinks");
         let hidden = widget
@@ -2503,11 +2542,13 @@ mod tests {
         use crate::hit::Target;
         let mut widget = widget();
         let (_, y) = at(&widget, 0, C::Name);
-        let lane_at = |widget: &ArrangementWidget, past: f64| {
-            match widget.hit(widget.scene.tcp.width() + past, y).expect("a hit").target {
-                Target::Lane { row, seconds } => (row, seconds),
-                other => panic!("{past} px past the panel is {other:?}"),
-            }
+        let lane_at = |widget: &ArrangementWidget, past: f64| match widget
+            .hit(widget.scene.tcp.width() + past, y)
+            .expect("a hit")
+            .target
+        {
+            Target::Lane { row, seconds } => (row, seconds),
+            other => panic!("{past} px past the panel is {other:?}"),
         };
         let full = lane_at(&widget, 50.0);
 

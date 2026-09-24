@@ -183,7 +183,11 @@ impl Tcp {
     #[must_use]
     pub fn name_field(self) -> (f64, f64) {
         let x = f64::from(g::NAME_FIELD_X);
-        let w = if self.compact { 84.0 } else { f64::from(g::NAME_FIELD_W) };
+        let w = if self.compact {
+            84.0
+        } else {
+            f64::from(g::NAME_FIELD_W)
+        };
         (x, w)
     }
 

@@ -33,7 +33,10 @@ impl Song {
             .find(|r| r.lane == 0)
             .map(|r| (r.start, r.end))
             .or_else(|| {
-                let start = regions.iter().map(|r| r.start).fold(f64::INFINITY, f64::min);
+                let start = regions
+                    .iter()
+                    .map(|r| r.start)
+                    .fold(f64::INFINITY, f64::min);
                 let end = regions.iter().map(|r| r.end).fold(0.0, f64::max);
                 (end > start).then_some((start, end))
             })?;
@@ -64,7 +67,9 @@ impl Song {
 
     /// The section the play position is in, if any.
     fn current(&self, at: f64) -> Option<usize> {
-        self.sections.iter().rposition(|(from, _)| *from <= at + 1e-6)
+        self.sections
+            .iter()
+            .rposition(|(from, _)| *from <= at + 1e-6)
     }
 
     fn progress(&self, at: f64) -> f64 {

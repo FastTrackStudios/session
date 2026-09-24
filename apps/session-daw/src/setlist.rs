@@ -64,7 +64,11 @@ fn hsl_hex(hue: f64, saturation: f64, lightness: f64) -> String {
         _ => (chroma, 0.0, x),
     };
     let m = lightness - chroma / 2.0;
-    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a channel in 0..=255")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a channel in 0..=255"
+    )]
     let byte = |v: f64| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u8;
     format!("#{:02x}{:02x}{:02x}", byte(r), byte(g), byte(b))
 }
@@ -104,9 +108,16 @@ impl Song {
         let sections = &session.project.sections;
         let song = sections.iter().find(|s| s.lane == 0);
         let span = song.map(|s| (s.start, s.end)).unwrap_or_else(|| {
-            let start = sections.iter().map(|s| s.start).fold(f64::INFINITY, f64::min);
+            let start = sections
+                .iter()
+                .map(|s| s.start)
+                .fold(f64::INFINITY, f64::min);
             let end = sections.iter().map(|s| s.end).fold(0.0, f64::max);
-            if end > start { (start, end) } else { (0.0, 0.0) }
+            if end > start {
+                (start, end)
+            } else {
+                (0.0, 0.0)
+            }
         });
         let color = song
             .and_then(|s| s.color.clone())
@@ -304,7 +315,8 @@ impl Setlist {
                 out.push(RemoteProject {
                     guid: info.guid,
                     name: info.name,
-                    path: Some(std::path::PathBuf::from(info.path)).filter(|p| !p.as_os_str().is_empty()),
+                    path: Some(std::path::PathBuf::from(info.path))
+                        .filter(|p| !p.as_os_str().is_empty()),
                 });
             }
             Ok(out)
@@ -323,10 +335,15 @@ impl Setlist {
                 }
                 selected.clone_from(&project.guid);
             }
-            let chart = project.path.as_deref().and_then(crate::prepare::chart_beside);
+            let chart = project
+                .path
+                .as_deref()
+                .and_then(crate::prepare::chart_beside);
             match StudioSession::read_current(project.path.as_deref(), chart) {
                 Ok(session) => songs.push(Song::of(project.song_name(), project.guid, session)),
-                Err(e) => tracing::error!(error = %e, "a remote project could not be read; the set goes on without it"),
+                Err(e) => {
+                    tracing::error!(error = %e, "a remote project could not be read; the set goes on without it")
+                }
             }
         }
         if selected != attached.project_guid {
@@ -340,7 +357,10 @@ impl Setlist {
         if songs.is_empty() {
             eyre::bail!("none of the remote's projects could be read");
         }
-        let at = songs.iter().position(|s| s.project == attached.project_guid).unwrap_or(0);
+        let at = songs
+            .iter()
+            .position(|s| s.project == attached.project_guid)
+            .unwrap_or(0);
         crate::open::switch_song(&songs[at].project);
         Ok(Self { songs, at })
     }
@@ -354,7 +374,9 @@ impl Setlist {
             return;
         };
         let rgb = color.as_deref().and_then(hex_rgb);
-        song.color = color.filter(|_| rgb.is_some()).unwrap_or_else(|| title_color(&song.name));
+        song.color = color
+            .filter(|_| rgb.is_some())
+            .unwrap_or_else(|| title_color(&song.name));
         crate::open::set_song_color(&song.project, rgb.unwrap_or(0), song.saved.as_deref());
     }
 }
@@ -399,7 +421,9 @@ pub fn remote_songs(projects: Vec<RemoteProject>, current: &str) -> (Vec<RemoteP
 #[cfg(feature = "native")]
 fn hex_rgb(css: &str) -> Option<u32> {
     let hex = css.strip_prefix('#')?;
-    (hex.len() == 6).then(|| u32::from_str_radix(hex, 16).ok()).flatten()
+    (hex.len() == 6)
+        .then(|| u32::from_str_radix(hex, 16).ok())
+        .flatten()
 }
 
 /// The songs a setlist names, in order.
@@ -503,7 +527,10 @@ mod tests {
         let mut setlist = Setlist::of(vec![song("one"), song("two"), song("three")]);
         setlist.at = 2;
         setlist.reorder(2, 0);
-        assert_eq!(setlist.current().map(|s| s.name.clone()), Some("three".into()));
+        assert_eq!(
+            setlist.current().map(|s| s.name.clone()),
+            Some("three".into())
+        );
         assert_eq!(setlist.at, 0);
     }
 
@@ -512,15 +539,25 @@ mod tests {
         let mut setlist = Setlist::of(vec![song("one"), song("two"), song("three")]);
         setlist.at = 2;
         setlist.remove(0);
-        assert_eq!(setlist.current().map(|s| s.name.clone()), Some("three".into()));
+        assert_eq!(
+            setlist.current().map(|s| s.name.clone()),
+            Some("three".into())
+        );
         setlist.remove(setlist.at);
-        assert_eq!(setlist.current().map(|s| s.name.clone()), Some("two".into()));
+        assert_eq!(
+            setlist.current().map(|s| s.name.clone()),
+            Some("two".into())
+        );
     }
 
     #[test]
     fn a_title_always_gets_the_same_colour_and_titles_differ() {
         assert_eq!(title_color("Praise"), title_color("Praise"));
-        assert_eq!(title_color(" praise "), title_color("Praise"), "case and edges do not count");
+        assert_eq!(
+            title_color(" praise "),
+            title_color("Praise"),
+            "case and edges do not count"
+        );
         assert_ne!(title_color("Praise"), title_color("Washed"));
         assert!(title_color("Who Else").starts_with('#') && title_color("Who Else").len() == 7);
     }
@@ -530,8 +567,16 @@ mod tests {
         let mut setlist = Setlist::of(vec![song("one"), song("two")]);
         assert!(setlist.pick(1, 14.0).is_some());
         assert_eq!(setlist.at, 1);
-        assert_eq!(setlist.progress_of(0, 99.0), 0.5, "left halfway, whatever is playing now");
-        assert_eq!(setlist.progress_of(1, 4.0), 0.0, "the current one reads the playhead");
+        assert_eq!(
+            setlist.progress_of(0, 99.0),
+            0.5,
+            "left halfway, whatever is playing now"
+        );
+        assert_eq!(
+            setlist.progress_of(1, 4.0),
+            0.0,
+            "the current one reads the playhead"
+        );
         assert!(setlist.pick(1, 0.0).is_none(), "already current");
     }
 
@@ -551,19 +596,33 @@ mod tests {
             ],
             "c",
         );
-        assert_eq!(songs.iter().map(|p| p.guid.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+        assert_eq!(
+            songs.iter().map(|p| p.guid.as_str()).collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
         assert_eq!(at, 2);
         assert_eq!(songs[0].song_name(), "Washed", "the file's stem");
         assert_eq!(songs[1].song_name(), "Untitled", "a tab never saved");
-        assert_eq!(songs[2].song_name(), "Who Else", "the remote's name, less its extension");
-        assert_eq!(remote_songs(songs, "gone").1, 0, "a current not in the list starts at the top");
+        assert_eq!(
+            songs[2].song_name(),
+            "Who Else",
+            "the remote's name, less its extension"
+        );
+        assert_eq!(
+            remote_songs(songs, "gone").1,
+            0,
+            "a current not in the list starts at the top"
+        );
     }
 
     #[cfg(feature = "native")]
     #[test]
     fn a_setlist_folder_is_its_song_folders_in_order_sessions_first() {
         let dir = tempfile::tempdir().expect("tempdir");
-        for (song, files) in [("B Song", &["B Song.RPP"][..]), ("A Song", &["A Song.RPP", "A Song.session/"][..])] {
+        for (song, files) in [
+            ("B Song", &["B Song.RPP"][..]),
+            ("A Song", &["A Song.RPP", "A Song.session/"][..]),
+        ] {
             let folder = dir.path().join(song);
             std::fs::create_dir_all(&folder).unwrap();
             for file in files {
@@ -575,15 +634,21 @@ mod tests {
             }
         }
         let songs = read_setlist(dir.path()).expect("songs");
-        assert_eq!(songs, vec![
-            dir.path().join("A Song/A Song.session"),
-            dir.path().join("B Song/B Song.RPP"),
-        ]);
+        assert_eq!(
+            songs,
+            vec![
+                dir.path().join("A Song/A Song.session"),
+                dir.path().join("B Song/B Song.RPP"),
+            ]
+        );
         let list = dir.path().join("set.setlist");
         std::fs::write(&list, "# tonight\nB Song\n\nA Song/A Song.RPP\n").unwrap();
-        assert_eq!(read_setlist(&list).expect("songs"), vec![
-            dir.path().join("B Song/B Song.RPP"),
-            dir.path().join("A Song/A Song.RPP"),
-        ]);
+        assert_eq!(
+            read_setlist(&list).expect("songs"),
+            vec![
+                dir.path().join("B Song/B Song.RPP"),
+                dir.path().join("A Song/A Song.RPP"),
+            ]
+        );
     }
 }

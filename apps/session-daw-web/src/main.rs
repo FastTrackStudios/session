@@ -26,9 +26,12 @@ fn main() {
             .with_default(tracing::Level::INFO)
             .with_target("loro_internal", tracing::Level::WARN)
             .with_target("loro", tracing::Level::WARN);
-        let subscriber = tracing_subscriber::registry()
-            .with(filter)
-            .with(tracing_wasm::WASMLayer::new(tracing_wasm::WASMLayerConfigBuilder::new().build()));
+        let subscriber =
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(tracing_wasm::WASMLayer::new(
+                    tracing_wasm::WASMLayerConfigBuilder::new().build(),
+                ));
         let _ = tracing::subscriber::set_global_default(subscriber);
     }
     dioxus::launch(App);
@@ -55,9 +58,17 @@ fn source() -> (session_daw::web_engine::WebSource, Option<String>) {
     let query = web_sys::window()
         .and_then(|w| w.location().search().ok())
         .and_then(|q| web_sys::UrlSearchParams::new_with_str(&q).ok());
-    let param = |key: &str| query.as_ref().and_then(|q| q.get(key)).filter(|v| !v.is_empty());
+    let param = |key: &str| {
+        query
+            .as_ref()
+            .and_then(|q| q.get(key))
+            .filter(|v| !v.is_empty())
+    };
     let source = match (param(LIVE), param(SHARE)) {
-        (Some(link), _) => WebSource::Live { link, name: param("name").unwrap_or_else(guest_name) },
+        (Some(link), _) => WebSource::Live {
+            link,
+            name: param("name").unwrap_or_else(guest_name),
+        },
         (None, Some(link)) => WebSource::Shared { link },
         (None, None) => WebSource::Bundled {
             name: "Always On Time".to_owned(),

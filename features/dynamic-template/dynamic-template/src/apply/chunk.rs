@@ -174,7 +174,6 @@ impl<'a> RChunkTarget<'a> {
     pub fn carries_folder_structure(&self, id: usize) -> bool {
         !self.is_plain(id)
     }
-
 }
 
 /// Whether a chunk is a `<TRACK>`.
@@ -366,7 +365,6 @@ fn derived_guid(name: &str) -> String {
         c & 0xffff,
     )
 }
-
 
 impl TemplateTarget for RChunkTarget<'_> {
     /// Nest a "DI" capture under its sibling primary track, for any group that

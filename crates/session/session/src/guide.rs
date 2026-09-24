@@ -88,7 +88,9 @@ pub fn is_cue_track(name: &str, is_folder: bool) -> bool {
     if is_folder {
         name.eq_ignore_ascii_case(CLICK_GUIDE_FOLDER)
     } else {
-        GENERATED_TRACKS.iter().any(|t| name.eq_ignore_ascii_case(t))
+        GENERATED_TRACKS
+            .iter()
+            .any(|t| name.eq_ignore_ascii_case(t))
     }
 }
 
@@ -261,16 +263,22 @@ impl<D: GuideDaw> Guide<D> {
     /// count and cues are all summed there. Only while it is still at
     /// unity, so a level someone has set is never written over.
     fn guide_folder_headroom(&self, project: &ProjectContext) -> DawResult<()> {
-        let Some(folder) = Tracks::all(&self.daw, project.clone()).into_iter().find(|t| {
-            t.folder_depth > 0 && t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER)
-        }) else {
+        let Some(folder) = Tracks::all(&self.daw, project.clone())
+            .into_iter()
+            .find(|t| t.folder_depth > 0 && t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER))
+        else {
             return Ok(());
         };
         if (folder.volume - 1.0).abs() > 1e-6 {
             return Ok(());
         }
         let gain = 10f64.powf(GUIDE_FOLDER_DB / 20.0);
-        Tracks::set_volume(&self.daw, project.clone(), TrackRef::Guid(folder.guid), gain)
+        Tracks::set_volume(
+            &self.daw,
+            project.clone(),
+            TrackRef::Guid(folder.guid),
+            gain,
+        )
     }
 
     /// A plain (non-folder) track with exactly this name.
@@ -286,10 +294,9 @@ impl<D: GuideDaw> Guide<D> {
     /// Anything else in the folder keeps its place after them.
     fn order_click_guide_folder(&self, project: &ProjectContext) -> DawResult<()> {
         let all = Tracks::all(&self.daw, project.clone());
-        let Some(folder_at) = all
-            .iter()
-            .position(|t| t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER) && t.folder_depth > 0)
-        else {
+        let Some(folder_at) = all.iter().position(|t| {
+            t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER) && t.folder_depth > 0
+        }) else {
             return Ok(());
         };
         // The folder's direct children: everything until it closes.
@@ -310,13 +317,21 @@ impl<D: GuideDaw> Guide<D> {
         };
         let mut ordered = children.clone();
         ordered.sort_by_key(|t| rank(&t.name)); // stable for the rest
-        let unchanged = ordered.iter().map(|t| &t.guid).eq(children.iter().map(|t| &t.guid));
+        let unchanged = ordered
+            .iter()
+            .map(|t| &t.guid)
+            .eq(children.iter().map(|t| &t.guid));
         if unchanged {
             return Ok(());
         }
         for (i, t) in ordered.iter().enumerate() {
             Tracks::clear_selection(&self.daw, project.clone())?;
-            Tracks::set_selected(&self.daw, project.clone(), TrackRef::Guid(t.guid.clone()), true)?;
+            Tracks::set_selected(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(t.guid.clone()),
+                true,
+            )?;
             Tracks::reorder_selected(
                 &self.daw,
                 project.clone(),
@@ -329,9 +344,19 @@ impl<D: GuideDaw> Guide<D> {
         let last = ordered.len().saturating_sub(1);
         for (i, t) in ordered.iter().enumerate() {
             let depth = if i == last { -1 } else { 0 };
-            Tracks::set_folder_depth(&self.daw, project.clone(), TrackRef::Guid(t.guid.clone()), depth)?;
+            Tracks::set_folder_depth(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(t.guid.clone()),
+                depth,
+            )?;
         }
-        Tracks::set_folder_depth(&self.daw, project.clone(), TrackRef::Guid(all[folder_at].guid.clone()), 1)
+        Tracks::set_folder_depth(
+            &self.daw,
+            project.clone(),
+            TrackRef::Guid(all[folder_at].guid.clone()),
+            1,
+        )
     }
 
     /// Put every click and guide track — the multitrack's muted stems and
@@ -393,7 +418,12 @@ impl<D: GuideDaw> Guide<D> {
 
         Tracks::clear_selection(&self.daw, project.clone())?;
         for guid in &moving {
-            Tracks::set_selected(&self.daw, project.clone(), TrackRef::Guid(guid.clone()), true)?;
+            Tracks::set_selected(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(guid.clone()),
+                true,
+            )?;
         }
         Tracks::reorder_selected(
             &self.daw,
@@ -572,12 +602,16 @@ impl<D: GuideDaw> Guide<D> {
     /// Whether a track carries recorded audio — which makes a track named
     /// "Click" or "Guide" a multitrack's stem, not the generator's own.
     fn has_audio(&self, project: &ProjectContext, track_guid: &str) -> bool {
-        Items::get_items(&self.daw, project.clone(), TrackRef::Guid(track_guid.to_owned()))
-            .iter()
-            .any(|item| {
-                Takes::get_active_take(&self.daw, project.clone(), ItemRef::Guid(item.guid.clone()))
-                    .is_some_and(|take| !take.is_midi)
-            })
+        Items::get_items(
+            &self.daw,
+            project.clone(),
+            TrackRef::Guid(track_guid.to_owned()),
+        )
+        .iter()
+        .any(|item| {
+            Takes::get_active_take(&self.daw, project.clone(), ItemRef::Guid(item.guid.clone()))
+                .is_some_and(|take| !take.is_midi)
+        })
     }
 
     /// The multitrack's own click / count / guide audio: muted (the
@@ -585,7 +619,11 @@ impl<D: GuideDaw> Guide<D> {
     /// renamed "<Role> Audio", so it can never be taken for the generated
     /// track of the same role. Idempotent.
     fn adopt_stems(&self, project: &ProjectContext) {
-        let roles = [GuideTrackRole::Click, GuideTrackRole::Count, GuideTrackRole::Guide];
+        let roles = [
+            GuideTrackRole::Click,
+            GuideTrackRole::Count,
+            GuideTrackRole::Guide,
+        ];
         for track in Tracks::all(&self.daw, project.clone()) {
             let Some(role) = roles
                 .iter()
@@ -600,7 +638,12 @@ impl<D: GuideDaw> Guide<D> {
             if !track.muted {
                 let _ = Tracks::set_muted(&self.daw, project.clone(), at.clone(), true);
             }
-            let _ = Tracks::rename(&self.daw, project.clone(), at, &format!("{} Audio", role.name()));
+            let _ = Tracks::rename(
+                &self.daw,
+                project.clone(),
+                at,
+                &format!("{} Audio", role.name()),
+            );
         }
     }
 

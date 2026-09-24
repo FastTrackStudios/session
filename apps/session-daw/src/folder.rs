@@ -42,7 +42,8 @@ pub trait Folder: Send + Sync {
     ///
     /// No such file, or it is not UTF-8.
     fn read_to_string(&self, path: &Path) -> std::io::Result<String> {
-        String::from_utf8(self.read(path)?).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        String::from_utf8(self.read(path)?)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     /// The one file in `dir` with the extension `ext`, if there is exactly
@@ -53,7 +54,9 @@ pub trait Folder: Send + Sync {
             .ok()?
             .into_iter()
             .map(|name| dir.join(name))
-            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext)) && !self.is_dir(p));
+            .filter(|p| {
+                p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext)) && !self.is_dir(p)
+            });
         let one = found.next()?;
         found.next().is_none().then_some(one)
     }
@@ -124,18 +127,26 @@ impl Memory {
     #[must_use]
     pub fn len_of(&self, path: &Path) -> Option<u64> {
         let files = self.files.read().ok()?;
-        files.get(path).map(|b| u64::try_from(b.len()).unwrap_or(u64::MAX))
+        files
+            .get(path)
+            .map(|b| u64::try_from(b.len()).unwrap_or(u64::MAX))
     }
 }
 
 fn not_found(path: &Path) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::NotFound, format!("{} is not here", path.display()))
+    std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("{} is not here", path.display()),
+    )
 }
 
 impl Folder for Memory {
     fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
         let files = self.files.read().map_err(|_| not_found(path))?;
-        files.get(path).map(|b| b.to_vec()).ok_or_else(|| not_found(path))
+        files
+            .get(path)
+            .map(|b| b.to_vec())
+            .ok_or_else(|| not_found(path))
     }
 
     fn list(&self, dir: &Path) -> std::io::Result<Vec<String>> {
@@ -148,7 +159,11 @@ impl Folder for Memory {
             .filter(|name| !name.is_empty())
             .collect();
         names.dedup();
-        if names.is_empty() { Err(not_found(dir)) } else { Ok(names) }
+        if names.is_empty() {
+            Err(not_found(dir))
+        } else {
+            Ok(names)
+        }
     }
 
     fn is_dir(&self, path: &Path) -> bool {
@@ -171,7 +186,9 @@ impl Folder for Memory {
 /// No manifest (or more than one), an object that is not what its name
 /// says, or a manifest that does not parse.
 pub fn session_text(folder: &dyn Folder, dir: &Path) -> eyre::Result<String> {
-    let names = folder.list(dir).map_err(|e| eyre::eyre!("session {}: {e}", dir.display()))?;
+    let names = folder
+        .list(dir)
+        .map_err(|e| eyre::eyre!("session {}: {e}", dir.display()))?;
     let manifest = daw::standalone::session_file::choose_manifest(&names)
         .map_err(|reason| eyre::eyre!("session {}: {reason}", dir.display()))?;
     let manifest_path = dir.join(manifest);
@@ -181,8 +198,12 @@ pub fn session_text(folder: &dyn Folder, dir: &Path) -> eyre::Result<String> {
     for name in folder.list(&objects_dir).unwrap_or_default() {
         objects.push((name.clone(), folder.read(&objects_dir.join(&name))?));
     }
-    daw::standalone::session_file::session_rpp_text_from_parts(&text, &manifest_path.to_string_lossy(), objects)
-        .map_err(|e| eyre::eyre!(e))
+    daw::standalone::session_file::session_rpp_text_from_parts(
+        &text,
+        &manifest_path.to_string_lossy(),
+        objects,
+    )
+    .map_err(|e| eyre::eyre!(e))
 }
 
 #[cfg(test)]
@@ -202,8 +223,15 @@ mod tests {
         assert!(folder.is_dir(Path::new("/s/Song.session")));
         assert!(!folder.is_dir(Path::new("/s/Song.RPP")));
         assert_eq!(folder.read(Path::new("/s/Song.kf")).unwrap(), b"chart");
-        assert_eq!(folder.only_with_extension(Path::new("/s"), "kf"), Some(PathBuf::from("/s/Song.kf")));
-        assert_eq!(folder.only_with_extension(Path::new("/s"), "session"), None, "a directory is not a file");
+        assert_eq!(
+            folder.only_with_extension(Path::new("/s"), "kf"),
+            Some(PathBuf::from("/s/Song.kf"))
+        );
+        assert_eq!(
+            folder.only_with_extension(Path::new("/s"), "session"),
+            None,
+            "a directory is not a file"
+        );
         assert!(folder.read(Path::new("/s/missing")).is_err());
     }
 }

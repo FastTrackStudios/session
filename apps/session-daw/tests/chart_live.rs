@@ -28,10 +28,19 @@ ch 8
 /// each other. One at a time.
 static ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn build(project_file: &Path, chart: &str) -> (daw::standalone::Standalone, ProjectContext, session::keyflow::from_chart::ChartBuilt) {
+fn build(
+    project_file: &Path,
+    chart: &str,
+) -> (
+    daw::standalone::Standalone,
+    ProjectContext,
+    session::keyflow::from_chart::ChartBuilt,
+) {
     let opened = session_daw::open::open_silent(project_file).expect("open");
     // The transport engine spawns on the window's runtime; so must we.
-    let _runtime = session_daw::open::runtime().expect("engine runtime").enter();
+    let _runtime = session_daw::open::runtime()
+        .expect("engine runtime")
+        .enter();
     let project = ProjectContext::Project(opened.project_guid.clone());
     let built = build_from_chart(&opened.daw, &project, chart).expect("build from chart");
     (opened.daw, project, built)
@@ -39,7 +48,9 @@ fn build(project_file: &Path, chart: &str) -> (daw::standalone::Standalone, Proj
 
 #[test]
 fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
-    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _engine = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("empty.rpp");
     std::fs::write(&file, EMPTY).expect("write project");
@@ -70,13 +81,19 @@ fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
         "the SONG-lane region carries the title"
     );
     // Intro, verse and chorus: at least one region each besides the song's.
-    assert!(regions.len() > built.sections.min(3), "section regions: {regions:?}");
+    assert!(
+        regions.len() > built.sections.min(3),
+        "section regions: {regions:?}"
+    );
 
     let names: Vec<String> = Tracks::all(&daw, project.clone())
         .into_iter()
         .map(|t| t.name)
         .collect();
-    let at = names.iter().position(|n| n == "Keyflow").expect("Keyflow folder");
+    let at = names
+        .iter()
+        .position(|n| n == "Keyflow")
+        .expect("Keyflow folder");
     assert_eq!(&names[at + 1..at + 5], ["KEY", "CHORD", "LINES", "HITS"]);
 
     // KEY: one key item at the start, read back as the chart's key.
@@ -96,14 +113,21 @@ fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
         .into_iter()
         .find(|t| t.name == "CHORD")
         .expect("CHORD");
-    let items = daw::service::Items::get_items(&daw, project.clone(), daw::service::TrackRef::Guid(chord_track.guid));
+    let items = daw::service::Items::get_items(
+        &daw,
+        project.clone(),
+        daw::service::TrackRef::Guid(chord_track.guid),
+    );
     // intro 4 bars + verse 4 bars x2 + chorus 4 bars x2, one chord a bar.
     assert_eq!(items.len(), 20, "a chord item per chord");
     let first = items
         .iter()
         .min_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()))
         .expect("items");
-    assert!((first.position.as_seconds() - 2.0 * bar).abs() < 1e-6, "after the count-in");
+    assert!(
+        (first.position.as_seconds() - 2.0 * bar).abs() < 1e-6,
+        "after the count-in"
+    );
     let notes = daw::service::Midi::notes(
         &daw,
         daw::service::MidiTakeLocation::new(
@@ -113,11 +137,18 @@ fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
         ),
     );
     assert_eq!(notes.len(), 3, "a triad");
-    assert_eq!(first.label.as_deref(), Some("1"), "named as the chart writes it");
+    assert_eq!(
+        first.label.as_deref(),
+        Some("1"),
+        "named as the chart writes it"
+    );
 
     // A second build is refused rather than stamping everything twice.
     let again = build_from_chart(&daw, &project, CHART);
-    assert!(again.is_err(), "a project with its structure built refuses a rebuild");
+    assert!(
+        again.is_err(),
+        "a project with its structure built refuses a rebuild"
+    );
 }
 
 /// The same song, edited: faster, in G, a longer chorus, different chords.
@@ -139,7 +170,9 @@ ch 16
 /// the old song covered. Text that does not parse changes nothing.
 #[test]
 fn a_changed_chart_rebuilds_in_place() {
-    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _engine = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("empty.rpp");
     std::fs::write(&file, EMPTY).expect("write project");
@@ -149,16 +182,31 @@ fn a_changed_chart_rebuilds_in_place() {
 
     let rebuilt = rebuild_from_chart(&daw, &project, EDITED).expect("rebuild");
     let (old_start, old_end) = rebuilt.replaced.expect("there was a song to replace");
-    assert!(old_start.abs() < 1e-6, "the old song began at its count-in, at zero");
-    assert!(old_end >= first.song_end_seconds - 1e-6, "{old_end} covers the old song");
+    assert!(
+        old_start.abs() < 1e-6,
+        "the old song began at its count-in, at zero"
+    );
+    assert!(
+        old_end >= first.song_end_seconds - 1e-6,
+        "{old_end} covers the old song"
+    );
 
     assert!((TempoMap::get_tempo_at(&daw, project.clone(), 0.0) - 100.0).abs() < 1e-6);
-    let markers: Vec<String> = Markers::all(&daw, project.clone()).into_iter().map(|m| m.name).collect();
+    let markers: Vec<String> = Markers::all(&daw, project.clone())
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
     for want in ["COUNT-IN", "SONGSTART", "SONGEND", "=END"] {
-        let n = markers.iter().filter(|m| m.eq_ignore_ascii_case(want)).count();
+        let n = markers
+            .iter()
+            .filter(|m| m.eq_ignore_ascii_case(want))
+            .count();
         assert_eq!(n, 1, "{want} once, not stamped twice: {markers:?}");
     }
-    assert!(markers.iter().any(|m| m == "Lyrics"), "the hand-placed marker stays");
+    assert!(
+        markers.iter().any(|m| m == "Lyrics"),
+        "the hand-placed marker stays"
+    );
     let songs = Regions::all(&daw, project.clone())
         .into_iter()
         .filter(|r| r.name == "Test Song")
@@ -166,10 +214,17 @@ fn a_changed_chart_rebuilds_in_place() {
     assert_eq!(songs, 1, "one SONG-lane region");
 
     let tracks = Tracks::all(&daw, project.clone());
-    assert_eq!(tracks.iter().filter(|t| t.name == "Keyflow").count(), 1, "one Keyflow folder");
+    assert_eq!(
+        tracks.iter().filter(|t| t.name == "Keyflow").count(),
+        1,
+        "one Keyflow folder"
+    );
     let changes = session::key::key_changes(&daw, &project);
     assert_eq!(changes.len(), 1, "one key item: {changes:?}");
-    assert!(session::key::format_key(&changes[0].key).starts_with('G'), "now in G");
+    assert!(
+        session::key::format_key(&changes[0].key).starts_with('G'),
+        "now in G"
+    );
     let chord_track = tracks.iter().find(|t| t.name == "CHORD").expect("CHORD");
     let items = daw::service::Items::get_items(
         &daw,
@@ -181,7 +236,14 @@ fn a_changed_chart_rebuilds_in_place() {
 
     // Half-typed: nothing moves.
     let regions_before = Regions::all(&daw, project.clone()).len();
-    assert!(rebuild_from_chart(&daw, &project, "Test Song\n100bpm 4/4 #G\nvs 8\n1 5 6 4 x9\n").is_err());
+    assert!(
+        rebuild_from_chart(
+            &daw,
+            &project,
+            "Test Song\n100bpm 4/4 #G\nvs 8\n1 5 6 4 x9\n"
+        )
+        .is_err()
+    );
     assert_eq!(Regions::all(&daw, project.clone()).len(), regions_before);
     assert!((TempoMap::get_tempo_at(&daw, project.clone(), 0.0) - 100.0).abs() < 1e-6);
 }
@@ -190,7 +252,9 @@ fn a_changed_chart_rebuilds_in_place() {
 /// not for CI: `FTS_CHART_PROJECT=song.rpp FTS_CHART=song.kf`.
 #[test]
 fn a_real_chart_when_one_is_given() {
-    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _engine = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (Some(project_file), Some(chart)) = (
         std::env::var_os("FTS_CHART_PROJECT"),
         std::env::var_os("FTS_CHART"),
@@ -203,7 +267,14 @@ fn a_real_chart_when_one_is_given() {
     let mut regions = Regions::all(&daw, project.clone());
     regions.sort_by(|a, b| a.start_seconds().total_cmp(&b.start_seconds()));
     for r in regions {
-        eprintln!("  region {:>8.3} – {:>8.3}  lane {:?} color {:?}  {}", r.start_seconds(), r.end_seconds(), r.lane, r.color.map(|c| format!("{c:#08x}")), r.name);
+        eprintln!(
+            "  region {:>8.3} – {:>8.3}  lane {:?} color {:?}  {}",
+            r.start_seconds(),
+            r.end_seconds(),
+            r.lane,
+            r.color.map(|c| format!("{c:#08x}")),
+            r.name
+        );
     }
     let mut markers = Markers::all(&daw, project);
     markers.sort_by(|a, b| a.position_seconds().total_cmp(&b.position_seconds()));
@@ -217,12 +288,16 @@ fn a_real_chart_when_one_is_given() {
 /// with nothing of a longer earlier version left behind.
 #[test]
 fn an_edited_chart_regenerates_the_guide_to_match() {
-    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _engine = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("empty.rpp");
     std::fs::write(&file, EMPTY).expect("write project");
     let opened = session_daw::open::open_silent(&file).expect("open");
-    let _runtime = session_daw::open::runtime().expect("engine runtime").enter();
+    let _runtime = session_daw::open::runtime()
+        .expect("engine runtime")
+        .enter();
     let guid = opened.project_guid.clone();
     let project = ProjectContext::Project(guid.clone());
 
@@ -230,26 +305,42 @@ fn an_edited_chart_regenerates_the_guide_to_match() {
     let generated = |daw: &daw::standalone::Standalone| -> Vec<(String, f64, f64)> {
         Tracks::all(daw, project.clone())
             .into_iter()
-            .filter(|t| ["Click", "Count", "Guide"].contains(&t.name.as_str()) && t.folder_depth <= 0)
+            .filter(|t| {
+                ["Click", "Count", "Guide"].contains(&t.name.as_str()) && t.folder_depth <= 0
+            })
             .flat_map(|t| {
                 let name = t.name.clone();
-                daw::service::Items::get_items(daw, project.clone(), daw::service::TrackRef::Guid(t.guid))
-                    .into_iter()
-                    .map(move |i| {
-                        let at = i.position.as_seconds();
-                        (name.clone(), at, at + i.length.as_seconds())
-                    })
+                daw::service::Items::get_items(
+                    daw,
+                    project.clone(),
+                    daw::service::TrackRef::Guid(t.guid),
+                )
+                .into_iter()
+                .map(move |i| {
+                    let at = i.position.as_seconds();
+                    (name.clone(), at, at + i.length.as_seconds())
+                })
             })
             .collect()
     };
 
-    let long = session_daw::prepare::apply_chart(&opened.daw, &guid, EDITED, true).expect("the long chart");
+    let long = session_daw::prepare::apply_chart(&opened.daw, &guid, EDITED, true)
+        .expect("the long chart");
     let items = generated(&opened.daw);
-    assert_eq!(items.len(), 3, "one item each for click, count and cues: {items:?}");
-    assert!(items.iter().all(|(_, _, end)| *end >= long.built.song_end_seconds - 1e-3));
+    assert_eq!(
+        items.len(),
+        3,
+        "one item each for click, count and cues: {items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .all(|(_, _, end)| *end >= long.built.song_end_seconds - 1e-3)
+    );
     let long_end = items.iter().map(|(_, _, end)| *end).fold(0.0_f64, f64::max);
 
-    let short = session_daw::prepare::apply_chart(&opened.daw, &guid, CHART, true).expect("the short chart");
+    let short = session_daw::prepare::apply_chart(&opened.daw, &guid, CHART, true)
+        .expect("the short chart");
     assert!(short.built.song_end_seconds < long.built.song_end_seconds);
     let items = generated(&opened.daw);
     assert_eq!(items.len(), 3, "the long song's items are gone: {items:?}");
@@ -268,33 +359,47 @@ fn an_edited_chart_regenerates_the_guide_to_match() {
 /// times the chart is laid over the song again.
 #[test]
 fn a_bar_of_two_four_reaches_the_tempo_map() {
-    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _engine = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("empty.rpp");
     std::fs::write(&file, EMPTY).expect("write project");
     let opened = session_daw::open::open_silent(&file).expect("open");
-    let _runtime = session_daw::open::runtime().expect("engine runtime").enter();
+    let _runtime = session_daw::open::runtime()
+        .expect("engine runtime")
+        .enter();
     let project = ProjectContext::Project(opened.project_guid.clone());
     let chart = "Song\n60bpm 4/4 #D\n\nCount 1\nCH 2\nBreakdown 1\n!T2/4\nVS 2\n";
 
     for _ in 0..2 {
-        session::keyflow::from_chart::rebuild_from_chart(&opened.daw, &project, chart).expect("rebuild");
+        session::keyflow::from_chart::rebuild_from_chart(&opened.daw, &project, chart)
+            .expect("rebuild");
     }
-    let meters: Vec<(i64, Option<(u32, u32)>)> = TempoMap::get_tempo_points(&opened.daw, project.clone())
-        .into_iter()
-        .map(|p| {
-            (
-                (p.position.seconds().unwrap_or(-1.0) * 1000.0).round() as i64,
-                p.time_signature.map(|ts| (ts.numerator(), ts.denominator())),
-            )
-        })
-        .collect();
-    assert_eq!(meters, vec![(12_000, Some((2, 4))), (14_000, Some((4, 4)))], "{meters:?}");
+    let meters: Vec<(i64, Option<(u32, u32)>)> =
+        TempoMap::get_tempo_points(&opened.daw, project.clone())
+            .into_iter()
+            .map(|p| {
+                (
+                    (p.position.seconds().unwrap_or(-1.0) * 1000.0).round() as i64,
+                    p.time_signature
+                        .map(|ts| (ts.numerator(), ts.denominator())),
+                )
+            })
+            .collect();
+    assert_eq!(
+        meters,
+        vec![(12_000, Some((2, 4))), (14_000, Some((4, 4)))],
+        "{meters:?}"
+    );
 
     // The verse after the breakdown starts two beats earlier than 4/4 would.
     let verse = Regions::all(&opened.daw, project.clone())
         .into_iter()
         .find(|r| r.name.starts_with("VS"))
         .expect("a verse region");
-    assert!((verse.time_range.start_seconds() - 14.0).abs() < 1e-6, "{verse:?}");
+    assert!(
+        (verse.time_range.start_seconds() - 14.0).abs() < 1e-6,
+        "{verse:?}"
+    );
 }

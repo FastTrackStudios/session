@@ -216,17 +216,32 @@ async fn library(command: LibraryCommand) -> eyre::Result<()> {
                 println!("{} ({} songs)", list.title, list.songs.len());
                 for song in &list.songs {
                     let by = song.writers.join(", ");
-                    println!("  song:{:<28} {}{}", song.slug, song.title, if by.is_empty() { String::new() } else { format!(" — {by}") });
+                    println!(
+                        "  song:{:<28} {}{}",
+                        song.slug,
+                        song.title,
+                        if by.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" — {by}")
+                        }
+                    );
                 }
             }
         }
-        LibraryCommand::Pull { setlist, into, originals } => {
+        LibraryCommand::Pull {
+            setlist,
+            into,
+            originals,
+        } => {
             let list = setlists
                 .iter()
                 .find(|l| l.title == setlist)
                 .ok_or_else(|| eyre::eyre!("no setlist `{setlist}` in {}", lib.org))?;
             let into = into.unwrap_or_else(|| {
-                std::env::temp_dir().join("fts-session-library").join(&lib.org)
+                std::env::temp_dir()
+                    .join("fts-session-library")
+                    .join(&lib.org)
             });
             let file = lib.pull_setlist(list, &into, originals).await?;
             println!("{}", file.display());
@@ -253,7 +268,11 @@ async fn run(command: Command) -> eyre::Result<()> {
             out,
             quality,
         } => proxies::guide_library(&library, &out, quality),
-        Command::Import { folders, out, force } => import(&folders, &out, force),
+        Command::Import {
+            folders,
+            out,
+            force,
+        } => import(&folders, &out, force),
         Command::Lyrics {
             command:
                 LyricsCommand::Fetch {
@@ -541,6 +560,10 @@ fn import(folders: &[PathBuf], out: &Path, force: bool) -> eyre::Result<()> {
     if failed.is_empty() {
         Ok(())
     } else {
-        Err(eyre::eyre!("{} did not import:\n{}", failed.len(), failed.join("\n")))
+        Err(eyre::eyre!(
+            "{} did not import:\n{}",
+            failed.len(),
+            failed.join("\n")
+        ))
     }
 }

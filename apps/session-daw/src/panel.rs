@@ -41,15 +41,29 @@ pub enum Button {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PanelEvent {
     /// The `z` key, by its physical position (Shift+z is a zoom too).
-    ZKey { pressed: bool, repeat: bool },
+    ZKey {
+        pressed: bool,
+        repeat: bool,
+    },
     Modifiers(crate::mousemap::Mods),
-    Pointer { x: f64, y: f64 },
-    Button { button: Button, pressed: bool },
+    Pointer {
+        x: f64,
+        y: f64,
+    },
+    Button {
+        button: Button,
+        pressed: bool,
+    },
     /// A wheel, already in pixels (a line-counting wheel times
     /// [`WHEEL_LINE`]).
-    Wheel { dx: f64, dy: f64 },
+    Wheel {
+        dx: f64,
+        dy: f64,
+    },
     /// Once a frame, with where the play cursor is.
-    Frame { play_at: f64 },
+    Frame {
+        play_at: f64,
+    },
 }
 
 /// What the pointer and the keyboard are doing to the view.
@@ -227,8 +241,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     // cursor is — is a plain cell it reads every paint, because the paint
     // runs outside the Dioxus runtime.
     let (hosted, view, edits) = use_hook(|| {
-        let view: crate::widget::Shared =
-            Rc::new(RefCell::new(crate::widget::View::OPENING));
+        let view: crate::widget::Shared = Rc::new(RefCell::new(crate::widget::View::OPENING));
         let built = crate::widget::ArrangementWidget::for_session(
             &session.project,
             &session.rows,
@@ -370,7 +383,10 @@ impl ArrangementPanel {
     pub fn extent(&self, r: (f64, f64, f64, f64), zx: f64, zy: f64) -> (f64, f64) {
         let (fw, fh) = self.frame(r);
         let span_y = *self.span_y.peek();
-        ((self.span_x * zx - fw).max(0.0), (span_y * zy - fh).max(0.0))
+        (
+            (self.span_x * zx - fw).max(0.0),
+            (span_y * zy - fh).max(0.0),
+        )
     }
 
     /// Out no further than the whole session filling the frame, and never
@@ -635,7 +651,10 @@ impl ArrangementPanel {
             // that made them (a toggle would flip twice).
             links.to_mixer.borrow_mut().extend(pending.iter().cloned());
             let from_mixer: Vec<_> = links.from_mixer.borrow_mut().drain(..).collect();
-            links.to_arrange.borrow_mut().extend(from_mixer.iter().cloned());
+            links
+                .to_arrange
+                .borrow_mut()
+                .extend(from_mixer.iter().cloned());
             pending.extend(from_mixer);
         }
         for edit in pending {
@@ -664,7 +683,9 @@ impl ArrangementPanel {
     /// The track panel's shape, as the widget is drawing it.
     #[must_use]
     pub fn tcp(&self) -> crate::tcp::Tcp {
-        crate::tcp::Tcp { compact: self.compact.get() }
+        crate::tcp::Tcp {
+            compact: self.compact.get(),
+        }
     }
 
     /// Page the view to the play cursor when following and the cursor has
@@ -713,7 +734,10 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
     let (mut scroll, mut down) = (panel.scroll, panel.down);
     let (click, click_muted) = panel.click.clone();
     // Read as a signal so a toggle re-renders what is sized to the panel.
-    let tcp_w = crate::tcp::Tcp { compact: (panel.shape)() }.width();
+    let tcp_w = crate::tcp::Tcp {
+        compact: (panel.shape)(),
+    }
+    .width();
     rsx! {
         // The main toolbar, in the corner left of the ruler's lane names.
         crate::toolbar::MainToolbar {

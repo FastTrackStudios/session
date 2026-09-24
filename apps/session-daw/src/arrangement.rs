@@ -298,7 +298,11 @@ fn wave_gain(wave: &crate::midi::Wave) -> f64 {
         .iter()
         .map(|&(max, min)| f64::from(max.abs().max(min.abs())))
         .fold(0.0_f64, f64::max);
-    if loudest > 0.0 { (1.0 / loudest).min(MOST_GAIN) } else { 1.0 }
+    if loudest > 0.0 {
+        (1.0 / loudest).min(MOST_GAIN)
+    } else {
+        1.0
+    }
 }
 
 /// A pixel short of the lane at full scale, and never thinner than a hair
@@ -321,7 +325,9 @@ fn lane_wave_path(lane: &LaneWave, left: f64, right: f64, pps: f64) -> Option<Be
     let fold = crate::num::index((1.0 / (wave.step * pps.max(1e-9))).floor().max(1.0)).max(1);
     let last = wave.points.len();
     let first = (crate::num::index(((from - lane.x0) / wave.step).floor().max(0.0)) / fold) * fold;
-    let end = crate::num::index(((to - lane.x0) / wave.step).ceil().max(0.0)).saturating_add(fold).min(last);
+    let end = crate::num::index(((to - lane.x0) / wave.step).ceil().max(0.0))
+        .saturating_add(fold)
+        .min(last);
     if first >= end {
         return None;
     }
@@ -329,9 +335,15 @@ fn lane_wave_path(lane: &LaneWave, left: f64, right: f64, pps: f64) -> Option<Be
         .chunks(fold)
         .enumerate()
         .map(|(r, run)| {
-            let (max, min) = run.iter().fold((0.0_f32, 0.0_f32), |(mx, mn), &(a, b)| (mx.max(a), mn.min(b)));
+            let (max, min) = run.iter().fold((0.0_f32, 0.0_f32), |(mx, mn), &(a, b)| {
+                (mx.max(a), mn.min(b))
+            });
             let at = crate::num::coord(first + r * fold) + crate::num::coord(run.len()) / 2.0;
-            (at.mul_add(wave.step, lane.x0).clamp(lane.x0, lane.x1), max, min)
+            (
+                at.mul_add(wave.step, lane.x0).clamp(lane.x0, lane.x1),
+                max,
+                min,
+            )
         })
         .collect();
     let mid = (lane.top + lane.bottom) / 2.0;
@@ -347,7 +359,10 @@ fn lane_wave_path(lane: &LaneWave, left: f64, right: f64, pps: f64) -> Option<Be
         }
     }
     for &(x, _, min) in runs.iter().rev() {
-        path.line_to((x, mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR))));
+        path.line_to((
+            x,
+            mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR)),
+        ));
     }
     path.close_path();
     Some(path)
@@ -757,12 +772,23 @@ impl Arrangement {
                     // Audio: the take's own peaks, once they have been
                     // read — plain until then, for the same reason.
                     None => {
-                        if let Some(wave) = wave.clone().filter(|w| w.step > 0.0 && !w.points.is_empty()) {
+                        if let Some(wave) = wave
+                            .clone()
+                            .filter(|w| w.step > 0.0 && !w.points.is_empty())
+                        {
                             // Over the body just recorded, drawn at replay.
                             let body = command_index(&lanes).saturating_sub(1);
                             index.waves.insert(
                                 body,
-                                LaneWave { gain: wave_gain(&wave), wave, x0, x1, top, bottom, color },
+                                LaneWave {
+                                    gain: wave_gain(&wave),
+                                    wave,
+                                    x0,
+                                    x1,
+                                    top,
+                                    bottom,
+                                    color,
+                                },
                             );
                         }
                     }
@@ -1733,8 +1759,8 @@ fn waveform(
     let mid = (top + bottom) / 2.0;
     // The points that land inside the item once shifted.
     let first = crate::num::index((shift / wave.step).floor().max(0.0));
-    let last = crate::num::index(((x1 - x0 + shift) / wave.step).ceil().max(0.0))
-        .min(wave.points.len());
+    let last =
+        crate::num::index(((x1 - x0 + shift) / wave.step).ceil().max(0.0)).min(wave.points.len());
     if first >= last {
         return None;
     }
@@ -1757,7 +1783,10 @@ fn waveform(
         }
     }
     for (i, &(_, min)) in span.iter().enumerate().rev() {
-        path.line_to((x_of(i), mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR))));
+        path.line_to((
+            x_of(i),
+            mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR)),
+        ));
     }
     path.close_path();
     Some(path)
@@ -1868,10 +1897,21 @@ fn letter(
         None,
         &Rect::new(left, top + inset, right, top + row_h - inset),
     );
-    #[expect(clippy::cast_possible_truncation, reason = "a font size, well inside f32")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a font size, well inside f32"
+    )]
     let size_f32 = size as f32;
     let baseline = top + (row_h + size * CAP) / 2.0;
-    crate::tcp::glyphs(painter, font, palette.text, text, left + PAD, baseline, size_f32);
+    crate::tcp::glyphs(
+        painter,
+        font,
+        palette.text,
+        text,
+        left + PAD,
+        baseline,
+        size_f32,
+    );
 }
 
 impl Arrangement {
@@ -2247,12 +2287,18 @@ mod lettering_tests {
         let at = |written, t| spell("CHORD", written, t, &keys);
         assert_eq!(
             at("5/7", 2.0),
-            Some(Spelled { numbers: "5/7".into(), chords: "C/E".into() })
+            Some(Spelled {
+                numbers: "5/7".into(),
+                chords: "C/E".into()
+            })
         );
         assert_eq!(at("4", 10.0).map(|s| s.chords), Some("C".into()));
         assert_eq!(at("Bb", 2.0).map(|s| s.numbers), Some("4".into()));
         assert_eq!(at("N.C.", 2.0).map(|s| s.chords), Some("N.C.".into()));
-        assert_eq!(spell("CHORD", "1", 0.0, &[]).map(|s| s.chords), Some("1".into()));
+        assert_eq!(
+            spell("CHORD", "1", 0.0, &[]).map(|s| s.chords),
+            Some("1".into())
+        );
         assert_eq!(spell("Bass", "1", 0.0, &keys), None);
         assert_eq!(
             spell("KEY", "F major", 0.0, &keys).map(|s| s.numbers),
@@ -2280,7 +2326,10 @@ mod waveform_tests {
         use vello::kurbo::Shape as _;
         let path = waveform(&wave(), 10.0, 12.0, 0.0, 20.0, 0.0).expect("a path");
         let b = path.bounding_box();
-        assert!((b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9, "{b:?}");
+        assert!(
+            (b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9,
+            "{b:?}"
+        );
         assert!(b.x0 >= 10.0 && b.x1 <= 12.0, "{b:?}");
     }
 
@@ -2294,13 +2343,20 @@ mod waveform_tests {
             step: 0.5,
             points: vec![(0.1, -0.1), (0.05, -0.02), (0.1, -0.1)],
         };
-        let b = waveform(&quiet, 0.0, 1.5, 0.0, 20.0, 0.0).expect("a path").bounding_box();
-        assert!((b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9, "{b:?}");
+        let b = waveform(&quiet, 0.0, 1.5, 0.0, 20.0, 0.0)
+            .expect("a path")
+            .bounding_box();
+        assert!(
+            (b.y0 - 1.0).abs() < 1e-9 && (b.y1 - 19.0).abs() < 1e-9,
+            "{b:?}"
+        );
         let noise = Wave {
             step: 0.5,
             points: vec![(0.001, -0.001), (0.001, -0.001)],
         };
-        let b = waveform(&noise, 0.0, 1.0, 0.0, 20.0, 0.0).expect("a path").bounding_box();
+        let b = waveform(&noise, 0.0, 1.0, 0.0, 20.0, 0.0)
+            .expect("a path")
+            .bounding_box();
         assert!(b.height() < 4.0, "noise stays small: {b:?}");
     }
 
@@ -2324,8 +2380,21 @@ mod lane_wave_tests {
 
     fn lane(points: usize) -> LaneWave {
         // Forty points a second over 100 s.
-        let wave = Wave { step: 0.025, points: (0..points).map(|i| if i == 2000 { (0.9, -0.9) } else { (0.1, -0.1) }).collect() };
-        LaneWave { wave: std::sync::Arc::new(wave), x0: 0.0, x1: 100.0, top: 0.0, bottom: 40.0, color: Color::WHITE, gain: 1.0 }
+        let wave = Wave {
+            step: 0.025,
+            points: (0..points)
+                .map(|i| if i == 2000 { (0.9, -0.9) } else { (0.1, -0.1) })
+                .collect(),
+        };
+        LaneWave {
+            wave: std::sync::Arc::new(wave),
+            x0: 0.0,
+            x1: 100.0,
+            top: 0.0,
+            bottom: 40.0,
+            color: Color::WHITE,
+            gain: 1.0,
+        }
     }
 
     fn points_of(path: &vello::kurbo::BezPath) -> usize {
@@ -2338,11 +2407,19 @@ mod lane_wave_tests {
         // Fitted: 100 s across 200 px — two pixels a second, ~200 points
         // each way, not 4000.
         let fitted = lane_wave_path(&lane, 0.0, 100.0, 2.0).expect("a path");
-        assert!(points_of(&fitted) < 2 * 210, "{} elements", points_of(&fitted));
+        assert!(
+            points_of(&fitted) < 2 * 210,
+            "{} elements",
+            points_of(&fitted)
+        );
         // Zoomed in on 10 s at 100 px a second: only those seconds, at the
         // envelope's own resolution (40 a second is under a pixel's worth).
         let near = lane_wave_path(&lane, 45.0, 55.0, 100.0).expect("a path");
-        assert!(points_of(&near) < 2 * 420 && points_of(&near) > 2 * 380, "{} elements", points_of(&near));
+        assert!(
+            points_of(&near) < 2 * 420 && points_of(&near) > 2 * 380,
+            "{} elements",
+            points_of(&near)
+        );
         // Out of view: nothing.
         assert!(lane_wave_path(&lane, 200.0, 300.0, 2.0).is_none());
     }
@@ -2352,7 +2429,12 @@ mod lane_wave_tests {
         let lane = lane(4000);
         let fitted = lane_wave_path(&lane, 0.0, 100.0, 2.0).expect("a path");
         // The spike at point 2000 (50 s) reaches near the band's top edge.
-        let top = fitted.elements().iter().filter_map(|e| e.end_point()).map(|p| p.y).fold(f64::MAX, f64::min);
+        let top = fitted
+            .elements()
+            .iter()
+            .filter_map(|e| e.end_point())
+            .map(|p| p.y)
+            .fold(f64::MAX, f64::min);
         assert!(top < 5.0, "the spike survives the fold: top at {top}");
     }
 }

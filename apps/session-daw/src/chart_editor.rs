@@ -111,15 +111,20 @@ pub fn ChartEditor() -> Element {
         Some(Outcome::Refused(_) | Outcome::ChartOnly) => ("", "#e3b341".to_owned()),
     };
     let message = match outcome() {
-        None => file
-            .as_ref()
-            .and_then(|f| f.file_name())
-            .map_or_else(|| "no chart file".to_owned(), |n| n.to_string_lossy().into_owned()),
-        Some(Outcome::Applied { sections, bpm }) => format!("laid over the song — {sections} sections, {bpm} bpm"),
+        None => file.as_ref().and_then(|f| f.file_name()).map_or_else(
+            || "no chart file".to_owned(),
+            |n| n.to_string_lossy().into_owned(),
+        ),
+        Some(Outcome::Applied { sections, bpm }) => {
+            format!("laid over the song — {sections} sections, {bpm} bpm")
+        }
         Some(Outcome::Refused(why)) => format!("not applied: {why}"),
-        Some(Outcome::ChartOnly) => "chart saved — the song is rebuilt only in Engine mode".to_owned(),
+        Some(Outcome::ChartOnly) => {
+            "chart saved — the song is rebuilt only in Engine mode".to_owned()
+        }
     };
-    let css = keyflow_editor_lang::highlight_css(&keyflow_editor_lang::HighlightTheme::default_dark());
+    let css =
+        keyflow_editor_lang::highlight_css(&keyflow_editor_lang::HighlightTheme::default_dark());
     rsx! {
         style { dangerous_inner_html: editor_view::EDITOR_CSS }
         style { dangerous_inner_html: "{css}" }
@@ -167,7 +172,11 @@ pub fn EditorToggle(open: Signal<bool>) -> Element {
     } else {
         ("rgba(16,17,20,0.85)", TEXT, RULE)
     };
-    let title = if open() { "Hide the chart's text" } else { "Edit the chart as text" };
+    let title = if open() {
+        "Hide the chart's text"
+    } else {
+        "Edit the chart as text"
+    };
     rsx! {
         button {
             title,
@@ -234,23 +243,40 @@ fn remote_carets(state: &editor_state::EditorState) -> Vec<editor_state::Decorat
         if key.starts_with(&me) || !key.ends_with(session::sync::presence::STATE) {
             continue;
         }
-        let Some(peer) = session::sync::presence::PeerState::decode(&value) else { continue };
-        let Some((anchor, head)) = peer.chart_caret.as_ref() else { continue };
-        let (Some(a), Some(h)) = (doc.resolve_chart_cursor(anchor), doc.resolve_chart_cursor(head))
-        else {
+        let Some(peer) = session::sync::presence::PeerState::decode(&value) else {
+            continue;
+        };
+        let Some((anchor, head)) = peer.chart_caret.as_ref() else {
+            continue;
+        };
+        let (Some(a), Some(h)) = (
+            doc.resolve_chart_cursor(anchor),
+            doc.resolve_chart_cursor(head),
+        ) else {
             continue;
         };
         let (a, h) = (rope.char_to_byte(a.min(max)), rope.char_to_byte(h.min(max)));
-        let (r, g, b) = ((peer.color >> 16) & 0xff, (peer.color >> 8) & 0xff, peer.color & 0xff);
+        let (r, g, b) = (
+            (peer.color >> 16) & 0xff,
+            (peer.color >> 8) & 0xff,
+            peer.color & 0xff,
+        );
         let color = format!("rgb({r},{g},{b})");
         if a != h {
             out.push(editor_state::DecoratedRange::mark_with_attrs(
                 a.min(h)..a.max(h),
                 "collab-selection",
-                vec![("style".to_owned(), format!("background-color: rgba({r},{g},{b},0.28);"))],
+                vec![(
+                    "style".to_owned(),
+                    format!("background-color: rgba({r},{g},{b},0.28);"),
+                )],
             ));
         }
-        let name = peer.name.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let name = peer
+            .name
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
         // A bar the height of the line, and the name above it — clear of
         // the text it points into.
         out.push(editor_state::DecoratedRange::widget(
@@ -277,7 +303,13 @@ fn apply_remote(state: Signal<editor_state::EditorState>, text: &str) {
         return;
     }
     let mut state = state;
-    state.set(current.update(editor_state::TransactionSpec::new().changes(changes).user_event("remote")));
+    state.set(
+        current.update(
+            editor_state::TransactionSpec::new()
+                .changes(changes)
+                .user_event("remote"),
+        ),
+    );
 }
 
 /// The editor's own palette tokens, dark, for the stylesheet's variables.
@@ -293,7 +325,11 @@ const EDITOR_THEME: &str = "
 
 /// Start the worker that lays chart text over `project`: it takes the
 /// latest text once typing has paused, applies it, saves, and replies.
-fn start(project: String, file: Option<PathBuf>, reply: futures_channel::mpsc::UnboundedSender<Outcome>) -> mpsc::Sender<String> {
+fn start(
+    project: String,
+    file: Option<PathBuf>,
+    reply: futures_channel::mpsc::UnboundedSender<Outcome>,
+) -> mpsc::Sender<String> {
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::Builder::new()
         .name("session-chart-editor".into())

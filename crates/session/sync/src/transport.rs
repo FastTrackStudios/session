@@ -289,7 +289,9 @@ impl TransportSync {
     /// The session's mode, as last set by anyone.
     #[must_use]
     pub fn mode(&self) -> TransportMode {
-        self.current.as_ref().map_or(TransportMode::Independent, |c| c.mode)
+        self.current
+            .as_ref()
+            .map_or(TransportMode::Independent, |c| c.mode)
     }
 
     /// The entry in force.
@@ -321,7 +323,12 @@ impl TransportSync {
 
     /// Switch everyone between playing apart and together, from where this
     /// engine is. Returns the entry to publish.
-    pub fn set_mode(&mut self, mode: TransportMode, local: &LocalTransport, now_ms: f64) -> SharedTransport {
+    pub fn set_mode(
+        &mut self,
+        mode: TransportMode,
+        local: &LocalTransport,
+        now_ms: f64,
+    ) -> SharedTransport {
         let entry = self.entry(mode, local, now_ms);
         self.pressed_at = None;
         entry
@@ -341,12 +348,17 @@ impl TransportSync {
             self.pressed_at = None;
             let entry = self.entry(TransportMode::Shared, local, now_ms);
             self.switching = None;
-            return Tick { publish: Some(entry), commands: Vec::new() };
+            return Tick {
+                publish: Some(entry),
+                commands: Vec::new(),
+            };
         }
         if now_ms < self.quiet_until {
             return Tick::default();
         }
-        let Some(current) = self.current.clone() else { return Tick::default() };
+        let Some(current) = self.current.clone() else {
+            return Tick::default();
+        };
         let mut commands = self.follower.step(&current, local, now_ms);
         // A switch already asked for is not asked for again (until it has
         // had its time); the rest waits for the song to be there.
@@ -366,11 +378,19 @@ impl TransportSync {
         if !commands.is_empty() {
             self.quiet_until = now_ms + SETTLE_MS;
         }
-        Tick { publish: None, commands }
+        Tick {
+            publish: None,
+            commands,
+        }
     }
 
     /// A new entry from this engine's state, in force from now.
-    fn entry(&mut self, mode: TransportMode, local: &LocalTransport, now_ms: f64) -> SharedTransport {
+    fn entry(
+        &mut self,
+        mode: TransportMode,
+        local: &LocalTransport,
+        now_ms: f64,
+    ) -> SharedTransport {
         let floor = self.current.as_ref().map_or(0, |c| c.seq.saturating_add(1));
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let clock = (now_ms.max(0.0) as u64).saturating_mul(1000);
@@ -418,7 +438,12 @@ impl SyncPosition {
             ("playhead", LoroValue::Double(p.playhead_seconds)),
             ("rate", LoroValue::Double(p.playrate)),
             ("playing", LoroValue::Bool(p.is_playing)),
-            ("song", self.song.as_deref().map_or(LoroValue::Null, LoroValue::from)),
+            (
+                "song",
+                self.song
+                    .as_deref()
+                    .map_or(LoroValue::Null, LoroValue::from),
+            ),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))

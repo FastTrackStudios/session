@@ -84,7 +84,11 @@ pub fn group_of(ancestors: &[&str], name: &str, is_folder: bool) -> String {
         // The folder itself and what the guide generates are the guide; the
         // stems beside them are their own group.
         let generated = crate::guide::is_cue_track(name, is_folder && ancestors.is_empty());
-        return if generated || (is_folder && ancestors.is_empty()) { GUIDE.to_owned() } else { GUIDE_AUDIO.to_owned() };
+        return if generated || (is_folder && ancestors.is_empty()) {
+            GUIDE.to_owned()
+        } else {
+            GUIDE_AUDIO.to_owned()
+        };
     }
     top.to_lowercase()
 }
@@ -98,7 +102,10 @@ mod tests {
         let cue = LoadSelection::cue();
         assert!(cue.includes(&group_of(&[], "Guide", true)));
         for generated in ["Click", "Shaker", "Count", "Guide"] {
-            assert!(cue.includes(&group_of(&["Guide"], generated, false)), "{generated}");
+            assert!(
+                cue.includes(&group_of(&["Guide"], generated, false)),
+                "{generated}"
+            );
         }
         for stem in ["Click Audio", "Guide Audio", "Count Audio"] {
             assert!(!cue.includes(&group_of(&["Guide"], stem, false)), "{stem}");

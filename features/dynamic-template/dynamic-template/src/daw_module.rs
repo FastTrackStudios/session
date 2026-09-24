@@ -1166,7 +1166,6 @@ fn with_suffix(name: &str, suffix: &str) -> String {
     format!("{name}{suffix}")
 }
 
-
 // One static table entry per template group; splitting it up would only
 // obscure the 1:1 mapping to REAPER command suffixes.
 const fn create_template_specs() -> &'static [CreateTemplateSpec] {

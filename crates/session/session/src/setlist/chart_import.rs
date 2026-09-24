@@ -122,7 +122,10 @@ pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError
     // as long there, and everything after it lands two beats earlier than
     // a single meter would put it.
     let quarter = 60.0 / tempo_bpm;
-    let header = (u8::try_from(num).unwrap_or(4), u8::try_from(den).unwrap_or(4));
+    let header = (
+        u8::try_from(num).unwrap_or(4),
+        u8::try_from(den).unwrap_or(4),
+    );
     let key = chart.initial_key.as_ref().map(|k| k.root.name.clone());
 
     let mut sections: Vec<LaidSection> = Vec::with_capacity(chart.sections.len());
@@ -199,14 +202,20 @@ mod meter_tests {
     /// 2/4 and back is listed where it happens.
     #[test]
     fn a_bar_of_two_four_is_half_a_bar() {
-        let layout = chart_to_layout(
-            "Song\n60bpm 4/4 #D\n\nCount 1\nCH 2\nBreakdown 1\n!T2/4\nVS 2\n",
-        )
-        .expect("lays out");
+        let layout =
+            chart_to_layout("Song\n60bpm 4/4 #D\n\nCount 1\nCH 2\nBreakdown 1\n!T2/4\nVS 2\n")
+                .expect("lays out");
         // At 60 bpm a quarter is a second: 4 + 8 = 12 s to the breakdown,
         // which lasts 2 s, so the verse starts at 14 and ends at 22.
-        let starts: Vec<(f64, f64)> = layout.sections.iter().map(|s| (s.start_seconds, s.end_seconds)).collect();
-        assert_eq!(starts, vec![(0.0, 4.0), (4.0, 12.0), (12.0, 14.0), (14.0, 22.0)]);
+        let starts: Vec<(f64, f64)> = layout
+            .sections
+            .iter()
+            .map(|s| (s.start_seconds, s.end_seconds))
+            .collect();
+        assert_eq!(
+            starts,
+            vec![(0.0, 4.0), (4.0, 12.0), (12.0, 14.0), (14.0, 22.0)]
+        );
         assert_eq!(layout.meter_changes, vec![(12.0, 2, 4), (14.0, 4, 4)]);
         assert_eq!(layout.measure_starts, vec![0.0, 4.0, 8.0, 12.0, 14.0, 18.0]);
         assert!((layout.song_end_seconds - 22.0).abs() < 1e-9);

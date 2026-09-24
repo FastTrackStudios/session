@@ -190,7 +190,10 @@ async fn a_whole_set_is_shared_and_people_can_be_on_different_songs() {
 async fn a_joiner_finds_the_shared_clock() {
     use session_sync::clock::{SessionClockClient, SharedClock};
     let host = session_sync::net::SetHost::new(session_sync::net::session_id("Worship Set"));
-    let server = architect::LocalServer::serve(host.mount(architect::LayerRouter::new()), architect::Scope::new());
+    let server = architect::LocalServer::serve(
+        host.mount(architect::LayerRouter::new()),
+        architect::Scope::new(),
+    );
     let client: SessionClockClient = server.establish::<SessionClockClient>().await.unwrap();
     let clock = SharedClock::follow(client);
     let mut offset = None;
@@ -203,6 +206,12 @@ async fn a_joiner_finds_the_shared_clock() {
     }
     let offset = offset.expect("an estimate after a few pings");
     let rtt = clock.round_trip_micros().unwrap();
-    assert!(offset.abs() < rtt.max(1_000.0), "offset {offset} µs, round trip {rtt} µs");
-    assert!(SharedClock::owned().offset_micros() == Some(0.0), "the host's own clock is the shared one");
+    assert!(
+        offset.abs() < rtt.max(1_000.0),
+        "offset {offset} µs, round trip {rtt} µs"
+    );
+    assert!(
+        SharedClock::owned().offset_micros() == Some(0.0),
+        "the host's own clock is the shared one"
+    );
 }
