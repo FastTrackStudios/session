@@ -348,6 +348,10 @@ impl Keep {
             Self::Disk(_) => FetchConfig::default(),
             Self::Memory(_) => FetchConfig {
                 resident: Some(daw::standalone::audio_engine::media_fetch::Resident::BROWSER),
+                // A seek needs every stem's block at the new place at once,
+                // and over the internet each one is a round trip: more of
+                // them in flight is what gets the song sounding again.
+                concurrency: 8,
                 ..FetchConfig::default()
             },
         }
@@ -633,17 +637,14 @@ impl StreamedSong {
     ) {
         let fetch: Arc<dyn RangeFetch> = Arc::new(SourceFetch(Arc::clone(&self.source)));
         // In a browser, through its cache: what the window let go comes
-        // back from there, and a reload streams nothing twice.
+        // back from there, and a reload streams nothing twice. (Filling the
+        // cache ahead of playing is [`Self::warm`], the page's to run.)
         #[cfg(target_arch = "wasm32")]
-        let fetch: Arc<dyn RangeFetch> = {
-            let cached = Arc::new(CachedFetch::new(
-                fetch,
-                &self.source.label(),
-                self.versions(),
-            ));
-            wasm_bindgen_futures::spawn_local(Arc::clone(&cached).warm(Arc::clone(&stop)));
-            cached
-        };
+        let fetch: Arc<dyn RangeFetch> = Arc::new(CachedFetch::new(
+            fetch,
+            &self.source.label(),
+            self.versions(),
+        ));
         let driving = daw::standalone::audio_engine::media_fetch::drive(
             takes,
             fetch,
@@ -661,6 +662,18 @@ impl StreamedSong {
 }
 
 impl StreamedSong {
+    /// Bring the song's proxies into the browser's cache before they are
+    /// played: every block — so a seek anywhere in the song is local — or
+    /// only the first `blocks` of each (the song's opening, for the song
+    /// after the one on screen), until done or `stop`.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn warm(&self, blocks: Option<u64>, stop: Arc<AtomicBool>) {
+        let fetch: Arc<dyn RangeFetch> = Arc::new(SourceFetch(Arc::clone(&self.source)));
+        CachedFetch::new(fetch, &self.source.label(), self.versions())
+            .warm(blocks, stop)
+            .await;
+    }
+
     /// Each proxy's size and version (its page index's hash: a proxy made
     /// again is indexed again), by its path in the song.
     #[cfg(target_arch = "wasm32")]
@@ -777,9 +790,25 @@ impl CachedFetch {
         Ok(bytes)
     }
 
-    /// Fill the cache with every block of every proxy, one at a time,
-    /// until done or `stop`.
-    async fn warm(self: Arc<Self>, stop: Arc<AtomicBool>) {
+    /// Whether block `block` of `path` is in the cache already.
+    async fn cached(&self, cache: &web_sys::Cache, path: &str, block: u64) -> bool {
+        let Some((_, version)) = self.files.get(path).copied() else {
+            return false;
+        };
+        wasm_bindgen_futures::JsFuture::from(cache.match_with_str(&self.key(path, version, block)))
+            .await
+            .is_ok_and(|hit| !hit.is_undefined())
+    }
+
+    /// Fill the cache with every proxy's blocks — all of them, or the
+    /// first `limit` of each — until done or `stop`: several requests at
+    /// once (each is a round trip), block by block across every file so
+    /// the whole band's next stretch comes before any one track's end.
+    /// A block already there is only looked up, not read.
+    async fn warm(&self, limit: Option<u64>, stop: Arc<AtomicBool>) {
+        use futures_util::StreamExt as _;
+        /// Blocks in flight at once.
+        const AT_ONCE: usize = 8;
         let Ok(cache) = Self::cache().await else {
             return;
         };
@@ -790,21 +819,30 @@ impl CachedFetch {
             .map(|(_, (size, _))| size.div_ceil(Self::BLOCK))
             .max()
             .unwrap_or(0);
-        // Block by block across every file: the whole band's next stretch
-        // before any one track's end.
-        for block in 0..blocks {
-            for (path, (size, _)) in &files {
-                if stop.load(Ordering::Relaxed) {
+        let blocks = limit.map_or(blocks, |limit| blocks.min(limit));
+        let wanted = (0..blocks).flat_map(|block| {
+            files
+                .iter()
+                .filter(move |(_, (size, _))| block * Self::BLOCK < *size)
+                .map(move |(path, _)| (path.as_str(), block))
+        });
+        let cache = &cache;
+        let stop = &stop;
+        futures_util::stream::iter(wanted)
+            .map(|(path, block)| async move {
+                if stop.load(Ordering::Relaxed) || self.cached(cache, path, block).await {
                     return;
                 }
-                if block * Self::BLOCK < *size
-                    && let Err(e) = self.block(&cache, path, block).await
-                {
+                if let Err(e) = self.block(cache, path, block).await {
                     tracing::debug!(media = %path, block, error = %e, "song-stream: warming the cache skipped a block");
                 }
-            }
+            })
+            .buffer_unordered(AT_ONCE)
+            .for_each(|()| async {})
+            .await;
+        if !stop.load(Ordering::Relaxed) {
+            tracing::info!(stream.source = %self.label, stream.files = files.len(), stream.blocks = ?limit, "song-stream: in the browser's cache");
         }
-        tracing::info!(stream.source = %self.label, stream.files = files.len(), "song-stream: the song is in the browser's cache");
     }
 }
 

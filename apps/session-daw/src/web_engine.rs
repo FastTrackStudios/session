@@ -136,6 +136,11 @@ struct WebSong {
 struct Web {
     standalone: daw_standalone::sync::Standalone,
     songs: HashMap<String, WebSong>,
+    /// The songs' projects in set order, as they opened — what "the next
+    /// song" is.
+    order: Vec<String>,
+    /// Stops the cache warming started for the song last shown.
+    warming: Arc<std::sync::atomic::AtomicBool>,
 }
 
 thread_local! {
@@ -270,6 +275,8 @@ pub async fn open(
         *web.borrow_mut() = Some(Web {
             standalone: standalone.clone(),
             songs: HashMap::from([(project.clone(), kept)]),
+            order: vec![project.clone()],
+            warming: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
     });
     crate::web_audio::install(standalone.clone(), &project);
@@ -305,7 +312,21 @@ pub async fn open(
                     let project = song.project.clone();
                     WEB.with(|web| {
                         if let Some(web) = web.borrow_mut().as_mut() {
+                            let streamed = kept.streamed.clone();
                             web.songs.insert(project.clone(), kept);
+                            web.order.push(project.clone());
+                            // The song right after the one on screen: its
+                            // opening, so moving on to it plays at once.
+                            let showing = crate::open::current_song();
+                            let after_showing = web.order.len() >= 2
+                                && showing.as_deref()
+                                    == web.order.get(web.order.len() - 2).map(String::as_str);
+                            if let (true, Some(streamed)) = (after_showing, streamed) {
+                                let stop = Arc::clone(&web.warming);
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    streamed.warm(Some(NEXT_SONG_OPENING), stop).await;
+                                });
+                            }
                         }
                     });
                     crate::collab::song_opened(&project);
@@ -512,11 +533,12 @@ async fn read_back(song: Loaded) -> eyre::Result<(crate::setlist::Song, WebSong)
 /// waveforms loading.
 pub fn switch_song(project: &str) {
     WEB.with(|web| {
-        let web = web.borrow();
-        let Some(web) = web.as_ref() else { return };
+        let mut web = web.borrow_mut();
+        let Some(web) = web.as_mut() else { return };
         web.standalone.set_current_project(project);
         crate::open::set_current_song(project);
         crate::web_audio::switch(project);
+        warm_around(web, project);
         let Some(song) = web.songs.get(project) else {
             return;
         };
@@ -540,6 +562,40 @@ pub fn switch_song(project: &str) {
                 previews.fill_waves(items).await;
             }
         });
+    });
+}
+
+/// Blocks of each stem the song after the one on screen is warmed with —
+/// its opening (a block is 256 KiB, some fifteen seconds of a proxy), so
+/// moving on to it plays at once.
+const NEXT_SONG_OPENING: u64 = 2;
+
+/// Fill the browser's cache around `project`, now on screen: the whole of
+/// it — so a jump anywhere in the song plays from disk, not the network —
+/// then the opening of the song after it. What was warming for the song
+/// before stops.
+fn warm_around(web: &mut Web, project: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    web.warming.store(true, Ordering::Relaxed);
+    let stop = Arc::new(AtomicBool::new(false));
+    web.warming = Arc::clone(&stop);
+    let streamed = |p: &str| web.songs.get(p).and_then(|s| s.streamed.clone());
+    let here = streamed(project);
+    let next = web
+        .order
+        .iter()
+        .position(|p| p == project)
+        .and_then(|at| web.order.get(at + 1))
+        .and_then(|p| streamed(p));
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Some(here) = here {
+            here.warm(None, Arc::clone(&stop)).await;
+        }
+        if let Some(next) = next
+            && !stop.load(Ordering::Relaxed)
+        {
+            next.warm(Some(NEXT_SONG_OPENING), stop).await;
+        }
     });
 }
 
