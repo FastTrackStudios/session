@@ -34,7 +34,10 @@ run_task() {
     for attempt in 1 2; do
         "$TASK" "$@" &
         local pid=$!
-        ( sleep "$STEP_TIMEOUT"; kill -TERM "$pid" 2>/dev/null ) &
+        # Its output goes nowhere: inside `$(run_task …)` a watchdog still
+        # holding the capture's pipe keeps the substitution open until it
+        # wakes, so every captured call would last the whole timeout.
+        ( sleep "$STEP_TIMEOUT"; kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 &
         local watchdog=$!
         disown "$watchdog" 2>/dev/null || true
         if wait "$pid"; then
