@@ -33,17 +33,17 @@
     "daw-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790281419,
-        "narHash": "sha256-IoIq+Arl9f8ktJLZ1SXLLBG1TZ1jEp/XO3b1ZUVA4Fk=",
+        "lastModified": 1790281817,
+        "narHash": "sha256-DwZ3dRhFCRi11aVZIBw6U5LWaeKz3zzwQoCzaKw6fKE=",
         "owner": "FastTrackStudios",
         "repo": "daw",
-        "rev": "a71b58bddd3128f0d8e374dc001d7547c724beef",
+        "rev": "1dc3f20f90131679e79bf7e128f8476416d7f369",
         "type": "github"
       },
       "original": {
         "owner": "FastTrackStudios",
         "repo": "daw",
-        "rev": "a71b58bddd3128f0d8e374dc001d7547c724beef",
+        "rev": "1dc3f20f90131679e79bf7e128f8476416d7f369",
         "type": "github"
       }
     },
