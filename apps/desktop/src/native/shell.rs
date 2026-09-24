@@ -92,12 +92,19 @@ pub fn Shell() -> Element {
     // Space plays and stops whatever has the focus.
     session_daw::keys::use_window_transport_keys();
     let window = dioxus_native::use_window();
-    // The bar's width, for how much of it is spelled out: the window's,
-    // in logical pixels, kept as it is resized.
+    // The window's size in logical pixels, kept as it is resized: the
+    // bar's width says how much of it is spelled out, and the shape says
+    // which layout — a phone's (or a window made that small) takes the
+    // small-screen one, the same panels rearranged.
     let logical = |w: &std::sync::Arc<dyn winit::window::Window>| {
-        f64::from(w.surface_size().width) / w.scale_factor().max(1.0)
+        let size = w.surface_size();
+        let scale = w.scale_factor().max(1.0);
+        (
+            f64::from(size.width) / scale,
+            f64::from(size.height) / scale,
+        )
     };
-    let mut width = use_signal(|| logical(&window));
+    let mut size = use_signal(|| logical(&window));
     let measuring = window.clone();
     dioxus_native::use_window_event(move |event, _| {
         if matches!(
@@ -106,13 +113,65 @@ pub fn Shell() -> Element {
                 | winit::event::WindowEvent::ScaleFactorChanged { .. }
         ) {
             let now = logical(&measuring);
-            if (*width.peek() - now).abs() > 0.5 {
-                width.set(now);
+            let was = *size.peek();
+            if (was.0 - now.0).abs() > 0.5 || (was.1 - now.1).abs() > 0.5 {
+                size.set(now);
             }
         }
     });
+    let width = move || size().0;
+    let form = use_memo(move || {
+        let (w, h) = size();
+        session_daw::compact::Form::of(w, h)
+    });
+    let mut form_signal = use_context_provider(|| Signal::new(*form.peek()));
+    use_effect(move || {
+        let now = form();
+        if *form_signal.peek() != now {
+            form_signal.set(now);
+        }
+    });
+    let phone_view = use_signal(|| session_daw::compact::PhoneView::Chart);
+    // A song picked, from the tabs or the navigator: that song is current,
+    // and the audio moves to it. Where the one it replaces had got to is
+    // kept on its tab.
+    let pick = move |index: usize| {
+        let at = session_daw::engine::Transport::shared().map_or(0.0, |t| t.read().0);
+        let picked = setlist
+            .write()
+            .pick(index, at)
+            .map(|song| song.project.clone());
+        if let Some(project) = picked {
+            session_daw::open::switch_song(&project);
+            // Playing together, everyone goes with it.
+            session_daw::collab::transport_pressed();
+        }
+    };
     let (dragging, zooming) = (window.clone(), window);
     let current = setlist.read().current().cloned();
+    if form().compact() {
+        return rsx! {
+            style { {TAILWIND} }
+            session_daw::collab_pointers::CollabPointers {}
+            session_daw::compact::CompactShell {
+                form: form(),
+                view: phone_view,
+                on_pick: pick,
+                drawer: rsx! {
+                    div {
+                        style: "display:flex; align-items:center; gap:8px; flex-wrap:wrap;",
+                        session_daw::collab_bar::CollabBar {}
+                        session_daw::shell::AudioBadge { density: session_daw::shell::Density::Full }
+                    }
+                },
+                body: rsx! {
+                    if let Some(song) = current {
+                        PhoneViews { key: "{song.project}", session: song.session.clone(), view: phone_view }
+                    }
+                },
+            }
+        };
+    }
     rsx! {
         style { {TAILWIND} }
         div {
@@ -152,15 +211,7 @@ pub fn Shell() -> Element {
                 on_zoom: move |()| zooming.set_maximized(!zooming.is_maximized()),
                 // A tab picked: that song is current, and the audio moves to
                 // it. Where the one it replaces had got to is kept on its tab.
-                on_pick: move |index: usize| {
-                    let at = session_daw::engine::Transport::shared().map_or(0.0, |t| t.read().0);
-                    let picked = setlist.write().pick(index, at).map(|song| song.project.clone());
-                    if let Some(project) = picked {
-                        session_daw::open::switch_song(&project);
-                        // Playing together, everyone goes with it.
-                        session_daw::collab::transport_pressed();
-                    }
-                },
+                on_pick: pick,
                 on_color: move |(index, color): (usize, Option<String>)| {
                     setlist.write().recolor(index, color);
                 },
@@ -171,6 +222,29 @@ pub fn Shell() -> Element {
                 SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
             }
         }
+    }
+}
+
+/// The small-screen layout's views but Control (which the shell draws): the
+/// same panels as the wide layout's, over one song.
+#[component]
+fn PhoneViews(
+    session: session_daw::studio::StudioSession,
+    view: Signal<session_daw::compact::PhoneView>,
+) -> Element {
+    use session_daw::compact::PhoneView;
+    use_context_provider(|| session);
+    let mode: Signal<Mode> = use_context();
+    match view() {
+        PhoneView::Control => rsx! {},
+        PhoneView::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
+        PhoneView::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
+        PhoneView::Arrangement => rsx! {
+            session_daw::mixer_panel::DawPanels { mode: Some(mode()) }
+        },
+        PhoneView::Mixer => rsx! {
+            session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
+        },
     }
 }
 

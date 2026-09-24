@@ -220,9 +220,11 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     let zooms = use_hook(crate::zoom::Requests::default);
     // The panel's shape, shared with the toolbar that toggles it. The
     // view decides where it starts: compact where the arrangement is
-    // docked beside more (the Overview), full in the DAW view.
+    // docked beside more (the Overview) or the screen is small (a phone),
+    // full in the DAW view.
     let docked = mixer.as_ref().is_some_and(|links| links.docked);
-    let compact = use_hook(|| Rc::new(Cell::new(docked)));
+    let small = crate::compact::use_form().compact();
+    let compact = use_hook(|| Rc::new(Cell::new(docked || small)));
     let shape = use_signal(|| compact.get());
     // On by default: in a service the view should always show where the
     // song is.

@@ -565,6 +565,7 @@ fn LoadingFrame(headline: String, detail: String, failed: bool, children: Elemen
 /// transport and the mode — over whichever song is up.
 #[component]
 fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setlist) -> Element {
+    use crate::compact::{CompactShell, PhoneView};
     use crate::shell::{TopBar, View};
     use session::modes::Mode;
 
@@ -616,7 +617,57 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
             }
         }
     });
+    // The page's shape: a phone's (or a window that small) takes the
+    // small-screen layout, the same panels rearranged.
+    let form = use_viewport_form();
+    use_context_provider(|| form);
+    let phone_view = use_signal(|| PhoneView::Chart);
+    // A song picked, from the tabs or the navigator: that song is current,
+    // and the audio moves to it. Where the one it replaces had got to is
+    // kept on its tab.
+    let pick = move |index: usize| {
+        let at = crate::engine::Transport::shared().map_or(0.0, |t| t.read().0);
+        let picked = setlist
+            .write()
+            .pick(index, at)
+            .map(|song| song.project.clone());
+        if let Some(project) = picked {
+            crate::open::switch_song(&project);
+            // Playing together, everyone goes with it.
+            crate::collab::transport_pressed();
+        }
+    };
     let current = setlist.read().current().cloned();
+    if form().compact() {
+        return rsx! {
+            CompactShell {
+                form: form(),
+                view: phone_view,
+                on_pick: pick,
+                drawer: rsx! {
+                    div {
+                        style: "display:flex; align-items:center; gap:8px; flex-wrap:wrap;",
+                        crate::collab_bar::CollabBar {}
+                        ListeningBadge { listening: listening(), asking }
+                        crate::shell::AudioBadge { density: crate::shell::Density::Full }
+                    }
+                },
+                body: rsx! {
+                    if let Some(song) = current {
+                        PhoneViews {
+                            key: "{song.project}",
+                            session: song.session.clone(),
+                            engine: engine.clone(),
+                            view: phone_view,
+                        }
+                    }
+                },
+            }
+            if asking() {
+                LoadMultitracks { listening: listening(), asking }
+            }
+        };
+    }
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
@@ -640,17 +691,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                     crate::collab_bar::CollabBar {}
                     ListeningBadge { listening: listening(), asking }
                 },
-                // A tab picked: that song is current, and the audio moves to
-                // it. Where the one it replaces had got to is kept on its tab.
-                on_pick: move |index: usize| {
-                    let at = crate::engine::Transport::shared().map_or(0.0, |t| t.read().0);
-                    let picked = setlist.write().pick(index, at).map(|song| song.project.clone());
-                    if let Some(project) = picked {
-                        crate::open::switch_song(&project);
-                        // Playing together, everyone goes with it.
-                        crate::collab::transport_pressed();
-                    }
-                },
+                on_pick: pick,
             }
             if let Some(song) = current {
                 // Keyed by the song: picking another remounts every panel
@@ -660,6 +701,56 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
+        }
+    }
+}
+
+/// The page's shape, measured now and a few times a second after — a phone
+/// turned on its side, a window resized.
+fn use_viewport_form() -> Signal<crate::compact::Form> {
+    fn measure() -> crate::compact::Form {
+        let size = web_sys::window().map(|w| {
+            let px = |v: Result<wasm_bindgen::JsValue, _>| {
+                v.ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
+            };
+            (px(w.inner_width()), px(w.inner_height()))
+        });
+        size.map_or(crate::compact::Form::Wide, |(w, h)| {
+            crate::compact::Form::of(w, h)
+        })
+    }
+    let mut form = use_signal(measure);
+    use_future(move || async move {
+        loop {
+            gloo_timers::future::TimeoutFuture::new(250).await;
+            let now = measure();
+            if *form.peek() != now {
+                form.set(now);
+            }
+        }
+    });
+    form
+}
+
+/// The small-screen layout's views but Control (which the shell draws): the
+/// same panels as the wide layout's, over one song.
+#[component]
+fn PhoneViews(
+    session: crate::studio::StudioSession,
+    engine: crate::web_engine::EngineRef,
+    view: Signal<crate::compact::PhoneView>,
+) -> Element {
+    use crate::compact::PhoneView;
+    use_context_provider(|| session);
+    match view() {
+        PhoneView::Control => rsx! {},
+        PhoneView::Chart => rsx! { crate::chart_panel::WebChart { paged: true } },
+        PhoneView::Lyrics => rsx! { crate::lyrics_panel::LyricsPanel {} },
+        PhoneView::Arrangement => {
+            rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone() } }
+        }
+        PhoneView::Mixer => {
+            rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone(), mixer_only: true } }
         }
     }
 }
