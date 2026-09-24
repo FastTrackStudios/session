@@ -14,7 +14,11 @@ files-client.workspace = true
 task-dial.workspace = true
 vox-core.workspace = true
 eyre.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+# The library id rule (slugify) lives with the live session's code.
+session-sync = { path = "../sync" }
+# `sync` only: a page has no tokio runtime (timers are architect::platform).
+tokio = { version = "1.48", default-features = false, features = ["sync"] }
+architect = { workspace = true, features = ["platform"] }
 
 [lib]
 doctest = false

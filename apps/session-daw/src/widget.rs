@@ -167,6 +167,10 @@ pub struct ArrangementWidget {
     /// shown or hidden re-plans from. `None` in a widget built without
     /// one, which then cannot show or hide anything.
     replan: Option<(crate::studio::Planner, daw_ui::studio::project::Project)>,
+    /// A page's session read back from the engine, waiting to be drawn
+    /// ([`Self::resync`]).
+    #[cfg(not(feature = "native"))]
+    read_back: Rc<std::cell::RefCell<Option<daw_ui::studio::project::Project>>>,
     /// The rows' height at zoom 1, for the panel's scroll range, which
     /// changes when rows are shown or hidden.
     content_h: Rc<std::cell::Cell<f64>>,
@@ -383,6 +387,8 @@ impl ArrangementWidget {
             zooms: crate::zoom::Requests::default(),
             fit_on_open: true,
             replan: None,
+            #[cfg(not(feature = "native"))]
+            read_back: Rc::default(),
             mixer: None,
             content_h: Rc::new(std::cell::Cell::new(
                 rows.iter().map(|(track, _)| layout.height_of(track.height)).sum(),
@@ -598,16 +604,36 @@ impl ArrangementWidget {
             tracing::warn!("the session could not be read back from the engine");
             return;
         };
-        let unread: Vec<(String, f64)> = fresh
-            .items
-            .values()
-            .flatten()
-            .filter(|item| fresh.is_midi(&item.guid) && self.previews.get(&item.guid).is_none())
-            .map(|item| (item.guid.clone(), item.length.as_seconds()))
-            .collect();
+        let unread = unread_midi(&fresh, &self.previews);
         if !unread.is_empty() {
             self.previews.fill_blocking(unread);
         }
+        self.adopt(fresh);
+    }
+
+    /// [`Self::resync`] in a page, which cannot block on the engine: the
+    /// read-back (and any new MIDI's notes) runs on the page's event loop,
+    /// and a later paint adopts it.
+    #[cfg(not(feature = "native"))]
+    fn resync(&mut self) {
+        let slot = Rc::clone(&self.read_back);
+        let previews = self.previews.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let Some(fresh) = daw_ui::studio::project::fetch().await else {
+                tracing::warn!("the session could not be read back from the engine");
+                return;
+            };
+            let unread = unread_midi(&fresh, &previews);
+            if !unread.is_empty() {
+                previews.fill(unread).await;
+            }
+            *slot.borrow_mut() = Some(fresh);
+        });
+    }
+
+    /// Draw a session read back from the engine: its rows planned again,
+    /// and everything they are drawn from.
+    fn adopt(&mut self, fresh: daw_ui::studio::project::Project) {
         let Some((planner, raw)) = self.replan.as_mut() else {
             return;
         };
@@ -1209,6 +1235,17 @@ impl ArrangementWidget {
     }
 }
 
+/// The MIDI items of `fresh` whose notes `previews` has not read.
+fn unread_midi(fresh: &daw_ui::studio::project::Project, previews: &crate::midi::Previews) -> Vec<(String, f64)> {
+    fresh
+        .items
+        .values()
+        .flatten()
+        .filter(|item| fresh.is_midi(&item.guid) && previews.get(&item.guid).is_none())
+        .map(|item| (item.guid.clone(), item.length.as_seconds()))
+        .collect()
+}
+
 impl Widget for ArrangementWidget {
     /// Whether the last event changed the picture.
     ///
@@ -1549,9 +1586,16 @@ impl ArrangementWidget {
         crate::ghosts::local_shown(&self.rows, &self.scene);
         // The engine changed the session under us (a toolbar insert, an
         // edited chart): read it back before drawing it.
-        #[cfg(feature = "native")]
-        if crate::studio::take_resync() {
+            if crate::studio::take_resync() {
             self.resync();
+        }
+        // A page's read-back, once it has arrived.
+        #[cfg(not(feature = "native"))]
+        {
+            let fresh = self.read_back.borrow_mut().take();
+            if let Some(fresh) = fresh {
+                self.adopt(fresh);
+            }
         }
         // The panel's shape, if the toolbar has changed it: the rows are
         // RECORDED to it, so this re-cuts rather than re-scales.

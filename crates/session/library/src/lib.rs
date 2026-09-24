@@ -32,26 +32,9 @@ pub fn session_root_dir(song_slug: &str) -> String {
     format!("session/{song_slug}")
 }
 
-/// A song's library id from its title, the way the library makes one: an
-/// apostrophe drops out (`God, I'm` → `god-im`), any other run of
-/// non-alphanumerics is one dash, lower-case, no dash at either end.
-#[must_use]
-pub fn slugify(title: &str) -> String {
-    let mut out = String::new();
-    let mut dash = false;
-    for c in title.chars().filter(|c| *c != '\'' && *c != '\u{2019}') {
-        if c.is_alphanumeric() {
-            if dash && !out.is_empty() {
-                out.push('-');
-            }
-            dash = false;
-            out.extend(c.to_lowercase());
-        } else {
-            dash = true;
-        }
-    }
-    out
-}
+/// A song's library id from its title (`God, I'm` → `god-im`) — the rule
+/// lives with the live session's code, which matches songs by it too.
+pub use session_sync::slug::slugify;
 
 /// The token the `task` CLI stored for `org`:
 /// `$XDG_DATA_HOME/task/session-tokens/<org>.json` (default data home
@@ -383,7 +366,7 @@ impl TaskSong {
     }
 
     async fn read_on(&self, files: &FilesClient, path: &str, range: &std::ops::Range<u64>) -> eyre::Result<Vec<u8>> {
-        tokio::time::timeout(READ_TIMEOUT, files.read_range(self.root, path, range.start, range.end - 1))
+        architect::platform::timeout(READ_TIMEOUT, files.read_range(self.root, path, range.start, range.end - 1))
             .await
             .map_err(|_| eyre::eyre!("{path} {range:?}: no answer in {}s", READ_TIMEOUT.as_secs()))?
             .map_err(|e| eyre::eyre!("{path} {range:?}: {e}"))

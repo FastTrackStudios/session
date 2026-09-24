@@ -58,6 +58,10 @@ pub enum WebSource {
     Shared { link: String },
     /// A copy bundled with the page: its project and chart by URL; silent.
     Bundled { name: String, rpp_url: String, chart_url: Option<String> },
+    /// A live share link to a set Task keeps (`live-proto`): the page joins
+    /// it — its first song opened from that song's files link, everyone in
+    /// the set in one session with it (`collab::join_task`), by `name`.
+    Live { link: String, name: String },
 }
 
 /// Open the page's song the one way songs open (`open_core::open_song_in`,
@@ -76,12 +80,33 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
     use crate::folder::{Folder, Memory};
     use crate::song_stream::{Keep, ShareSource, StreamedSong, mirror};
 
-    let (folder, path, streamed): (Arc<dyn Folder>, std::path::PathBuf, Option<StreamedSong>) = match source {
-        WebSource::Shared { link } => {
-            let song = mirror(Arc::new(ShareSource::new(link)?), Keep::Memory(Memory::new())).await?;
+    // A live set: joined first, for the song's files link.
+    let mut live: Option<crate::collab::TaskSet> = None;
+    let shared_link = match source {
+        WebSource::Live { link, .. } => {
+            use live_proto::LiveSessionsClient;
+            let set = crate::collab::TaskSet::parse(&format!("share:{link}"));
+            let lane: LiveSessionsClient =
+                task_dial::establish_at(&set.url, None).await.map_err(|e| eyre::eyre!("dialling the set: {e}"))?;
+            let joined = lane.join(String::new()).await.map_err(|e| eyre::eyre!("joining the set: {e:?}"))?;
+            let files = joined
+                .songs
+                .iter()
+                .find_map(|s| s.files.clone())
+                .ok_or_else(|| eyre::eyre!("the set has no song with files to open"))?;
+            tracing::info!(live.setlist = %joined.title, live.songs = joined.songs.len(), live.epoch = joined.epoch, "web: joined a live set");
+            live = Some(crate::collab::TaskSet { setlist: joined.setlist, ..set });
+            Some(files)
+        }
+        WebSource::Shared { link } => Some(link.clone()),
+        WebSource::Bundled { .. } => None,
+    };
+    let (folder, path, streamed): (Arc<dyn Folder>, std::path::PathBuf, Option<StreamedSong>) = match (source, shared_link) {
+        (_, Some(link)) => {
+            let song = mirror(Arc::new(ShareSource::new(&link)?), Keep::Memory(Memory::new())).await?;
             (Arc::clone(&song.folder), song.project.clone(), Some(song))
         }
-        WebSource::Bundled { name, rpp_url, chart_url } => {
+        (WebSource::Bundled { name, rpp_url, chart_url }, None) => {
             let memory = Memory::new();
             let dir = std::path::Path::new("/bundled");
             let rpp = dir.join(format!("{name}.RPP"));
@@ -91,6 +116,7 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
             }
             (Arc::new(memory), rpp, None)
         }
+        (_, None) => eyre::bail!("nothing to open"),
     };
 
     let standalone = daw_standalone::sync::Standalone::new();
@@ -113,6 +139,11 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
     let project_guid = opened.project_guid.clone();
     let rpp_text = crate::open_core::project_text_in(folder.as_ref(), &plan.open)?.text;
     let chart_text = prepare.chart.as_ref().and_then(|p| folder.read_to_string(p).ok());
+    // The song on screen, and the chart it seeds a live set's doc with.
+    crate::open::set_current_song(&project_guid);
+    if let Some(chart) = &chart_text {
+        crate::collab::remember_chart(&plan.open, chart);
+    }
 
     let bundle = daw_standalone::bootstrap::build_in_process_daw(standalone.clone())
         .await
@@ -126,6 +157,14 @@ pub async fn open(source: &WebSource, guide: Option<&str>) -> eyre::Result<(Engi
         stream_song(&standalone, &project_guid, &song);
         song
     });
+
+    // In the live set with everyone else (the facade is up: the session's
+    // bridges read and drive the engine through it).
+    if let (Some(set), WebSource::Live { name, .. }) = (live, source) {
+        if let Err(e) = crate::collab::join_task(&set, name.clone()) {
+            tracing::warn!(collab.error = %e, "web: could not join the live set");
+        }
+    }
 
     // Say which step fails: `fetch` answers only yes or no.
     let facade = daw_control::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
