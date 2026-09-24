@@ -52,30 +52,11 @@
         hash = "sha256-sOVDXTNydgpetvC1D+DBF1XmR6k6KZbQ9mXKPOBPuTg=";
       };
 
-      # cargo opens a git source even when every crate taken from it is
-      # patched to a sibling path — which offline means it has to be
-      # vendored, and the lockfile (which records only the patched paths)
-      # never names it. The daw pin is such a source: listed here with one
-      # of its crates, which is all cargo needs to open it. Read from the
-      # manifest and the sibling input, so it follows every bump.
-      dawTag = (builtins.fromTOML (builtins.readFile ../../Cargo.toml)).workspace.dependencies.daw.tag;
-      patchedAway = {
-        version = 4;
-        package = [
-          {
-            name = "daw";
-            version = (builtins.fromTOML (builtins.readFile "${inputs.daw-src}/Cargo.toml")).workspace.package.version;
-            source = "git+https://github.com/FastTrackStudios/daw?tag=${dawTag}#${inputs.daw-src.rev}";
-          }
-        ];
-      };
-
       # Vendor against the root Cargo.lock. (The old baseview fetch
       # override is gone: the dead Codys-Wright/baseview.git dep was
       # vendored into libs/vendor/baseview as a path dep 2026-07-16.)
-      cargoVendorDir = craneLib.vendorMultipleCargoDeps {
-        cargoLockList = [ ../../Cargo.lock ];
-        cargoLockParsedList = [ patchedAway ];
+      cargoVendorDir = craneLib.vendorCargoDeps {
+        src = ftsSrc;
 
         # libspa-sys needs bindgen's `clang_macro_fallback()` to evaluate
         # cast-expression C macros its normal cexpr parser can't fold —
