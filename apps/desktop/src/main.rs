@@ -115,15 +115,17 @@ fn main() {
         if let Some(guard) = architect_telemetry::init("session") {
             std::mem::forget(guard);
         }
+        // What is logged without RUST_LOG — and what is exported.
+        const LOG_DEFAULT: &str = "info,vox_core=warn,schema_deser=off";
         let registry = tracing_subscriber::registry()
             .with(
                 tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "info,vox_core=warn,schema_deser=off".into()),
+                    .unwrap_or_else(|_| LOG_DEFAULT.into()),
             )
             .with(tracing_subscriber::fmt::layer())
             .with(log_ring::RingLayer::new())
             .with(architect_telemetry::tracing_layer());
-        match architect_telemetry::otel::init("session") {
+        match architect_telemetry::otel::init("session", LOG_DEFAULT) {
             Some((otel_guard, layers)) => {
                 registry.with(layers).init();
                 std::mem::forget(otel_guard);
