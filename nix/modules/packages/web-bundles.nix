@@ -35,6 +35,9 @@
         jq
         # Pre-compression for --compression-static serving.
         brotli
+        # stylo (Blitz's CSS engine, in the Session app's page) generates
+        # its property tables with a Python script at build time.
+        python3
         llvmPackages_18.clang-unwrapped
         llvmPackages_18.bintools-unwrapped
       ]);
