@@ -58,6 +58,9 @@ pub struct Status {
     /// This person, as the others see them: name and colour.
     pub name: String,
     pub color: u32,
+    /// When a playground set (the public demo) starts over, on this
+    /// machine's clock; `None` for a set that keeps what is done in it.
+    pub resets_at: Option<architect::platform::Instant>,
 }
 
 /// One song of the set, as the session keeps it.
@@ -667,6 +670,14 @@ async fn join_task_live(set: TaskSet, name: String) -> eyre::Result<Live> {
             .join(set.setlist.clone())
             .await
             .map_err(|e| eyre::eyre!("joining the set: {e:?}"))?;
+        // A playground's end, from Task's clock onto this machine's.
+        let resets_at = match joined.resets_at {
+            Some(at) => lane.now().await.ok().map(|now| {
+                let left = std::time::Duration::from_secs_f64(((at - now) / 1e6).max(0.0));
+                architect::platform::Instant::now() + left
+            }),
+            None => None,
+        };
         let sync: crdt::sync::DocSyncClient = task_dial::establish_at(&set.url, token)
             .await
             .map_err(|e| eyre::eyre!("session sync: {e}"))?;
@@ -737,7 +748,9 @@ async fn join_task_live(set: TaskSet, name: String) -> eyre::Result<Live> {
         );
         let started = start(bridges, Arc::clone(&presence), clock, joined.title.clone(), me, name, None);
         let _keep = peer;
-        Ok::<_, eyre::Report>(started.into_live(set.url.clone(), false, presence))
+        let mut live = started.into_live(set.url.clone(), false, presence);
+        live.status.resets_at = resets_at;
+        Ok::<_, eyre::Report>(live)
     }
 }
 
@@ -763,6 +776,7 @@ impl Started {
                 set: self.set,
                 color: presence::color_for(&self.me),
                 name: self.name,
+                resets_at: None,
             },
             stop: self.stop,
             sync: self.sync,

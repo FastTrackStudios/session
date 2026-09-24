@@ -39,6 +39,8 @@ fn display_name() -> String {
 pub fn CollabBar() -> Element {
     let mut status = use_signal(crate::collab::status);
     let mut error = use_signal(|| None::<String>);
+    // A playground's time left, in whole seconds (ticks the countdown).
+    let mut resets_in = use_signal(|| None::<u64>);
     #[cfg(feature = "native")]
     let mut joining = use_signal(String::new);
     let mut people = use_signal(crate::ghosts::everyone);
@@ -104,6 +106,13 @@ pub fn CollabBar() -> Element {
         loop {
             architect::platform::sleep(Duration::from_millis(500)).await;
             let now = crate::collab::status();
+            let left = now
+                .as_ref()
+                .and_then(|s| s.resets_at)
+                .map(|at| at.saturating_duration_since(architect::platform::Instant::now()).as_secs());
+            if *resets_in.peek() != left {
+                resets_in.set(left);
+            }
             if *status.peek() != now {
                 status.set(now);
             }
@@ -162,6 +171,14 @@ pub fn CollabBar() -> Element {
                         background:#0f1012; cursor:pointer;",
                 onclick: move |_| open.toggle(),
                 {face}
+                // A playground starts over on a timer: how long this run
+                // has left, so nobody is surprised by it.
+                if let Some(left) = resets_in() {
+                    span {
+                        style: "font-size:11px; font-variant-numeric:tabular-nums; color:{DIM};",
+                        "{clock(left)}"
+                    }
+                }
                 if error().is_some() {
                     span { style: "width:7px; height:7px; border-radius:4px; background:#e3b341;" }
                 }
@@ -185,9 +202,10 @@ pub fn CollabBar() -> Element {
                                 }
                             }
                             span { style: "font-size:11px; color:{DIM};",
-                                match &live {
-                                    Some(l) => rsx! { "{who(l.peers)}" },
-                                    None => rsx! { "Share this set, or join someone's" },
+                                match (&live, resets_in()) {
+                                    (Some(l), Some(left)) => rsx! { "{who(l.peers)} · starts over in {clock(left)}" },
+                                    (Some(l), None) => rsx! { "{who(l.peers)}" },
+                                    (None, _) => rsx! { "Share this set, or join someone's" },
                                 }
                             }
                         }
@@ -305,6 +323,11 @@ pub fn CollabBar() -> Element {
             }
         }
     }
+}
+
+/// Seconds as `m:ss`.
+fn clock(seconds: u64) -> String {
+    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 fn who(peers: usize) -> String {
