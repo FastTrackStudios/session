@@ -893,13 +893,13 @@ styx-format = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.1.
 # FastTrackStudios/vendor): the rc.7 forward-ports are committed there
 # locally but not tagged yet. Replace both with a pinned vendor tag before
 # this repo is pushed, same as the `../daw` paths.
-phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.0" }
+phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.1" }
 # Vendored facet-core rc.7 with one change: chrono's display fns keep
 # sub-second precision. chrono types are opaque scalars whose only encode
 # path is `display`, so upstream's `SecondsFormat::Secs` rounded EVERY
 # timestamp on every vox RPC to the second — and anything ordered by one
 # could invert when two events shared a second.
-facet-core = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.0" }
+facet-core = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.1" }
 # Vendored phon-jit rc.5 with a one-line build.rs fix: force the stable,
 # call-based stencils. Upstream's nightly detection can be true while no real
 # nightly is present (the pinned nix toolchain), so it compiled the `become`

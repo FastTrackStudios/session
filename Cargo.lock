@@ -5539,7 +5539,7 @@ dependencies = [
 [[package]]
 name = "facet-core"
 version = "0.50.0-rc.7"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.4.0#b58441601ee53a6851b802b4ab65957d659468c4"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.4.1#c2a29c0437270b36051fb3441f61ed63e1475c0e"
 dependencies = [
  "autocfg",
  "camino",
@@ -11242,7 +11242,7 @@ dependencies = [
 [[package]]
 name = "phon"
 version = "0.2.0-rc.7"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.4.0#b58441601ee53a6851b802b4ab65957d659468c4"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.4.1#c2a29c0437270b36051fb3441f61ed63e1475c0e"
 dependencies = [
  "facet",
  "facet-value",
@@ -18565,14 +18565,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "baseview"
-version = "0.3.3"
-
-[[patch.unused]]
-name = "dsp-golden"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -18674,4 +18666,12 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "baseview"
+version = "0.3.3"
+
+[[patch.unused]]
+name = "dsp-golden"
 version = "0.1.0"
