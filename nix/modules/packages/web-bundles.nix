@@ -179,10 +179,25 @@
 
       # What session.fasttrackstudio.app serves: the site, and the app
       # under /app/.
+      #
+      # The app's page loads its module and wasm at URLs carrying the
+      # wasm's hash. Their names never change, and Cloudflare gives `.js`
+      # a four-hour browser TTL whatever the origin says: after a deploy a
+      # returning browser paired its cached glue with the new wasm, which
+      # does not link (a blank page). The page itself is `no-cache`, so a
+      # new build's page always asks for its own files.
       session-site-root = pkgs.runCommand "session-site-root" { } ''
         mkdir -p $out/app
         cp -R ${session-web}/www/. $out/
         cp -R ${session-app-web}/www/. $out/app/
+        chmod -R u+w $out/app
+        v=$(sha256sum $out/app/session-daw-web_bg.wasm | cut -c1-16)
+        substituteInPlace $out/app/index.html \
+          --replace-fail '"./session-daw-web.js"' "\"./session-daw-web.js?v=$v\"" \
+          --replace-fail 'init();' "init({ module_or_path: \"./session-daw-web_bg.wasm?v=$v\" });"
+        # Its precompressed copy is the old page: served first, it would
+        # undo the above.
+        rm -f $out/app/index.html.br $out/app/index.html.gz
       '';
     in
     {
