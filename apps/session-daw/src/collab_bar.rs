@@ -481,7 +481,7 @@ pub fn PeerDots(project: String) -> Element {
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "web"))]
 /// Open the song the shared transport asks for — playing together, someone
 /// else picked another song of the set.
 ///
@@ -491,7 +491,7 @@ pub fn PeerDots(project: String) -> Element {
 pub fn use_follow_song(mut setlist: Signal<crate::setlist::Setlist>) {
     use_future(move || async move {
         loop {
-            futures_timer::Delay::new(Duration::from_millis(100)).await;
+            architect::platform::sleep(Duration::from_millis(100)).await;
             if !crate::audio_mode::owns_project()
                 && let Some(remote) = crate::open::current_song()
             {

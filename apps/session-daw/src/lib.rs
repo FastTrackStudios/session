@@ -92,6 +92,15 @@ pub mod open {
         }
     }
 
+    /// Make `project_guid` the song on screen — what picking a setlist tab
+    /// does; on a page, [`crate::web_engine::switch_song`].
+    pub fn switch_song(project_guid: &str) {
+        #[cfg(feature = "web")]
+        crate::web_engine::switch_song(project_guid);
+        #[cfg(not(feature = "web"))]
+        set_current_song(project_guid);
+    }
+
     /// What needs the local engine's own handle (as natively).
     #[derive(Clone, Copy, Debug)]
     pub enum LocalOnly {
