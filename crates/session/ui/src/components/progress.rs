@@ -211,7 +211,11 @@ pub fn SegmentedProgressBar(
     #[props(default)] on_comment_click: Option<Callback<f64>>,
     #[props(default)] loop_indicator: Option<LoopIndicatorData>,
     #[props(default)] queued_target: Option<QueuedTarget>,
+    /// The bar's height as CSS (`5rem` unless given) — a phone's is slim.
+    #[props(default)]
+    height: Option<String>,
 ) -> Element {
+    let bar_height = height.unwrap_or_else(|| "5rem".to_owned());
     // Text width estimation constants (in pixels):
     // We use generous estimates since text will truncate with ellipsis if needed.
     // Better to show text that gets truncated than hide it entirely.
@@ -417,6 +421,7 @@ pub fn SegmentedProgressBar(
     rsx! {
         div {
             class: "relative flex flex-col items-center justify-center h-20 w-full",
+            style: "height: {bar_height};",
             // Tempo/Time Signature labels
             if !tempo_markers.is_empty() {
                 // Time signature markers
@@ -567,6 +572,7 @@ pub fn SegmentedProgressBar(
             // Main segmented progress bar
             div {
                 class: "relative w-full h-20 rounded-lg overflow-hidden bg-secondary",
+                style: "height: {bar_height};",
                 // Render sections as background layers
                 for (index, section_start, _section_end, section_width, section_color, _filled_percent, _section_name, _section_comment) in section_data.iter() {
                     {
@@ -732,11 +738,15 @@ pub fn SongProgressBar(
     #[props(default)] song_key: Option<String>,
     #[props(default)] loop_indicator: Option<LoopIndicatorData>,
     #[props(default)] queued_target: Option<QueuedTarget>,
+    /// The bar's height as CSS (see [`SegmentedProgressBar`]).
+    #[props(default)]
+    height: Option<String>,
 ) -> Element {
     rsx! {
         div {
             class: "w-full relative",
             SegmentedProgressBar {
+                height: height,
                 progress: progress,
                 sections: sections,
                 tempo_markers: tempo_markers,

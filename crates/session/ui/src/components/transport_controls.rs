@@ -48,6 +48,10 @@ pub fn TransportControlBar(
     /// (Back / Play / Loop / Advance).
     #[props(default = true)]
     show_recording: bool,
+    /// Icons without their words — a phone's transport, where the four
+    /// shapes say enough and the width is better spent on the icons.
+    #[props(default)]
+    icons_only: bool,
 ) -> Element {
     let playing = is_playing;
     let looping = is_looping;
@@ -55,7 +59,13 @@ pub fn TransportControlBar(
     let armed = is_armed;
 
     let cols = if show_recording { 6 } else { 4 };
-    let icon = if compact { 20 } else { 28 };
+    let icon = if icons_only {
+        24
+    } else if compact {
+        20
+    } else {
+        28
+    };
     // Shared cell layout — the only difference between modes is icon size,
     // stacking direction, and type scale. State-specific fills are appended
     // per button below.
@@ -90,7 +100,7 @@ pub fn TransportControlBar(
                         on_arm_toggle.call(());
                     },
                     ArmIcon { size: icon, color: "currentColor" }
-                    "Arm"
+                    if !icons_only { "Arm" }
                 }
 
                 // Record Button — toggles recording into the active song's project
@@ -121,7 +131,7 @@ pub fn TransportControlBar(
                     }
                 },
                 BackIcon { size: icon, color: "currentColor" }
-                "Back"
+                if !icons_only { "Back" }
             }
 
             // Play/Pause Button
@@ -139,7 +149,9 @@ pub fn TransportControlBar(
                 } else {
                     PlayIcon { size: icon, color: "currentColor" }
                 }
-                if playing { "Pause" } else { "Play" }
+                if !icons_only {
+                    if playing { "Pause" } else { "Play" }
+                }
             }
 
             // Loop Button
@@ -153,7 +165,7 @@ pub fn TransportControlBar(
                     on_loop_toggle.call(());
                 },
                 LoopIcon { size: icon, color: "currentColor" }
-                "Loop"
+                if !icons_only { "Loop" }
             }
 
             // Advance Button
@@ -165,7 +177,7 @@ pub fn TransportControlBar(
                     }
                 },
                 ForwardIcon { size: icon, color: "currentColor" }
-                "Advance"
+                if !icons_only { "Advance" }
             }
         }
     }
