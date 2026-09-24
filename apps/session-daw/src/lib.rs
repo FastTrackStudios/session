@@ -16,7 +16,7 @@ pub mod balance;
 pub mod chart_panel;
 #[cfg(feature = "native")]
 pub mod collab;
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "web"))]
 pub mod song_stream;
 #[cfg(feature = "native")]
 pub mod stream_in;
@@ -51,6 +51,8 @@ pub mod options;
 pub mod chart_editor;
 #[cfg(feature = "native")]
 pub mod organize;
+pub mod folder;
+pub mod open_core;
 #[cfg(feature = "native")]
 pub mod open;
 /// On the web there is no in-process tokio runtime: the engine clients
@@ -59,6 +61,8 @@ pub mod open;
 /// host drives the engine its own way (`web_host`).
 #[cfg(not(feature = "native"))]
 pub mod open {
+    pub use crate::open_core::*;
+
     /// Never constructed: [`runtime`] has none to give.
     pub struct Runtime(());
 

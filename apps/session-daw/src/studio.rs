@@ -147,7 +147,7 @@ impl StudioSession {
             crate::open::switch_to(&opened.daw, &opened.project_guid, false);
             opened
         };
-        crate::open::prepare_and_save(&opened, &plan, prepare);
+        crate::open::prepare_and_save(crate::folder::disk(), &opened, &plan, prepare);
         let session = Self::read_current(Some(plan.open.as_path()), prepare.chart.clone())?;
         Ok((session, opened.project_guid))
     }
@@ -553,7 +553,7 @@ mod source_tests {
         let (dir, rpp) = song();
         let _ = std::fs::remove_dir_all(dir.join("Song.session"));
         assert_eq!(
-            crate::open::song_plan_with(&rpp, &prepared(), false),
+            crate::open::song_plan_with(crate::folder::disk(), &rpp, &prepared(), false),
             crate::open::SongPlan {
                 open: rpp.clone(),
                 prepare: true,
@@ -562,7 +562,7 @@ mod source_tests {
         );
         // Nothing to prepare is nothing to save.
         assert_eq!(
-            crate::open::song_plan_with(&rpp, &Prepare::default(), false),
+            crate::open::song_plan_with(crate::folder::disk(), &rpp, &Prepare::default(), false),
             crate::open::SongPlan {
                 open: rpp,
                 prepare: false,
@@ -583,11 +583,11 @@ mod source_tests {
             prepare: false,
             save_to: None,
         };
-        assert_eq!(crate::open::song_plan_with(&rpp, &prepared(), false), as_saved);
-        assert_eq!(crate::open::song_plan_with(&saved, &prepared(), false), as_saved);
+        assert_eq!(crate::open::song_plan_with(crate::folder::disk(), &rpp, &prepared(), false), as_saved);
+        assert_eq!(crate::open::song_plan_with(crate::folder::disk(), &saved, &prepared(), false), as_saved);
         // Asked to, the multitrack is prepared afresh over it.
         assert_eq!(
-            crate::open::song_plan_with(&rpp, &prepared(), true),
+            crate::open::song_plan_with(crate::folder::disk(), &rpp, &prepared(), true),
             crate::open::SongPlan {
                 open: rpp,
                 prepare: true,

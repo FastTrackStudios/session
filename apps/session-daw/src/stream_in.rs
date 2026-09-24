@@ -403,7 +403,7 @@ async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::Strea
     let cache = std::env::temp_dir().join("fts-stream");
     if only.as_deref().is_none_or(|o| o == "peer") {
         match PeerSource::new(remote).await {
-            Ok(source) => match mirror(std::sync::Arc::new(source), &cache).await {
+            Ok(source) => match mirror(std::sync::Arc::new(source), crate::song_stream::Keep::Disk(cache.clone())).await {
                 Ok(streamed) => return Some(streamed),
                 Err(e) => tracing::info!(stream.song = remote, error = %e, "stream-in: the engine cannot send this song"),
             },
@@ -420,7 +420,7 @@ async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::Strea
         && let Some(link) = link
     {
         match ShareSource::new(&link) {
-            Ok(source) => match mirror(std::sync::Arc::new(source), &cache).await {
+            Ok(source) => match mirror(std::sync::Arc::new(source), crate::song_stream::Keep::Disk(cache.clone())).await {
                 Ok(streamed) => return Some(streamed),
                 Err(e) => tracing::warn!(stream.song = %name, error = %e, "stream-in: the share link's copy could not be mirrored"),
             },
@@ -437,7 +437,7 @@ async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::Strea
             return None;
         }
     };
-    match mirror(source, &cache).await {
+    match mirror(source, crate::song_stream::Keep::Disk(cache.clone())).await {
         Ok(streamed) => Some(streamed),
         Err(e) => {
             tracing::warn!(stream.song = %name, error = %e, "stream-in: the library's copy could not be mirrored");

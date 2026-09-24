@@ -34,7 +34,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use daw_standalone::audio_engine::render::ProjectRenderer;
-use daw_standalone::audio_engine::streamed::StreamFeeder;
+use daw_standalone::audio_engine::streamed::{Decode, StreamFeeder};
 use daw_standalone::sync::Standalone;
 use daw_standalone::transport_engine::{TransportBundle, TransportShared};
 use fts_sample::ogg_stream::OggStream;
@@ -114,7 +114,7 @@ struct Player {
     /// so the song still moves, silently.
     clocked: Cell<bool>,
     renderer: ProjectRenderer,
-    feeders: RefCell<Vec<StreamFeeder<OggStream>>>,
+    feeders: RefCell<Vec<StreamFeeder<Box<dyn Decode + Send>>>>,
     /// Which feeder a tick starts with — round robin, so one stem's
     /// catch-up does not starve the rest.
     first: Cell<usize>,
@@ -196,11 +196,18 @@ pub fn add_stem(project: &str, take: &str, bytes: Arc<[u8]>) -> Result<(), Strin
         take,
         AudioSource::Streamed(streamed.clone()),
     );
-    player
-        .feeders
-        .borrow_mut()
-        .push(StreamFeeder::new(streamed, stream));
+    adopt(StreamFeeder::new(streamed, stream).boxed());
     Ok(())
+}
+
+/// Feed a streamed take from this page's loop — a whole proxy
+/// ([`add_stem`]) or one arriving by range from a share link
+/// (`song_stream::StreamedSong::attach`). Before the player is installed
+/// there is nothing to feed it from; it is dropped.
+pub fn adopt(feeder: StreamFeeder<Box<dyn Decode + Send>>) {
+    if let Some(player) = player() {
+        player.feeders.borrow_mut().push(feeder);
+    }
 }
 
 /// How far the device is behind the engine's playhead, in seconds — what

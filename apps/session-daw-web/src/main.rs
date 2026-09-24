@@ -1,12 +1,13 @@
 //! The Session DAW view in a browser: the web demo's bundle.
 //!
 //! Built with cargo and wasm-bindgen (`just web-daw`), served as static
-//! files: `index.html` and the module. The session comes from a Task share
-//! link to its folder — `?share=<link>&project=<Song.RPP>&chart=<Song.kf>`
-//! — whose documents open it and whose audio renditions stream its stems
-//! from their proxies; `&guide=<link>` is the guide sample library's, for
-//! the click, the count and the cues. Without a link it opens the copy
-//! bundled under `session/`, silent. See `session_daw::web_host`.
+//! files: `index.html` and the module. The song comes from a Task share
+//! link to its session folder — `?share=<link>` — opened the one way songs
+//! open (its prepared `.session`, mirrored into memory) with its proxies
+//! streaming in by range, what will be heard first first; `&guide=<link>`
+//! is the guide sample library's, for the click, the count and the cues.
+//! Without a link it opens the copy bundled under `session/`, silent. See
+//! `session_daw::web_engine`.
 
 use dioxus::prelude::*;
 
@@ -27,57 +28,34 @@ fn main() {
     dioxus::launch(App);
 }
 
-/// What the page opens: the project and chart URLs, and where the audio
-/// streams from.
-#[derive(Clone)]
-struct Source {
-    name: String,
-    rpp: String,
-    chart: Option<String>,
-    media: Option<String>,
-    guide: Option<String>,
-}
+/// The query parameter a share link comes in.
+const SHARE: &str = "share";
 
-/// The page's query, or the bundled copy.
-fn source() -> Source {
+/// What the page opens — the song a share link shares (`?share=<link>`),
+/// or the copy bundled under `session/`, silent — and the guide library's
+/// link (`&guide=<link>`).
+fn source() -> (session_daw::web_engine::WebSource, Option<String>) {
+    use session_daw::web_engine::WebSource;
     let query = web_sys::window()
         .and_then(|w| w.location().search().ok())
         .and_then(|q| web_sys::UrlSearchParams::new_with_str(&q).ok());
-    let param = |key: &str| query.as_ref().and_then(|q| q.get(key));
-    if let (Some(share), Some(project)) = (param("share"), param("project")) {
-        let share = share.trim_end_matches('/').to_owned();
-        let doc = |name: &str| format!("{share}/doc/{}", js_sys::encode_uri_component(name));
-        return Source {
-            name: project
-                .trim_end_matches(".RPP")
-                .trim_end_matches(".rpp")
-                .to_owned(),
-            rpp: doc(&project),
-            chart: param("chart").map(|c| doc(&c)),
-            media: Some(share),
-            guide: param("guide"),
-        };
-    }
-    Source {
-        name: "Always On Time".to_owned(),
-        rpp: "session/demo.RPP".to_owned(),
-        chart: Some("session/demo.kf".to_owned()),
-        media: None,
-        guide: None,
-    }
+    let param = |key: &str| query.as_ref().and_then(|q| q.get(key)).filter(|v| !v.is_empty());
+    let source = match param(SHARE) {
+        Some(link) => WebSource::Shared { link },
+        None => WebSource::Bundled {
+            name: "Always On Time".to_owned(),
+            rpp_url: "session/demo.RPP".to_owned(),
+            chart_url: Some("session/demo.kf".to_owned()),
+        },
+    };
+    (source, param("guide"))
 }
 
 #[component]
 fn App() -> Element {
-    let source = use_hook(source);
+    let (source, guide) = use_hook(source);
     rsx! {
         style { {TAILWIND} }
-        session_daw::web_host::WebDemo {
-            name: source.name.clone(),
-            rpp_url: source.rpp.clone(),
-            chart_url: source.chart.clone(),
-            media: source.media.clone(),
-            guide: source.guide.clone(),
-        }
+        session_daw::web_host::WebDemo { source, guide }
     }
 }

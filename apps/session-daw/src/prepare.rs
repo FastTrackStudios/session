@@ -26,8 +26,16 @@ impl Prepare {
     /// chart beside it, and given its guide. What a setlist's songs get,
     /// and what `session-desktop --engine` gives a song.
     #[must_use]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn for_song(path: &std::path::Path) -> Self {
-        Self { organize: true, chart: chart_beside(path), guide: true }
+        Self::for_song_in(crate::folder::disk(), path)
+    }
+
+    /// [`Self::for_song`] for a song in `folder`.
+    #[must_use]
+    pub fn for_song_in(folder: &dyn crate::folder::Folder, path: &std::path::Path) -> Self {
+        let chart = path.parent().and_then(|dir| folder.only_with_extension(dir, "kf"));
+        Self { organize: true, chart, guide: true }
     }
 
     /// From `FTS_BLITZ_ORGANIZE=1`, `FTS_BLITZ_CHART=<file.kf>` and
@@ -54,14 +62,25 @@ impl Prepare {
     /// # Errors
     ///
     /// The step that failed, and why.
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn run(&self, opened: &crate::open::Opened) -> eyre::Result<()> {
+        self.run_in(crate::folder::disk(), opened)
+    }
+
+    /// [`Self::run`], reading the chart and lyrics from `folder`.
+    ///
+    /// # Errors
+    ///
+    /// The step that failed, and why.
+    pub fn run_in(&self, folder: &dyn crate::folder::Folder, opened: &crate::open::Opened) -> eyre::Result<()> {
         // This window's runtime when it has one; otherwise whatever
         // runtime the caller runs on (`session-desktop --engine`).
+        #[cfg(feature = "native")]
         let _entered = crate::open::runtime().map(|runtime| runtime.enter());
         let chart = match &self.chart {
             Some(path) => Some(
-                std::fs::read_to_string(path)
+                folder
+                    .read_to_string(path)
                     .map_err(|e| eyre::eyre!("chart {}: {e}", path.display()))?,
             ),
             None => None,
@@ -76,9 +95,12 @@ impl Prepare {
         // The song's synced lyrics, when a `.lrc` sits beside its chart:
         // onto the LINES track, from where the song starts.
         if let (Some(path), Some(text)) = (&self.chart, chart.as_deref())
-            && let Some(lrc) = lrc_beside(path)
+            && let Some(lrc) = path.parent().and_then(|dir| folder.only_with_extension(dir, "lrc"))
         {
-            let lines = stamp_lyrics(&opened.daw, &opened.project_guid, text, &lrc)?;
+            let lyrics = folder
+                .read_to_string(&lrc)
+                .map_err(|e| eyre::eyre!("lyrics {}: {e}", lrc.display()))?;
+            let lines = stamp_lyrics(&opened.daw, &opened.project_guid, text, &lyrics)?;
             tracing::info!(lyrics.lines = lines, "prepare: lyrics stamped");
         }
         Ok(())
@@ -86,40 +108,34 @@ impl Prepare {
 }
 
 /// The one `.lrc` beside a chart, if there is exactly one.
+#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn lrc_beside(chart: &std::path::Path) -> Option<PathBuf> {
-    let mut found = std::fs::read_dir(chart.parent()?)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lrc")));
-    let lrc = found.next()?;
-    found.next().is_none().then_some(lrc)
+    crate::folder::Folder::only_with_extension(&crate::folder::Disk, chart.parent()?, "lrc")
 }
 
-/// Stamp the synced lyrics in `lrc` onto the song's LINES track: the
+/// Stamp the synced lyrics `lrc` (an `.lrc`'s text) onto the song's LINES track: the
 /// recording's 0 at the song's start (SONGSTART, from the chart), the
 /// last line held to its end. Returns how many lines went on.
 ///
 /// # Errors
 ///
-/// The chart does not lay out, the `.lrc` cannot be read, or a line's
-/// item could not be made.
+/// The chart does not lay out, or a line's item could not be made.
 pub fn stamp_lyrics(
     daw: &daw_standalone::sync::Standalone,
     project_guid: &str,
     chart: &str,
-    lrc: &std::path::Path,
+    lrc: &str,
 ) -> eyre::Result<usize> {
     let layout = session::setlist::chart_import::chart_to_layout(chart)
         .map_err(|e| eyre::eyre!("chart: {e:?}"))?;
-    let text = std::fs::read_to_string(lrc).map_err(|e| eyre::eyre!("lyrics {}: {e}", lrc.display()))?;
-    let mut lyrics = session::lyrics::Lyrics::from_lrc(&text, layout.song_start_seconds, layout.song_end_seconds);
+    let text = lrc;
+    let mut lyrics = session::lyrics::Lyrics::from_lrc(text, layout.song_start_seconds, layout.song_end_seconds);
     let project = ProjectContext::Project(project_guid.to_owned());
     // Pinned to the song where the `.lrc` says (see `lyrics::Anchor`): its
     // section's downbeat, from the regions the chart just laid out, and
     // the beats from there at the song's tempo.
-    if let Some(anchor) = session::lyrics::Anchor::in_lrc(&text) {
+    if let Some(anchor) = session::lyrics::Anchor::in_lrc(text) {
         use daw::service::Regions as _;
         let downbeat = daw
             .all(project.clone())
@@ -144,15 +160,10 @@ pub fn stamp_lyrics(
 
 /// The one `.kf` chart in the project's folder, if there is exactly one.
 /// Two would be a guess, and a wrong chart is worse than none.
+#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn chart_beside(project: &std::path::Path) -> Option<PathBuf> {
-    let mut charts = std::fs::read_dir(project.parent()?)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("kf")));
-    let chart = charts.next()?;
-    charts.next().is_none().then_some(chart)
+    crate::folder::Folder::only_with_extension(&crate::folder::Disk, project.parent()?, "kf")
 }
 
 /// Prepare the song at `rpp` and save it as `Song.session` beside it —

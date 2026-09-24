@@ -1,11 +1,13 @@
 //! A song streamed in from elsewhere, when it is not on this machine —
 //! from the engine this window drives, or from the Task library.
 //!
-//! One way, whatever the source ([`SongSource`]): the small files — the
-//! prepared `.session`, the chart, the lyrics, the waveform caches, each
-//! proxy's page index — are mirrored into a local cache, so the song opens
-//! the one way songs open; the proxies are not: each is attached as a take
-//! that plays what has arrived (`stream_remote_ogg`, a disk-backed
+//! One way, whatever the source ([`SongSource`]) and wherever it runs: the
+//! small files — the prepared `.session`, the chart, the lyrics, the
+//! waveform caches, each proxy's page index — are mirrored ([`Keep`]: a
+//! cache on disk natively, memory in a browser), so the song opens the one
+//! way songs open (`open_core::open_song_in`, through the mirror's
+//! [`crate::folder::Folder`]); the proxies are not: each is attached as a
+//! take that plays what has arrived (`attach_remote_ogg` over a
 //! `SparseBytes`), and one fetcher per song brings their bytes in the order
 //! they will be heard (`media_fetch::drive`) by range-reads on the source.
 //! The originals stay where they are.
@@ -22,13 +24,16 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use daw::standalone::audio_engine::materialize::{PendingMedia, stream_remote_ogg};
-use daw::standalone::audio_engine::media_fetch::{FetchConfig, RangeFetch, StreamedTake};
+use daw::standalone::audio_engine::materialize::PendingMedia;
+use daw::standalone::audio_engine::media_fetch::{FetchConfig, Fetching, RangeFetch, StreamedTake};
 use daw::standalone::sync::Standalone;
+
+use crate::folder::{Folder, Memory};
 use fts_sample::ogg_index::OggIndex;
 use fts_sample::sparse::SparseBytes;
 
-/// Where a streamed song's files come from.
+/// Where a song's files come from.
+#[cfg(not(target_arch = "wasm32"))]
 pub trait SongSource: Send + Sync + 'static {
     /// A name for its cache folder.
     fn label(&self) -> String;
@@ -43,15 +48,38 @@ pub trait SongSource: Send + Sync + 'static {
     }
 }
 
+/// Where a song's files come from (see the native definition: here a
+/// request is a JS promise, and not `Send`).
+#[cfg(target_arch = "wasm32")]
+pub trait SongSource: 'static {
+    /// A name for its cache folder.
+    fn label(&self) -> String;
+    /// Every file of the song folder with its size, the project first.
+    fn list(&self) -> Pending<eyre::Result<Vec<(String, u64)>>>;
+    /// The bytes `range` of `path`.
+    fn read(&self, path: String, range: std::ops::Range<u64>) -> Pending<Result<Vec<u8>, String>>;
+    /// The song's chart, when the source keeps it apart from the folder
+    /// (the library's) — it replaces the folder's `.kf`.
+    fn chart(&self) -> Pending<eyre::Result<Option<String>>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
 /// A source's answer, later.
+#[cfg(not(target_arch = "wasm32"))]
 pub type Pending<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>;
+/// A source's answer, later.
+#[cfg(target_arch = "wasm32")]
+pub type Pending<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T>>>;
 
 /// The engine this window drives: its project's song folder.
+#[cfg(feature = "native")]
 pub struct PeerSource {
     remote: String,
     files: daw::rpc::SongFiles,
 }
 
+#[cfg(feature = "native")]
 impl PeerSource {
     /// The song folder of `remote` (a project on the facade's engine).
     ///
@@ -64,6 +92,7 @@ impl PeerSource {
     }
 }
 
+#[cfg(feature = "native")]
 impl SongSource for PeerSource {
     fn label(&self) -> String {
         format!("peer-{}", self.remote)
@@ -81,11 +110,13 @@ impl SongSource for PeerSource {
 }
 
 /// A song in the Task library: its session File Root, and its chart.
+#[cfg(feature = "native")]
 pub struct TaskSource {
     library: session_library::Library,
     song: session_library::TaskSong,
 }
 
+#[cfg(feature = "native")]
 impl TaskSource {
     /// The library song `slug` (`washed`), from the library the
     /// environment names (`FTS_TASK_SERVER`, `FTS_TASK_ORG`, the token).
@@ -100,6 +131,7 @@ impl TaskSource {
     }
 }
 
+#[cfg(feature = "native")]
 impl SongSource for TaskSource {
     fn label(&self) -> String {
         format!("task-{}", self.song.slug)
@@ -230,12 +262,85 @@ impl SongSource for ShareSource {
     }
 }
 
-/// A song mirrored from a source: where it opens locally, and its
-/// proxies there to stream.
+/// Where a mirrored song's small files are kept.
+#[derive(Clone, Debug)]
+pub enum Keep {
+    /// A cache folder on this machine (under it, one folder per source),
+    /// its proxies' bytes in `.part` files beside them.
+    #[cfg(not(target_arch = "wasm32"))]
+    Disk(PathBuf),
+    /// Memory — a browser's; the proxies' bytes too.
+    Memory(Memory),
+}
+
+impl Keep {
+    /// The folder the mirrored files are read back from.
+    fn folder(&self) -> Arc<dyn Folder> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Disk(_) => Arc::new(crate::folder::Disk),
+            Self::Memory(memory) => Arc::new(memory.clone()),
+        }
+    }
+
+    /// Where a source labelled `label` is mirrored.
+    fn base(&self, label: &str) -> PathBuf {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Disk(root) => root.join(safe_name(label)),
+            Self::Memory(_) => Path::new("/").join(safe_name(label)),
+        }
+    }
+
+    /// Whether `path` is already here at `size` bytes.
+    fn has(&self, path: &Path, size: u64) -> bool {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Disk(_) => std::fs::metadata(path).is_ok_and(|m| m.len() == size),
+            Self::Memory(memory) => memory.len_of(path) == Some(size),
+        }
+    }
+
+    fn write(&self, path: &Path, bytes: Vec<u8>) -> eyre::Result<()> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Disk(_) => {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(path, bytes)?;
+            }
+            Self::Memory(memory) => memory.insert(path, bytes),
+        }
+        Ok(())
+    }
+
+    /// Room for the `size` bytes of the proxy at `path`, as they arrive.
+    fn sparse(&self, path: &Path, size: u64) -> Option<Arc<SparseBytes>> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Disk(_) => {
+                let store = PathBuf::from(format!("{}.part", path.display()));
+                std::fs::create_dir_all(store.parent()?).ok()?;
+                SparseBytes::on_disk(size, &store).ok()
+            }
+            Self::Memory(_) => {
+                let _ = path;
+                Some(SparseBytes::in_memory(size))
+            }
+        }
+    }
+}
+
+/// A song mirrored from a source: where it opens, and its proxies to
+/// stream.
 pub struct StreamedSong {
-    /// The project to open (in the cache).
+    /// The project to open (in the mirror).
     pub project: PathBuf,
-    cache: PathBuf,
+    /// The mirror it opens from.
+    pub folder: Arc<dyn Folder>,
+    keep: Keep,
+    base: PathBuf,
     source: Arc<dyn SongSource>,
     /// Proxies by their file stem, lower-case: (path in the song, size).
     proxies: HashMap<String, (String, u64)>,
@@ -251,18 +356,19 @@ fn is_media(lower: &str) -> bool {
     lower.starts_with("media/") && !lower.starts_with("media/peaks/") && !lower.ends_with(".ogg.idx")
 }
 
-/// Mirror a song from `source` into `cache_root`: every small file fetched
-/// whole (skipped when already here at its size), the media left to
-/// stream; the source's own chart, if it keeps one, written in.
+/// Mirror a song from `source` into `keep`: every small file fetched whole
+/// (skipped when already there at its size), the media left to stream; the
+/// source's own chart, if it keeps one, written in.
 ///
 /// # Errors
 ///
-/// The source lists nothing, or a file could not be fetched or written.
-pub async fn mirror(source: Arc<dyn SongSource>, cache_root: &Path) -> eyre::Result<StreamedSong> {
+/// The source lists nothing, or a file could not be fetched or kept.
+pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<StreamedSong> {
     let list = source.list().await?;
     let first = list.first().ok_or_else(|| eyre::eyre!("the song folder is empty"))?;
-    let cache = cache_root.join(safe_name(&source.label()));
-    let project = cache.join(&first.0);
+    let label = source.label();
+    let base = keep.base(&label);
+    let project = base.join(&first.0);
     let mut proxies = HashMap::new();
     let mut fetched = 0usize;
     for (path, size) in &list {
@@ -275,30 +381,44 @@ pub async fn mirror(source: Arc<dyn SongSource>, cache_root: &Path) -> eyre::Res
         if is_media(&lower) || *size == 0 {
             continue;
         }
-        let local = cache.join(path);
-        if std::fs::metadata(&local).is_ok_and(|m| m.len() == *size) {
+        let local = base.join(path);
+        if keep.has(&local, *size) {
             continue;
         }
         let bytes = source.read(path.clone(), 0..*size).await.map_err(|e| eyre::eyre!(e))?;
-        if let Some(parent) = local.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&local, bytes)?;
+        keep.write(&local, bytes)?;
         fetched = fetched.saturating_add(1);
     }
-    if let Some(chart) = source.chart().await?
-        && let Some(folder) = project.parent()
-    {
-        session_library::write_chart(folder, &source.label(), &chart)?;
+    if let Some(chart) = source.chart().await? {
+        write_chart(&keep, &project, &label, &chart)?;
     }
     tracing::info!(
-        stream.source = %source.label(),
+        stream.source = %label,
         stream.files = list.len(),
         stream.fetched = fetched,
         stream.proxies = proxies.len(),
         "song-stream: mirrored"
     );
-    Ok(StreamedSong { project, cache, source, proxies })
+    Ok(StreamedSong { project, folder: keep.folder(), keep, base, source, proxies })
+}
+
+/// The source's chart, as THE chart beside `project` (the folder's own
+/// gave way to it in the source's listing).
+fn write_chart(keep: &Keep, project: &Path, label: &str, chart: &str) -> eyre::Result<()> {
+    match keep {
+        #[cfg(feature = "native")]
+        Keep::Disk(_) => {
+            if let Some(folder) = project.parent() {
+                session_library::write_chart(folder, label, chart)?;
+            }
+            Ok(())
+        }
+        #[allow(unreachable_patterns)]
+        _ => {
+            let stem = project.file_stem().map_or_else(|| label.to_owned(), |s| s.to_string_lossy().into_owned());
+            keep.write(&project.with_file_name(format!("{stem}.kf")), chart.as_bytes().to_vec())
+        }
+    }
 }
 
 impl StreamedSong {
@@ -308,14 +428,24 @@ impl StreamedSong {
     pub fn attach(&self, daw: &Standalone, local: &str, media: &PendingMedia) -> Option<StreamedTake> {
         let stem = Path::new(&media.path).file_stem()?.to_string_lossy().to_lowercase();
         let (path, size) = self.proxies.get(&stem)?.clone();
-        let index_file = OggIndex::path_for(&self.cache.join(&path));
-        let index = OggIndex::from_text(&std::fs::read_to_string(&index_file).ok()?)?;
-        let store = self.cache.join(format!("{path}.part"));
-        if let Some(parent) = store.parent() {
-            std::fs::create_dir_all(parent).ok()?;
-        }
-        let bytes = SparseBytes::on_disk(size, &store).ok()?;
-        stream_remote_ogg(daw, local, &media.take_guid, Arc::clone(&bytes), index.clone());
+        let at = self.base.join(&path);
+        let index = OggIndex::from_text(&self.folder.read_to_string(&OggIndex::path_for(&at)).ok()?)?;
+        let bytes = self.keep.sparse(&at, size)?;
+        let feeder = daw::standalone::audio_engine::materialize::attach_remote_ogg(
+            daw,
+            local,
+            &media.take_guid,
+            Arc::clone(&bytes),
+            index.clone(),
+        );
+        // Natively the butler thread decodes it; in a browser, the page's
+        // audio loop.
+        #[cfg(not(target_arch = "wasm32"))]
+        daw::standalone::audio_engine::streamed::butler_adopt(feeder);
+        #[cfg(all(feature = "web", target_arch = "wasm32"))]
+        crate::web_audio::adopt(feeder.boxed());
+        #[cfg(all(not(feature = "web"), target_arch = "wasm32"))]
+        drop(feeder);
         Some(StreamedTake {
             path,
             bytes,
@@ -336,15 +466,14 @@ impl StreamedSong {
         stop: Arc<AtomicBool>,
     ) {
         let fetch: Arc<dyn RangeFetch> = Arc::new(SourceFetch(Arc::clone(&self.source)));
+        let driving =
+            daw::standalone::audio_engine::media_fetch::drive(takes, fetch, playhead, FetchConfig::default(), stop);
+        #[cfg(feature = "native")]
         if let Some(runtime) = crate::open::runtime() {
-            runtime.spawn(daw::standalone::audio_engine::media_fetch::drive(
-                takes,
-                fetch,
-                playhead,
-                FetchConfig::default(),
-                stop,
-            ));
+            runtime.spawn(driving);
         }
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(driving);
     }
 }
 
@@ -361,11 +490,7 @@ pub fn arrived(takes: &Mutex<Vec<StreamedTake>>) -> usize {
 struct SourceFetch(Arc<dyn SongSource>);
 
 impl RangeFetch for SourceFetch {
-    fn fetch(
-        &self,
-        path: &str,
-        range: std::ops::Range<u64>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send>> {
+    fn fetch(&self, path: &str, range: std::ops::Range<u64>) -> Fetching {
         self.0.read(path.to_owned(), range)
     }
 }
@@ -413,11 +538,11 @@ mod tests {
             let source: Arc<dyn SongSource> = Arc::new(ShareSource::new(&link).unwrap());
             let cache = std::env::temp_dir().join(format!("fts-probe-{}", std::process::id()));
             let t = std::time::Instant::now();
-            let song = mirror(Arc::clone(&source), &cache).await.unwrap();
+            let song = mirror(Arc::clone(&source), Keep::Disk(cache.clone())).await.unwrap();
             eprintln!("mirror {:?}", t.elapsed());
             let mut takes = Vec::new();
             for (path, size) in song.proxies.values() {
-                let index = OggIndex::from_text(&std::fs::read_to_string(OggIndex::path_for(&song.cache.join(path))).unwrap()).unwrap();
+                let index = OggIndex::from_text(&std::fs::read_to_string(OggIndex::path_for(&song.base.join(path))).unwrap()).unwrap();
                 let secs = index.frames as f64 / f64::from(index.sample_rate);
                 takes.push(StreamedTake { path: path.clone(), bytes: SparseBytes::in_memory(*size), index, start: 0.0, end: secs, source_offset: 0.0, playrate: 1.0 });
             }

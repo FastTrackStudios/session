@@ -250,6 +250,10 @@ web = [
     "dep:vello_common",
     "dep:rustc-hash",
     "dep:gloo-timers", "daw-standalone/stream-ogg", "dep:fts-sample", "dep:futures-util",
+    # A shared song, streamed from its share link (song_stream::ShareSource),
+    # opened from memory the one way songs open (open_core, folder).
+    "dep:reqwest", "dep:serde_json", "daw/standalone-session-file",
+    "dep:futures-channel",
 ]
 # The `#[reaper_test]` suites, which need a REAPER to talk to. Behind a
 # feature so an ordinary `cargo nextest run --workspace` does not try to

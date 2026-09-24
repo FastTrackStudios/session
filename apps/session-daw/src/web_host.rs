@@ -439,58 +439,18 @@ pub fn WebArrangement(engine: crate::web_engine::EngineRef) -> Element {
     }
 }
 
-/// Fetch a URL's text.
-async fn fetch_text(url: &str) -> Result<String, String> {
-    let window = web_sys::window().ok_or("no window")?;
-    let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
-        .await
-        .map_err(|e| format!("{url}: {e:?}"))?;
-    let response: web_sys::Response = response.dyn_into().map_err(|_| "not a response".to_owned())?;
-    if !response.ok() {
-        return Err(format!("{url}: HTTP {}", response.status()));
-    }
-    let text = response.text().map_err(|e| format!("{e:?}"))?;
-    wasm_bindgen_futures::JsFuture::from(text)
-        .await
-        .map_err(|e| format!("{e:?}"))?
-        .as_string()
-        .ok_or_else(|| format!("{url}: not text"))
-}
-
-/// The web demo: fetch a session's project (and chart), open it in the
-/// page, and show it.
+/// The web demo: open the page's song (see [`crate::web_engine::WebSource`])
+/// and show it.
 #[component]
 pub fn WebDemo(
-    name: String,
-    rpp_url: String,
-    chart_url: Option<String>,
-    /// Where the takes' audio streams from — a Task share link to the
-    /// session's folder. `None` opens it silent.
-    media: Option<String>,
+    source: crate::web_engine::WebSource,
     /// The guide sample library's share link: the click, count and cues.
     guide: Option<String>,
 ) -> Element {
     let opened = use_resource(move || {
-        let (name, rpp_url, chart_url, media, guide) = (
-            name.clone(),
-            rpp_url.clone(),
-            chart_url.clone(),
-            media.clone(),
-            guide.clone(),
-        );
+        let (source, guide) = (source.clone(), guide.clone());
         async move {
-            let rpp = fetch_text(&rpp_url).await?;
-            let chart = match &chart_url {
-                Some(url) => Some(fetch_text(url).await?),
-                None => None,
-            };
-            crate::web_engine::open(
-                &name,
-                &rpp,
-                chart.as_deref(),
-                media.as_deref(),
-                guide.as_deref(),
-            )
+            crate::web_engine::open(&source, guide.as_deref())
                 .await
                 .map_err(|e| e.to_string())
         }
