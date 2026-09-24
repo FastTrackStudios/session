@@ -374,16 +374,34 @@ async fn load_next(song: &mut Song, playhead: f64) {
 }
 
 /// Which source to stream from even when the song is here: `peer` (the
-/// engine this window drives) or `task` (the library).
+/// engine this window drives), `share` (a share link) or `task` (the
+/// library).
 const STREAM_SOURCE_ENV: &str = "FTS_STREAM_SOURCE";
+
+/// Share links to songs' sessions, whitespace-separated: `slug=url`, or a
+/// bare `url` for whichever song is open (the demo streams by these).
+const SHARE_LINKS_ENV: &str = "FTS_SHARE_LINKS";
+
+/// The share link for the song `slug` in `links` (see [`SHARE_LINKS_ENV`]).
+fn share_link_for(links: &str, slug: &str) -> Option<String> {
+    let mut any = None;
+    for entry in links.split_whitespace() {
+        match entry.split_once('=').filter(|(k, _)| !k.contains('/') && !k.contains(':')) {
+            Some((song, url)) if song == slug => return Some(url.to_owned()),
+            Some(_) => {}
+            None => any = any.or_else(|| Some(entry.to_owned())),
+        }
+    }
+    any
+}
 
 /// A song not on this machine, mirrored and streamed from the engine this
 /// window drives, or else from the Task library (the song by its name).
 async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::StreamedSong> {
-    use crate::song_stream::{PeerSource, SongSource, TaskSource, mirror};
+    use crate::song_stream::{PeerSource, ShareSource, SongSource, TaskSource, mirror};
     let only = std::env::var(STREAM_SOURCE_ENV).ok().filter(|v| !v.is_empty());
     let cache = std::env::temp_dir().join("fts-stream");
-    if only.as_deref() != Some("task") {
+    if only.as_deref().is_none_or(|o| o == "peer") {
         match PeerSource::new(remote).await {
             Ok(source) => match mirror(std::sync::Arc::new(source), &cache).await {
                 Ok(streamed) => return Some(streamed),
@@ -397,6 +415,21 @@ async fn stream_from_elsewhere(remote: &str) -> Option<crate::song_stream::Strea
     }
     let name = song_name(remote).await?;
     let slug = session_library::slugify(&name);
+    let link = std::env::var(SHARE_LINKS_ENV).ok().and_then(|links| share_link_for(&links, &slug));
+    if only.as_deref() != Some("task")
+        && let Some(link) = link
+    {
+        match ShareSource::new(&link) {
+            Ok(source) => match mirror(std::sync::Arc::new(source), &cache).await {
+                Ok(streamed) => return Some(streamed),
+                Err(e) => tracing::warn!(stream.song = %name, error = %e, "stream-in: the share link's copy could not be mirrored"),
+            },
+            Err(e) => tracing::warn!(stream.song = %name, error = %e, "stream-in: the share link is not a URL"),
+        }
+    }
+    if only.as_deref() == Some("share") {
+        return None;
+    }
     let source: std::sync::Arc<dyn SongSource> = match TaskSource::new(&slug).await {
         Ok(source) => std::sync::Arc::new(source),
         Err(e) => {
@@ -442,4 +475,17 @@ async fn local_song_file(remote: &str) -> Option<PathBuf> {
         .ok()?
         .into_iter()
         .find(|song| song.file_stem().is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&name)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::share_link_for;
+
+    #[test]
+    fn a_song_takes_its_own_share_link_before_the_catch_all() {
+        let links = "http://t/org/d/share/any washed=http://t/org/d/share/w";
+        assert_eq!(share_link_for(links, "washed").as_deref(), Some("http://t/org/d/share/w"));
+        assert_eq!(share_link_for(links, "who-else").as_deref(), Some("http://t/org/d/share/any"));
+        assert_eq!(share_link_for("washed=http://t/x", "who-else"), None);
+    }
 }

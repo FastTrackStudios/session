@@ -13,6 +13,9 @@
 //! - [`PeerSource`] — the engine's song folder (`daw::rpc::SongFiles`).
 //! - [`TaskSource`] — the song's session File Root in the library
 //!   (`session_library::TaskSong`); its library chart replaces the folder's.
+//! - [`ShareSource`] — a Task share link to the song's session (the public
+//!   demo: no account): its JSON listing, its documents whole, its proxies
+//!   as the link's audio rendition with HTTP ranges.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -123,6 +126,107 @@ impl SongSource for TaskSource {
         let library = self.library.clone();
         let slug = self.song.slug.clone();
         Box::pin(async move { library.song_chart(&slug).await })
+    }
+}
+
+/// A Task share link to a song's session
+/// (`https://task…/org/<org>/share/<token>`, `?pw=` when it has one).
+pub struct ShareSource {
+    link: reqwest::Url,
+    password: Option<String>,
+    http: reqwest::Client,
+}
+
+impl ShareSource {
+    /// The session `link` shares.
+    ///
+    /// # Errors
+    ///
+    /// `link` is not a URL.
+    pub fn new(link: &str) -> eyre::Result<Self> {
+        let mut link = reqwest::Url::parse(link.trim().trim_end_matches('/'))?;
+        let password = link.query_pairs().find(|(k, _)| k == "pw").map(|(_, v)| v.into_owned());
+        link.set_query(None);
+        Ok(Self { link, password, http: reqwest::Client::new() })
+    }
+
+    /// The link's route `route` (`list`, `doc`, `rendition/audio`) for the
+    /// song-folder path `path`, each segment escaped.
+    fn url(&self, route: &str, path: &str) -> reqwest::Url {
+        let mut url = self.link.clone();
+        if let Ok(mut segments) = url.path_segments_mut() {
+            segments.extend(route.split('/')).extend(path.split('/').filter(|s| !s.is_empty()));
+        }
+        if let Some(pw) = &self.password {
+            url.query_pairs_mut().append_pair("pw", pw);
+        }
+        url
+    }
+
+    /// The link's token, for the cache folder's name — never the password.
+    fn token(&self) -> String {
+        self.link.path_segments().and_then(Iterator::last).unwrap_or_default().to_owned()
+    }
+}
+
+/// The media path whose audio rendition is the proxy at `proxy`
+/// (`Media/Proxies/Bass.ogg` → `Media/Bass.ogg`: a link streams the
+/// committed proxy beside a take by the take's stem), when it is one.
+fn rendition_of(proxy: &str) -> Option<String> {
+    let (dir, name) = proxy.rsplit_once('/')?;
+    let parent = dir.strip_suffix("Proxies")?.trim_end_matches('/');
+    let name = name.strip_suffix(".ogg")?;
+    Some(if parent.is_empty() { format!("{name}.ogg") } else { format!("{parent}/{name}.ogg") })
+}
+
+impl SongSource for ShareSource {
+    fn label(&self) -> String {
+        format!("share-{}", self.token())
+    }
+
+    fn list(&self) -> Pending<eyre::Result<Vec<(String, u64)>>> {
+        let request = self.http.get(self.url("list", ""));
+        Box::pin(async move {
+            let listed: serde_json::Value = request.send().await?.error_for_status()?.json().await?;
+            let mut entries: Vec<(String, u64)> = listed["entries"]
+                .as_array()
+                .ok_or_else(|| eyre::eyre!("the link lists no entries"))?
+                .iter()
+                .filter_map(|e| Some((e["path"].as_str()?.to_owned(), e["size"].as_u64().unwrap_or(0))))
+                .collect();
+            // The project first: the top-level `.RPP`, as every source.
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            if let Some(at) = entries.iter().position(|(p, _)| !p.contains('/') && p.to_lowercase().ends_with(".rpp")) {
+                let project = entries.remove(at);
+                entries.insert(0, project);
+            }
+            Ok(entries)
+        })
+    }
+
+    fn read(&self, path: String, range: std::ops::Range<u64>) -> Pending<Result<Vec<u8>, String>> {
+        let ranged = rendition_of(&path).map(|media| self.url("rendition/audio", &media));
+        let request = match &ranged {
+            Some(url) => self
+                .http
+                .get(url.clone())
+                .header(reqwest::header::RANGE, format!("bytes={}-{}", range.start, range.end.saturating_sub(1))),
+            // A document comes whole (it is small); the range is cut here.
+            None => self.http.get(self.url("doc", &path)),
+        };
+        let partial = ranged.is_some();
+        Box::pin(async move {
+            let what = |e: &dyn std::fmt::Display| format!("{path} {range:?}: {e}");
+            let response = request.send().await.and_then(reqwest::Response::error_for_status).map_err(|e| what(&e))?;
+            let served_range = response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+            let bytes = response.bytes().await.map_err(|e| what(&e))?;
+            if partial && served_range {
+                return Ok(bytes.to_vec());
+            }
+            let from = usize::try_from(range.start).unwrap_or(usize::MAX);
+            let to = usize::try_from(range.end).unwrap_or(usize::MAX).min(bytes.len());
+            bytes.get(from..to).map(<[u8]>::to_vec).ok_or_else(|| what(&"shorter than asked"))
+        })
     }
 }
 
@@ -244,12 +348,12 @@ impl StreamedSong {
     }
 }
 
-/// How many of `takes` have all their bytes.
+/// How many of `takes` have all they play.
 #[must_use]
 pub fn arrived(takes: &Mutex<Vec<StreamedTake>>) -> usize {
     takes
         .lock()
-        .map(|t| t.iter().filter(|t| t.bytes.missing(&(0..t.bytes.len())).is_empty()).count())
+        .map(|t| t.iter().filter(|t| t.complete()).count())
         .unwrap_or(0)
 }
 
@@ -272,5 +376,68 @@ pub struct FetchGuard(pub Arc<AtomicBool>);
 impl Drop for FetchGuard {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_proxy_is_the_rendition_of_its_take_stem() {
+        assert_eq!(rendition_of("Media/Proxies/Keys 1.ogg").as_deref(), Some("Media/Keys 1.ogg"));
+        assert_eq!(rendition_of("Proxies/Bass.ogg").as_deref(), Some("Bass.ogg"));
+        assert_eq!(rendition_of("Media/Proxies/Bass.ogg.idx"), None);
+        assert_eq!(rendition_of("Media/Bass.wav"), None);
+    }
+
+    #[test]
+    fn a_share_link_escapes_paths_and_keeps_its_password_out_of_the_label() {
+        let source = ShareSource::new("http://task.test/org/demo/share/tok123?pw=secret").unwrap();
+        assert_eq!(source.label(), "share-tok123");
+        assert_eq!(
+            source.url("doc", "Media/Proxies/Keys 1.ogg.idx").as_str(),
+            "http://task.test/org/demo/share/tok123/doc/Media/Proxies/Keys%201.ogg.idx?pw=secret"
+        );
+        assert_eq!(source.url("list", "").as_str(), "http://task.test/org/demo/share/tok123/list?pw=secret");
+    }
+
+    /// Probe: a whole song from a live share link through the fetcher
+    /// (`FTS_PROBE_LINK=<link> cargo test -p session-daw --lib probe -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "needs a live Task share link"]
+    fn probe_share_link_throughput() {
+        let link = std::env::var("FTS_PROBE_LINK").unwrap();
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        rt.block_on(async {
+            let source: Arc<dyn SongSource> = Arc::new(ShareSource::new(&link).unwrap());
+            let cache = std::env::temp_dir().join(format!("fts-probe-{}", std::process::id()));
+            let t = std::time::Instant::now();
+            let song = mirror(Arc::clone(&source), &cache).await.unwrap();
+            eprintln!("mirror {:?}", t.elapsed());
+            let mut takes = Vec::new();
+            for (path, size) in song.proxies.values() {
+                let index = OggIndex::from_text(&std::fs::read_to_string(OggIndex::path_for(&song.cache.join(path))).unwrap()).unwrap();
+                let secs = index.frames as f64 / f64::from(index.sample_rate);
+                takes.push(StreamedTake { path: path.clone(), bytes: SparseBytes::in_memory(*size), index, start: 0.0, end: secs, source_offset: 0.0, playrate: 1.0 });
+            }
+            let total: u64 = takes.iter().map(|t| t.bytes.len()).sum();
+            let takes = Arc::new(Mutex::new(takes));
+            let t = std::time::Instant::now();
+            daw::standalone::audio_engine::media_fetch::drive(
+                takes,
+                Arc::new(SourceFetch(source)),
+                {
+                    // A playhead moving from 30 s, as a playing remote's.
+                    let began = std::time::Instant::now();
+                    Arc::new(move || 30.0 + began.elapsed().as_secs_f64())
+                },
+                FetchConfig::default(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await;
+            eprintln!("fetched {total} bytes in {:?}", t.elapsed());
+            let _ = std::fs::remove_dir_all(cache);
+        });
     }
 }
