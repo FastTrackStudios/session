@@ -94,7 +94,10 @@ fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
         .iter()
         .position(|n| n == "Keyflow")
         .expect("Keyflow folder");
-    assert_eq!(&names[at + 1..at + 6], ["KEY", "CHORD", "LINES", "Lyrics", "HITS"]);
+    assert_eq!(
+        &names[at + 1..at + 6],
+        ["KEY", "CHORD", "LINES", "Lyrics", "HITS"]
+    );
 
     // KEY: one key item at the start, read back as the chart's key.
     let changes = session::key::key_changes(&daw, &project);
