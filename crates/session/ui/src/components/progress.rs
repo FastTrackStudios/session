@@ -214,6 +214,10 @@ pub fn SegmentedProgressBar(
     /// The bar's height as CSS (`5rem` unless given) — a phone's is slim.
     #[props(default)]
     height: Option<String>,
+    /// Whether each section is named on the bar — off where it is too
+    /// narrow to read (a phone held upright): the colours say enough.
+    #[props(default = true)]
+    labels: bool,
 ) -> Element {
     let bar_height = height.unwrap_or_else(|| "5rem".to_owned());
     // Text width estimation constants (in pixels):
@@ -648,7 +652,7 @@ pub fn SegmentedProgressBar(
                 }
                 // Section name text (with optional comment below)
                 for (index, section_start, _section_end, section_width, _section_color, _filled_percent, section_name, section_comment) in section_data.iter() {
-                    if !section_name.is_empty() {
+                    if labels && !section_name.is_empty() {
                         div {
                             key: "text-{index}",
                             class: "absolute h-full pointer-events-none z-30 overflow-hidden",
@@ -741,12 +745,16 @@ pub fn SongProgressBar(
     /// The bar's height as CSS (see [`SegmentedProgressBar`]).
     #[props(default)]
     height: Option<String>,
+    /// Whether the sections are named (see [`SegmentedProgressBar`]).
+    #[props(default = true)]
+    labels: bool,
 ) -> Element {
     rsx! {
         div {
             class: "w-full relative",
             SegmentedProgressBar {
                 height: height,
+                labels: labels,
                 progress: progress,
                 sections: sections,
                 tempo_markers: tempo_markers,

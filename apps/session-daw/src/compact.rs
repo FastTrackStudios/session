@@ -145,7 +145,11 @@ pub fn CompactShell(
                     style: "flex:none; display:flex; flex-direction:column; gap:4px; padding:6px 8px; \
                             background:{BAR_BG}; border-top:1px solid {RULE};",
                     if !control {
-                        crate::progress::ProgressBar { height: "1.75rem".to_owned() }
+                        // Upright, the sections are too narrow to name.
+                        crate::progress::ProgressBar {
+                            height: "1.75rem".to_owned(),
+                            labels: landscape,
+                        }
                     }
                     crate::progress::TransportButtons {
                         compact: true,
