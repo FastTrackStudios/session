@@ -442,7 +442,8 @@ impl Setlist {
     /// the remote's projects are selected one at a time while they are read
     /// and the one that was current is selected again at the end. A project
     /// saved on this machine gets its track kinds and chart from beside it;
-    /// one that is not (another machine's, or never saved) opens without.
+    /// one that is not (another machine's — any reached over the network —
+    /// or never saved) opens without.
     ///
     /// # Errors
     ///
@@ -450,6 +451,13 @@ impl Setlist {
     /// none could be read.
     pub fn attach(target: &crate::open::RemoteTarget) -> eyre::Result<Self> {
         let attached = crate::open::attach(target)?;
+        // A project's path means this machine's disk only when the system
+        // driven is on it: a local REAPER over its socket. A Session engine
+        // or a REAPER's bridge is reached over the network, so its paths
+        // are another machine's — read here they are at best missing and at
+        // worst a folder the OS guards (a phone simulator on a Mac stalls on
+        // a privacy prompt for its owner's Downloads).
+        let local = matches!(target, crate::open::RemoteTarget::Reaper { .. });
         let listed = crate::open::facade_blocking("list projects", |daw| async move {
             let mut out = Vec::new();
             for project in daw.projects().await? {
@@ -458,7 +466,7 @@ impl Setlist {
                     guid: info.guid,
                     name: info.name,
                     path: Some(std::path::PathBuf::from(info.path))
-                        .filter(|p| !p.as_os_str().is_empty()),
+                        .filter(|p| local && !p.as_os_str().is_empty()),
                 });
             }
             Ok(out)

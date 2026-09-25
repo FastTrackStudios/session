@@ -1,14 +1,24 @@
-//! Test-only REAPER extension for the `session` library crate.
+//! The Session bridge: REAPER, reachable from the Session app anywhere.
 //!
-//! This is not a production sidecar. It is a small in-process REAPER host used
-//! by this repo's integration tests to mount session without loading the full
-//! `fts-extensions` plugin.
+//! A slim REAPER extension that mounts session through [`session::host`] —
+//! the same three calls `fts-extensions` makes, and nothing else of it — and
+//! serves the result (REAPER's daw facade plus the setlist, mode, take and
+//! record surfaces) three ways:
 //!
-//! It mounts session through [`session::host`] — the same three calls
-//! `fts-extensions` makes — so what a test drives is what production drives.
-//! Everything else here is test scaffolding with no production counterpart:
-//! the `FTS_SESSION_EXT` health beacon and the LAN `/vox` server on an
-//! OS-assigned port.
+//! - the Unix socket in `/tmp` the Mac's own tools dial;
+//! - a WebSocket on the LAN, `ws://<this Mac>:4040/vox`
+//!   (`FTS_SESSION_BRIDGE_PORT` to move it; a free port when that one is
+//!   taken, as parallel test REAPERs find it);
+//! - iroh, `fts-engine:<id>` from a key kept in
+//!   `~/.config/fts/session-bridge-iroh.key`, so a phone reaches it from off
+//!   the LAN too.
+//!
+//! An iPad, a phone or a page dials either address as it dials a Session
+//! engine (the app's `connect_engine_daw`): every lane is answered by the
+//! one router, so the daw facade and the setlist arrive as they would from
+//! `session-desktop --engine`. The addresses are logged, written to
+//! `~/.config/fts/session-bridge.txt`, and set in ExtState
+//! (`FTS_SESSION_EXT`: `lan_port`, `iroh`) — the tests' way in.
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -74,7 +84,7 @@ impl TestExtension {
                 // the actual port is published via ExtState for the test to
                 // discover, the same way the health beacon below announces
                 // pid/status.
-                spawn_lan_test_server(&runtime, handler.clone());
+                spawn_bridge(&runtime, handler.clone());
                 daw_reaper::build_extension_daw_with(handler).await
             })
             .map_err(|e| eyre::eyre!("{e}"))?;
@@ -163,48 +173,123 @@ impl TestExtension {
     }
 }
 
-/// Bind a real axum `/vox` WebSocket server on `127.0.0.1:0` (OS-assigned
-/// port, so parallel test runs never collide) serving `handler` — the
-/// exact `architect::axum_ws::serve_router` path `session-desktop --engine`
-/// uses for its LAN control surface. Publishes the bound port to ExtState
-/// (`FTS_SESSION_EXT`/`lan_port`) so a `daw::test` can discover it and
-/// connect a real `vox_websocket::WsLink` client, proving the WebSocket
-/// path itself works against real REAPER — not just that the router works
-/// over the unix socket `daw::test` normally uses.
-fn spawn_lan_test_server(runtime: &ExtensionRuntime, handler: daw::LayerRouter) {
+/// The port the LAN WebSocket listens on unless `FTS_SESSION_BRIDGE_PORT`
+/// names another — `session-desktop --engine`'s, so a device dials a bridge
+/// and an engine the same way.
+const DEFAULT_PORT: u16 = 4040;
+
+/// Serve `handler` on the LAN (WebSocket) and over iroh, and say where.
+fn spawn_bridge(runtime: &ExtensionRuntime, handler: daw::LayerRouter) {
+    let ws = handler.clone();
     runtime.spawn(async move {
-        let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
+        let wanted = std::env::var("FTS_SESSION_BRIDGE_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(DEFAULT_PORT);
+        // Taken (another REAPER, a test run beside this one): any free port.
+        let listener = match tokio::net::TcpListener::bind(("0.0.0.0", wanted)).await {
             Ok(l) => l,
             Err(e) => {
-                warn!("session test extension: LAN test server bind failed: {e}");
-                return;
+                warn!(bridge.port = wanted, error = %e, "session bridge: port taken, using a free one");
+                match tokio::net::TcpListener::bind(("0.0.0.0", 0)).await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        warn!(error = %e, "session bridge: the LAN server could not bind");
+                        return;
+                    }
+                }
             }
         };
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-        let _ = ExtState::set(
-            &daw_reaper::Reaper,
-            "FTS_SESSION_EXT",
-            "lan_port",
-            &port.to_string(),
-            false,
-        );
-        info!(port, "session test extension: LAN test server listening");
-
+        let _ = ExtState::set(&daw_reaper::Reaper, "FTS_SESSION_EXT", "lan_port", &port.to_string(), false);
+        announce(Some(port), None);
         let app = axum::Router::new().route(
             "/vox",
-            axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
-                let handler = handler.clone();
+            axum::routing::get(move |upgrade: axum::extract::ws::WebSocketUpgrade| {
+                let handler = ws.clone();
                 async move {
-                    ws.on_upgrade(move |socket| async move {
+                    upgrade.on_upgrade(move |socket| async move {
                         architect::axum_ws::serve_router(socket, handler).await;
                     })
                 }
             }),
         );
         if let Err(e) = axum::serve(listener, app).await {
-            warn!("session test extension: LAN test server error: {e}");
+            warn!(error = %e, "session bridge: the LAN server stopped");
         }
     });
+    runtime.spawn(async move {
+        let Some(key_path) = config_dir().map(|d| d.join("session-bridge-iroh.key")) else {
+            warn!("session bridge: no config directory for the iroh key");
+            return;
+        };
+        let key = match architect::iroh_link::load_or_create_secret_key(&key_path) {
+            Ok(key) => key,
+            Err(e) => {
+                warn!(error = %e, "session bridge: the iroh key could not be read or made");
+                return;
+            }
+        };
+        let endpoint = match architect::iroh_link::bind_endpoint(key).await {
+            Ok(endpoint) => endpoint,
+            Err(e) => {
+                warn!(error = %e, "session bridge: iroh did not bind");
+                return;
+            }
+        };
+        let id = endpoint.id().to_string();
+        let _ = ExtState::set(&daw_reaper::Reaper, "FTS_SESSION_EXT", "iroh", &id, false);
+        announce(None, Some(&id));
+        architect::iroh_link::serve_router(&endpoint, handler).await;
+    });
+}
+
+/// Where the bridge can be reached, said once each part is up: in the log,
+/// and in `~/.config/fts/session-bridge.txt` for a person to read off.
+fn announce(port: Option<u16>, iroh: Option<&str>) {
+    static SEEN: std::sync::Mutex<(Option<u16>, Option<String>)> =
+        std::sync::Mutex::new((None, None));
+    let Ok(mut seen) = SEEN.lock() else { return };
+    if port.is_some() {
+        seen.0 = port;
+    }
+    if let Some(id) = iroh {
+        seen.1 = Some(id.to_owned());
+    }
+    let mut lines = vec!["Session bridge — dial one of these from the Session app:".to_owned()];
+    if let Some(port) = seen.0 {
+        for ip in lan_addresses() {
+            lines.push(format!("  ws://{ip}:{port}/vox"));
+        }
+        lines.push(format!("  ws://localhost:{port}/vox"));
+    }
+    if let Some(id) = &seen.1 {
+        lines.push(format!("  fts-engine:{id}"));
+    }
+    let text = lines.join("\n");
+    info!(
+        bridge.port = seen.0,
+        bridge.iroh = seen.1.as_deref(),
+        "session bridge: listening"
+    );
+    if let Some(dir) = config_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("session-bridge.txt"), format!("{text}\n"));
+    }
+}
+
+/// This Mac's LAN address, as the route to the internet leaves it (no
+/// packet is sent: a UDP socket only picks the interface).
+fn lan_addresses() -> Vec<String> {
+    let probe = std::net::UdpSocket::bind(("0.0.0.0", 0))
+        .and_then(|s| s.connect(("1.1.1.1", 80)).map(|()| s))
+        .and_then(|s| s.local_addr());
+    probe.map(|a| vec![a.ip().to_string()]).unwrap_or_default()
+}
+
+/// `~/.config/fts`, where the FTS tools keep their keys and notes.
+fn config_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config").join("fts"))
 }
 
 extern "C" fn timer_callback() {

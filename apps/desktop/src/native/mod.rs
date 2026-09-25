@@ -180,7 +180,7 @@ fn remember(project: &Path) {
 pub fn launch() {
     // How this app dials a Session engine (Remote on another Session): the
     // connector lives with the app's iroh identity (`crate::remote`).
-    #[cfg(feature = "session")]
+    #[cfg(feature = "session-domain")]
     session_daw::open::set_engine_dialer(|address| {
         Box::pin(async move {
             let addr = crate::remote::EngineAddr::parse(&address).map_err(|e| eyre::eyre!(e))?;
