@@ -292,6 +292,23 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             );
         }
     };
+    // `FTS_SESSION_LIVE=<link>` joins a live set as the window opens, as
+    // `FTS_SESSION_PROJECT` opens a song (`demo` is the public demo).
+    use_hook({
+        let mut join = join.clone();
+        move || {
+            if let Some(link) = std::env::var("FTS_SESSION_LIVE")
+                .ok()
+                .filter(|l| !l.trim().is_empty())
+            {
+                join(if link.trim() == "demo" {
+                    DEMO_LINK.to_owned()
+                } else {
+                    link
+                });
+            }
+        }
+    });
     let mut join_demo = join.clone();
     let mut join_link = join.clone();
     let mut join_pasted = join;
