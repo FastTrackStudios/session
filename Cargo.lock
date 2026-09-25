@@ -1299,6 +1299,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "auth-client"
+version = "0.1.0"
+source = "git+https://github.com/FastTrackStudios/architect?tag=v0.9.4#18349bb6d8b1554c99392d621c7d08645bed0829"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "vox",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13652,6 +13665,7 @@ dependencies = [
  "anyrender_vello 0.12.0",
  "anyrender_vello_hybrid",
  "architect",
+ "auth-client",
  "blitz-dom",
  "blitz-paint",
  "blitz-traits",
@@ -18884,6 +18898,10 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -18985,8 +19003,4 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "dsp-golden"
 version = "0.1.0"

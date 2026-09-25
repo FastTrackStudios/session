@@ -70,6 +70,15 @@ pub fn Shell() -> Element {
     // the tabs read and a pick or a recolour writes.
     let opened: session_daw::setlist::Setlist = use_context();
     let mut setlist = use_context_provider(|| Signal::new(opened));
+    // A streamed set's songs after the first, as each opens behind it.
+    use_future(move || async move {
+        let Some(mut arrivals) = session_daw::stream_set::take_arrivals() else {
+            return;
+        };
+        while let Some(arrival) = arrivals.recv().await {
+            setlist.write().arrive(arrival);
+        }
+    });
     use_live_advance(setlist, mode);
     session_daw::collab_bar::use_follow_song(setlist);
     // `FTS_SESSION_SONG=<n>` (1-based): open the set on its n-th song — to
@@ -92,19 +101,6 @@ pub fn Shell() -> Element {
     // Space plays and stops whatever has the focus.
     session_daw::keys::use_window_transport_keys();
     let window = dioxus_native::use_window();
-    // iOS: winit's window is handed to the app's scene (see `ios_scene`).
-    #[cfg(target_os = "ios")]
-    use_hook({
-        let window = window.clone();
-        move || {
-            use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            if let Ok(handle) = window.window_handle()
-                && let RawWindowHandle::UiKit(uikit) = handle.as_raw()
-            {
-                super::ios_scene::window_created(uikit.ui_view);
-            }
-        }
-    });
     // The window's size in logical pixels, kept as it is resized: the
     // bar's width says how much of it is spelled out, and the shape says
     // which layout — a phone's (or a window made that small) takes the

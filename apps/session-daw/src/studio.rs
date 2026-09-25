@@ -90,6 +90,83 @@ impl PartialEq for StudioSession {
     }
 }
 
+impl StudioSession {
+    /// The song that opened as `project` in the engine — current or not —
+    /// read back as the studio lays it out, by the project rather than
+    /// whichever is current, so a song opening behind the one on screen
+    /// does not move it: how a page reads every song it opens, and a
+    /// window the songs of a streamed set that arrive after the first.
+    /// `rpp_text` is the project's text (for its track kinds), `chart_text`
+    /// its chart's; `waves` also reads its audio items' peaks from the
+    /// engine (a page is handed them instead).
+    ///
+    /// # Errors
+    ///
+    /// The facade is not up, or the project is not in the engine or could
+    /// not be read.
+    pub async fn read_project(
+        project: &str,
+        name: &str,
+        rpp_text: &str,
+        chart_text: Option<&str>,
+        waves: bool,
+    ) -> eyre::Result<Self> {
+        const SCENE: &str = "drum-mixing";
+        // Say which step fails: `fetch_of` answers only yes or no.
+        let facade =
+            daw_control::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
+        let handle = facade
+            .project(project.to_owned())
+            .await
+            .map_err(|e| eyre::eyre!("{name} is not in the engine: {e}"))?;
+        let raw = daw_ui::studio::project::fetch_of(handle.clone())
+            .await
+            .ok_or_else(|| eyre::eyre!("could not read {name} back"))?;
+        let planner = Planner {
+            raw: Arc::new(raw),
+            scene: Some(SCENE),
+            kinds: Arc::new(crate::plan::Kinds::from_text(rpp_text)),
+        };
+        let (studio, rows) = planner.plan(&planner.raw);
+        let previews = crate::midi::Previews::default();
+        let items = || studio.0.items.values().flatten();
+        previews
+            .fill_in(
+                &handle,
+                items()
+                    .filter(|item| studio.0.is_midi(&item.guid))
+                    .map(|item| (item.guid.clone(), item.length.as_seconds()))
+                    .collect(),
+            )
+            .await;
+        if waves {
+            previews
+                .fill_waves_in(
+                    &handle,
+                    items()
+                        .filter(|item| !studio.0.is_midi(&item.guid))
+                        .map(|item| item.guid.clone())
+                        .collect(),
+                )
+                .await;
+        }
+        let chart = chart_text.and_then(|text| {
+            keyflow::parse(text)
+                .inspect_err(|e| tracing::error!(error = %e, "chart: could not parse"))
+                .ok()
+                .map(Arc::new)
+        });
+        Ok(Self {
+            project: studio,
+            rows,
+            previews,
+            chart,
+            chart_file: None,
+            planner,
+        })
+    }
+}
+
 #[cfg(feature = "native")]
 impl StudioSession {
     /// Open `path` on the process's engine with audio, run `prepare` on it
@@ -119,12 +196,17 @@ impl StudioSession {
         prepare: &crate::prepare::Prepare,
         first: bool,
     ) -> eyre::Result<(Self, String)> {
-        Self::open_first_as(path, prepare, first.then_some(true))
+        Self::open_first_as(
+            path,
+            prepare,
+            first.then_some(true),
+            crate::open::Media::All,
+        )
     }
 
     /// [`Self::open_as`], where `first` is `Some(audio)` for the song that
     /// stands the engine up — with or without a device — and `None` for
-    /// the rest.
+    /// the rest; `media` is when its media loads.
     ///
     /// # Errors
     ///
@@ -133,16 +215,13 @@ impl StudioSession {
         path: &std::path::Path,
         prepare: &crate::prepare::Prepare,
         first: Option<bool>,
+        media: crate::open::Media,
     ) -> eyre::Result<(Self, String)> {
         let plan = crate::open::song_plan(path, prepare);
         let opened = if let Some(audio) = first {
-            if audio {
-                crate::open::open_and_serve(&plan.open)?
-            } else {
-                crate::open::open_silent(&plan.open)?
-            }
+            crate::open::open_first_with(&plan.open, audio, media)?
         } else {
-            let opened = crate::open::open_another(&plan.open)?;
+            let opened = crate::open::open_another_with(&plan.open, media)?;
             crate::open::switch_to(&opened.daw, &opened.project_guid, false);
             opened
         };

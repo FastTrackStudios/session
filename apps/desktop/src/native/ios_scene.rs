@@ -1,4 +1,6 @@
-//! The UIScene lifecycle, which iOS 27 requires of every app.
+//! The UIScene lifecycle, which iOS 27 requires of every app — and the
+//! little else of UIKit the app reaches for itself ([`open_url`],
+//! [`pasted`]).
 //!
 //! An app built with the iOS 27 SDK that does not adopt scenes is stopped at
 //! launch (`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`
@@ -108,4 +110,32 @@ fn attach(mtm: MainThreadMarker) {
         ios.scene = "adopted",
         "ios: winit's window joined the scene"
     );
+}
+
+/// Open `url` in the browser.
+pub fn open_url(url: &str) {
+    use objc2_foundation::{NSDictionary, NSString, NSURL};
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let Some(url) = NSURL::URLWithString(&NSString::from_str(url)) else {
+        tracing::warn!("ios: not a URL to open");
+        return;
+    };
+    // SAFETY: an empty options dictionary is a dictionary of the right
+    // type; no completion handler.
+    unsafe {
+        UIApplication::sharedApplication(mtm).openURL_options_completionHandler(
+            &url,
+            &NSDictionary::new(),
+            None,
+        );
+    }
+}
+
+/// The text on the pasteboard, if any (iOS asks its person first).
+pub fn pasted() -> Option<String> {
+    // SAFETY: the general pasteboard's string, read on the main thread
+    // (the start screen's press handler).
+    unsafe { objc2_ui_kit::UIPasteboard::generalPasteboard().string() }.map(|s| s.to_string())
 }

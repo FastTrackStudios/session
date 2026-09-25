@@ -371,7 +371,9 @@ architect-auth = { git = "https://github.com/FastTrackStudios/architect", tag = 
 auth = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 auth-proto = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 auth-db = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
-auth-client = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
+# v0.9.4 for `auth_client::device` (the app signs in from another device);
+# auth-client links no architect, so it moves ahead of the rest alone.
+auth-client = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.4" }
 crdt = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 crdt-derive = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }
 crdt-seaorm = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.9.2" }

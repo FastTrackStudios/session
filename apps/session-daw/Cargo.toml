@@ -205,6 +205,9 @@ task-dial = { workspace = true, optional = true }
 # A song streamed from a share link (the public demo): its listing, its
 # documents and its proxies over HTTP.
 reqwest = { workspace = true, optional = true }
+# Signing in to Task from another device (task_account): the protocol and
+# the kept session.
+auth-client = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 # The browser's tokio: channels and `select!` for the live session's loop
@@ -263,6 +266,7 @@ native = [
     "dawfile-reaper/peaks-wav",
     "dawfile-reaper/peaks-ogg",
     "dep:session-library",
+    "dep:auth-client",
     "dep:live-proto",
     "dep:task-dial",
     "dep:reqwest",

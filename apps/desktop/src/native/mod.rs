@@ -19,6 +19,7 @@
 #[cfg(target_os = "ios")]
 mod ios_scene;
 mod shell;
+mod start;
 
 use std::any::Any;
 use std::path::{Path, PathBuf};
@@ -28,36 +29,39 @@ use std::path::{Path, PathBuf};
 /// this repo.
 const EXAMPLE: &str = "/Volumes/build-disk/development/sessions/Always On Time/Always On Time.RPP";
 
-/// What to open, in order: `FTS_SESSION_SETLIST` (a setlist); then
-/// `FTS_SESSION_PROJECT` (one song); what was open last time; the example,
-/// if this machine has it; and otherwise the user's pick from an Open
-/// dialog. `None` when the dialog is cancelled.
-///
-/// A song is a setlist of one, so what comes back is always a list — with
-/// the path it came from, which is what is remembered.
-fn choose() -> Option<(PathBuf, Vec<PathBuf>)> {
-    let target = std::env::var_os("FTS_SESSION_SETLIST")
+/// What to open as the window opens, in order: `FTS_SESSION_SETLIST` (a
+/// setlist); then `FTS_SESSION_PROJECT` (one song); what was open last
+/// time; and the example, if this machine has it. `None` when there is
+/// nothing: the window stays on the start screen ([`start`]), which is
+/// where a set is picked, joined, or streamed.
+fn choose() -> Option<PathBuf> {
+    std::env::var_os("FTS_SESSION_SETLIST")
         .or_else(|| std::env::var_os("FTS_SESSION_PROJECT"))
         .map(PathBuf::from)
         .or_else(|| remembered().filter(|p| p.exists()))
-        .or_else(|| Some(PathBuf::from(EXAMPLE)).filter(|p| p.is_file()))
-        .or_else(pick)?;
-    let songs = songs_of(&target)?;
-    Some((target, songs))
+        // Not on a phone: its disk is its own, and a simulator's reach into
+        // this Mac's `/Volumes` blocks on a privacy prompt no one sees.
+        .or_else(|| {
+            Some(PathBuf::from(EXAMPLE)).filter(|p| cfg!(not(target_os = "ios")) && p.is_file())
+        })
 }
 
-/// The songs `target` names: a setlist's (a folder of song folders, or a
-/// `.setlist` file — see `session_daw::setlist::read_setlist`), or the one
-/// song it is.
+/// The songs `target` names: the one song it is (a project, a `.session`,
+/// or a song's folder); or a setlist's (a folder of song folders, or a
+/// `.setlist` file — see `session_daw::setlist::read_setlist`).
 fn songs_of(target: &Path) -> Option<Vec<PathBuf>> {
-    let setlist = (target.is_dir() && !session_daw::open::is_session(target))
-        || target
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("setlist"));
-    if !setlist {
+    use session_daw::setlist::{read_setlist, song_in};
+    if target.is_dir() && !session_daw::open::is_session(target) {
+        if let Some(song) = song_in(target) {
+            return Some(vec![song]);
+        }
+    } else if !target
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("setlist"))
+    {
         return Some(vec![target.to_path_buf()]);
     }
-    session_daw::setlist::read_setlist(target)
+    read_setlist(target)
         .inspect_err(|e| tracing::error!(error = %e, "the setlist could not be read"))
         .ok()
 }
@@ -71,7 +75,8 @@ fn pick() -> Option<PathBuf> {
         .pick_file()
 }
 
-/// A phone has no files to pick: a set is joined by its link.
+/// A phone has no Open dialog: its songs are the app's documents, which
+/// the start screen lists.
 #[cfg(target_os = "ios")]
 fn pick() -> Option<PathBuf> {
     None
@@ -113,6 +118,34 @@ fn ask(title: &str, description: String, _buttons: &[&str]) -> Option<String> {
     None
 }
 
+/// Open `url` in the browser (a sign-in's approval page).
+fn open_url(url: &str) {
+    #[cfg(target_os = "ios")]
+    ios_scene::open_url(url);
+    #[cfg(not(target_os = "ios"))]
+    {
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(windows) {
+            "explorer"
+        } else {
+            "xdg-open"
+        };
+        if let Err(e) = std::process::Command::new(opener).arg(url).spawn() {
+            tracing::warn!(error = %e, "could not open a link in the browser");
+        }
+    }
+}
+
+/// What is on the clipboard, when a platform lets it be read here (a
+/// phone, where typing a link is the hard way).
+fn pasted() -> Option<String> {
+    #[cfg(target_os = "ios")]
+    return ios_scene::pasted();
+    #[cfg(not(target_os = "ios"))]
+    None
+}
+
 /// Where the last session's path is kept.
 fn memory() -> Option<PathBuf> {
     Some(dirs::data_dir()?.join("Session").join("last-session"))
@@ -136,12 +169,14 @@ fn remember(project: &Path) {
     }
 }
 
-/// Open the setlist — every song into the one engine, the first current —
-/// then the window. Returns when the window closes, or straight away when
-/// nothing was chosen.
+/// The window, and the setlist in it — every song in the one engine, the
+/// first current. Returns when the window closes.
 ///
-/// A session that fails to open says why and offers the Open dialog again,
-/// rather than quitting with no window and nothing on screen.
+/// The window opens on the start screen ([`start`]), opening what was
+/// chosen ([`choose`]) as it does — so a phone, with nothing picked before
+/// launch, and a desktop take the same way in, and nothing is opened
+/// before there is a window to say so. With nothing chosen, or when it
+/// does not open, the start screen stays.
 pub fn launch() {
     // How this app dials a Session engine (Remote on another Session): the
     // connector lives with the app's iroh identity (`crate::remote`).
@@ -161,27 +196,31 @@ pub fn launch() {
     } else {
         mode.target
     };
-    let setlist = match remote {
+    match remote {
         Some(target) => match attach(&target) {
-            Some(setlist) => setlist,
-            None => return,
+            Some(Attached::Set(setlist)) => run(Some(setlist), None),
+            Some(Attached::Engine) => run(None, choose()),
+            None => {}
         },
-        None => match open_chosen() {
-            Some(setlist) => setlist,
-            None => return,
-        },
-    };
-    run(setlist);
+        None => run(None, choose()),
+    }
+}
+
+/// What attaching came to: the set the other system has open, or Engine
+/// mode after all (it was not there, and this window plays the set).
+enum Attached {
+    Set(session_daw::setlist::Setlist),
+    Engine,
 }
 
 /// Attach to the system a Remote or Cue window drives. When it is not
 /// there, say so and offer to try again, to open a session here in Engine
 /// mode instead, or to quit — never quietly play the set here while
 /// someone thinks REAPER is.
-fn attach(target: &session_daw::open::RemoteTarget) -> Option<session_daw::setlist::Setlist> {
+fn attach(target: &session_daw::open::RemoteTarget) -> Option<Attached> {
     loop {
         match session_daw::setlist::Setlist::attach(target) {
-            Ok(setlist) => return Some(setlist),
+            Ok(setlist) => return Some(Attached::Set(setlist)),
             Err(e) => {
                 tracing::error!(error = %e, audio.target = target.kind(), "could not attach to the system this window drives");
                 let answer = ask(
@@ -193,7 +232,7 @@ fn attach(target: &session_daw::open::RemoteTarget) -> Option<session_daw::setli
                     Some("Try Again") => {}
                     Some("Open in Engine Mode") => {
                         session_daw::open::set_mode(session_daw::open::ModeState::engine());
-                        return open_chosen();
+                        return Some(Attached::Engine);
                     }
                     _ => return None,
                 }
@@ -202,51 +241,20 @@ fn attach(target: &session_daw::open::RemoteTarget) -> Option<session_daw::setli
     }
 }
 
-/// Engine mode: open the chosen song or setlist into the engine.
-fn open_chosen() -> Option<session_daw::setlist::Setlist> {
-    let mut chosen = choose();
-    let setlist = loop {
-        let Some((target, songs)) = chosen else {
-            return None;
-        };
-        match session_daw::setlist::Setlist::open(&songs) {
-            Ok(setlist) => {
-                remember(&target);
-                break setlist;
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "could not open the session");
-                let again = ask(
-                    "Could not open the session",
-                    format!("{}\n\n{e}", target.display()),
-                    &["Open Another…", "Quit"],
-                );
-                if again.as_deref() != Some("Open Another…") {
-                    return None;
-                }
-                chosen = pick().and_then(|target| songs_of(&target).map(|songs| (target, songs)));
-            }
-        }
-    };
-    Some(setlist)
-}
-
-/// The window, over `setlist`.
-fn run(setlist: session_daw::setlist::Setlist) {
-    // `FTS_SESSION_AUTOPLAY=1` starts playing as the window opens — for
-    // measuring a session while it plays without a hand on the mouse.
-    if std::env::var("FTS_SESSION_AUTOPLAY").is_ok_and(|v| v != "0") {
-        session_daw::engine::transport(session_daw::engine::Move::PlayStop, 0.0);
-    }
-
+/// The window: over `setlist` when it is open already (Remote, Cue);
+/// otherwise the start screen, opening `open` — the window is up at once,
+/// and the song comes in behind its loading note (`start`).
+fn run(setlist: Option<session_daw::setlist::Setlist>, open: Option<PathBuf>) {
     // iOS 27 stops an app that has not adopted scenes: ours is registered
     // before UIKit starts, for Info.plist to name.
     #[cfg(target_os = "ios")]
     ios_scene::register();
     let attributes = window_attributes();
-    let contexts: Vec<Box<dyn Fn() -> Box<dyn Any> + Send + Sync>> =
-        vec![Box::new(move || Box::new(setlist.clone()) as Box<dyn Any>)];
-    dioxus_native::launch_cfg(shell::Shell, contexts, vec![Box::new(attributes)]);
+    let contexts: Vec<Box<dyn Fn() -> Box<dyn Any> + Send + Sync>> = vec![
+        Box::new(move || Box::new(setlist.clone()) as Box<dyn Any>),
+        Box::new(move || Box::new(start::OpenFirst(open.clone())) as Box<dyn Any>),
+    ];
+    dioxus_native::launch_cfg(start::App, contexts, vec![Box::new(attributes)]);
 }
 
 /// The window: our top bar IS the title bar. On macOS the native one is made

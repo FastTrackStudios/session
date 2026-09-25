@@ -155,7 +155,15 @@ impl TaskSource {
     ///
     /// The library cannot be reached, or has no session for the song.
     pub async fn new(slug: &str) -> eyre::Result<Self> {
-        let library = session_library::Library::from_env();
+        Self::of(session_library::Library::from_env(), slug).await
+    }
+
+    /// The song `slug` in `library` — one a window signed in to.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub async fn of(library: session_library::Library, slug: &str) -> eyre::Result<Self> {
         let song = library.song(slug).await?;
         Ok(Self { library, song })
     }

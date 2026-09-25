@@ -150,8 +150,13 @@ impl Previews {
         let Ok(project) = daw.current_project().await else {
             return;
         };
+        self.fill_waves_in(&project, guids).await;
+    }
+
+    /// [`Self::fill_waves`] for `project`, whichever is current.
+    pub async fn fill_waves_in(&self, project: &daw_control::Project, guids: Vec<String>) {
         for guid in guids {
-            let Some(wave) = read_wave(&project, &guid).await else {
+            let Some(wave) = read_wave(project, &guid).await else {
                 continue;
             };
             if let Ok(mut waves) = self.waves.lock() {
