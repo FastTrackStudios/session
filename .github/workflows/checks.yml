@@ -78,7 +78,11 @@ jobs:
           path: processor
       - name: Persistent target dir
         run: |
-          dir="${CACHE_DIRECTORY:-$HOME/.cache}/cargo-target"
+          # On the runner's big disk ($CI_CACHE_DIR: the runner module's
+          # per-instance dir on /run/media/Development), not /var/cache on
+          # the root disk, which a 580 GB target dir filled until jobs died
+          # mid-test. The fallbacks are for a runner without one.
+          dir="${CI_CACHE_DIR:-${CACHE_DIRECTORY:-$HOME/.cache}}/cargo-target"
           mkdir -p "$dir"
           echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
           echo "target dir: $dir ($(du -sh "$dir" 2>/dev/null | cut -f1))"
