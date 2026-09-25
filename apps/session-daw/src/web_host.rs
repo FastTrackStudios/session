@@ -185,9 +185,27 @@ fn pointer(e: &PointerData) -> BlitzPointerEvent {
         Some(dioxus::html::input_data::MouseButton::Secondary) => MouseEventButton::Secondary,
         _ => MouseEventButton::Main,
     };
+    // Which pointer, so a widget can tell fingers apart (two faders at
+    // once) and a finger from a mouse (touch gestures).
+    let id = match e.pointer_type().as_str() {
+        "touch" => BlitzPointerId::Finger(u64::from(e.pointer_id().unsigned_abs())),
+        "pen" => BlitzPointerId::Pen,
+        _ => BlitzPointerId::Mouse,
+    };
+    let mut buttons = MouseEventButtons::empty();
+    for held in e.held_buttons() {
+        buttons |= match held {
+            dioxus::html::input_data::MouseButton::Primary => MouseEventButtons::Primary,
+            dioxus::html::input_data::MouseButton::Secondary => MouseEventButtons::Secondary,
+            dioxus::html::input_data::MouseButton::Auxiliary => MouseEventButtons::Auxiliary,
+            dioxus::html::input_data::MouseButton::Fourth => MouseEventButtons::Fourth,
+            dioxus::html::input_data::MouseButton::Fifth => MouseEventButtons::Fifth,
+            dioxus::html::input_data::MouseButton::Unknown => MouseEventButtons::empty(),
+        };
+    }
     BlitzPointerEvent {
-        id: BlitzPointerId::Mouse,
-        is_primary: true,
+        id,
+        is_primary: e.is_primary(),
         coords: PointerCoords {
             page_x: x,
             page_y: y,
@@ -197,7 +215,7 @@ fn pointer(e: &PointerData) -> BlitzPointerEvent {
             client_y: y,
         },
         button,
-        buttons: MouseEventButtons::empty(),
+        buttons,
         mods: modifiers(e.modifiers()),
         details: PointerDetails::default(),
         element: blitz_traits::events::Point { x, y },
@@ -258,7 +276,8 @@ pub fn WidgetCanvas(
             panel.call(event);
         }
     };
-    let (w1, w2, w3, w4, w5) = (
+    let (w1, w2, w3, w4, w5, w6) = (
+        widget.clone(),
         widget.clone(),
         widget.clone(),
         widget.clone(),
@@ -310,6 +329,11 @@ pub fn WidgetCanvas(
             onpointerup: move |e| {
                 to_panel(PanelEvent::Button { button: panel_button(&e), pressed: false });
                 w3.0.borrow_mut().event(&UiEvent::PointerUp(pointer(&e)));
+            },
+            // The browser took the pointer back (a system gesture, the
+            // page scrolling): what it was doing ends here.
+            onpointercancel: move |e| {
+                w6.0.borrow_mut().event(&UiEvent::PointerCancel(pointer(&e)));
             },
             oncontextmenu: move |e| e.prevent_default(),
             onwheel: move |e| {
@@ -572,6 +596,8 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     };
     // The record view's song menu picks the same way.
     use_context_provider(|| crate::record_view::PickSong(Callback::new(pick)));
+    // Touch mode: on where the page's pointer is a finger.
+    use_context_provider(crate::touch::Touch::detect);
     // Record mode's performance view stands in for the top bar.
     let record_screen =
         move || mode() == session::modes::Mode::Record && view() == crate::shell::View::Performance;

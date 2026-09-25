@@ -350,6 +350,22 @@ impl Strip {
         (floor - self.fader_top()).clamp(0.0, self.stretch())
     }
 
+    /// The fader's cap at `volume`, in the strip's coordinates: where the
+    /// overlay draws it, and so where a finger can take hold of it. `None`
+    /// where the volume is a knob.
+    #[must_use]
+    pub fn cap(&self, volume: f64) -> Option<Rect> {
+        if !self.has_fader() {
+            return None;
+        }
+        let column = self.rect(Control::Volume)?;
+        let fader_w = self.columns.fader_w;
+        let (y, h) = art::fader_cap_at(crate::tcp::volume_fraction(volume), fader_w, self.travel());
+        let w = art::cap_w(fader_w);
+        let x = column.x0 + (fader_w - w) / 2.0;
+        Some(Rect::new(x, column.y0 + y, x + w, column.y0 + y + h))
+    }
+
     /// Whether the volume control is a fader rather than a knob.
     #[must_use]
     pub fn has_fader(&self) -> bool {

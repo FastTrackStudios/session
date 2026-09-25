@@ -3,9 +3,10 @@
 //!
 //! - **On top**, the song's bar and, right under it, the section's: the
 //!   current section split into its measures, a press on one going there.
-//! - **On the right**, a mixer of the five things a singer needs to hear —
-//!   Click, Vocal, Drums, Bass, Guitar — made for a finger: big mute and
-//!   solo, and a fader that moves only by its cap.
+//! - **On the right**, the DAW's mixer, with just the five things a singer
+//!   needs to hear — Click, Vocal, Drums, Bass, Guitar. Touch mode
+//!   ([`crate::touch`]) makes it a finger's: bigger, a fader that moves
+//!   only by its cap.
 //! - **On the left**, the rating pad (★★★ / ★★ / ★ / ✕): a press marks the
 //!   vocal take at the playhead — while he sings, or after, moved there by
 //!   the bars ([`crate::take_rating`]).
@@ -13,13 +14,11 @@
 //!   it in more detail with the pad.
 //! - **At the bottom**, the transport, with Record where Loop is.
 
-use std::rc::Rc;
-
 use dioxus::prelude::*;
 use session_ui::components::{MeasureIndicator, SectionProgressBar};
 
 use crate::compact::{Form, use_form};
-use crate::engine::{Edit, Move, transport};
+use crate::engine::{Move, transport};
 use crate::progress::{ProgressBar, Song, TransportButtons, use_reading};
 use crate::studio::StudioSession;
 use crate::take_rating::{Scope, Stars, miss, star};
@@ -58,7 +57,7 @@ pub fn RecordView() -> Element {
             div {
                 style: "flex:1; min-height:0; display:flex; flex-direction:column; gap:10px; padding:10px;",
                 RatingPad { upright }
-                div { style: "flex:1; min-height:0; display:flex;", TouchMixer {} }
+                div { style: "flex:1; min-height:0; display:flex;", RecordMixer {} }
             }
         }
     } else {
@@ -81,7 +80,7 @@ pub fn RecordView() -> Element {
                 div { style: "flex:none; width:132px; display:flex;", RatingPad { upright } }
                 // Room, for now.
                 div { style: "flex:1; min-width:0;" }
-                div { style: "flex:none; display:flex;", TouchMixer {} }
+                RecordMixer {}
             }
         }
     };
@@ -141,6 +140,7 @@ fn RecordMenu(height: String) -> Element {
     let setlist = try_use_context::<Signal<crate::setlist::Setlist>>();
     let pick = try_use_context::<PickSong>();
     let mode = try_use_context::<Signal<Mode>>();
+    let touch = try_use_context::<crate::touch::Touch>();
     let mut open = use_signal(|| false);
     let songs: Vec<(usize, String, String)> = setlist
         .map(|s| {
@@ -199,6 +199,21 @@ fn RecordMenu(height: String) -> Element {
                                     "{label}"
                                 }
                             }
+                        }
+                    }
+                    if let Some(crate::touch::Touch(mut touch)) = touch {
+                        button {
+                            style: {
+                                let (fg, bg) = if touch() { ("#93c5fd", "#24272d") } else { (DIM, PANEL) };
+                                format!(
+                                    "display:flex; align-items:center; justify-content:space-between; height:44px; \
+                                     padding:0 14px; border-radius:12px; border:1px solid {RULE}; background:{bg}; \
+                                     color:{fg}; font-family:inherit; font-size:15px; font-weight:650; cursor:pointer;"
+                                )
+                            },
+                            onclick: move |_| touch.toggle(),
+                            span { "Touch controls" }
+                            span { if touch() { "On" } else { "Off" } }
                         }
                     }
                     span { style: "font-size:11px; font-weight:700; letter-spacing:0.08em; color:{DIM}; padding:2px 4px 0;", "SONGS" }
@@ -453,96 +468,76 @@ struct Strip {
     arm: Option<daw_proto::Track>,
 }
 
-/// The touch mixer: one strip per group the project has.
+/// The mixer: the DAW's own ([`crate::mixer_panel`]), with one strip per
+/// group the project has. Which tracks those are is read from the engine
+/// now and again, since a song picked is another project; what they are
+/// set to arrives as the engine's track events, inside the mixer.
 #[component]
-fn TouchMixer() -> Element {
-    let applier = use_hook(|| Rc::new(crate::engine::Applier::start()));
+fn RecordMixer() -> Element {
     let mut strips = use_signal(Vec::<Strip>::new);
-    // A fader held: its strip's live value is ours until it is let go.
-    let held = use_signal(|| None::<String>);
     use_future(move || async move {
         loop {
-            if let Some(found) = read_strips().await {
-                let holding = held.peek().clone();
-                let mut next = found;
-                if let Some(guid) = holding {
-                    // Keep the held fader where the finger has it.
-                    let current = strips.peek().clone();
-                    for (strip, was) in next.iter_mut().zip(current.iter()) {
-                        if let (Some(track), Some(was)) = (strip.track.as_mut(), was.track.as_ref())
-                            && track.guid == guid
-                        {
-                            track.volume = was.volume;
-                        }
-                    }
-                }
-                if *strips.peek() != next {
-                    strips.set(next);
-                }
+            if let Some(found) = read_strips().await
+                && guids(&found) != guids(&strips.peek())
+            {
+                strips.set(found);
             }
-            architect::platform::sleep(std::time::Duration::from_millis(300)).await;
+            architect::platform::sleep(std::time::Duration::from_secs(2)).await;
         }
     });
     let list = strips();
+    let shown = list.iter().filter(|s| s.track.is_some()).count();
+    if shown == 0 {
+        return rsx! {};
+    }
+    // As wide as its strips, drawn at touch mode's size, and no wider: the
+    // room left over stays with the view.
+    let zoom = crate::touch::zoom(crate::touch::use_touch());
+    let width = (shown as f64 * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP) * zoom).ceil();
     rsx! {
         div {
-            style: "display:flex; gap:8px; padding:10px; border-radius:16px; background:{PANEL}; \
-                    border:1px solid {RULE};",
-            for (i, strip) in list.into_iter().enumerate() {
-                if let Some(track) = strip.track.clone() {
-                    TouchStrip {
-                        key: "{strip.label}",
-                        label: strip.label,
-                        track,
-                        arm: strip.arm.clone(),
-                        held,
-                        on_edit: {
-                            let applier = Rc::clone(&applier);
-                            move |edit: Edit| {
-                                // Shown at once; the engine catches up.
-                                let mut list = strips.write();
-                                if let Some(strip) = list.get_mut(i) {
-                                    for track in strip.track.iter_mut().chain(strip.arm.iter_mut()) {
-                                        apply_locally(track, &edit);
-                                    }
-                                }
-                                drop(list);
-                                if let Some(applier) = applier.as_ref() {
-                                    applier.send(edit);
-                                }
-                            }
-                        },
-                    }
-                } else {
-                    // A group the project does not have: its place kept, so
-                    // the strips stay where the hand expects them.
-                    div {
-                        key: "{strip.label}",
-                        style: "width:84px; flex:none; display:flex; flex-direction:column; align-items:center; \
-                                gap:8px; opacity:0.45;",
-                        span { style: "font-size:14px; font-weight:650;", "{strip.label}" }
-                        div {
-                            style: "flex:1; display:flex; align-items:center; justify-content:center; \
-                                    text-align:center; font-size:11px; color:{DIM}; line-height:1.4; padding:0 4px;",
-                            "Not in this project"
-                        }
-                    }
-                }
-            }
+            style: "position:relative; flex:none; width:{width}px; max-width:100%; height:100%; \
+                    border-radius:16px; overflow:hidden; border:1px solid {RULE};",
+            GroupMixer { key: "{guids(&list)}", strips: list }
         }
     }
 }
 
-/// An edit, on the strip's copy, so the finger sees it before the engine
-/// answers.
-fn apply_locally(track: &mut daw_proto::Track, edit: &Edit) {
-    match edit {
-        Edit::SetVolume(guid, gain) if *guid == track.guid => track.volume = *gain,
-        Edit::ToggleMute(guid) if *guid == track.guid => track.muted = !track.muted,
-        Edit::ToggleSolo(guid) if *guid == track.guid => track.soloed = !track.soloed,
-        Edit::ToggleArm(guid) if *guid == track.guid => track.armed = !track.armed,
-        _ => {}
-    }
+/// The groups' strips as the mixer's rows: each group's track, its arm
+/// sent to the track under it that records.
+#[component]
+fn GroupMixer(strips: Vec<Strip>) -> Element {
+    use_context_provider(|| {
+        let rows = strips
+            .iter()
+            .filter_map(|s| s.track.clone())
+            .map(|track| (track, 0))
+            .collect();
+        let arm_of = strips
+            .iter()
+            .filter_map(|s| {
+                let (track, arm) = (s.track.as_ref()?, s.arm.as_ref()?);
+                (arm.guid != track.guid).then(|| (track.guid.clone(), arm.clone()))
+            })
+            .collect();
+        crate::mixer_panel::Links::alone(rows, arm_of)
+    });
+    #[cfg(feature = "native")]
+    return rsx! { crate::mixer_panel::Mixer {} };
+    #[cfg(all(feature = "web", not(feature = "native")))]
+    return rsx! { crate::mixer_panel::WebMixer { hidden: false } };
+    #[cfg(not(any(feature = "native", feature = "web")))]
+    rsx! {}
+}
+
+/// Which tracks the groups are: what, changed, means another mixer.
+fn guids(strips: &[Strip]) -> String {
+    strips
+        .iter()
+        .flat_map(|s| [s.track.as_ref(), s.arm.as_ref()])
+        .map(|t| t.map_or("-", |t| t.guid.as_str()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// The groups' tracks, from the engine.
@@ -605,127 +600,6 @@ fn arm_target(
         .or_else(|| inside.iter().find(|t| says(t)))
         .or_else(|| inside.first())
         .map(|t| (*t).clone())
-}
-
-/// How far a finger moves a fader from bottom to top, in pixels: the drag's
-/// scale, whatever height the lane is drawn at.
-const TRAVEL: f64 = 220.0;
-/// The fader cap's height.
-const CAP_H: f64 = 44.0;
-
-/// One strip: the name, a fader moved only by its cap, mute and solo.
-#[component]
-fn TouchStrip(
-    label: &'static str,
-    track: daw_proto::Track,
-    arm: Option<daw_proto::Track>,
-    held: Signal<Option<String>>,
-    on_edit: EventHandler<Edit>,
-) -> Element {
-    let guid = track.guid.clone();
-    let norm = daw_theme_art::paint::tcp::gain_norm(track.volume).clamp(0.0, 1.0);
-    // Where the drag began: the pointer's y, and the fader then.
-    let mut grip = use_signal(|| None::<(f64, daw_proto::Track)>);
-    let holding = grip().is_some();
-    let db = 20.0 * track.volume.max(1e-9).log10();
-    let db_text = if track.volume <= 0.0 {
-        "-inf".to_owned()
-    } else {
-        format!("{db:+.1}")
-    };
-    let (mute_bg, mute_fg) = if track.muted {
-        ("#b45309", "#fff")
-    } else {
-        ("#23262c", DIM)
-    };
-    let (solo_bg, solo_fg) = if track.soloed {
-        ("#ca8a04", "#111")
-    } else {
-        ("#23262c", DIM)
-    };
-    let cap_color = if holding { "#3aa0ff" } else { "#d1d5db" };
-    let drag_guid = guid.clone();
-    let mute_guid = guid.clone();
-    let solo_guid = guid.clone();
-    rsx! {
-        div {
-            style: "width:84px; flex:none; display:flex; flex-direction:column; align-items:center; gap:8px;",
-            span { style: "font-size:14px; font-weight:650;", "{label}" }
-            span { style: "font-size:11px; color:{DIM}; font-variant-numeric:tabular-nums;", "{db_text} dB" }
-            // The fader: its lane takes the moves while the cap is held, so
-            // a finger that slides off the cap keeps it; a press on the lane
-            // alone does nothing.
-            div {
-                style: "flex:1; min-height:96px; width:84px; display:flex; flex-direction:column; align-items:center;",
-                onmousemove: move |e| {
-                    let Some((from_y, was)) = grip() else { return };
-                    let y = e.data().client_coordinates().y;
-                    let fraction = (from_y - y) / TRAVEL;
-                    if let Some(edit) = crate::engine::drag(crate::mcp::Control::Volume, &drag_guid, &was, fraction) {
-                        on_edit.call(edit);
-                    }
-                },
-                onmouseup: move |_| {
-                    grip.set(None);
-                    held.set(None);
-                },
-                onmouseleave: move |_| {
-                    grip.set(None);
-                    held.set(None);
-                },
-                // The slot above the cap and below it, shared as the fader
-                // stands: flex rather than placed, so the lane is as tall as
-                // the strip has room for (and Blitz sizes it — an absolute
-                // box stretched by insets gets no height).
-                div { style: "flex:{1.0 - norm} 1 0px; width:6px; border-radius:3px 3px 0 0; background:#2a2d33;" }
-                // The cap: the only place a fader is taken.
-                div {
-                    style: "flex:none; width:60px; height:{CAP_H}px; \
-                            border-radius:10px; background:{cap_color}; box-shadow:0 2px 6px rgba(0,0,0,0.5); \
-                            display:flex; align-items:center; justify-content:center;",
-                    onmousedown: {
-                        let guid = guid.clone();
-                        let track = track.clone();
-                        move |e: MouseEvent| {
-                            grip.set(Some((e.data().client_coordinates().y, track.clone())));
-                            held.set(Some(guid.clone()));
-                        }
-                    },
-                    div { style: "width:36px; height:3px; border-radius:2px; background:#4b5563;" }
-                }
-                div { style: "flex:{norm} 1 0px; width:6px; border-radius:0 0 3px 3px; background:#3aa0ff66;" }
-            }
-            // Record arm: red when armed — the one a singer's track needs.
-            if let Some(arm) = arm {
-                button {
-                    style: {
-                        let (bg, fg, border) = if arm.armed { ("#dc2626", "#fff", "#dc2626") } else { ("#23262c", "#f87171", RULE) };
-                        format!(
-                            "width:72px; height:44px; border-radius:10px; border:1px solid {border}; \
-                             background:{bg}; color:{fg}; font-family:inherit; font-size:15px; \
-                             font-weight:700; cursor:pointer;"
-                        )
-                    },
-                    onclick: move |_| on_edit.call(Edit::ToggleArm(arm.guid.clone())),
-                    "R"
-                }
-            }
-            button {
-                style: "width:72px; height:44px; border-radius:10px; border:1px solid {RULE}; \
-                        background:{mute_bg}; color:{mute_fg}; font-family:inherit; font-size:15px; \
-                        font-weight:700; cursor:pointer;",
-                onclick: move |_| on_edit.call(Edit::ToggleMute(mute_guid.clone())),
-                "M"
-            }
-            button {
-                style: "width:72px; height:44px; border-radius:10px; border:1px solid {RULE}; \
-                        background:{solo_bg}; color:{solo_fg}; font-family:inherit; font-size:15px; \
-                        font-weight:700; cursor:pointer;",
-                onclick: move |_| on_edit.call(Edit::ToggleSolo(solo_guid.clone())),
-                "S"
-            }
-        }
-    }
 }
 
 #[cfg(test)]

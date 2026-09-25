@@ -1017,7 +1017,6 @@ fn draw_strip_controls(
     if strip.has_fader()
         && let Some((x, y)) = at(Control::Volume)
     {
-        let value = crate::tcp::volume_fraction(track.volume);
         let travel = strip.travel();
         // Each channel on its own half, not the louder of the two and
         // not their sum: a summed meter cannot tell you that a stereo
@@ -1080,14 +1079,18 @@ fn draw_strip_controls(
         );
         // The cap, centred in the column and narrower than the meter,
         // so a channel shows down each side of it whatever it covers.
-        let (cap_y, cap_h) = art::fader_cap_at(value, strip.columns.fader_w, travel);
-        let cap_w = art::cap_w(strip.columns.fader_w);
+        // Where `Strip::cap` puts it, which is also where a finger takes
+        // hold of it.
+        let Some(cap) = strip.cap(track.volume) else {
+            return;
+        };
+        let (cap_y, cap_h) = (cap.y0 - y, cap.height());
         crate::art::scaled(
             scene,
             &art::fader_cap_through(&palette.chrome, palette.chrome.hardware_mark, CAP_GLASS),
             font,
-            x + (strip.columns.fader_w - cap_w) / 2.0,
-            y + cap_y,
+            left + cap.x0,
+            cap.y0,
             cap_h / 53.0,
         );
         // What the fader is SET to, while it is being set. The numbers

@@ -178,6 +178,8 @@ web-sys = { workspace = true, optional = true, features = [
     "CacheStorage", "Cache",
     # Whether this viewer chose the multitracks, kept across a set's resets.
     "Storage",
+    # Touch mode's default: whether the page's pointer is a finger.
+    "MediaQueryList",
 ] }
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
