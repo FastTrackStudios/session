@@ -109,7 +109,9 @@ fn attach(mtm: MainThreadMarker) {
     // and a window framed to the screen has its surface stretched into the
     // scene — the picture drawn taller than laid out, its foot off screen.
     // On a phone the two are the same.
-    window.setFrame(objc2_ui_kit::UICoordinateSpace::bounds(&*scene.coordinateSpace()));
+    window.setFrame(objc2_ui_kit::UICoordinateSpace::bounds(
+        &*scene.coordinateSpace(),
+    ));
     window.makeKeyAndVisible();
     tracing::info!(
         ios.scene = "adopted",

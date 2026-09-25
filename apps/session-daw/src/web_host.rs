@@ -573,9 +573,8 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     // The record view's song menu picks the same way.
     use_context_provider(|| crate::record_view::PickSong(Callback::new(pick)));
     // Record mode's performance view stands in for the top bar.
-    let record_screen = move || {
-        mode() == session::modes::Mode::Record && view() == crate::shell::View::Performance
-    };
+    let record_screen =
+        move || mode() == session::modes::Mode::Record && view() == crate::shell::View::Performance;
     let current = setlist.read().current().cloned();
     if form().compact() {
         return rsx! {

@@ -145,7 +145,10 @@ pub fn miss(scope: Scope) {
 /// Drop `rank` on `take` at `at`: its marker's index, if it landed.
 async fn mark(take: &daw::rpc::TakeHandle, rank: TakeRating, at: f64) -> Option<u32> {
     let position = daw_proto::Position::from_time(daw_proto::PositionInSeconds::from_seconds(at));
-    match take.add_marker_at(position, &rank.to_marker_name(), None).await {
+    match take
+        .add_marker_at(position, &rank.to_marker_name(), None)
+        .await
+    {
         Ok(Some(index)) => {
             tracing::info!(rating.rank = %rank.to_marker_name(), rating.at = at, "take-rating: marked");
             Some(index)
@@ -182,7 +185,9 @@ async fn vocal_take(at: f64) -> Option<Target> {
     let item = items
         .iter()
         .filter_map(|item| {
-            let rank = vocal.iter().position(|(guid, _)| *guid == item.track_guid)?;
+            let rank = vocal
+                .iter()
+                .position(|(guid, _)| *guid == item.track_guid)?;
             let from = item.position.as_seconds();
             let to = from + item.length.as_seconds();
             (from <= at && at < to).then_some((vocal[rank].1, from, item))
@@ -251,7 +256,13 @@ impl<T> MaybeSend for T {}
 mod tests {
     use super::*;
 
-    fn track(guid: &str, name: &str, parent: Option<&str>, folder: bool, armed: bool) -> daw_proto::Track {
+    fn track(
+        guid: &str,
+        name: &str,
+        parent: Option<&str>,
+        folder: bool,
+        armed: bool,
+    ) -> daw_proto::Track {
         daw_proto::Track {
             guid: guid.into(),
             name: name.into(),
@@ -291,10 +302,14 @@ mod tests {
 
     #[test]
     fn the_ranks_are_reapers_marker_names() {
-        let names: Vec<String> = [TakeRating::UpRank(1), TakeRating::UpRank(3), TakeRating::DownRank]
-            .iter()
-            .map(|r| r.to_marker_name())
-            .collect();
+        let names: Vec<String> = [
+            TakeRating::UpRank(1),
+            TakeRating::UpRank(3),
+            TakeRating::DownRank,
+        ]
+        .iter()
+        .map(|r| r.to_marker_name())
+        .collect();
         assert_eq!(names, [":)", ":)))", ":("]);
     }
 }

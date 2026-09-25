@@ -88,7 +88,11 @@ pub fn RecordView() -> Element {
     // Room for the window's traffic lights on a Mac, whose title bar the
     // top row stands in for.
     let lead = if cfg!(target_os = "macos") { 84 } else { 12 };
-    let (song_h, section_h) = if upright { ("3rem", "2.5rem") } else { ("4rem", "2.75rem") };
+    let (song_h, section_h) = if upright {
+        ("3rem", "2.5rem")
+    } else {
+        ("4rem", "2.75rem")
+    };
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; width:100%; height:100%; box-sizing:border-box; \
@@ -593,7 +597,8 @@ fn arm_target(
         }
         false
     };
-    let inside: Vec<&daw_proto::Track> = tracks.iter().filter(|t| !t.is_folder && under(t)).collect();
+    let inside: Vec<&daw_proto::Track> =
+        tracks.iter().filter(|t| !t.is_folder && under(t)).collect();
     inside
         .iter()
         .find(|t| t.armed)
