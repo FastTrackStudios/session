@@ -875,12 +875,12 @@ pipewire-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git"
 # Branch `session-stale-mousedown` on the fork (db4318a9 plus the fix for a
 # drag whose pressed node was removed — it panicked Blitz on every press
 # that re-rendered), pinned by rev.
-blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
-blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
-blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
-blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
-blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
-blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
+blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
+blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
+blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
+blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
+blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
+blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
 # Vendored in-tree rather than patched to a sibling checkout, because a
 # path outside this repo builds on one machine and nowhere else. Three
 # measured changes to the present path — the GPU barrier removed, frame

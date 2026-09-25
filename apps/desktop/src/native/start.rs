@@ -62,13 +62,25 @@ pub fn App() -> Element {
     }
     let initial: Option<Setlist> = use_context();
     let opened = use_signal(|| initial);
-    match opened() {
+    let page = match opened() {
         Some(setlist) => rsx! {
             WithSetlist { setlist, super::shell::Shell {} }
         },
         None => rsx! { Start { opened } },
+    };
+    rsx! {
+        document::Style { {ROOT_CSS} }
+        {page}
     }
 }
+
+/// The page itself, edge to edge. Blitz's default stylesheet gives `body`
+/// an 8px margin, and Blitz places an absolutely positioned box against its
+/// parent — the body — so without this every view sat 8px right and down
+/// and ran off the right edge. And the canvas takes the page's background:
+/// the app's own dark, under a phone's status bar and home indicator too,
+/// rather than the renderer's clear colour.
+const ROOT_CSS: &str = "html, body { margin: 0; padding: 0; background: #0f1012; }";
 
 /// What the launch chose to open as the window opens (see
 /// `super::choose`), if anything.
@@ -153,7 +165,9 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                 Some(Ok(setlist)) => opened.set(Some(setlist)),
                 Some(Err(e)) => {
                     tracing::warn!(error = %e, "start: the set did not open");
-                    opening.set(Opening::Failed(format!("{e:#}")));
+                    opening.set(Opening::Failed(session_daw::task_set::brief(&format!(
+                        "{e:#}"
+                    ))));
                 }
                 None => opening.set(Opening::Failed("opening stopped".to_owned())),
             }
@@ -207,7 +221,9 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                     }
                     orgs.set(Load::Ready(list));
                 }
-                Some(Err(e)) => orgs.set(Load::Failed(format!("{e:#}"))),
+                Some(Err(e)) => orgs.set(Load::Failed(session_daw::task_set::brief(&format!(
+                    "{e:#}"
+                )))),
                 None => {}
             }
         });
@@ -222,7 +238,9 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             let library = account.library(&org);
             match off_thread(move || session_daw::stream_set::setlists(&library)).await {
                 Some(Ok(list)) => setlists.set(Load::Ready(list)),
-                Some(Err(e)) => setlists.set(Load::Failed(format!("{e:#}"))),
+                Some(Err(e)) => setlists.set(Load::Failed(session_daw::task_set::brief(&format!(
+                    "{e:#}"
+                )))),
                 None => {}
             }
         });
@@ -235,7 +253,9 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             let started = match off_thread(move || task_account::start(&at)).await {
                 Some(Ok(started)) => started,
                 Some(Err(e)) => {
-                    sign_in.set(SignIn::Failed(format!("{e:#}")));
+                    sign_in.set(SignIn::Failed(session_daw::task_set::brief(&format!(
+                        "{e:#}"
+                    ))));
                     return;
                 }
                 None => return,
@@ -244,7 +264,9 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             sign_in.set(SignIn::Code(started.clone()));
             match off_thread(move || task_account::finish(&server, &started)).await {
                 Some(Ok(account)) => sign_in.set(SignIn::In(account)),
-                Some(Err(e)) => sign_in.set(SignIn::Failed(format!("{e:#}"))),
+                Some(Err(e)) => sign_in.set(SignIn::Failed(session_daw::task_set::brief(
+                    &format!("{e:#}"),
+                ))),
                 None => {}
             }
         });
@@ -497,18 +519,36 @@ fn songs_line(setlist: &LibrarySetlist) -> String {
     }
 }
 
-/// The live link in `text`: a Task live share link as it is, or the one a
-/// Session app link carries (`…/app/?live=<link>`).
+/// The live link in `text`: a Task live share link as it is, the one a
+/// Session app link carries (`…/app/?live=<link>`), or — for the site's
+/// demo page (`…/demo`) — the demo's. Typed as people type them: with or
+/// without `https://`.
 fn live_link(text: &str) -> Option<String> {
-    let text = text.trim();
-    if !text.starts_with("http://") && !text.starts_with("https://") {
+    let text = text.trim().trim_end_matches('/');
+    let bare = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .unwrap_or(text);
+    // A host and a path, at least: `name.tld/…`.
+    let (host, path) = bare.split_once('/')?;
+    if !host.contains('.') || host.contains(' ') {
         return None;
     }
-    let carried = text
+    let url = if bare.len() == text.len() {
+        format!("https://{text}")
+    } else {
+        text.to_owned()
+    };
+    if let Some(carried) = url
         .split(['?', '&'])
         .find_map(|pair| pair.strip_prefix("live="))
-        .map(percent_decode);
-    Some(carried.unwrap_or_else(|| text.to_owned()))
+    {
+        return Some(percent_decode(carried));
+    }
+    if path.split(['?', '#']).next() == Some("demo") {
+        return Some(DEMO_LINK.to_owned());
+    }
+    Some(url)
 }
 
 /// `%XX` escapes undone (a link riding in another's query).
@@ -727,5 +767,20 @@ mod tests {
             Some(task)
         );
         assert_eq!(live_link("not a link"), None);
+        assert_eq!(live_link("example.com"), None);
+    }
+
+    #[test]
+    fn a_link_typed_without_its_scheme_or_the_demo_page_is_understood() {
+        assert_eq!(
+            live_link("task.example/org/band/share/abc").as_deref(),
+            Some("https://task.example/org/band/share/abc")
+        );
+        for demo in [
+            "session.fasttrackstudio.app/demo",
+            "https://session.fasttrackstudio.app/demo/",
+        ] {
+            assert_eq!(live_link(demo).as_deref(), Some(super::DEMO_LINK), "{demo}");
+        }
     }
 }
