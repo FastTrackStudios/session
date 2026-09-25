@@ -492,6 +492,8 @@ fn RecordMixer() -> Element {
     }
     // As wide as its strips, drawn at touch mode's size, and no wider: the
     // room left over stays with the view.
+    // The widest the strips can be drawn; a short one draws them smaller
+    // and leaves room over.
     let zoom = crate::touch::zoom(crate::touch::use_touch());
     let width = (shown as f64 * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP) * zoom).ceil();
     rsx! {

@@ -80,6 +80,23 @@ pub struct MixerLinks {
 /// The finest grid division the ruler will draw.
 const FINEST: f64 = 1.0 / 16.0;
 
+/// A finger held on the lanes: its press, kept to play as a click if it
+/// turns out to be a tap; where it last was; whether it has become a
+/// scroll.
+struct Finger {
+    down: blitz_traits::events::BlitzPointerEvent,
+    last: (f64, f64),
+    scrolling: bool,
+}
+
+/// How tall a row opens at least, on a finger's screen: a fingertip.
+const OPEN_ROW_TOUCH: f64 = 44.0;
+/// How tall a row opens at least on a compact panel: a name you can read.
+const OPEN_ROW_COMPACT: f64 = 28.0;
+/// How wide a second opens at least on either, in CSS pixels: a bar of a
+/// song at 120 is two dozen pixels, an item a thing you can take hold of.
+const OPEN_PPS: f64 = 12.0;
+
 /// Where the view is, shared between the window and the widget.
 ///
 /// A plain cell rather than a signal. The paint happens inside Blitz's
@@ -162,6 +179,11 @@ pub struct ArrangementWidget {
     /// whole song across (`z x`) — asked once, on the first paint, when
     /// the rows have their places.
     fit_on_open: bool,
+    /// A finger held on the lanes, not yet a scroll or a tap
+    /// ([`ArrangementWidget::fingered`]).
+    finger: Option<Finger>,
+    /// Touch mode, as the panel was opened in.
+    touch: bool,
     /// How to plan the rows again, and the project as the engine has it
     /// (with the visibility this window has changed since): what a track
     /// shown or hidden re-plans from. `None` in a widget built without
@@ -386,6 +408,8 @@ impl ArrangementWidget {
             which: crate::which_key::Shared::default(),
             zooms: crate::zoom::Requests::default(),
             fit_on_open: true,
+            finger: None,
+            touch: false,
             replan: None,
             #[cfg(not(feature = "native"))]
             read_back: Rc::default(),
@@ -493,6 +517,13 @@ impl ArrangementWidget {
     #[must_use]
     pub const fn scene(&self) -> &Arrangement {
         &self.scene
+    }
+
+    /// Touch mode: the view opens with rows a finger can hit.
+    #[must_use]
+    pub fn with_touch(mut self, touch: bool) -> Self {
+        self.touch = touch;
+        self
     }
 
     /// Share the panel's shape with whoever toggles it.
@@ -763,6 +794,30 @@ impl ArrangementWidget {
                 by: if inward { 1.25 } else { 0.8 },
             }),
         }
+    }
+
+    /// The least zoom the opening view may have on each axis (across,
+    /// down).
+    ///
+    /// Fitting a forty-track session into an iPad's docked arrangement
+    /// made every row a hairline and every item a sliver: the whole song
+    /// on screen, and none of it usable. So on a finger's screen a row
+    /// opens at least [`OPEN_ROW_TOUCH`] tall, on a compact panel at least
+    /// [`OPEN_ROW_COMPACT`], and either way a second at least
+    /// [`OPEN_PPS`] wide; the rest is a scroll away. The full DAW view on
+    /// a desktop fits as it always has.
+    fn opening_floor(&self) -> (f64, f64) {
+        let row = if self.touch {
+            OPEN_ROW_TOUCH
+        } else if self.compact.get() {
+            OPEN_ROW_COMPACT
+        } else {
+            return (0.0, 0.0);
+        };
+        (
+            OPEN_PPS / crate::studio::PPS,
+            row / crate::layout::CONTROL_ROW,
+        )
     }
 
     /// What the widget wants done, for the window to drain.
@@ -1321,7 +1376,8 @@ impl ArrangementWidget {
             }
             _ => None,
         };
-        let changed = !self.stands_down(event) && self.took(event);
+        let changed =
+            !self.stands_down(event) && self.fingered(event).unwrap_or_else(|| self.took(event));
         self.point(event, pressed);
         self.dirty.set(changed);
     }
@@ -1335,16 +1391,43 @@ impl ArrangementWidget {
             self.previews_seen = generation;
             self.recut();
         }
-        let scene = self.draw(width, height, scale);
+        // Blitz hands a widget its size in device pixels and the pointer in
+        // CSS pixels; the page hands both in CSS pixels (and `scale` 1).
+        // Laid out in CSS pixels, so a press lands on what is drawn under
+        // it, then drawn at the device's scale. Drawing device pixels as if
+        // they were CSS put a 2x screen's arrangement at half size, and
+        // every press twice as far along as what it seemed to hit.
+        let scale = scale.max(f64::EPSILON);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a widget's size"
+        )]
+        let (css_w, css_h) = (
+            (f64::from(width) / scale).round() as u32,
+            (f64::from(height) / scale).round() as u32,
+        );
+        let drawn = self.draw(css_w, css_h, scale);
+        let scene = if (scale - 1.0).abs() < f64::EPSILON {
+            drawn
+        } else {
+            let mut scene = Scene::new();
+            anyrender::PaintScene::append_scene(&mut scene, drawn, Affine::scale(scale));
+            scene
+        };
         if std::mem::take(&mut self.fit_on_open) {
-            for command in [
-                crate::zoom::Command::FitTracks,
-                crate::zoom::Command::Project,
-            ] {
-                if let Some(request) = self.zoom_request(command) {
-                    self.zooms.borrow_mut().push(request);
-                }
-            }
+            // The whole song and every row, as far as they fit readably.
+            let framed = |command| match self.zoom_request(command) {
+                Some(crate::zoom::Request::Frame { time, rows, .. }) => (time, rows),
+                _ => (None, None),
+            };
+            let (_, rows) = framed(crate::zoom::Command::FitTracks);
+            let (time, _) = framed(crate::zoom::Command::Project);
+            self.zooms.borrow_mut().push(crate::zoom::Request::Open {
+                time,
+                rows,
+                floor: self.opening_floor(),
+            });
         }
         scene
     }
@@ -1419,6 +1502,83 @@ impl ArrangementWidget {
     /// The answer is whether the picture changed. Most moves do not: a
     /// pointer crossing the panel raises an event per pixel and changes
     /// which control it is on perhaps twice.
+    /// A finger, before the mouse's handling: on a lane, the ruler or a
+    /// track's name, a press is held back — dragged past
+    /// [`crate::touch::SLOP`] it scrolls the view, and let go where it
+    /// landed it is the click it would have been, played then. A mouse
+    /// press there moves the cursor at once and drags out a selection;
+    /// a finger that did would make every scroll an edit. On an item or a
+    /// control it is a press like any other, so items still drag.
+    ///
+    /// One finger at a time: a second one down while the first is held is
+    /// ignored, rather than starting an edit under the first.
+    fn fingered(&mut self, event: &UiEvent) -> Option<bool> {
+        let at = |e: &blitz_traits::events::BlitzPointerEvent| {
+            (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
+        };
+        match event {
+            UiEvent::PointerDown(e) if e.is_finger() => {
+                if self.finger.is_some() {
+                    return Some(true);
+                }
+                let (x, y) = at(e);
+                if self.spot_at(x, y).is_some() {
+                    return None;
+                }
+                let scrolls = self.hit(x, y).is_some_and(|hit| {
+                    matches!(
+                        hit.target,
+                        crate::hit::Target::Lane { .. }
+                            | crate::hit::Target::Ruler { .. }
+                            | crate::hit::Target::Track { .. }
+                            | crate::hit::Target::Empty
+                    )
+                });
+                if !scrolls {
+                    return None;
+                }
+                self.finger = Some(Finger {
+                    down: e.clone(),
+                    last: (x, y),
+                    scrolling: false,
+                });
+                Some(true)
+            }
+            UiEvent::PointerMove(e) => {
+                let finger = self.finger.as_mut().filter(|f| f.down.id == e.id)?;
+                let (x, y) = at(e);
+                let from = at(&finger.down);
+                if !finger.scrolling && (x - from.0).hypot(y - from.1) > crate::touch::SLOP {
+                    finger.scrolling = true;
+                }
+                if finger.scrolling {
+                    let (dx, dy) = (finger.last.0 - x, finger.last.1 - y);
+                    finger.last = (x, y);
+                    self.zooms
+                        .borrow_mut()
+                        .push(crate::zoom::Request::ScrollBy { dx, dy });
+                }
+                Some(true)
+            }
+            UiEvent::PointerUp(e) => {
+                if self.finger.as_ref().is_none_or(|f| f.down.id != e.id) {
+                    // Another finger's lift, while one is held: ignored,
+                    // as its press was.
+                    return self.finger.is_some().then_some(true);
+                }
+                let finger = self.finger.take()?;
+                if !finger.scrolling {
+                    // A tap: the press and the release, together.
+                    self.took(&UiEvent::PointerDown(finger.down));
+                    self.took(&UiEvent::PointerUp(e.clone()));
+                }
+                Some(true)
+            }
+            UiEvent::PointerCancel(e) => self.finger.take_if(|f| f.down.id == e.id).map(|_| true),
+            _ => None,
+        }
+    }
+
     fn took(&mut self, event: &UiEvent) -> bool {
         let at = |e: &blitz_traits::events::BlitzPointerEvent| {
             (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
@@ -1813,6 +1973,17 @@ impl ArrangementWidget {
             );
             self.controls = Some((recorded, view.zoom_y));
         }
+        // Kept below the ruler. The ruler covers the recorded panel by
+        // being drawn after it, but these come after the ruler, so a row
+        // scrolled halfway under it drew its knob and buttons over the
+        // ruler's lanes.
+        let under_ruler = vello::kurbo::Rect::new(
+            0.0,
+            ruler::ruler_h(),
+            view.width.max(0.0),
+            view.height.max(ruler::ruler_h()),
+        );
+        anyrender::PaintScene::push_clip_layer(&mut out, Affine::IDENTITY, &under_ruler);
         let controls = match self.controls.as_ref() {
             Some((controls, _)) => {
                 let counts = controls.replay(&mut out, &self.scene, view, at);
@@ -1861,6 +2032,7 @@ impl ArrangementWidget {
             );
             self.meters_lit.set(lit);
         }
+        anyrender::PaintScene::pop_layer(&mut out);
         // The edit cursor and the time selection, over the lanes and
         // up through the ruler. Drawn from the editor's own state,
         // which is what a click on the ruler moves.

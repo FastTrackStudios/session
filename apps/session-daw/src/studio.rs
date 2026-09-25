@@ -419,6 +419,37 @@ pub fn previews_of(project: &ProjectRef) -> crate::midi::Previews {
     previews
 }
 
+/// A window position as winit gives it (device pixels from the window's
+/// corner) in CSS pixels from the page's: the space the panels' rects
+/// (`get_client_rect`) and Blitz's own events are in. The safe area comes
+/// off as Blitz takes it off its own — except on a Mac, where Blitz draws
+/// under the title bar and takes nothing off.
+///
+/// Without it a 2x screen put the pointer twice as far along as the panel
+/// thought it was, and an iPad's status bar further down still.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn css_point(window: &dyn winit::window::Window, x: f64, y: f64) -> (f64, f64) {
+    let scale = window.scale_factor().max(f64::EPSILON);
+    #[cfg(not(target_os = "macos"))]
+    let (left, top) = {
+        let insets = window.safe_area();
+        (f64::from(insets.left), f64::from(insets.top))
+    };
+    #[cfg(target_os = "macos")]
+    let (left, top) = (0.0, 0.0);
+    ((x - left) / scale, (y - top) / scale)
+}
+
+/// A wheel's pixel delta, which winit gives in device pixels, in CSS
+/// pixels.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn css_delta(window: &dyn winit::window::Window, dx: f64, dy: f64) -> (f64, f64) {
+    let scale = window.scale_factor().max(f64::EPSILON);
+    (dx / scale, dy / scale)
+}
+
 /// The arrangement panel, on dioxus-native: the widget as a Blitz custom
 /// widget, winit's window events translated into [`crate::panel`]'s.
 ///
@@ -429,6 +460,7 @@ pub fn previews_of(project: &ProjectRef) -> crate::midi::Previews {
 pub fn Arrangement() -> Element {
     use crate::panel::{Button, PanelEvent, WHEEL_LINE};
     let window = dioxus_native::use_window();
+    let win = window.clone();
     let sink: crate::tool::Sink =
         Rc::new(move |icon| window.set_cursor(winit::cursor::Cursor::Icon(icon)));
     let applier = use_hook(|| Rc::new(crate::engine::Applier::start()));
@@ -470,12 +502,20 @@ pub fn Arrangement() -> Element {
                 }));
             }
             winit::event::WindowEvent::PointerMoved { position, .. } => {
-                panel.handle(PanelEvent::Pointer {
-                    x: position.x,
-                    y: position.y,
-                });
+                let (x, y) = css_point(&*win, position.x, position.y);
+                panel.handle(PanelEvent::Pointer { x, y });
             }
-            winit::event::WindowEvent::PointerButton { state, button, .. } => {
+            winit::event::WindowEvent::PointerButton {
+                state,
+                button,
+                position,
+                ..
+            } => {
+                // Where it is pressed, first: a finger has not moved there
+                // beforehand, so the last position is where the previous
+                // one lifted.
+                let (x, y) = css_point(&*win, position.x, position.y);
+                panel.handle(PanelEvent::Pointer { x, y });
                 let button = match button {
                     winit::event::ButtonSource::Mouse(winit::event::MouseButton::Middle) => {
                         Button::Middle
@@ -496,9 +536,14 @@ pub fn Arrangement() -> Element {
                     winit::event::MouseScrollDelta::LineDelta(x, y) => {
                         (f64::from(*x) * WHEEL_LINE, f64::from(*y) * WHEEL_LINE)
                     }
-                    winit::event::MouseScrollDelta::PixelDelta(at) => (at.x, at.y),
+                    winit::event::MouseScrollDelta::PixelDelta(at) => css_delta(&*win, at.x, at.y),
                 };
                 panel.handle(PanelEvent::Wheel { dx, dy });
+            }
+            // A pinch, on a touchscreen (see `touch::recognize_gestures`)
+            // or a trackpad.
+            winit::event::WindowEvent::PinchGesture { delta, .. } => {
+                panel.handle(PanelEvent::Pinch { by: *delta });
             }
             winit::event::WindowEvent::RedrawRequested => {
                 let play_at = transport.map_or(0.0, |t| t.read().0);

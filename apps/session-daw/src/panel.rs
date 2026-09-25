@@ -60,6 +60,11 @@ pub enum PanelEvent {
         dx: f64,
         dy: f64,
     },
+    /// Two fingers pinching: the zoom across grows by `by` (0.1 is ten
+    /// percent wider), about where they are.
+    Pinch {
+        by: f64,
+    },
     /// Once a frame, with where the play cursor is.
     Frame {
         play_at: f64,
@@ -225,6 +230,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     let docked = mixer.as_ref().is_some_and(|links| links.docked);
     let small = crate::compact::use_form().compact();
     let compact = use_hook(|| Rc::new(Cell::new(docked || small)));
+    let touch = crate::touch::use_touch();
     let shape = use_signal(|| compact.get());
     // On by default: in a service the view should always show where the
     // song is.
@@ -255,7 +261,8 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         .with_pointing(Rc::clone(&pointing))
         .with_view_links(Rc::clone(&which), Rc::clone(&zooms))
         .with_planner(session.planner.clone(), Rc::clone(&content_h))
-        .with_compact(Rc::clone(&compact));
+        .with_compact(Rc::clone(&compact))
+        .with_touch(touch);
         let built = match &mixer {
             Some(links) => built.with_mixer(crate::widget::MixerLinks {
                 toggle: Rc::clone(&links.toggle),
@@ -514,6 +521,18 @@ impl ArrangementPanel {
                 };
                 self.reshape(&input);
             }
+            PanelEvent::Pinch { by } => {
+                // Time, as a pinch zooms a timeline everywhere else; the
+                // rows keep the height the view opened at.
+                let input = self.input.borrow();
+                if !self.inside(input.pointer) {
+                    return;
+                }
+                let (zx, zy) = *self.zoom.peek();
+                let ((x0, x1), _) = self.limits(r);
+                let to = ((zx * (1.0 + by).max(0.1)).clamp(x0, x1), zy);
+                self.rezoom(to, input.pointer);
+            }
             PanelEvent::Wheel { dx, dy } => {
                 let input = self.input.borrow();
                 if !self.inside(input.pointer) {
@@ -593,6 +612,20 @@ impl ArrangementPanel {
             };
             let framed = || match request {
                 crate::zoom::Request::Frame { time, rows, .. } => {
+                    crate::zoom::frame(now, at, time, rows)
+                }
+                crate::zoom::Request::ScrollBy { dx, dy } => crate::zoom::Target {
+                    scroll_x: now.scroll_x + dx,
+                    scroll_y: now.scroll_y + dy,
+                    ..now
+                },
+                crate::zoom::Request::Open { time, rows, floor } => {
+                    let raised = |(lo, hi): (f64, f64), least: f64| (lo.max(least).min(hi), hi);
+                    let at = crate::zoom::Frame {
+                        limits_x: raised(at.limits_x, floor.0),
+                        limits_y: raised(at.limits_y, floor.1),
+                        ..at
+                    };
                     crate::zoom::frame(now, at, time, rows)
                 }
                 crate::zoom::Request::Scale { vertical, by } => {
@@ -752,6 +785,8 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             compact: Rc::clone(&panel.compact),
             shape: panel.shape,
             follow: Rc::clone(&panel.follow),
+            touch: crate::touch::use_touch(),
+            mixer: panel.mixer.as_ref().map(|links| links.open),
         }
         crate::which_key::Panel { showing: (panel.which_shown)(), colors: colors.clone() }
         crate::studio::ScrollBar {

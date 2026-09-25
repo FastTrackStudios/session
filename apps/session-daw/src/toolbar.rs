@@ -22,6 +22,9 @@ const HOVER_RULE: &str = "#3a3f47";
 /// Which toggle a button is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Toggle {
+    /// The mixer under the arrangement: `x` on a keyboard, and only in the
+    /// menu, for a screen without one.
+    Mixer,
     Compact,
     Follow,
     Metronome,
@@ -60,14 +63,31 @@ impl Toggle {
             Self::Snap => "Snapping",
             Self::Lock => "Locking",
             Self::Compact => "Compact track panel — more room for the arrangement",
+            Self::Mixer => "The mixer (x)",
             Self::Follow => "Follow the play cursor — page the view to wherever it goes",
+        }
+    }
+
+    /// The name the menu gives it, beside its icon.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Metronome => "Metronome",
+            Self::AutoCrossfade => "Auto crossfade",
+            Self::Grouping => "Item grouping",
+            Self::Ripple => "Ripple per track",
+            Self::Grid => "Grid lines",
+            Self::Snap => "Snap",
+            Self::Lock => "Lock",
+            Self::Follow => "Follow the play cursor",
+            Self::Compact => "Compact track panel",
+            Self::Mixer => "Mixer",
         }
     }
 
     const fn option(self) -> Option<&'static options::Option> {
         match self {
             // These are the window's, not the session's.
-            Self::Compact | Self::Follow | Self::Metronome => None,
+            Self::Compact | Self::Follow | Self::Metronome | Self::Mixer => None,
             Self::AutoCrossfade => Some(&options::AUTO_CROSSFADE),
             Self::Grouping => Some(&options::GROUPING),
             Self::Ripple => Some(&options::RIPPLE),
@@ -116,6 +136,15 @@ impl Toggle {
             // The play cursor, and the page turning to keep it in view:
             // the line, and an arrow along to the right of it.
             Self::Follow => &["M7 4 V20", "M11 12 H19", "M15.5 8.5 L19 12 L15.5 15.5"],
+            // Three faders: their grooves and their caps.
+            Self::Mixer => &[
+                "M6 4 V20",
+                "M12 4 V20",
+                "M18 4 V20",
+                "M4 14 H8",
+                "M10 8 H14",
+                "M16 12 H20",
+            ],
             // A panel squeezed from the right: its edge, and an arrow
             // pushing into it.
             Self::Compact => &[
@@ -143,6 +172,13 @@ pub fn MainToolbar(
     /// Whether the view follows the play cursor, shared with the panel
     /// that pages it (see `panel::ArrangementPanel::frame_tick`).
     follow: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Touch mode: the toggles in a menu, at a finger's size.
+    #[props(default)]
+    touch: bool,
+    /// Whether the mixer under the arrangement is open, when the view has
+    /// one: a toggle in the menu.
+    #[props(default)]
+    mixer: Option<Signal<bool>>,
 ) -> Element {
     // Each option's state as last set here; the options themselves are the
     // truth, this is what re-renders the button.
@@ -155,12 +191,100 @@ pub fn MainToolbar(
     });
     let mut metronome = use_signal(|| !click_muted);
     let mut following = use_signal(|| follow.get());
+    let mut open = use_signal(|| false);
     let is_on = move |t: Toggle| match t {
         Toggle::Metronome => metronome(),
         Toggle::Compact => shape(),
         Toggle::Follow => following(),
+        Toggle::Mixer => mixer.is_some_and(|open| open()),
         other => shown.read().iter().any(|(each, on)| *each == other && *on),
     };
+    // What a toggle does, whether pressed in the row or in the menu.
+    let press = use_callback(move |toggle: Toggle| match toggle {
+        Toggle::Mixer => {
+            if let Some(mut open) = mixer {
+                open.toggle();
+            }
+        }
+        Toggle::Metronome => {
+            if let Some(guid) = click.clone() {
+                edits
+                    .0
+                    .borrow_mut()
+                    .push(crate::engine::Edit::ToggleMute(guid));
+                metronome.toggle();
+            }
+        }
+        Toggle::Follow => {
+            let now = !follow.get();
+            follow.set(now);
+            following.set(now);
+        }
+        Toggle::Compact => {
+            let now = !compact.get();
+            compact.set(now);
+            let mut shape = shape;
+            shape.set(now);
+        }
+        other => {
+            if let Some(option) = other.option() {
+                let now = option.toggle();
+                for (each, on) in shown.write().iter_mut() {
+                    if *each == other {
+                        *on = now;
+                    }
+                }
+            }
+        }
+    });
+    // A finger, or a corner too narrow for the rows (the compact panel's,
+    // a phone's): one button, and the toggles in a menu under it. Squeezed
+    // into the corner, the rows were cut off.
+    if touch || width < FULL_W {
+        return rsx! {
+            div {
+                style: "position:absolute; left:0; top:0; padding:6px 8px; z-index:20;",
+                button {
+                    title: "Arrangement options",
+                    style: "width:44px; height:36px; padding:0; display:flex; align-items:center; \
+                            justify-content:center; border-radius:8px; border:1px solid {HOVER_RULE}; \
+                            background:#1c1e22; color:{OFF_FG}; cursor:pointer;",
+                    onclick: move |_| open.toggle(),
+                    lucide_dioxus::Menu { size: 20, color: "currentColor" }
+                }
+                if open() {
+                    // A press outside closes it.
+                    div {
+                        style: "position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:21;",
+                        onclick: move |_| open.set(false),
+                    }
+                    div {
+                        style: "position:absolute; top:48px; left:8px; z-index:22; width:260px; \
+                                display:flex; flex-direction:column; gap:2px; padding:6px; \
+                                border-radius:12px; background:#1c1e22; border:1px solid {HOVER_RULE}; \
+                                box-shadow:0 12px 32px rgba(0,0,0,0.6);",
+                        for toggle in mixer
+                            .map(|_| Toggle::Mixer)
+                            .into_iter()
+                            .chain(Toggle::ROWS.iter().flat_map(|row| row.iter()).copied())
+                        {
+                            button {
+                                key: "{toggle:?}",
+                                style: menu_row_style(is_on(toggle)),
+                                onclick: move |_| press.call(toggle),
+                                Icon { toggle, on: is_on(toggle) }
+                                span { style: "flex:1; text-align:left;", "{toggle.label()}" }
+                                span {
+                                    style: "font-size:12px; color:{OFF_FG};",
+                                    if is_on(toggle) { "On" } else { "Off" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
     rsx! {
         div {
             style: "position:absolute; left:0; top:0; width:{width}px; padding:6px 8px; \
@@ -173,41 +297,7 @@ pub fn MainToolbar(
                             key: "{toggle:?}",
                             title: toggle.title(),
                             style: button_style(is_on(toggle)),
-                            onclick: {
-                                let edits = edits.clone();
-                                let click = click.clone();
-                                let compact = std::rc::Rc::clone(&compact);
-                                let follow = std::rc::Rc::clone(&follow);
-                                move |_| match toggle {
-                                    Toggle::Metronome => {
-                                        if let Some(guid) = click.clone() {
-                                            edits.0.borrow_mut().push(crate::engine::Edit::ToggleMute(guid));
-                                            metronome.toggle();
-                                        }
-                                    }
-                                    Toggle::Follow => {
-                                        let now = !follow.get();
-                                        follow.set(now);
-                                        following.set(now);
-                                    }
-                                    Toggle::Compact => {
-                                        let now = !compact.get();
-                                        compact.set(now);
-                                        let mut shape = shape;
-                                        shape.set(now);
-                                    }
-                                    other => {
-                                        if let Some(option) = other.option() {
-                                            let now = option.toggle();
-                                            for (each, on) in shown.write().iter_mut() {
-                                                if *each == other {
-                                                    *on = now;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
+                            onclick: move |_| press.call(toggle),
                             Icon { toggle, on: is_on(toggle) }
                         }
                     }
@@ -235,6 +325,23 @@ fn Icon(toggle: Toggle, on: bool) -> Element {
             }
         }
     }
+}
+
+/// How wide the corner must be for the rows: the longer row's five 30px
+/// buttons, their gaps and the padding.
+const FULL_W: f64 = 5.0 * 30.0 + 4.0 * 4.0 + 16.0;
+
+fn menu_row_style(on: bool) -> String {
+    let (bg, fg) = if on {
+        (ON_BG, ON_FG)
+    } else {
+        ("transparent", "#d1d5db")
+    };
+    format!(
+        "display:flex; align-items:center; gap:12px; height:44px; padding:0 12px; border:none; \
+         border-radius:8px; background:{bg}; color:{fg}; font-family:inherit; font-size:15px; \
+         cursor:pointer;"
+    )
 }
 
 fn button_style(on: bool) -> String {

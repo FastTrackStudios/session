@@ -41,6 +41,30 @@ use crate::studio::StudioSession;
 /// at.
 pub const HEIGHT: f64 = crate::mcp::DEFAULT_HEIGHT;
 
+/// Where the arrangement stops and how tall the mixer under it is, as CSS
+/// lengths.
+///
+/// Alone, the mixer fills the panel. Docked in the Overview on a finger's
+/// screen, the two share it evenly: an iPad's pane is some six hundred
+/// pixels, and a fixed mixer at touch size left the arrangement a strip a
+/// third of a row tall. Otherwise the mixer is its own height, in pixels.
+fn split(open: bool, mixer_only: bool, docked: bool, touch: bool) -> (String, String) {
+    if mixer_only {
+        return ("0px".to_owned(), "100%".to_owned());
+    }
+    let mixer = if docked && touch {
+        "50%".to_owned()
+    } else {
+        format!("{}px", docked_height(touch))
+    };
+    let bottom = if open {
+        mixer.clone()
+    } else {
+        "0px".to_owned()
+    };
+    (bottom, mixer)
+}
+
 /// How tall the docked mixer is, with touch mode on or off. Its strips are
 /// drawn [`crate::touch::ZOOM`] times bigger, so it is taller, though not
 /// by the whole zoom: the strips shed their small controls first, which
@@ -222,18 +246,12 @@ pub fn DawPanels(
         }
     });
     let open = (links.open)() || mixer_only;
-    let height = docked_height(crate::touch::use_touch());
-    let arrange_bottom = if open { height } else { 0.0 };
+    let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, crate::touch::use_touch());
     let mixer_display = if open { "block" } else { "none" };
-    let mixer_height = if mixer_only {
-        "100%".to_owned()
-    } else {
-        format!("{height}px")
-    };
     rsx! {
         if !mixer_only {
             div {
-                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
+                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom};",
                 crate::studio::Arrangement {}
             }
         }
@@ -296,21 +314,26 @@ pub fn Mixer() -> Element {
     let scrolling = Rc::clone(&scroll);
     let arrange_node = Rc::clone(&links.arrange_node);
     let refocus = use_hook(|| Rc::new(Cell::new(false)));
+    let window = dioxus_native::use_window();
     dioxus_native::use_window_event(move |event, _| match event {
         // A press here: hand the keyboard back to the arrangement. Not
         // from this event: the document is still borrowed while Blitz
         // handles it, and focusing from inside that panics ("RefCell
         // already borrowed"). The next redraw does it, as the rect is
         // read.
-        winit::event::WindowEvent::PointerButton { state, .. } if state.is_pressed() => {
+        winit::event::WindowEvent::PointerButton {
+            state, position, ..
+        } if state.is_pressed() => {
+            pointer.set(crate::studio::css_point(&*window, position.x, position.y));
             let r = *rect.peek();
             let (x, y) = pointer.get();
             if x >= r.0 && x < r.0 + r.2 && y >= r.1 && y < r.1 + r.3 {
                 refocus.set(true);
             }
         }
+        // In CSS pixels, as the rect is.
         winit::event::WindowEvent::PointerMoved { position, .. } => {
-            pointer.set((position.x, position.y));
+            pointer.set(crate::studio::css_point(&*window, position.x, position.y));
         }
         winit::event::WindowEvent::MouseWheel { delta, .. } => {
             let r = *rect.peek();
@@ -322,7 +345,9 @@ pub fn Mixer() -> Element {
                 winit::event::MouseScrollDelta::LineDelta(x, y) => {
                     (f64::from(*x) * 40.0, f64::from(*y) * 40.0)
                 }
-                winit::event::MouseScrollDelta::PixelDelta(at) => (at.x, at.y),
+                winit::event::MouseScrollDelta::PixelDelta(at) => {
+                    crate::studio::css_delta(&*window, at.x, at.y)
+                }
             };
             let most = (content_w.get() - r.2).max(0.0);
             scrolling.set((scrolling.get() - dx - dy).clamp(0.0, most));
@@ -395,13 +420,7 @@ pub fn WebDawPanels(
         links
     });
     let open = (links.open)() || mixer_only;
-    let height = docked_height(crate::touch::use_touch());
-    let arrange_bottom = if open { height } else { 0.0 };
-    let mixer_height = if mixer_only {
-        "100%".to_owned()
-    } else {
-        format!("{height}px")
-    };
+    let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, crate::touch::use_touch());
     // Hidden rather than removed: kept at its size, the mixer builds its
     // strips and its GPU context at load, so `x` opens it at once instead
     // of after the second a first build takes.
@@ -413,7 +432,7 @@ pub fn WebDawPanels(
     rsx! {
         if !mixer_only {
             div {
-                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
+                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom};",
                 crate::web_host::WebArrangement { engine }
             }
         }
@@ -560,9 +579,15 @@ struct MixerWidget {
     /// The widget's width as last painted, in CSS pixels: how far a
     /// finger can scroll.
     width: Cell<f64>,
+    /// The zoom the last paint drew at ([`MixerWidget::zoom_for`]).
+    drawn_zoom: Cell<f64>,
     /// Each strip as last laid out, for anchoring others' pointers.
     strips: Rc<RefCell<Strips>>,
 }
+
+/// The shortest a strip is laid out when zoomed: where the name plate
+/// still clears the routing and the buttons over it.
+const MIN_STRIP_H: f64 = 230.0;
 
 /// Each strip's track, left edge and width, in content pixels.
 type Strips = Vec<(String, f64, f64)>;
@@ -631,6 +656,7 @@ impl MixerWidget {
             built_live: false,
             dirty: Cell::new(false),
             width: Cell::new(0.0),
+            drawn_zoom: Cell::new(1.0),
         }
     }
 
@@ -726,9 +752,19 @@ impl MixerWidget {
         Some(Spot { row, control })
     }
 
-    /// How much bigger the strips are drawn than they are laid out.
+    /// How much bigger the strips are drawn than they are laid out, as the
+    /// last paint drew them: what a press is read back through.
     fn zoom(&self) -> f64 {
-        crate::touch::zoom(self.touch.get())
+        self.drawn_zoom.get()
+    }
+
+    /// How much bigger to draw strips `height` CSS pixels tall: touch
+    /// mode's zoom, but never so much that a strip is laid out shorter
+    /// than [`MIN_STRIP_H`] — below that its name runs into the buttons
+    /// above it, so a short dock (the Overview's, on a tablet) gets
+    /// strips somewhat less big instead.
+    fn zoom_for(&self, height: f64) -> f64 {
+        crate::touch::zoom(self.touch.get()).min((height / MIN_STRIP_H).max(1.0))
     }
 
     /// A point in the widget, in the strips' own (content) coordinates.
@@ -1010,7 +1046,6 @@ impl MixerWidget {
         self.dirty.set(false);
         self.flush_drag();
         self.catch_up();
-        let zoom = self.zoom();
         // Blitz hands a widget its size in device pixels, and the pointer
         // in CSS pixels; the page hands both in CSS pixels (and `scale`
         // 1). Laid out in CSS pixels, so the hit test agrees with the
@@ -1020,6 +1055,8 @@ impl MixerWidget {
         let scale = scale.max(f64::EPSILON);
         let (css_w, css_h) = (f64::from(width) / scale, f64::from(height) / scale);
         self.width.set(css_w);
+        let zoom = self.zoom_for(css_h);
+        self.drawn_zoom.set(zoom);
         // Laid out at the size it has once zoomed, and drawn bigger.
         let (w, h) = (css_w / zoom, css_h / zoom);
         let mut out = Scene::new();
