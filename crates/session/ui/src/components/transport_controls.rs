@@ -52,6 +52,11 @@ pub fn TransportControlBar(
     /// shapes say enough and the width is better spent on the icons.
     #[props(default)]
     icons_only: bool,
+    /// Record where Loop is: the four-button bar of a surface that records
+    /// (Back / Play / Record / Advance) — a phone or a tablet in record
+    /// mode, where arming is done elsewhere and looping is not wanted.
+    #[props(default)]
+    record_in_loop: bool,
 ) -> Element {
     let playing = is_playing;
     let looping = is_looping;
@@ -154,6 +159,31 @@ pub fn TransportControlBar(
                 }
             }
 
+            // Record, in Loop's place (see `record_in_loop`).
+            if record_in_loop {
+                div {
+                    class: if recording {
+                        cls("bg-red-600 text-white hover:bg-red-700")
+                    } else {
+                        cls("border border-border hover:bg-accent text-red-500")
+                    },
+                    onclick: move |_| {
+                        on_record_toggle.call(());
+                    },
+                    // A plain round dot: Blitz draws no SVG `<circle>`,
+                    // which is all the Circle icon is.
+                    div {
+                        style: format!(
+                            "width:{dot}px; height:{dot}px; border-radius:50%; background:{fill}; flex:none;",
+                            dot = icon * 7 / 10,
+                            fill = if recording { "#ffffff" } else { "#ef4444" },
+                        ),
+                    }
+                    if !icons_only {
+                        if recording { "Recording" } else { "Record" }
+                    }
+                }
+            } else {
             // Loop Button
             div {
                 class: if looping {
@@ -166,6 +196,7 @@ pub fn TransportControlBar(
                 },
                 LoopIcon { size: icon, color: "currentColor" }
                 if !icons_only { "Loop" }
+            }
             }
 
             // Advance Button

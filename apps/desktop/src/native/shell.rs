@@ -274,13 +274,21 @@ fn SongViews(
     use session_daw::chart_editor::{ChartEditor, EditorToggle};
     use session_daw::shell::{OverviewLayout, View};
     use_context_provider(|| session);
+    let mode: Signal<session::modes::Mode> = use_context();
+    let record_mode = move || mode() == session::modes::Mode::Record;
     rsx! {
         div {
             style: "position:relative; flex:1; min-height:0;",
             match view() {
                 View::Setup => rsx! { session_daw::setup::SetupView {} },
                 View::Daw => rsx! { Arrangement {} },
-                View::Performance => rsx! { PerformanceView {} },
+                View::Performance => rsx! {
+                    if record_mode() {
+                        session_daw::record_view::RecordView {}
+                    } else {
+                        PerformanceView {}
+                    }
+                },
                 View::Overview => rsx! {
                     OverviewLayout {
                         progress: rsx! { session_daw::progress::ProgressBar {} },

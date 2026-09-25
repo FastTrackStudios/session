@@ -795,12 +795,19 @@ fn SongViews(
 ) -> Element {
     use crate::shell::{OverviewLayout, View};
     use_context_provider(|| session);
+    let mode: Signal<session::modes::Mode> = use_context();
     rsx! {
         div {
             style: "position:relative; flex:1; min-height:0;",
             match view() {
                 View::Setup => rsx! { crate::setup::SetupView {} },
-                View::Performance => rsx! { WebPerformance {} },
+                View::Performance => rsx! {
+                    if mode() == session::modes::Mode::Record {
+                        crate::record_view::RecordView {}
+                    } else {
+                        WebPerformance {}
+                    }
+                },
                 View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone() } },
                 View::Overview => rsx! {
                     OverviewLayout {

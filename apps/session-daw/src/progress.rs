@@ -152,13 +152,17 @@ pub fn ProgressBar(
     }
 }
 
-/// The performance transport: back a section, play/stop, loop, on a section.
+/// The performance transport: back a section, play/stop, loop (record, in
+/// record mode), on a section.
 /// `compact` is a small screen's: the four icons alone, `height` pixels tall
 /// (44 unless given).
 #[component]
 pub fn TransportButtons(
     #[props(default)] compact: bool,
     #[props(default)] height: Option<u32>,
+    /// Record mode's: Record where Loop is.
+    #[props(default)]
+    record: bool,
 ) -> Element {
     let session: StudioSession = use_context();
     let song = use_hook(|| Song::of(&session));
@@ -174,12 +178,13 @@ pub fn TransportButtons(
                 icons_only: compact,
                 is_playing: r.playing,
                 is_looping: r.looping,
-                is_recording: false,
+                is_recording: r.recording,
                 is_armed: false,
                 show_recording: false,
+                record_in_loop: record,
                 on_play_pause: move |()| transport(Move::PlayStop, 0.0),
                 on_loop_toggle: move |()| transport(Move::ToggleLoop, 0.0),
-                on_record_toggle: move |()| {},
+                on_record_toggle: move |()| transport(Move::ToggleRecord, 0.0),
                 on_arm_toggle: move |()| {},
                 // Back: to the start of this section, or — within a second
                 // of it — to the one before, which is what a second press
