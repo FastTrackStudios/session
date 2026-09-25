@@ -22,6 +22,7 @@ pub mod collab;
 pub mod collab_bar;
 #[cfg(feature = "native")]
 pub mod collab_pointers;
+pub mod compact;
 pub mod cursor;
 pub mod engine;
 pub mod expression;
@@ -43,6 +44,7 @@ pub mod mcp;
 pub mod midi;
 pub mod mixer_panel;
 pub mod mousemap;
+pub mod navigator;
 pub mod notice;
 pub mod num;
 #[cfg(feature = "native")]

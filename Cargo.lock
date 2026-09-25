@@ -1483,7 +1483,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "regex",
@@ -4949,7 +4949,7 @@ dependencies = [
 [[package]]
 name = "editor-keyflow-lang"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "editor-state",
  "keyflow-text",
@@ -5039,7 +5039,7 @@ dependencies = [
 [[package]]
 name = "engraver"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "engraver-proto",
 ]
@@ -5047,7 +5047,7 @@ dependencies = [
 [[package]]
 name = "engraver-proto"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "anyrender",
  "bitflags 2.13.1",
@@ -6754,7 +6754,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.20",
- "windows 0.62.2",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -7367,7 +7367,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -8211,7 +8211,7 @@ dependencies = [
 [[package]]
 name = "keyflow"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "color-eyre",
  "colored",
@@ -8230,12 +8230,12 @@ dependencies = [
 [[package]]
 name = "keyflow-chordpro"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 
 [[package]]
 name = "keyflow-daw-analysis"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "architect",
  "daw",
@@ -8249,7 +8249,7 @@ dependencies = [
 [[package]]
 name = "keyflow-midi"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "keyflow-proto",
  "keyflow-text",
@@ -8259,7 +8259,7 @@ dependencies = [
 [[package]]
 name = "keyflow-proto"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "architect",
  "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.0)",
@@ -8276,7 +8276,7 @@ dependencies = [
 [[package]]
 name = "keyflow-sync"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "facet",
  "facet-json",
@@ -8289,7 +8289,7 @@ dependencies = [
 [[package]]
 name = "keyflow-syntax"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "facet",
  "serde",
@@ -8299,7 +8299,7 @@ dependencies = [
 [[package]]
 name = "keyflow-text"
 version = "0.0.1-alpha"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.3#ff6c4b5b65beda85b602b83eb1a946c0e567522a"
+source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.4#0c4c3cd5e13f7f12e263cfeb21ebae3ccadce871"
 dependencies = [
  "keyflow-chordpro",
  "keyflow-proto",
@@ -11801,7 +11801,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -13454,6 +13454,7 @@ dependencies = [
  "js-sys",
  "keyflow",
  "live-proto",
+ "lucide-dioxus",
  "patch-list",
  "pollster",
  "pprof",

@@ -260,6 +260,28 @@ impl ChartWidget {
         if page_w <= 0.0 || page_h <= 0.0 || per_pt <= 0.0 {
             return;
         }
+        // A panel taller than wide (a phone held upright), or too short for
+        // a page to be read at its full height (one on its side), shows the
+        // page across its width — and, when that is taller than the panel,
+        // follows the song down it.
+        let fit_width = w < h || page_w / page_h * h < w * 0.5;
+        if fit_width {
+            let zoom = w / (page_w * per_pt);
+            let visible = h / (zoom * per_pt);
+            let top = chart_secs
+                .and_then(|secs| self.view.cursor_at_time(secs))
+                .filter(|(page, ..)| *page == self.page)
+                .map_or(y, |(_, cursor_y, cursor_h)| {
+                    // The line being played a third of the way down, the
+                    // rest of the page's next lines under it.
+                    let wanted = cursor_y + cursor_h / 2.0 - visible / 3.0;
+                    wanted.clamp(y, (y + page_h - visible).max(y))
+                });
+            let mut live = self.live.borrow_mut();
+            live.zoom = zoom;
+            live.scroll_pt = (x, top);
+            return;
+        }
         // Across: the page, and the first measure or so of the next one
         // beside it — what is coming is on screen before the page turns.
         let across = self
@@ -658,6 +680,16 @@ mod tests {
             .page_number_at_time(310.0)
             .expect("310 s is inside 160 bars at 120");
         assert!(last > 1, "the end of the chart is still on page {last}");
+
+        // The cursor is on the page it says, inside it, lower down the page
+        // later in the song.
+        let (page, top, height) = view.cursor_at_time(0.5).expect("a cursor at 0.5 s");
+        assert_eq!(page, 1);
+        assert!(height > 0.0);
+        let (_, page_y, _, page_h) = view.page(1).expect("page one");
+        assert!(top >= page_y && top + height <= page_y + page_h);
+        let (_, lower, _) = view.cursor_at_time(20.0).expect("a cursor at 20 s");
+        assert!(lower > top, "20 s is further down page one than 0.5 s");
 
         let (first_x, first_y, ..) = view.page(1).expect("page one");
         let (last_x, last_y, ..) = view.page(last).expect("the last page");

@@ -154,6 +154,10 @@ pub fn DawPanels(
     /// mixer is open is remembered per mode, and Organize starts closed.
     #[props(default)]
     mode: Option<session::modes::Mode>,
+    /// The mixer alone, filling the panel — the small-screen layout's
+    /// Mixer view.
+    #[props(default)]
+    mixer_only: bool,
 ) -> Element {
     let session: StudioSession = use_context();
     let memory = try_use_context::<MixerMemory>();
@@ -182,17 +186,24 @@ pub fn DawPanels(
             memory.remember(docked, mode, open);
         }
     });
-    let open = (links.open)();
+    let open = (links.open)() || mixer_only;
     let arrange_bottom = if open { HEIGHT } else { 0.0 };
     let mixer_display = if open { "block" } else { "none" };
+    let mixer_height = if mixer_only {
+        "100%".to_owned()
+    } else {
+        format!("{HEIGHT}px")
+    };
     rsx! {
-        div {
-            style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
-            crate::studio::Arrangement {}
+        if !mixer_only {
+            div {
+                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
+                crate::studio::Arrangement {}
+            }
         }
         div {
             style: "display:{mixer_display}; position:absolute; left:0; right:0; bottom:0; \
-                    height:{HEIGHT}px; border-top:1px solid #000;",
+                    height:{mixer_height}; border-top:1px solid #000;",
             // Where others' pointers over the mixer are placed.
             onmounted: move |e| crate::ghosts::region_mounted("mixer", e.data()),
             Mixer {}
@@ -331,16 +342,25 @@ pub fn WebDawPanels(
     /// docked pair rather than a panel `x` summons.
     #[props(default)]
     docked: bool,
+    /// The mixer alone, filling the panel — the small-screen layout's
+    /// Mixer view.
+    #[props(default)]
+    mixer_only: bool,
 ) -> Element {
     let session: StudioSession = use_context();
     let links = use_context_provider(|| {
         let mut links = Links::new(session.rows.as_slice().to_vec());
-        links.open = Signal::new(docked);
+        links.open = Signal::new(docked || mixer_only);
         links.docked = docked;
         links
     });
-    let open = (links.open)();
+    let open = (links.open)() || mixer_only;
     let arrange_bottom = if open { HEIGHT } else { 0.0 };
+    let mixer_height = if mixer_only {
+        "100%".to_owned()
+    } else {
+        format!("{HEIGHT}px")
+    };
     // Hidden rather than removed: kept at its size, the mixer builds its
     // strips and its GPU context at load, so `x` opens it at once instead
     // of after the second a first build takes.
@@ -350,13 +370,15 @@ pub fn WebDawPanels(
         ("hidden", "none")
     };
     rsx! {
-        div {
-            style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
-            crate::web_host::WebArrangement { engine }
+        if !mixer_only {
+            div {
+                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
+                crate::web_host::WebArrangement { engine }
+            }
         }
         div {
             style: "visibility:{visibility}; pointer-events:{events}; position:absolute; \
-                    left:0; right:0; bottom:0; height:{HEIGHT}px; border-top:1px solid #000;",
+                    left:0; right:0; bottom:0; height:{mixer_height}; border-top:1px solid #000;",
             WebMixer { hidden: !open }
         }
     }

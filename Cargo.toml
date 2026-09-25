@@ -214,28 +214,28 @@ song = { path = "features/song" }
 #
 # `keyflow-proto` and `keyflow-syntax` stay in `daw`: expression-editor-core,
 # which daw-reaper hard-depends on, needs them.
-keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-proto = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-syntax = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-text = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-chordpro = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-midi = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-live = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-musicxml = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-musx = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-annotate = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-orchestra = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-sync = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-daw-analysis = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-ui = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-cli = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-lsp = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-tree-sitter-keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
+keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-proto = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-syntax = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-text = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-chordpro = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-midi = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-live = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-musicxml = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-musx = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-annotate = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-orchestra = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-sync = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-daw-analysis = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-ui = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-cli = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-lsp = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+tree-sitter-keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
 # Engraver — defaults OFF at the root (the full `engraver` feature drags
 # wgpu/vello + PDF export); consumers opt into `svg`/`wgpu`/`engraver`.
-engraver = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3", default-features = false }
-engraver-proto = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3", default-features = false }
-engraver-score = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
+engraver = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4", default-features = false }
+engraver-proto = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4", default-features = false }
+engraver-score = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
 
 # ── signal domain (wave 4) ────────────────────────────────────────────
 # `signal` is the facade — the only public API surface for the signal
@@ -701,7 +701,7 @@ editor-crdt = { git = "https://github.com/FastTrackStudios/editor", tag = "v0.1.
 # keyflow's own copy, which moved there from task at keyflow v0.2.0.
 # Renamed because task's older `editor-keyflow-lang` (above, for the site)
 # has the same package name.
-keyflow-editor-lang = { package = "editor-keyflow-lang", git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
+keyflow-editor-lang = { package = "editor-keyflow-lang", git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
 editor-keyflow = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 editor-keyflow-lang = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 view-knowledge-graph = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
@@ -1196,8 +1196,8 @@ installer-core = { path = "../daw/libs/installer-core" }
 # features/proto and features/syntax); daw keeps a copy for the crates
 # below it. Both sources point at keyflow's, so there is ONE keyflow-proto
 # in the graph — two would be two incompatible `Chart` types.
-keyflow-proto = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
-keyflow-syntax = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.3" }
+keyflow-proto = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
+keyflow-syntax = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.4" }
 kontrol = { path = "../daw/crates/kontrol/kontrol" }
 level-dsp = { path = "../daw/features/fx/level/level-dsp" }
 meter-dsp = { path = "../daw/crates/audiocore/meter-dsp" }
@@ -1244,4 +1244,5 @@ fts-plug-ui = { path = "../processor/libs/ui/fts-plug-ui" }
 # Clear native DOM mappings before Blitz recycles removed node slots.
 [patch."https://github.com/DioxusLabs/dioxus"]
 dioxus-native-dom = { path = "libs/vendor/dioxus-native-dom" }
+
 

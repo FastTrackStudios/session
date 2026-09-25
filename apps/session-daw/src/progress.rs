@@ -15,18 +15,18 @@ use crate::studio::StudioSession;
 use session_ui::components::progress::{ProgressSection, SongProgressBar};
 use session_ui::components::transport_controls::TransportControlBar;
 
-/// The song as the performance panels see it.
+/// The song as the performance panels (and the navigator) see it.
 #[derive(Clone, PartialEq)]
-struct Song {
-    start: f64,
-    end: f64,
+pub(crate) struct Song {
+    pub(crate) start: f64,
+    pub(crate) end: f64,
     /// Each section's span, in order.
-    sections: Vec<(f64, f64)>,
-    bar: Vec<ProgressSection>,
+    pub(crate) sections: Vec<(f64, f64)>,
+    pub(crate) bar: Vec<ProgressSection>,
 }
 
 impl Song {
-    fn of(session: &StudioSession) -> Option<Self> {
+    pub(crate) fn of(session: &StudioSession) -> Option<Self> {
         let regions = &session.project.sections;
         let (start, end) = regions
             .iter()
@@ -66,7 +66,7 @@ impl Song {
     }
 
     /// The section the play position is in, if any.
-    fn current(&self, at: f64) -> Option<usize> {
+    pub(crate) fn current(&self, at: f64) -> Option<usize> {
         self.sections
             .iter()
             .rposition(|(from, _)| *from <= at + 1e-6)
@@ -113,7 +113,11 @@ pub(crate) fn use_reading() -> Signal<Reading> {
 
 /// The ProgressBar panel. A click on a section plays from it.
 #[component]
-pub fn ProgressBar() -> Element {
+pub fn ProgressBar(
+    /// Its height as CSS — slim on a phone (5rem unless given).
+    #[props(default)]
+    height: Option<String>,
+) -> Element {
     let session: StudioSession = use_context();
     let song = use_hook(|| Song::of(&session));
     let reading = use_reading();
@@ -132,6 +136,7 @@ pub fn ProgressBar() -> Element {
     });
     rsx! {
         SongProgressBar {
+            height,
             progress: song.progress(reading().at),
             sections: song.bar.clone(),
             on_section_click: move |index: usize| {
@@ -144,18 +149,25 @@ pub fn ProgressBar() -> Element {
 }
 
 /// The performance transport: back a section, play/stop, loop, on a section.
+/// `compact` is a small screen's: the four icons alone, `height` pixels tall
+/// (44 unless given).
 #[component]
-pub fn TransportButtons() -> Element {
+pub fn TransportButtons(
+    #[props(default)] compact: bool,
+    #[props(default)] height: Option<u32>,
+) -> Element {
     let session: StudioSession = use_context();
     let song = use_hook(|| Song::of(&session));
     let reading = use_reading();
     let r = reading();
     let back = song.clone();
     let on = song;
+    let height = height.unwrap_or(if compact { 44 } else { 64 });
     rsx! {
         div {
-            style: "height:64px; flex:none; overflow:hidden; border-radius:10px;",
+            style: "height:{height}px; flex:none; overflow:hidden; border-radius:10px;",
             TransportControlBar {
+                icons_only: compact,
                 is_playing: r.playing,
                 is_looping: r.looping,
                 is_recording: false,

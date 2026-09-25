@@ -53,6 +53,9 @@ session = { workspace = true }
 # The performance panels (the progress bar), drawn under Blitz — see
 # `src/progress.rs`.
 session-ui = { workspace = true, features = ["web"] }
+# The small-screen layout's tab icons (`compact`) — the icon set session-ui's
+# transport draws with.
+lucide-dioxus = { workspace = true }
 # The chord items' numbers and names — `arrangement::Lettering`.
 keyflow = { workspace = true }
 # The guide engine the Click / Count / Guide MIDI tracks play through —
