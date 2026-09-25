@@ -19,7 +19,7 @@ mod guide;
 mod log_ring;
 mod prefs;
 // The shared "dial the engine" plumbing the browser session player uses.
-#[cfg(feature = "session")]
+#[cfg(feature = "session-domain")]
 mod remote;
 // The in-process session player (daw-standalone + audio + guide) is
 // native-only; the wasm build is a remote of the network engine instead.

@@ -273,9 +273,33 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
 
     let mut link = use_signal(String::new);
     let who = account.as_ref().map_or_else(guest_name, Account::name);
+    // Drive a REAPER through its Session bridge, at `address`: Remote mode,
+    // the set its open projects are — as `FTS_AUDIO_TARGET` does at launch.
+    let mut connect_bridge = move |address: String| {
+        remember_bridge(&address);
+        open_set(
+            Progress::Joining { retry: None },
+            Box::new(move |_| {
+                use session_daw::open::{ModeState, RemoteTarget};
+                let target = RemoteTarget::Session { address };
+                session_daw::open::set_mode(ModeState {
+                    requested: session_daw::open::AudioMode::Remote,
+                    target: Some(target.clone()),
+                    ..ModeState::engine()
+                });
+                Setlist::attach(&target)
+            }),
+        );
+    };
+    let bridge = use_hook(remembered_bridge);
     let join = {
         let who = who.clone();
         move |text: String| {
+            // A REAPER's Session bridge (or a Session engine): drive it.
+            if let Some(address) = engine_address(&text) {
+                connect_bridge(address);
+                return;
+            }
             let Some(live) = live_link(&text) else {
                 opening.set(Opening::Failed(
                     "that is not a Session or Task live link".to_owned(),
@@ -343,6 +367,19 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                         span { style: "flex:1; min-width:0;", "Could not open it — {why}" }
                     }
                 }
+                // The REAPER this device drove last, through its bridge.
+                if let Some(address) = bridge.clone() {
+                    div {
+                        style: "display:flex; flex-direction:column; gap:10px;",
+                        Heading { label: "Your REAPER" }
+                        ListRow {
+                            first: true,
+                            title: "Reconnect to REAPER",
+                            detail: address.clone(),
+                            on_press: move |()| connect_bridge(address.clone()),
+                        }
+                    }
+                }
                 // Live: the demo first, the way most people arrive.
                 div {
                     style: "display:flex; flex-direction:column; gap:10px;",
@@ -389,7 +426,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                                 span {
                                     style: "position:absolute; top:0; left:6px; height:38px; display:flex; \
                                             align-items:center; font-size:15px; color:#6b7280; pointer-events:none;",
-                                    "Have a link? Paste it here"
+                                    "Paste a live link or a REAPER bridge"
                                 }
                             }
                             input {
@@ -680,6 +717,40 @@ fn live_link(text: &str) -> Option<String> {
     Some(url)
 }
 
+/// The address of a REAPER's Session bridge (or a Session engine) in
+/// `text`: a `ws://`/`wss://` URL, `fts-engine:<id>`, or a bare iroh id —
+/// what the bridge shows when REAPER starts.
+fn engine_address(text: &str) -> Option<String> {
+    let text = text.trim();
+    let bare_id = text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit());
+    (text.starts_with("ws://")
+        || text.starts_with("wss://")
+        || text.starts_with("fts-engine:")
+        || bare_id)
+        .then(|| text.to_owned())
+}
+
+/// Where the last bridge's address is kept.
+fn bridge_memory() -> Option<PathBuf> {
+    Some(dirs::data_dir()?.join("Session").join("reaper-bridge"))
+}
+
+fn remember_bridge(address: &str) {
+    let Some(file) = bridge_memory() else { return };
+    let written = file
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&file, address));
+    if let Err(e) = written {
+        tracing::warn!(error = %e, "start: the bridge's address could not be kept");
+    }
+}
+
+fn remembered_bridge() -> Option<String> {
+    let text = std::fs::read_to_string(bridge_memory()?).ok()?;
+    engine_address(&text)
+}
+
 /// `%XX` escapes undone (a link riding in another's query).
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
@@ -904,6 +975,12 @@ mod tests {
             Some(task)
         );
         assert_eq!(live_link("not a link"), None);
+        assert_eq!(
+            super::engine_address(" ws://192.168.0.65:4040/vox ").as_deref(),
+            Some("ws://192.168.0.65:4040/vox")
+        );
+        assert!(super::engine_address("fts-engine:1aa6").is_some());
+        assert!(super::engine_address("https://task.example/org/band/share/abc").is_none());
         assert_eq!(live_link("example.com"), None);
     }
 
