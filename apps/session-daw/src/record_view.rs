@@ -751,7 +751,8 @@ mod tests {
             track("c", "Click", None),
             track("x", "Keys", None),
         ];
-        let labels: Vec<(&str, Option<&str>)> = strips_of(&tracks)
+        let strips = strips_of(&tracks);
+        let labels: Vec<(&str, Option<&str>)> = strips
             .iter()
             .map(|s| (s.label, s.track.as_ref().map(|t| t.guid.as_str())))
             .collect();
