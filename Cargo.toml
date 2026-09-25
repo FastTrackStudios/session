@@ -12,6 +12,7 @@ members = [
     "libs/razor",
     "libs/vendor/anyrender_vello",
     "libs/vendor/dioxus-native-dom",
+    "libs/vendor/dioxus-native",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
     "features/expression-editor/expression-editor-corpus",
@@ -867,12 +868,12 @@ pipewire-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git"
 # Branch `session-stale-mousedown` on the fork (db4318a9 plus the fix for a
 # drag whose pressed node was removed — it panicked Blitz on every press
 # that re-rendered), pinned by rev.
-blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
-blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
-blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
-blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
-blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
-blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "600c36bc363fe08f6179b69bcd570bcc32fdebb7" }
+blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
+blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
+blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
+blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
+blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
+blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "3d456ba0e7ab264858bf5c5d2dcc2f548d5df7f2" }
 # Vendored in-tree rather than patched to a sibling checkout, because a
 # path outside this repo builds on one machine and nowhere else. Three
 # measured changes to the present path — the GPU barrier removed, frame
@@ -1244,5 +1245,8 @@ fts-plug-ui = { path = "../processor/libs/ui/fts-plug-ui" }
 # Clear native DOM mappings before Blitz recycles removed node slots.
 [patch."https://github.com/DioxusLabs/dioxus"]
 dioxus-native-dom = { path = "libs/vendor/dioxus-native-dom" }
+# The renderer's pick, with the iOS simulator on vello-hybrid (see its
+# UPSTREAM.md).
+dioxus-native = { path = "libs/vendor/dioxus-native" }
 
 
