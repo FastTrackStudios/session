@@ -118,14 +118,29 @@ pub fn CompactShell(
     body: Element,
 ) -> Element {
     let setlist: Signal<Setlist> = use_context();
+    // The record view's song menu (in Control, in record mode) picks as the
+    // navigator does.
+    use_context_provider(|| crate::record_view::PickSong(on_pick));
     let open = use_signal(|| false);
     let current = setlist.read().current().cloned();
+    // Record mode: Control is the record view (`crate::record_view`),
+    // with its own bars and transport.
+    let mode = try_use_context::<Signal<session::modes::Mode>>();
+    let record = mode.is_some_and(|m| m() == session::modes::Mode::Record);
     let landscape = form == Form::Landscape;
     let direction = if landscape { "row" } else { "column" };
     let panel = rsx! {
         div {
             style: "position:relative; flex:1; min-height:0; min-width:0; overflow:hidden;",
-            if view() == PhoneView::Control {
+            if view() == PhoneView::Control && record {
+                if let Some(song) = &current {
+                    crate::shell::WithSong {
+                        key: "{song.project}",
+                        session: song.session.clone(),
+                        crate::record_view::RecordView {}
+                    }
+                }
+            } else if view() == PhoneView::Control {
                 crate::navigator::Navigator { on_pick }
             } else {
                 {body}
@@ -137,6 +152,7 @@ pub fn CompactShell(
     // view's own, full size.
     let control = view() == PhoneView::Control;
     let strip = match &current {
+        Some(_) if control && record => rsx! {},
         Some(song) => rsx! {
             crate::shell::WithSong {
                 key: "{song.project}",
@@ -179,7 +195,7 @@ pub fn CompactShell(
                     {panel}
                     {strip}
                     if open() {
-                        Drawer { open, {drawer} }
+                        Drawer { open, ModeSwitch {} {drawer} }
                     }
                 }
             } else {
@@ -189,7 +205,7 @@ pub fn CompactShell(
                     {panel}
                     {strip}
                     if open() {
-                        Drawer { open, {drawer} }
+                        Drawer { open, ModeSwitch {} {drawer} }
                     }
                 }
                 Tabs { view, rail: false }
@@ -245,6 +261,37 @@ fn Drawer(open: Signal<bool>, children: Element) -> Element {
                     background:{BAR_BG}; border-bottom:1px solid {RULE}; \
                     border-radius:0 0 14px 14px; box-shadow:0 16px 30px rgba(0,0,0,0.55);",
             {children}
+        }
+    }
+}
+
+/// Live or Record, for a phone — the wide layout's mode menu, cut to the
+/// two modes a small screen is used in. Absent where the host keeps no
+/// mode.
+#[component]
+fn ModeSwitch() -> Element {
+    use session::modes::Mode;
+    let Some(mut mode) = try_use_context::<Signal<Mode>>() else {
+        return rsx! {};
+    };
+    rsx! {
+        div {
+            style: "display:flex; gap:6px;",
+            for (each, label) in [(Mode::Live, "Live"), (Mode::Record, "Record")] {
+                button {
+                    key: "{label}",
+                    style: {
+                        let on = mode() == each;
+                        let (fg, bg) = if on { (ACCENT, "#1f2a3a") } else { (DIM, "transparent") };
+                        format!(
+                            "flex:1; height:40px; border-radius:10px; border:1px solid {RULE}; background:{bg}; \
+                             color:{fg}; font-family:inherit; font-size:14px; font-weight:650; cursor:pointer;"
+                        )
+                    },
+                    onclick: move |_| mode.set(each),
+                    "{label}"
+                }
+            }
         }
     }
 }

@@ -18899,10 +18899,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "dsp-golden"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -19004,4 +19000,8 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "dsp-golden"
 version = "0.1.0"

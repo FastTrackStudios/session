@@ -104,7 +104,14 @@ fn attach(mtm: MainThreadMarker) {
         return;
     };
     window.setWindowScene(Some(&scene));
-    window.setFrame(scene.screen().bounds());
+    // The scene's own bounds, not its screen's: on an iPad the scene is a
+    // window that need not fill the screen (iPadOS 26 windows, Split View),
+    // and a window framed to the screen has its surface stretched into the
+    // scene — the picture drawn taller than laid out, its foot off screen.
+    // On a phone the two are the same.
+    window.setFrame(objc2_ui_kit::UICoordinateSpace::bounds(
+        &*scene.coordinateSpace(),
+    ));
     window.makeKeyAndVisible();
     tracing::info!(
         ios.scene = "adopted",
