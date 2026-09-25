@@ -68,13 +68,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: FastTrackStudios/daw
-          ref: 3607e02afab5196d3f85c53a9388394acfd584f0
+          ref: 216c78246a0399e2d5fb94325afdd8c19fea2164
           path: daw
       - name: Sibling checkout — processor
         uses: actions/checkout@v4
         with:
           repository: FastTrackStudios/processor
-          ref: bdf855f35e646ced8e08d31750dcf158e0b1bc60
+          ref: 473ade6c8cdd1d10e26b4baff19f30aefa56154f
           path: processor
       - name: Persistent target dir
         run: |
