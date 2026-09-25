@@ -84,9 +84,9 @@ jobs:
           KEYCHAIN: fts-build.keychain
           KEYCHAIN_PW: fts-build
           MARKETING_VER: ${{ inputs.marketing_version || '0.0.1' }}
-          # 26.6 GM builds/signs/uploads; the beta's actool compiles the icon
-          # catalog (26.6's actool can't produce Assets.car on macOS 27).
-          ACTOOL_DEVELOPER_DIR: /Applications/Xcode-beta.app/Contents/Developer
+          # The release Xcode xcode-select points at (27, on macOS 27) builds,
+          # compiles the icon catalog, signs and uploads: App Store Connect
+          # refuses a beta SDK (90534), and actool must match the macOS.
           # ── Telemetry ────────────────────────────────────────────────
           # Baked at build time via option_env! in architect-telemetry: a
           # shipped app has nobody to set env vars for it, and the exporter
