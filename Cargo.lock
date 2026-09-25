@@ -13784,6 +13784,7 @@ dependencies = [
  "keyflow",
  "keyflow-sync",
  "libc",
+ "lucide-dioxus",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
  "objc2-ui-kit",
@@ -18898,6 +18899,10 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -18999,8 +19004,4 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "dsp-golden"
 version = "0.1.0"
