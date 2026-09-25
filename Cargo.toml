@@ -472,7 +472,12 @@ dioxus-web = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a5
 # every resolve rebuilds layout children for the whole document, the
 # combined workload goes 5.7x to 11.6x, and a frame that changes nothing
 # stops being free.
-dioxus-native = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false, features = ["prelude", "system-fonts", "svg", "autofocus", "data-uri", "vello", "accessibility", "hot-reload", "net", "html", "clipboard", "file-dialog", "vello-hybrid", "woff", "apple-font-embolden", "incremental"] }
+# The vendored copy (see its UPSTREAM.md) by path, not the git URL the
+# [patch] below redirects: a member's dep on a patched git crate leaves
+# nothing in the lockfile to match it, so cargo re-queries the git source
+# — which a vendored, offline build (nix, crane) refuses. daw's crates
+# still name the git URL; the patch covers them.
+dioxus-native = { path = "libs/vendor/dioxus-native", default-features = false, features = ["prelude", "system-fonts", "svg", "autofocus", "data-uri", "vello", "accessibility", "hot-reload", "net", "html", "clipboard", "file-dialog", "vello-hybrid", "woff", "apple-font-embolden", "incremental"] }
 # On `incremental`, which was suspected of the `hit_inner` panic and
 # exonerated: the crash reproduces with it off, so the stale ids that
 # `resolve.rs` knowingly keeps in `layout_children` are not the cause.
