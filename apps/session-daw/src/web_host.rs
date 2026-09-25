@@ -570,6 +570,12 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
             crate::collab::transport_pressed();
         }
     };
+    // The record view's song menu picks the same way.
+    use_context_provider(|| crate::record_view::PickSong(Callback::new(pick)));
+    // Record mode's performance view stands in for the top bar.
+    let record_screen = move || {
+        mode() == session::modes::Mode::Record && view() == crate::shell::View::Performance
+    };
     let current = setlist.read().current().cloned();
     if form().compact() {
         return rsx! {
@@ -606,25 +612,27 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
                     flex-direction:column; background:#0f1012; color:#e5e7eb; \
                     font-family:system-ui, sans-serif;",
-            TopBar {
-                view,
-                mode,
-                // The transport reads the song it drives, so it is mounted
-                // per song too — the tabs beside it are not.
-                transport: rsx! {
-                    if let Some(song) = current.clone() {
-                        WithSong {
-                            key: "{song.project}",
-                            session: song.session.clone(),
-                            crate::transport_bar::WebTransportBar {}
+            if !record_screen() {
+                TopBar {
+                    view,
+                    mode,
+                    // The transport reads the song it drives, so it is mounted
+                    // per song too — the tabs beside it are not.
+                    transport: rsx! {
+                        if let Some(song) = current.clone() {
+                            WithSong {
+                                key: "{song.project}",
+                                session: song.session.clone(),
+                                crate::transport_bar::WebTransportBar {}
+                            }
                         }
-                    }
-                    // Once, not per song: the live set this page is in —
-                    // who is here, together.
-                    crate::collab_bar::CollabBar {}
-                    ListeningBadge { listening: listening(), asking }
-                },
-                on_pick: pick,
+                        // Once, not per song: the live set this page is in —
+                        // who is here, together.
+                        crate::collab_bar::CollabBar {}
+                        ListeningBadge { listening: listening(), asking }
+                    },
+                    on_pick: pick,
+                }
             }
             if let Some(song) = current {
                 // Keyed by the song: picking another remounts every panel

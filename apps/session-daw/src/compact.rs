@@ -118,6 +118,9 @@ pub fn CompactShell(
     body: Element,
 ) -> Element {
     let setlist: Signal<Setlist> = use_context();
+    // The record view's song menu (in Control, in record mode) picks as the
+    // navigator does.
+    use_context_provider(|| crate::record_view::PickSong(on_pick));
     let open = use_signal(|| false);
     let current = setlist.read().current().cloned();
     // Record mode: Control is the record view (`crate::record_view`),

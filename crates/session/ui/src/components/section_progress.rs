@@ -26,7 +26,12 @@ pub fn SectionProgressBar(
     #[props(default)] on_measure_click: Option<Callback<daw_proto::MusicalPosition>>,
     #[props(default)] on_comment_click: Option<Callback<f64>>,
     #[props(default)] queued_target: Option<QueuedTarget>,
+    /// The bar's height as CSS (`1rem` unless given) — a touchscreen's is
+    /// taller, so each measure is a target a finger can hit.
+    #[props(default)]
+    height: Option<String>,
 ) -> Element {
+    let bar_height = height.unwrap_or_else(|| "1rem".to_owned());
     let current_progress = progress;
 
     // Track progress changes to detect jumps and disable animations
@@ -327,7 +332,8 @@ pub fn SectionProgressBar(
             }
             // Progress bar content (with padding to align with cards)
             div {
-                class: "relative w-full h-4 rounded-lg overflow-hidden bg-secondary",
+                class: "relative w-full rounded-lg overflow-hidden bg-secondary",
+                style: "height:{bar_height};",
                 // Tempo/Time signature marker lines (inside progress bar for proper positioning)
                 // Lines extend from top of progress bar upwards
                 if !tempo_markers.is_empty() {
