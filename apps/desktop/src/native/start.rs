@@ -19,6 +19,10 @@
 use std::path::PathBuf;
 
 use dioxus::prelude::*;
+use lucide_dioxus::{
+    ChevronRight, CircleAlert, FileMusic, FolderOpen, LibraryBig, Link, ListMusic, Radio,
+};
+use session_daw::loading::{Loading, Progress, mark_src};
 use session_daw::setlist::Setlist;
 use session_daw::stream_set::{LibrarySetlist, Remote};
 use session_daw::task_account::{self, Account, Started};
@@ -62,13 +66,25 @@ pub fn App() -> Element {
     }
     let initial: Option<Setlist> = use_context();
     let opened = use_signal(|| initial);
-    match opened() {
+    let page = match opened() {
         Some(setlist) => rsx! {
             WithSetlist { setlist, super::shell::Shell {} }
         },
         None => rsx! { Start { opened } },
+    };
+    rsx! {
+        document::Style { {ROOT_CSS} }
+        {page}
     }
 }
+
+/// The page itself, edge to edge. Blitz's default stylesheet gives `body`
+/// an 8px margin, and Blitz places an absolutely positioned box against its
+/// parent — the body — so without this every view sat 8px right and down
+/// and ran off the right edge. And the canvas takes the page's background:
+/// the app's own dark, under a phone's status bar and home indicator too,
+/// rather than the renderer's clear colour.
+const ROOT_CSS: &str = "html, body { margin: 0; padding: 0; background: #0f1012; }";
 
 /// What the launch chose to open as the window opens (see
 /// `super::choose`), if anything.
@@ -93,7 +109,8 @@ fn WithSetlist(setlist: Setlist, children: Element) -> Element {
 #[derive(Clone, PartialEq)]
 enum Opening {
     Idle,
-    Busy(String),
+    /// Opening: the loading screen shows where it has got to.
+    Busy(Progress),
     Failed(String),
 }
 
@@ -126,20 +143,24 @@ async fn off_thread<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static
 }
 
 /// A way of opening a set, run on a thread of its own: it says each step
-/// to its `progress`.
-type OpenWork = Box<dyn FnOnce(&dyn Fn(String)) -> eyre::Result<Setlist> + Send>;
+/// to its `progress` — the loading screen's.
+type OpenWork = Box<dyn FnOnce(&dyn Fn(Progress)) -> eyre::Result<Setlist> + Send>;
+
+/// An error for a person: the whole chain, in a few words.
+fn brief(e: &eyre::Report) -> String {
+    session_daw::task_set::brief(&format!("{e:#}"))
+}
 
 #[component]
 fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let mut opening = use_signal(|| Opening::Idle);
     let local = use_hook(documents);
-    let busy = matches!(opening(), Opening::Busy(_));
 
     // Open a set on a thread of its own; it becomes the window's when it
-    // is ready. What it is doing shows as it goes.
-    let mut open_set = move |what: String, work: OpenWork| {
-        opening.set(Opening::Busy(what));
-        let (tell, mut heard) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // is ready. Meanwhile the loading screen says where it has got to.
+    let mut open_set = move |first: Progress, work: OpenWork| {
+        opening.set(Opening::Busy(first));
+        let (tell, mut heard) = tokio::sync::mpsc::unbounded_channel::<Progress>();
         spawn(async move {
             while let Some(step) = heard.recv().await {
                 if matches!(*opening.peek(), Opening::Busy(_)) {
@@ -153,19 +174,19 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                 Some(Ok(setlist)) => opened.set(Some(setlist)),
                 Some(Err(e)) => {
                     tracing::warn!(error = %e, "start: the set did not open");
-                    opening.set(Opening::Failed(format!("{e:#}")));
+                    opening.set(Opening::Failed(brief(&e)));
                 }
                 None => opening.set(Opening::Failed("opening stopped".to_owned())),
             }
         });
     };
     let mut open_path = move |path: PathBuf| {
-        let name = path.file_name().map_or_else(
+        let title = path.file_stem().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
         open_set(
-            format!("Opening {name}…"),
+            Progress::Opening { title },
             Box::new(move |_| {
                 let songs = super::songs_of(&path)
                     .ok_or_else(|| eyre::eyre!("{} is not a song or a setlist", path.display()))?;
@@ -207,7 +228,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                     }
                     orgs.set(Load::Ready(list));
                 }
-                Some(Err(e)) => orgs.set(Load::Failed(format!("{e:#}"))),
+                Some(Err(e)) => orgs.set(Load::Failed(brief(&e))),
                 None => {}
             }
         });
@@ -222,7 +243,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             let library = account.library(&org);
             match off_thread(move || session_daw::stream_set::setlists(&library)).await {
                 Some(Ok(list)) => setlists.set(Load::Ready(list)),
-                Some(Err(e)) => setlists.set(Load::Failed(format!("{e:#}"))),
+                Some(Err(e)) => setlists.set(Load::Failed(brief(&e))),
                 None => {}
             }
         });
@@ -235,7 +256,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             let started = match off_thread(move || task_account::start(&at)).await {
                 Some(Ok(started)) => started,
                 Some(Err(e)) => {
-                    sign_in.set(SignIn::Failed(format!("{e:#}")));
+                    sign_in.set(SignIn::Failed(brief(&e)));
                     return;
                 }
                 None => return,
@@ -244,7 +265,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             sign_in.set(SignIn::Code(started.clone()));
             match off_thread(move || task_account::finish(&server, &started)).await {
                 Some(Ok(account)) => sign_in.set(SignIn::In(account)),
-                Some(Err(e)) => sign_in.set(SignIn::Failed(format!("{e:#}"))),
+                Some(Err(e)) => sign_in.set(SignIn::Failed(brief(&e))),
                 None => {}
             }
         });
@@ -263,16 +284,38 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             };
             let name = who.clone();
             open_set(
-                "Joining the set…".to_owned(),
+                Progress::Joining { retry: None },
                 Box::new(move |progress| {
                     session_daw::stream_set::open(Remote::Live { link: live, name }, progress)
                 }),
             );
         }
     };
+    // `FTS_SESSION_LIVE=<link>` joins a live set as the window opens, as
+    // `FTS_SESSION_PROJECT` opens a song (`demo` is the public demo).
+    use_hook({
+        let mut join = join.clone();
+        move || {
+            if let Some(link) = std::env::var("FTS_SESSION_LIVE")
+                .ok()
+                .filter(|l| !l.trim().is_empty())
+            {
+                join(if link.trim() == "demo" {
+                    DEMO_LINK.to_owned()
+                } else {
+                    link
+                });
+            }
+        }
+    });
     let mut join_demo = join.clone();
     let mut join_link = join.clone();
     let mut join_pasted = join;
+
+    // Opening: the loading screen, whole.
+    if let Opening::Busy(progress) = opening() {
+        return rsx! { Loading { progress } };
+    }
 
     rsx! {
         div {
@@ -280,40 +323,88 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                     overflow-y:auto; background:{BG}; color:{TEXT}; font-family:system-ui, sans-serif; \
                     display:flex; flex-direction:column; align-items:center;",
             div {
-                style: "width:100%; max-width:520px; box-sizing:border-box; padding:{TOP}px 18px 40px; \
-                        display:flex; flex-direction:column; gap:22px;",
+                style: "width:100%; max-width:560px; box-sizing:border-box; padding:{TOP}px 16px 48px; \
+                        display:flex; flex-direction:column; gap:26px;",
+                // The mark and the name.
                 div {
-                    style: "display:flex; flex-direction:column; gap:4px;",
-                    span { style: "font-size:26px; font-weight:700;", "Session" }
-                    span { style: "font-size:14px; color:{DIM};", "Your setlist, live — join a set, or open one." }
-                }
-                match opening() {
-                    Opening::Busy(step) => rsx! { Note { color: ACCENT, "{step}" } },
-                    Opening::Failed(why) => rsx! { Note { color: WARN, "Could not open it: {why}" } },
-                    Opening::Idle => rsx! {},
-                }
-                Section { title: "Join a set",
-                    Row {
-                        title: "The Session demo",
-                        detail: "The live set everyone who visits plays together",
-                        enabled: !busy,
-                        on_press: move |()| join_demo(DEMO_LINK.to_owned()),
-                    }
+                    style: "display:flex; align-items:center; gap:14px; padding:4px 2px 0;",
+                    img { src: mark_src(), width: "52", height: "52", style: "border-radius:12px; flex:none;" }
                     div {
-                        style: "display:flex; gap:8px; padding:10px 14px; border-bottom:1px solid {RULE};",
-                        input {
-                            style: "flex:1; min-width:0; height:36px; box-sizing:border-box; padding:0 10px; \
-                                    border-radius:8px; border:1px solid {RULE}; background:{BG}; color:{TEXT}; \
-                                    font-family:inherit; font-size:14px;",
-                            r#type: "text",
-                            placeholder: "A live link someone shared",
-                            value: "{link}",
-                            oninput: move |e| link.set(e.value()),
+                        style: "display:flex; flex-direction:column; gap:2px; min-width:0;",
+                        span { style: "font-size:28px; font-weight:750; letter-spacing:-0.02em;", "Session" }
+                        span { style: "font-size:14px; color:{DIM};", "Your setlist, live." }
+                    }
+                }
+                if let Opening::Failed(why) = opening() {
+                    div {
+                        style: "display:flex; gap:10px; align-items:flex-start; padding:12px 14px; border-radius:12px; \
+                                background:#2a1f12; border:1px solid #5b4219; color:{WARN}; font-size:13px; line-height:1.45;",
+                        CircleAlert { size: 18, color: "currentColor" }
+                        span { style: "flex:1; min-width:0;", "Could not open it — {why}" }
+                    }
+                }
+                // Live: the demo first, the way most people arrive.
+                div {
+                    style: "display:flex; flex-direction:column; gap:10px;",
+                    Heading { label: "Live now" }
+                    button {
+                        style: "display:flex; align-items:center; gap:14px; width:100%; box-sizing:border-box; padding:18px 16px; \
+                                border-radius:16px; border:1px solid #2c4a6b; cursor:pointer; text-align:left; \
+                                background:linear-gradient(135deg, #16283d 0%, #121a24 60%, #111316 100%); \
+                                color:{TEXT}; font-family:inherit;",
+                        onclick: move |_| join_demo(DEMO_LINK.to_owned()),
+                        div {
+                            style: "flex:none; width:44px; height:44px; border-radius:22px; display:flex; \
+                                    align-items:center; justify-content:center; background:{ACCENT}; color:#0b0c0e;",
+                            Radio { size: 22, color: "currentColor" }
                         }
-                        if cfg!(target_os = "ios") {
-                            Button {
+                        div {
+                            style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
+                            div {
+                                style: "display:flex; align-items:center; gap:8px;",
+                                span { style: "font-size:17px; font-weight:650;", "The Session demo" }
+                                span {
+                                    style: "font-size:10px; font-weight:750; letter-spacing:0.08em; padding:2px 6px; \
+                                            border-radius:5px; background:#3aa0ff26; color:{ACCENT};",
+                                    "LIVE"
+                                }
+                            }
+                            span { style: "font-size:13px; color:#aab4c0; line-height:1.4;", "Play along with everyone in the demo set — chart, lyrics and click." }
+                        }
+                        ChevronRight { size: 20, color: "#6b7a8c" }
+                    }
+                    // A link someone shared.
+                    div {
+                        style: "display:flex; gap:8px; align-items:center; padding:8px; border-radius:14px; \
+                                background:{BAR}; border:1px solid {RULE};",
+                        div {
+                            style: "flex:none; padding-left:6px; color:{DIM}; display:flex;",
+                            Link { size: 18, color: "currentColor" }
+                        }
+                        // The hint under the field while it is empty: Blitz
+                        // draws no `placeholder`.
+                        div {
+                            style: "position:relative; flex:1; min-width:0; height:38px;",
+                            if link().is_empty() {
+                                span {
+                                    style: "position:absolute; top:0; left:6px; height:38px; display:flex; \
+                                            align-items:center; font-size:15px; color:#6b7280; pointer-events:none;",
+                                    "Have a link? Paste it here"
+                                }
+                            }
+                            input {
+                                style: "position:absolute; top:0; left:0; width:100%; height:38px; box-sizing:border-box; \
+                                        padding:0 6px; border:none; background:transparent; color:{TEXT}; \
+                                        font-family:inherit; font-size:15px;",
+                                r#type: "text",
+                                value: "{link}",
+                                oninput: move |e| link.set(e.value()),
+                            }
+                        }
+                        if cfg!(target_os = "ios") && link().trim().is_empty() {
+                            Pill {
                                 label: "Paste",
-                                enabled: !busy,
+                                primary: false,
                                 on_press: move |()| {
                                     if let Some(text) = super::pasted() {
                                         link.set(text.clone());
@@ -321,48 +412,64 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                                     }
                                 },
                             }
-                        }
-                        Button {
-                            label: "Join",
-                            enabled: !busy && !link().trim().is_empty(),
-                            on_press: move |()| join_link(link()),
+                        } else {
+                            Pill {
+                                label: "Join",
+                                primary: !link().trim().is_empty(),
+                                on_press: move |()| {
+                                    if !link().trim().is_empty() {
+                                        join_link(link());
+                                    }
+                                },
+                            }
                         }
                     }
                 }
-                Section { title: "Task",
+                // Task: the library.
+                div {
+                    style: "display:flex; flex-direction:column; gap:10px;",
+                    Heading { label: "Your library" }
                     match sign_in() {
-                        SignIn::Out => rsx! {
-                            Row {
-                                title: "Sign in",
-                                detail: "From a browser where you are signed in to Task",
-                                enabled: !busy,
-                                on_press: start_sign_in,
-                            }
-                        },
-                        SignIn::Starting => rsx! { Line { color: DIM, "Asking Task for a code…" } },
-                        SignIn::Code(started) => rsx! {
-                            div {
-                                style: "display:flex; flex-direction:column; gap:8px; padding:14px;",
-                                span { style: "font-size:13px; color:{DIM};", "Approve this code in the browser:" }
-                                span { style: "font-size:28px; font-weight:700; letter-spacing:0.12em;", "{started.code.user_code}" }
-                                span { style: "font-size:12px; color:{DIM}; word-break:break-all;", "{started.link()}" }
+                        SignIn::Out | SignIn::Failed(_) => rsx! {
+                            Card {
                                 div {
-                                    style: "display:flex;",
-                                    Button {
-                                        label: "Open the page again",
-                                        enabled: true,
-                                        on_press: move |()| super::open_url(&started.link()),
+                                    style: "display:flex; gap:14px; align-items:flex-start;",
+                                    div {
+                                        style: "flex:none; width:40px; height:40px; border-radius:10px; display:flex; \
+                                                align-items:center; justify-content:center; background:#1f232a; color:{ACCENT};",
+                                        LibraryBig { size: 20, color: "currentColor" }
                                     }
+                                    div {
+                                        style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;",
+                                        span { style: "font-size:16px; font-weight:650;", "Your setlists, from Task" }
+                                        span { style: "font-size:13px; color:{DIM}; line-height:1.45;", "Sign in with your FastTrackStudio account to open your org's sets and stream them here." }
+                                        if let SignIn::Failed(why) = sign_in() {
+                                            span { style: "font-size:12px; color:{WARN}; line-height:1.4;", "Not signed in — {why}" }
+                                        }
+                                    }
+                                }
+                                div {
+                                    style: "display:flex; justify-content:flex-end; margin-top:14px;",
+                                    Pill { label: "Sign in", primary: true, on_press: start_sign_in }
                                 }
                             }
                         },
-                        SignIn::Failed(why) => rsx! {
-                            Line { color: WARN, "Not signed in: {why}" }
-                            Row {
-                                title: "Try again",
-                                detail: "",
-                                enabled: !busy,
-                                on_press: start_sign_in,
+                        SignIn::Starting => rsx! {
+                            Card { span { style: "font-size:14px; color:{DIM};", "Asking Task for a code…" } }
+                        },
+                        SignIn::Code(started) => rsx! {
+                            Card {
+                                div {
+                                    style: "display:flex; flex-direction:column; align-items:center; gap:12px; padding:6px 0;",
+                                    span { style: "font-size:14px; color:{DIM};", "Approve this code in your browser" }
+                                    CodeBoxes { code: started.code.user_code.clone() }
+                                    span { style: "font-size:12px; color:#6b7280;", "Waiting for approval…" }
+                                    Pill {
+                                        label: "Open the page again",
+                                        primary: false,
+                                        on_press: move |()| super::open_url(&started.link()),
+                                    }
+                                }
                             }
                         },
                         SignIn::In(account) => rsx! {
@@ -371,13 +478,13 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                                 orgs: orgs(),
                                 org,
                                 setlists: setlists(),
-                                enabled: !busy,
                                 on_open: move |setlist: LibrarySetlist| {
                                     let Some(org) = org() else { return };
                                     let library = account.library(&org);
                                     let name = account.name();
+                                    let first = setlist.songs.first().map(|s| s.title.clone()).unwrap_or_default();
                                     open_set(
-                                        format!("Opening {}…", setlist.title),
+                                        Progress::Fetching { title: first, retry: None },
                                         Box::new(move |progress| {
                                             session_daw::stream_set::open(
                                                 Remote::Library { library, setlist, name },
@@ -394,29 +501,41 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                         },
                     }
                 }
-                Section { title: "{LOCAL_TITLE}",
-                    if local.is_empty() {
-                        Line { color: DIM, "{LOCAL_EMPTY}" }
-                    }
-                    for path in local.clone() {
-                        Row {
-                            key: "{path.display()}",
-                            title: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                            detail: kind_of(&path),
-                            enabled: !busy,
-                            on_press: move |()| open_path(path.clone()),
+                // Songs and sets on this device.
+                div {
+                    style: "display:flex; flex-direction:column; gap:10px;",
+                    Heading { label: LOCAL_TITLE }
+                    div {
+                        style: "display:flex; flex-direction:column; border-radius:14px; overflow:hidden; \
+                                background:{BAR}; border:1px solid {RULE};",
+                        if local.is_empty() {
+                            div {
+                                style: "display:flex; gap:12px; align-items:center; padding:16px; font-size:13px; \
+                                        line-height:1.45; color:{DIM};",
+                                FolderOpen { size: 20, color: "currentColor" }
+                                span { style: "flex:1; min-width:0;", "{LOCAL_EMPTY}" }
+                            }
                         }
-                    }
-                    if cfg!(not(target_os = "ios")) {
-                        Row {
-                            title: "Open a song or setlist…",
-                            detail: "A REAPER project, a .session, or a .setlist",
-                            enabled: !busy,
-                            on_press: move |()| {
-                                if let Some(path) = super::pick() {
-                                    open_path(path);
-                                }
-                            },
+                        for (i, path) in local.clone().into_iter().enumerate() {
+                            ListRow {
+                                key: "{path.display()}",
+                                first: i == 0,
+                                title: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                                detail: kind_of(&path),
+                                on_press: move |()| open_path(path.clone()),
+                            }
+                        }
+                        if cfg!(not(target_os = "ios")) {
+                            ListRow {
+                                first: local.is_empty(),
+                                title: "Open a song or setlist…",
+                                detail: "A REAPER project, a .session, or a .setlist",
+                                on_press: move |()| {
+                                    if let Some(path) = super::pick() {
+                                        open_path(path);
+                                    }
+                                },
+                            }
                         }
                     }
                 }
@@ -432,7 +551,6 @@ fn TaskLibrary(
     orgs: Load<Vec<String>>,
     org: Signal<Option<String>>,
     setlists: Load<Vec<LibrarySetlist>>,
-    enabled: bool,
     on_open: EventHandler<LibrarySetlist>,
     on_sign_out: EventHandler<()>,
 ) -> Element {
@@ -442,18 +560,11 @@ fn TaskLibrary(
         .clone()
         .unwrap_or_else(|| account.name());
     rsx! {
-        div {
-            style: "display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid {RULE};",
-            span { style: "flex:1; min-width:0; font-size:13px; color:{DIM}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;", "Signed in as {who}" }
-            Button { label: "Sign out", enabled: true, on_press: move |()| on_sign_out.call(()) }
-        }
-        match orgs {
-            Load::Waiting => rsx! { Line { color: DIM, "Finding your orgs…" } },
-            Load::Failed(why) => rsx! { Line { color: WARN, "Could not reach Task: {why}" } },
-            Load::Ready(list) if list.len() > 1 => rsx! {
+        if let Load::Ready(list) = &orgs {
+            if list.len() > 1 {
                 div {
-                    style: "display:flex; flex-wrap:wrap; gap:6px; padding:10px 14px; border-bottom:1px solid {RULE};",
-                    for slug in list {
+                    style: "display:flex; flex-wrap:wrap; gap:6px;",
+                    for slug in list.clone() {
                         Chip {
                             key: "{slug}",
                             label: slug.clone(),
@@ -462,28 +573,67 @@ fn TaskLibrary(
                         }
                     }
                 }
-            },
-            Load::Ready(_) => rsx! {},
+            }
         }
-        match setlists {
-            Load::Waiting => rsx! {
-                if org().is_some() {
-                    Line { color: DIM, "Finding its setlists…" }
-                }
+        match (&orgs, &setlists) {
+            (Load::Failed(why), _) | (_, Load::Failed(why)) => rsx! {
+                Card { span { style: "font-size:13px; color:{WARN}; line-height:1.45;", "Could not read the library — {why}" } }
             },
-            Load::Failed(why) => rsx! { Line { color: WARN, "Could not read the library: {why}" } },
-            Load::Ready(list) if list.is_empty() => rsx! { Line { color: DIM, "No setlists in this library yet." } },
-            Load::Ready(list) => rsx! {
-                for setlist in list {
-                    Row {
+            (Load::Waiting, _) | (_, Load::Waiting) => rsx! {
+                Card { span { style: "font-size:14px; color:{DIM};", "Finding your setlists…" } }
+            },
+            (_, Load::Ready(list)) if list.is_empty() => rsx! {
+                Card { span { style: "font-size:14px; color:{DIM};", "No setlists in this library yet." } }
+            },
+            (_, Load::Ready(list)) => rsx! {
+                for setlist in list.clone() {
+                    SetlistCard {
                         key: "{setlist.id}",
-                        title: setlist.title.clone(),
-                        detail: songs_line(&setlist),
-                        enabled,
+                        setlist: setlist.clone(),
                         on_press: move |()| on_open.call(setlist.clone()),
                     }
                 }
             },
+        }
+        div {
+            style: "display:flex; align-items:center; gap:8px; padding:0 4px; font-size:12px; color:#6b7280;",
+            span { style: "flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;", "Signed in as {who}" }
+            button {
+                style: "border:none; background:transparent; color:{DIM}; font-family:inherit; font-size:12px; \
+                        text-decoration:underline; cursor:pointer; padding:4px;",
+                onclick: move |_| on_sign_out.call(()),
+                "Sign out"
+            }
+        }
+    }
+}
+
+/// A setlist as a card: its name, how many songs, and the first few.
+#[component]
+fn SetlistCard(setlist: LibrarySetlist, on_press: EventHandler<()>) -> Element {
+    let count = setlist.songs.len();
+    let preview = songs_line(&setlist);
+    rsx! {
+        button {
+            style: "display:flex; align-items:center; gap:14px; width:100%; box-sizing:border-box; padding:14px 16px; border-radius:14px; \
+                    background:{BAR}; border:1px solid {RULE}; color:{TEXT}; font-family:inherit; \
+                    text-align:left; cursor:pointer;",
+            onclick: move |_| on_press.call(()),
+            div {
+                style: "flex:none; width:40px; height:40px; border-radius:10px; display:flex; align-items:center; \
+                        justify-content:center; background:#1f232a; color:{ACCENT};",
+                ListMusic { size: 20, color: "currentColor" }
+            }
+            div {
+                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
+                div {
+                    style: "display:flex; align-items:center; gap:8px;",
+                    span { style: "font-size:16px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{setlist.title}" }
+                    span { style: "flex:none; font-size:11px; color:{DIM};", "{count} songs" }
+                }
+                span { style: "font-size:12px; color:#6b7280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{preview}" }
+            }
+            ChevronRight { size: 18, color: "#6b7280" }
         }
     }
 }
@@ -491,24 +641,43 @@ fn TaskLibrary(
 /// A setlist's songs, in a line.
 fn songs_line(setlist: &LibrarySetlist) -> String {
     let titles: Vec<&str> = setlist.songs.iter().map(|s| s.title.as_str()).collect();
-    match titles.len() {
-        0 => "No songs".to_owned(),
-        n => format!("{n} songs · {}", titles.join(", ")),
+    if titles.is_empty() {
+        "No songs".to_owned()
+    } else {
+        titles.join(" · ")
     }
 }
 
-/// The live link in `text`: a Task live share link as it is, or the one a
-/// Session app link carries (`…/app/?live=<link>`).
+/// The live link in `text`: a Task live share link as it is, the one a
+/// Session app link carries (`…/app/?live=<link>`), or — for the site's
+/// demo page (`…/demo`) — the demo's. Typed as people type them: with or
+/// without `https://`.
 fn live_link(text: &str) -> Option<String> {
-    let text = text.trim();
-    if !text.starts_with("http://") && !text.starts_with("https://") {
+    let text = text.trim().trim_end_matches('/');
+    let bare = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .unwrap_or(text);
+    // A host and a path, at least: `name.tld/…`.
+    let (host, path) = bare.split_once('/')?;
+    if !host.contains('.') || host.contains(' ') {
         return None;
     }
-    let carried = text
+    let url = if bare.len() == text.len() {
+        format!("https://{text}")
+    } else {
+        text.to_owned()
+    };
+    if let Some(carried) = url
         .split(['?', '&'])
         .find_map(|pair| pair.strip_prefix("live="))
-        .map(percent_decode);
-    Some(carried.unwrap_or_else(|| text.to_owned()))
+    {
+        return Some(percent_decode(carried));
+    }
+    if path.split(['?', '#']).next() == Some("demo") {
+        return Some(DEMO_LINK.to_owned());
+    }
+    Some(url)
 }
 
 /// `%XX` escapes undone (a link riding in another's query).
@@ -617,58 +786,69 @@ fn kind_of(path: &std::path::Path) -> String {
     }
 }
 
+/// A section's heading.
 #[component]
-fn Section(title: String, children: Element) -> Element {
+fn Heading(label: String) -> Element {
+    rsx! {
+        span {
+            style: "font-size:12px; font-weight:700; letter-spacing:0.08em; color:{DIM}; padding-left:4px;",
+            "{label.to_uppercase()}"
+        }
+    }
+}
+
+/// A panel holding one thing.
+#[component]
+fn Card(children: Element) -> Element {
     rsx! {
         div {
-            style: "display:flex; flex-direction:column; gap:6px;",
-            span { style: "font-size:11px; font-weight:700; letter-spacing:0.08em; color:{DIM}; padding-left:4px;", "{title.to_uppercase()}" }
-            div {
-                style: "display:flex; flex-direction:column; background:{BAR}; border:1px solid {RULE}; \
-                        border-radius:12px; overflow:hidden;",
-                {children}
-            }
+            style: "padding:16px; border-radius:14px; background:{BAR}; border:1px solid {RULE};",
+            {children}
         }
     }
 }
 
+/// A row of a list: a file, or the Open dialog.
 #[component]
-fn Row(title: String, detail: String, enabled: bool, on_press: EventHandler<()>) -> Element {
-    let fg = if enabled { TEXT } else { DIM };
-    rsx! {
-        button {
-            style: "display:flex; flex-direction:column; align-items:flex-start; gap:2px; min-height:52px; \
-                    padding:10px 14px; border:none; border-bottom:1px solid {RULE}; background:transparent; \
-                    color:{fg}; font-family:inherit; text-align:left; cursor:pointer; width:100%;",
-            onclick: move |_| {
-                if enabled {
-                    on_press.call(());
-                }
-            },
-            span { style: "font-size:15px; font-weight:600;", "{title}" }
-            if !detail.is_empty() {
-                span { style: "font-size:12px; color:{DIM};", "{detail}" }
-            }
-        }
-    }
-}
-
-#[component]
-fn Button(label: String, enabled: bool, on_press: EventHandler<()>) -> Element {
-    let (fg, bg) = if enabled {
-        (TEXT, "#23262c")
+fn ListRow(first: bool, title: String, detail: String, on_press: EventHandler<()>) -> Element {
+    let rule = if first {
+        "none".to_owned()
     } else {
-        (DIM, "transparent")
+        format!("1px solid {RULE}")
     };
     rsx! {
         button {
-            style: "flex:none; height:36px; padding:0 14px; border-radius:8px; border:1px solid {RULE}; \
-                    background:{bg}; color:{fg}; font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;",
-            onclick: move |_| {
-                if enabled {
-                    on_press.call(());
-                }
-            },
+            style: "display:flex; align-items:center; gap:12px; width:100%; box-sizing:border-box; min-height:56px; padding:10px 14px; \
+                    border:none; border-top:{rule}; background:transparent; color:{TEXT}; \
+                    font-family:inherit; text-align:left; cursor:pointer;",
+            onclick: move |_| on_press.call(()),
+            div {
+                style: "flex:none; color:{DIM}; display:flex;",
+                FileMusic { size: 20, color: "currentColor" }
+            }
+            div {
+                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;",
+                span { style: "font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
+                span { style: "font-size:12px; color:{DIM};", "{detail}" }
+            }
+            ChevronRight { size: 18, color: "#6b7280" }
+        }
+    }
+}
+
+/// A rounded button: the primary one filled.
+#[component]
+fn Pill(label: String, primary: bool, on_press: EventHandler<()>) -> Element {
+    let (fg, bg, border) = if primary {
+        ("#0b0c0e", ACCENT, ACCENT)
+    } else {
+        (TEXT, "#23262c", RULE)
+    };
+    rsx! {
+        button {
+            style: "flex:none; height:38px; padding:0 16px; border-radius:19px; border:1px solid {border}; \
+                    background:{bg}; color:{fg}; font-family:inherit; font-size:14px; font-weight:650; cursor:pointer;",
+            onclick: move |_| on_press.call(()),
             "{label}"
         }
     }
@@ -676,14 +856,14 @@ fn Button(label: String, enabled: bool, on_press: EventHandler<()>) -> Element {
 
 #[component]
 fn Chip(label: String, on: bool, on_press: EventHandler<()>) -> Element {
-    let (fg, bg) = if on {
-        (ACCENT, "#1f2a3a")
+    let (fg, bg, border) = if on {
+        (ACCENT, "#3aa0ff1f", "#3aa0ff66")
     } else {
-        (DIM, "transparent")
+        (DIM, "transparent", RULE)
     };
     rsx! {
         button {
-            style: "height:30px; padding:0 12px; border-radius:15px; border:1px solid {RULE}; \
+            style: "height:32px; padding:0 14px; border-radius:16px; border:1px solid {border}; \
                     background:{bg}; color:{fg}; font-family:inherit; font-size:13px; cursor:pointer;",
             onclick: move |_| on_press.call(()),
             "{label}"
@@ -691,24 +871,21 @@ fn Chip(label: String, on: bool, on_press: EventHandler<()>) -> Element {
     }
 }
 
-/// A line of text in a section.
+/// A sign-in code, one box per character, as the approval page shows it.
 #[component]
-fn Line(color: String, children: Element) -> Element {
+fn CodeBoxes(code: String) -> Element {
     rsx! {
         div {
-            style: "padding:12px 14px; font-size:13px; line-height:1.5; color:{color}; border-bottom:1px solid {RULE};",
-            {children}
-        }
-    }
-}
-
-#[component]
-fn Note(color: String, children: Element) -> Element {
-    rsx! {
-        div {
-            style: "padding:10px 14px; border-radius:10px; border:1px solid {RULE}; background:{BAR}; \
-                    font-size:13px; line-height:1.5; color:{color};",
-            {children}
+            style: "display:flex; gap:6px; justify-content:center;",
+            for (i, c) in code.chars().enumerate() {
+                span {
+                    key: "{i}",
+                    style: "width:30px; height:40px; border-radius:8px; display:flex; align-items:center; \
+                            justify-content:center; background:#0f1012; border:1px solid {RULE}; \
+                            font-size:20px; font-weight:700; font-family:ui-monospace, monospace;",
+                    "{c}"
+                }
+            }
         }
     }
 }
@@ -727,5 +904,20 @@ mod tests {
             Some(task)
         );
         assert_eq!(live_link("not a link"), None);
+        assert_eq!(live_link("example.com"), None);
+    }
+
+    #[test]
+    fn a_link_typed_without_its_scheme_or_the_demo_page_is_understood() {
+        assert_eq!(
+            live_link("task.example/org/band/share/abc").as_deref(),
+            Some("https://task.example/org/band/share/abc")
+        );
+        for demo in [
+            "session.fasttrackstudio.app/demo",
+            "https://session.fasttrackstudio.app/demo/",
+        ] {
+            assert_eq!(live_link(demo).as_deref(), Some(super::DEMO_LINK), "{demo}");
+        }
     }
 }

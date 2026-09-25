@@ -484,9 +484,9 @@ pub fn WebDemo(
     });
     let state = opened.read();
     match &*state {
-        None => rsx! { Loading { progress: progress() } },
+        None => rsx! { crate::loading::Loading { progress: progress() } },
         Some(Err(e)) => rsx! {
-            LoadingFrame {
+            crate::loading::LoadingFrame {
                 headline: "The session did not open".to_owned(),
                 detail: e.clone(),
                 failed: true,
@@ -501,63 +501,6 @@ pub fn WebDemo(
         Some(Ok((engine, setlist))) => rsx! {
             DemoView { engine: engine.clone(), setlist: setlist.clone() }
         },
-    }
-}
-
-/// The loading screen: where the open has got to.
-#[component]
-fn Loading(progress: crate::web_engine::Progress) -> Element {
-    use crate::web_engine::Progress;
-    let (headline, detail, retry) = match progress {
-        Progress::Joining { retry } => (
-            "Joining the live session".to_owned(),
-            "Reaching Task…".to_owned(),
-            retry,
-        ),
-        Progress::Fetching { title, retry } => (
-            format!("Opening {title}"),
-            "Bringing the song in…".to_owned(),
-            retry,
-        ),
-        Progress::Opening { title } => (
-            format!("Opening {title}"),
-            "Laying out the session…".to_owned(),
-            None,
-        ),
-    };
-    let detail = retry.unwrap_or(detail);
-    rsx! {
-        LoadingFrame { headline, detail, failed: false,
-            // A thin sweep: working, without claiming how far.
-            div {
-                style: "position:relative; width:220px; height:3px; border-radius:2px; overflow:hidden; \
-                        background:#1f2228; margin-top:6px;",
-                div {
-                    style: "position:absolute; top:0; left:0; width:40%; height:100%; border-radius:2px; \
-                            background:#3aa0ff; animation:fts-sweep 1.4s ease-in-out infinite;",
-                }
-            }
-        }
-    }
-}
-
-/// The frame every loading state shares: Session's mark, a headline, a
-/// line of detail, and whatever goes under it.
-#[component]
-fn LoadingFrame(headline: String, detail: String, failed: bool, children: Element) -> Element {
-    let detail_color = if failed { "#f87171" } else { "#9aa0a6" };
-    rsx! {
-        style { "@keyframes fts-sweep {{ 0% {{ left: -40% }} 100% {{ left: 100% }} }}" }
-        div {
-            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
-                    flex-direction:column; align-items:center; justify-content:center; gap:10px; \
-                    background:#0f1012; color:#e5e7eb; font-family:system-ui, sans-serif; \
-                    text-align:center; padding:0 24px; box-sizing:border-box;",
-            img { src: "/favicon.svg", width: "56", height: "56", style: "border-radius:13px; margin-bottom:6px;" }
-            div { style: "font-size:17px; font-weight:650;", "{headline}" }
-            div { style: "font-size:13px; color:{detail_color}; max-width:420px; line-height:1.5;", "{detail}" }
-            {children}
-        }
     }
 }
 

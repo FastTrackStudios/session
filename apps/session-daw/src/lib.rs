@@ -39,6 +39,7 @@ pub mod icons;
 pub mod keys;
 pub mod layout;
 pub mod live;
+pub mod loading;
 pub mod lyrics_panel;
 pub mod mcp;
 pub mod midi;

@@ -28,7 +28,7 @@ default = ["session", "charts", "native"]
 # The app on Blitz (dioxus-native): the panels-and-views shell with our own
 # title bar — see docs/app-on-blitz.md. Desktop only for now (iOS follows);
 # without it the desktop build launches the WRY app as before.
-native = ["session-domain", "dep:dioxus-native", "dep:session-daw", "dep:winit", "dep:rfd", "dep:dirs"]
+native = ["session-domain", "dep:dioxus-native", "dep:session-daw", "dep:winit", "dep:rfd", "dep:dirs", "dep:lucide-dioxus"]
 # Session on the web build is a REMOTE: the wasm target compiles only the
 # wire surface (session-proto's SetlistService clients + session-ui) and
 # talks to the network engine's SetlistService over the shared `/vox` link
@@ -156,6 +156,8 @@ winit = { version = "0.31.0-beta.2", optional = true }
 # Where the native app remembers the last session it opened
 # (`native::choose`).
 dirs = { version = "6", optional = true }
+# The start screen's icons (native::start), the same set the views use.
+lucide-dioxus = { workspace = true, optional = true }
 # Telemetry: fmt console logs + optional Sentry + OTLP export (traces,
 # logs, metrics). Doubly opt-in — the `otel` cargo feature carries the
 # dependency weight, and at runtime nothing exports unless

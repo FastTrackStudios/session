@@ -166,6 +166,10 @@ MARKETING_VER="${MARKETING_VER:-0.0.1}"
 # Launch screen — required because iPad multitasking is implied by the
 # orientation set. An empty UILaunchScreen dict = system default (fine).
 /usr/libexec/PlistBuddy -c "Add :UILaunchScreen dict" "$APP/Info.plist" 2>/dev/null || true
+# The app is dark, whatever the phone's setting: a light status bar over
+# its background, and a dark launch screen rather than a white flash.
+/usr/libexec/PlistBuddy -c "Delete :UIUserInterfaceStyle" "$APP/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :UIUserInterfaceStyle string Dark" "$APP/Info.plist"
 # The UIScene lifecycle — iOS 27 stops an app at launch without it. The
 # delegate class is the app's own (apps/desktop/src/native/ios_scene.rs):
 # winit, which the app draws into, does not adopt scenes itself yet.

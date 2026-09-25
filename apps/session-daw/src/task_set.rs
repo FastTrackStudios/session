@@ -45,8 +45,42 @@ pub async fn join(url: &str) -> eyre::Result<live_proto::LiveSet> {
     use live_proto::LiveSessionsClient;
     let lane: LiveSessionsClient = task_dial::establish_at(url, None)
         .await
-        .map_err(|e| eyre::eyre!("Task is not answering ({e})"))?;
+        .map_err(|e| eyre::eyre!("Task is not answering ({})", brief(&e)))?;
     lane.join(String::new())
         .await
         .map_err(|e| eyre::eyre!("the set could not be joined ({e:?})"))
+}
+
+/// A dial's error in a few words for a person: the HTTP status when the
+/// server answered one (a dial error carries the whole response — headers,
+/// and the body as bytes), else its first line, cut short.
+#[must_use]
+pub fn brief(error: &str) -> String {
+    if let Some(at) = error.find("status: ") {
+        let code: String = error[at + 8..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if !code.is_empty() {
+            return format!("the server answered {code}");
+        }
+    }
+    let line = error.lines().next().unwrap_or_default();
+    match line.char_indices().nth(120) {
+        Some((cut, _)) => format!("{}…", &line[..cut]),
+        None => line.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::brief;
+
+    #[test]
+    fn a_dial_error_is_its_status_or_its_first_line() {
+        let dial = "ws connect `wss://x/vox`: Http(Response { status: 502, version: HTTP/1.1, body: Some([60, 104]) })";
+        assert_eq!(brief(dial), "the server answered 502");
+        assert_eq!(brief("refused\nmore"), "refused");
+        assert_eq!(brief(&"x".repeat(300)).chars().count(), 121);
+    }
 }

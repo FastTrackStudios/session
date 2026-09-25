@@ -12,7 +12,7 @@
 //! ([`crate::collab::join_task`]): its people, its leader, its edits.
 //!
 //! Blocking, like [`Setlist::open`]: a window runs it on a thread of its
-//! own, and hears each step through `progress`.
+//! own, and hears each step through `progress` — the loading screen's.
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -22,6 +22,7 @@ use daw::standalone::audio_engine::materialize::pending_media;
 use daw::standalone::audio_engine::media_fetch::StreamedTake;
 
 use crate::collab::TaskSet;
+use crate::loading::Progress;
 use crate::setlist::{Arrival, Opening, Setlist};
 use crate::song_stream::{FetchGuard, Keep, ShareSource, SongSource, StreamedSong, TaskSource};
 
@@ -58,7 +59,7 @@ pub fn setlists(library: &session_library::Library) -> eyre::Result<Vec<session_
 /// # Errors
 ///
 /// The set could not be joined, or none of its songs opened.
-pub fn open(remote: Remote, progress: &dyn Fn(String)) -> eyre::Result<Setlist> {
+pub fn open(remote: Remote, progress: &dyn Fn(Progress)) -> eyre::Result<Setlist> {
     use crate::task_set::until_ok;
     let runtime = crate::open::engine_runtime()?;
     // What opens a song spawns tasks (`architect::platform::spawn`): on
@@ -67,22 +68,17 @@ pub fn open(remote: Remote, progress: &dyn Fn(String)) -> eyre::Result<Setlist> 
     let (sources, set, name) = match remote {
         Remote::Live { link, name } => {
             let set = TaskSet::parse(&format!("share:{link}"));
-            progress("Joining the set…".to_owned());
+            progress(Progress::Joining { retry: None });
             let joined = runtime.block_on(until_ok(
                 Some(5),
                 || crate::task_set::join(&set.url),
-                |why| progress(format!("Joining the set: {why}")),
+                |why| progress(Progress::Joining { retry: Some(why) }),
             ))?;
             tracing::info!(live.setlist = %joined.title, live.songs = joined.songs.len(), "stream-set: joined a live set");
-            let sources: Vec<(String, Arc<dyn SongSource>)> = joined
+            let sources: Vec<(String, Source)> = joined
                 .songs
                 .iter()
-                .filter_map(|song| {
-                    let source = ShareSource::new(song.files.as_deref()?)
-                        .inspect_err(|e| tracing::warn!(song.title = %song.title, error = %e, "stream-set: a song's files link is not a URL"))
-                        .ok()?;
-                    Some((song.title.clone(), Arc::new(source) as Arc<dyn SongSource>))
-                })
+                .filter_map(|song| Some((song.title.clone(), Source::Share(song.files.clone()?))))
                 .collect();
             let set = TaskSet {
                 setlist: joined.setlist,
@@ -95,16 +91,18 @@ pub fn open(remote: Remote, progress: &dyn Fn(String)) -> eyre::Result<Setlist> 
             setlist,
             name,
         } => {
-            let mut sources: Vec<(String, Arc<dyn SongSource>)> = Vec::new();
-            for song in &setlist.songs {
-                progress(format!("Finding {}…", song.title));
-                match runtime.block_on(TaskSource::of(library.clone(), &song.slug)) {
-                    Ok(source) => sources.push((song.title.clone(), Arc::new(source))),
-                    Err(e) => {
-                        tracing::warn!(song.slug = %song.slug, error = %e, "stream-set: the library has no session for a song");
-                    }
-                }
-            }
+            // Each song is looked up in the library when its turn comes —
+            // not all of them before the first can open.
+            let sources: Vec<(String, Source)> = setlist
+                .songs
+                .iter()
+                .map(|song| {
+                    (
+                        song.title.clone(),
+                        Source::Library(library.clone(), song.slug.clone()),
+                    )
+                })
+                .collect();
             let set = TaskSet {
                 url: library.org_url(),
                 token: library.token.clone(),
@@ -120,7 +118,10 @@ pub fn open(remote: Remote, progress: &dyn Fn(String)) -> eyre::Result<Setlist> 
         let Some((title, source)) = sources.next() else {
             eyre::bail!("none of the set's songs could be brought in");
         };
-        progress(format!("Bringing in {title}…"));
+        progress(Progress::Fetching {
+            title: title.clone(),
+            retry: None,
+        });
         let song = match runtime.block_on(bring_in(&source, &cache)) {
             Ok(song) => song,
             Err(e) => {
@@ -128,13 +129,15 @@ pub fn open(remote: Remote, progress: &dyn Fn(String)) -> eyre::Result<Setlist> 
                 continue;
             }
         };
-        progress(format!("Opening {title}…"));
+        progress(Progress::Opening {
+            title: title.clone(),
+        });
         let mut setlist = Setlist::open_streamed(vec![Opening {
             path: song.project.clone(),
             title: Some(title),
             streamed: Some(song),
         }])?;
-        let rest: Vec<(String, Arc<dyn SongSource>)> = sources.collect();
+        let rest: Vec<(String, Source)> = sources.collect();
         setlist.pending = rest.iter().map(|(title, _)| title.clone()).collect();
         break (setlist, rest);
     };
@@ -170,15 +173,31 @@ pub fn open(remote: Remote, progress: &dyn Fn(String)) -> eyre::Result<Setlist> 
     Ok(setlist)
 }
 
-/// A song's small files mirrored into `cache` — tried again a few times,
-/// since Task may be busy.
-async fn bring_in(
-    source: &Arc<dyn SongSource>,
-    cache: &std::path::Path,
-) -> eyre::Result<StreamedSong> {
+/// Where a song of the set comes from.
+enum Source {
+    /// A live set's song: its files link.
+    Share(String),
+    /// A library setlist's song: its slug in the library.
+    Library(session_library::Library, String),
+}
+
+impl Source {
+    /// The song, reached: a share link parsed, or the library asked for it.
+    async fn reach(&self) -> eyre::Result<Arc<dyn SongSource>> {
+        Ok(match self {
+            Self::Share(link) => Arc::new(ShareSource::new(link)?),
+            Self::Library(library, slug) => Arc::new(TaskSource::of(library.clone(), slug).await?),
+        })
+    }
+}
+
+/// A song reached and its small files mirrored into `cache` — tried again
+/// a few times, since Task may be busy.
+async fn bring_in(source: &Source, cache: &std::path::Path) -> eyre::Result<StreamedSong> {
+    let reached = source.reach().await?;
     crate::task_set::until_ok(
         Some(3),
-        || crate::song_stream::mirror(Arc::clone(source), Keep::Disk(cache.to_path_buf())),
+        || crate::song_stream::mirror(Arc::clone(&reached), Keep::Disk(cache.to_path_buf())),
         |_| {},
     )
     .await
