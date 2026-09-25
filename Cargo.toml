@@ -11,6 +11,7 @@ members = [
     "apps/session-reaper-xtask",
     "libs/razor",
     "libs/vendor/anyrender_vello",
+    "libs/vendor/anyrender_vello_hybrid",
     "libs/vendor/dioxus-native-dom",
     "libs/vendor/dioxus-native",
     "features/expression-editor/expression-editor-audio",
@@ -875,18 +876,23 @@ pipewire-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git"
 # Branch `session-stale-mousedown` on the fork (db4318a9 plus the fix for a
 # drag whose pressed node was removed — it panicked Blitz on every press
 # that re-rendered), pinned by rev.
-blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
-blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
-blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
-blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
-blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
-blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e8c3aefb0eb2345e52a6f2e15d534079bf22ee9" }
+blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e41da34610e00348564c64158636dfd3f85d8c8" }
+blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e41da34610e00348564c64158636dfd3f85d8c8" }
+blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e41da34610e00348564c64158636dfd3f85d8c8" }
+blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e41da34610e00348564c64158636dfd3f85d8c8" }
+blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e41da34610e00348564c64158636dfd3f85d8c8" }
+blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "0e41da34610e00348564c64158636dfd3f85d8c8" }
 # Vendored in-tree rather than patched to a sibling checkout, because a
 # path outside this repo builds on one machine and nowhere else. Three
 # measured changes to the present path — the GPU barrier removed, frame
 # latency 1 instead of 2, a switchable present mode — each reversible
 # from the environment. See libs/vendor/anyrender_vello/UPSTREAM.md.
 anyrender_vello = { path = "libs/vendor/anyrender_vello" }
+# Vendored one-line fix, for the iOS simulator (the one place this
+# renderer runs): a resize that arrives before the renderer is ready left
+# the surface at its first size. See
+# libs/vendor/anyrender_vello_hybrid/UPSTREAM.md.
+anyrender_vello_hybrid = { path = "libs/vendor/anyrender_vello_hybrid" }
 # Vendored one-line fix: quote scalars containing `<`/`>` — upstream
 # (facet-rs/facet) styx-format emits them bare but styx-parse rejects
 # them, so serialized keybind configs (`keys "<C-s>"`) could not be
