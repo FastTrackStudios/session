@@ -16,6 +16,8 @@
 //! window attaches to the system it drives and its open projects are the
 //! set (`session_daw::setlist::Setlist::attach`).
 
+#[cfg(target_os = "ios")]
+mod ios_scene;
 mod shell;
 
 use std::any::Any;
@@ -61,11 +63,54 @@ fn songs_of(target: &Path) -> Option<Vec<PathBuf>> {
 }
 
 /// The Open dialog: a REAPER project.
+#[cfg(not(target_os = "ios"))]
 fn pick() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .set_title("Open a session")
         .add_filter("Song or setlist", &["RPP", "rpp", "setlist"])
         .pick_file()
+}
+
+/// A phone has no files to pick: a set is joined by its link.
+#[cfg(target_os = "ios")]
+fn pick() -> Option<PathBuf> {
+    None
+}
+
+/// An error, and the choices `buttons` offers: the one picked, or `None`
+/// (the window closed, or the last button, which is always "Quit").
+#[cfg(not(target_os = "ios"))]
+fn ask(title: &str, description: String, buttons: &[&str]) -> Option<String> {
+    let dialog = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title(title)
+        .set_description(description);
+    let dialog = match buttons {
+        [a, b, c] => dialog.set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+            (*a).into(),
+            (*b).into(),
+            (*c).into(),
+        )),
+        [a, b] => dialog.set_buttons(rfd::MessageButtons::OkCancelCustom(
+            (*a).into(),
+            (*b).into(),
+        )),
+        _ => dialog,
+    };
+    match dialog.show() {
+        rfd::MessageDialogResult::Custom(choice) if buttons.last() != Some(&choice.as_str()) => {
+            Some(choice)
+        }
+        _ => None,
+    }
+}
+
+/// On a phone the error is logged and the launch gives up (the page it
+/// opens on says so).
+#[cfg(target_os = "ios")]
+fn ask(title: &str, description: String, _buttons: &[&str]) -> Option<String> {
+    tracing::error!(dialog.title = title, dialog.description = %description, "launch: no dialog to ask on this platform");
+    None
 }
 
 /// Where the last session's path is kept.
@@ -139,19 +184,14 @@ fn attach(target: &session_daw::open::RemoteTarget) -> Option<session_daw::setli
             Ok(setlist) => return Some(setlist),
             Err(e) => {
                 tracing::error!(error = %e, audio.target = target.kind(), "could not attach to the system this window drives");
-                let answer = rfd::MessageDialog::new()
-                    .set_level(rfd::MessageLevel::Error)
-                    .set_title("Could not reach it")
-                    .set_description(format!("{}\n\n{e}", target.describe()))
-                    .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
-                        "Try Again".into(),
-                        "Open in Engine Mode".into(),
-                        "Quit".into(),
-                    ))
-                    .show();
-                match answer {
-                    rfd::MessageDialogResult::Custom(choice) if choice == "Try Again" => {}
-                    rfd::MessageDialogResult::Custom(choice) if choice == "Open in Engine Mode" => {
+                let answer = ask(
+                    "Could not reach it",
+                    format!("{}\n\n{e}", target.describe()),
+                    &["Try Again", "Open in Engine Mode", "Quit"],
+                );
+                match answer.as_deref() {
+                    Some("Try Again") => {}
+                    Some("Open in Engine Mode") => {
                         session_daw::open::set_mode(session_daw::open::ModeState::engine());
                         return open_chosen();
                     }
@@ -176,16 +216,12 @@ fn open_chosen() -> Option<session_daw::setlist::Setlist> {
             }
             Err(e) => {
                 tracing::error!(error = %e, "could not open the session");
-                let again = rfd::MessageDialog::new()
-                    .set_level(rfd::MessageLevel::Error)
-                    .set_title("Could not open the session")
-                    .set_description(format!("{}\n\n{e}", target.display()))
-                    .set_buttons(rfd::MessageButtons::OkCancelCustom(
-                        "Open Another…".into(),
-                        "Quit".into(),
-                    ))
-                    .show();
-                if again != rfd::MessageDialogResult::Custom("Open Another…".into()) {
+                let again = ask(
+                    "Could not open the session",
+                    format!("{}\n\n{e}", target.display()),
+                    &["Open Another…", "Quit"],
+                );
+                if again.as_deref() != Some("Open Another…") {
                     return None;
                 }
                 chosen = pick().and_then(|target| songs_of(&target).map(|songs| (target, songs)));
@@ -203,6 +239,10 @@ fn run(setlist: session_daw::setlist::Setlist) {
         session_daw::engine::transport(session_daw::engine::Move::PlayStop, 0.0);
     }
 
+    // iOS 27 stops an app that has not adopted scenes: ours is registered
+    // before UIKit starts, for Info.plist to name.
+    #[cfg(target_os = "ios")]
+    ios_scene::register();
     let attributes = window_attributes();
     let contexts: Vec<Box<dyn Fn() -> Box<dyn Any> + Send + Sync>> =
         vec![Box::new(move || Box::new(setlist.clone()) as Box<dyn Any>)];
@@ -212,6 +252,15 @@ fn run(setlist: session_daw::setlist::Setlist) {
 /// The window: our top bar IS the title bar. On macOS the native one is made
 /// transparent and the content runs up under it, so the traffic lights sit
 /// inside the app's own bar, as in the Claude app.
+/// A phone's window is its screen: no size of our own to start from (a
+/// desktop size taken literally leaves the first surface a different shape
+/// from the screen, and the picture stays squeezed after the resize).
+#[cfg(target_os = "ios")]
+fn window_attributes() -> winit::window::WindowAttributes {
+    winit::window::WindowAttributes::default().with_title("Session")
+}
+
+#[cfg(not(target_os = "ios"))]
 fn window_attributes() -> winit::window::WindowAttributes {
     // `FTS_WINDOW_POS="x,y"` / `FTS_WINDOW_SIZE="WxH"` (logical pixels)
     // place the window instead of maximizing it — what `just duo` uses to
@@ -229,7 +278,9 @@ fn window_attributes() -> winit::window::WindowAttributes {
         // restores to when un-maximized.
         .with_maximized(pos.is_none() && size.is_none())
         .with_surface_size(winit::dpi::LogicalSize::new(w, h))
-        .with_min_surface_size(winit::dpi::LogicalSize::new(720.0, 480.0));
+        // Small enough to be phone-sized: below ~700 wide (or ~500 tall)
+        // the app takes its small-screen layout (`session_daw::compact`).
+        .with_min_surface_size(winit::dpi::LogicalSize::new(320.0, 300.0));
     if let Some((x, y)) = pos {
         attributes = attributes.with_position(winit::dpi::LogicalPosition::new(x, y));
     }

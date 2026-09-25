@@ -92,6 +92,19 @@ pub fn Shell() -> Element {
     // Space plays and stops whatever has the focus.
     session_daw::keys::use_window_transport_keys();
     let window = dioxus_native::use_window();
+    // iOS: winit's window is handed to the app's scene (see `ios_scene`).
+    #[cfg(target_os = "ios")]
+    use_hook({
+        let window = window.clone();
+        move || {
+            use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = window.window_handle()
+                && let RawWindowHandle::UiKit(uikit) = handle.as_raw()
+            {
+                super::ios_scene::window_created(uikit.ui_view);
+            }
+        }
+    });
     // The window's size in logical pixels, kept as it is resized: the
     // bar's width says how much of it is spelled out, and the shape says
     // which layout — a phone's (or a window made that small) takes the

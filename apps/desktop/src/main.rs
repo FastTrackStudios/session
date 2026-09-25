@@ -68,11 +68,9 @@ mod session_remote_view;
 mod collection_browser;
 // The browser chart pane: the active song's keyflow chart (CPU engraver →
 // SVG) with a playhead highlight driven by the transport streams.
-/// The app on Blitz — see `docs/app-on-blitz.md`.
-#[cfg(all(
-    feature = "native",
-    not(any(target_arch = "wasm32", target_os = "ios"))
-))]
+/// The app on Blitz — see `docs/app-on-blitz.md`. The desktop's, and the
+/// iPhone's: the same renderer and the same panels, laid out for the screen.
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 mod native;
 #[cfg(all(feature = "session", target_arch = "wasm32"))]
 mod session_chart_pane;
@@ -202,10 +200,7 @@ fn main() {
     // The Blitz app opens its session on the studio's engine itself (see
     // `native::launch`); bringing the WRY app's engine up as well would put
     // two daw-standalone facades in one process.
-    #[cfg(all(
-        feature = "native",
-        not(any(target_arch = "wasm32", target_os = "ios"))
-    ))]
+    #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
     {
         native::launch();
         return;
@@ -598,10 +593,6 @@ fn App() -> Element {
                     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
                     Some(Workspace::Arrangement) => rsx! {
                         ArrangementWorkspace { current }
-                    },
-                    #[cfg(not(all(feature = "session", not(target_arch = "wasm32"))))]
-                    Some(Workspace::Arrangement) => rsx! {
-                        ArrangementWorkspace {}
                     },
                     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
                     Some(Workspace::Mixer) => rsx! {

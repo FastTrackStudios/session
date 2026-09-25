@@ -157,8 +157,14 @@ pub fn CompactShell(
         None => rsx! {},
     };
     rsx! {
+        // An explicit size, not insets: Blitz gives an absolutely placed box
+        // stretched by `top`/`bottom` no height, and the column collapses to
+        // its content (the wide shell does the same). On a phone the viewport
+        // is already the safe area: Blitz's shell keeps the notch and the
+        // home indicator out of it.
         div {
-            style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; \
+            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; box-sizing:border-box; \
+                    display:flex; \
                     flex-direction:{direction}; \
                     background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
             if landscape {
@@ -225,8 +231,8 @@ fn Drawer(open: Signal<bool>, children: Element) -> Element {
     rsx! {
         // A press outside puts it back.
         div {
-            style: "position:absolute; top:{LINE_H}px; left:0; right:0; bottom:0; z-index:40; \
-                    background:rgba(0,0,0,0.5);",
+            style: "position:absolute; top:{LINE_H}px; left:0; width:100%; height:calc(100% - {LINE_H}px); \
+                    z-index:40; background:rgba(0,0,0,0.5);",
             onclick: move |_| open.set(false),
         }
         div {
