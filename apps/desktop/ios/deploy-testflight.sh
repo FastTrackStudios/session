@@ -35,7 +35,7 @@ trap cleanup_tmp EXIT
 DX_PACKAGE="${DX_PACKAGE:-session-desktop}"
 DX_APP_DIR="${DX_APP_DIR:-apps/desktop}"
 # No colon: an explicitly-empty DX_FEATURES (Task, default features) is honored.
-DX_FEATURES="${DX_FEATURES---no-default-features --features session-domain,charts}"
+DX_FEATURES="${DX_FEATURES---no-default-features --features native,session-domain,charts}"
 # Bundle id the App Store profile is minted for — must match the built .app's
 # CFBundleIdentifier (from the package's Dioxus.toml).
 DX_BUNDLE_ID="${DX_BUNDLE_ID:-app.fasttrackstudio.session}"
@@ -166,6 +166,19 @@ MARKETING_VER="${MARKETING_VER:-0.0.1}"
 # Launch screen — required because iPad multitasking is implied by the
 # orientation set. An empty UILaunchScreen dict = system default (fine).
 /usr/libexec/PlistBuddy -c "Add :UILaunchScreen dict" "$APP/Info.plist" 2>/dev/null || true
+# The UIScene lifecycle — iOS 27 stops an app at launch without it. The
+# delegate class is the app's own (apps/desktop/src/native/ios_scene.rs):
+# winit, which the app draws into, does not adopt scenes itself yet.
+/usr/libexec/PlistBuddy -c "Delete :UIApplicationSceneManifest" "$APP/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy \
+    -c "Add :UIApplicationSceneManifest dict" \
+    -c "Add :UIApplicationSceneManifest:UIApplicationSupportsMultipleScenes bool false" \
+    -c "Add :UIApplicationSceneManifest:UISceneConfigurations dict" \
+    -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication array" \
+    -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0 dict" \
+    -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneConfigurationName string Default" \
+    -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName string SessionSceneDelegate" \
+    "$APP/Info.plist"
 # Single supported platform — dx leaves both iPhoneOS+iPadOS, which Apple
 # rejects (91177). This is an iOS app; keep only iPhoneOS.
 /usr/libexec/PlistBuddy -c "Delete :CFBundleSupportedPlatforms" "$APP/Info.plist" 2>/dev/null || true

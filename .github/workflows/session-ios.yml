@@ -14,10 +14,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "apps/fasttrackstudio/**"
-      - "crates/session/**"
-      - "crates/daw/**"
-      - "features/**"
+      - "apps/desktop/**"
+      - "apps/session-daw/**"
+      - "crates/**"
+      - "libs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "flake.nix"
       - "flake.lock"
       - ".github/workflows/session-ios.yml"
@@ -54,11 +56,30 @@ jobs:
           df -h /Volumes/build-disk | tail -1
 
       # clean:false keeps target/ between runs so cargo builds incrementally.
+      # Into session/, beside its siblings: the workspace takes daw and
+      # processor as path deps (`../daw`, `../processor`), as checks.yml
+      # lays them out.
       - uses: actions/checkout@v4
         with:
+          path: session
           clean: false
 
-      - name: Build, sign, and upload Keyflow to TestFlight
+      # The siblings at the revisions flake.lock pins (daw-src,
+      # processor-src) — the one place they are pinned for a build.
+      - name: Sibling checkouts — daw, processor
+        run: |
+          set -euo pipefail
+          for sibling in daw processor; do
+            rev=$(jq -r ".nodes[\"$sibling-src\"].locked.rev" session/flake.lock)
+            if [ ! -d "$sibling/.git" ]; then
+              git clone --quiet "https://github.com/FastTrackStudios/$sibling" "$sibling"
+            fi
+            git -C "$sibling" fetch --quiet origin "$rev"
+            git -C "$sibling" checkout --quiet --force "$rev"
+            echo "$sibling at $rev"
+          done
+
+      - name: Build, sign, and upload Session to TestFlight
         env:
           KEYCHAIN: fts-build.keychain
           KEYCHAIN_PW: fts-build
@@ -76,30 +97,31 @@ jobs:
           TASK_OTLP_TOKEN: ${{ secrets.TASK_OTLP_TOKEN }}
           TASK_SENTRY_DSN: ${{ secrets.TASK_SENTRY_DSN }}
           # ── Session product identity ─────────────────────────────────
-          # NOTE the crate is still called `fasttrackstudio` here, a leftover
-          # of the repo split -- same crate name as Signal's app, in a
-          # different repo. Only DX_BUNDLE_ID separates the shipped products,
-          # so it must never be left at the default.
-          DX_PACKAGE: fasttrackstudio
-          DX_APP_DIR: apps/fasttrackstudio
+          # The app crate is `session-desktop` (apps/desktop) — the same one
+          # the Mac runs, on Blitz (`native`): the phone gets the same
+          # panels in the small-screen layout (session_daw::compact).
+          DX_PACKAGE: session-desktop
+          DX_APP_DIR: apps/desktop
           # NOT the crate defaults. `session` implies `tts`, which pulls
           # ort/ONNX Runtime -- and ONNX publishes no prebuilt binary for
           # aarch64-apple-ios, so ort-sys' build.rs panics and the whole
           # build dies. `session-domain` is Session without the TTS backend;
           # the guide still runs on synthesized cues.
-          DX_FEATURES: --no-default-features --features session-domain,charts
+          DX_FEATURES: --no-default-features --features native,session-domain,charts
           DX_BUNDLE_ID: app.fasttrackstudio.session
           APP_DISPLAY_NAME: Session
           PROFILE_NAME: FTS Session App Store
-          ICONS_DIR: ${{ github.workspace }}/apps/fasttrackstudio/ios/Assets.xcassets
+          ICONS_DIR: ${{ github.workspace }}/session/apps/desktop/ios/Assets.xcassets
+        working-directory: session
         run: |
           set -euo pipefail
           export PATH="/nix/var/nix/profiles/default/bin:$PATH"
           export NIX=/nix/var/nix/profiles/default/bin/nix
-          bash apps/fasttrackstudio/ios/deploy-testflight.sh
+          bash apps/desktop/ios/deploy-testflight.sh
 
       - name: Summary
         if: always()
+        working-directory: session
         run: |
           echo "### Session iOS TestFlight" >> "$GITHUB_STEP_SUMMARY"
           echo "commit \`$(git rev-parse --short HEAD)\` → Session uploaded (see log for build number)." >> "$GITHUB_STEP_SUMMARY"

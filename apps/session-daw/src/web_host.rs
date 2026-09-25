@@ -583,21 +583,11 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     // The set's other songs, as they open behind the one on screen: each
     // takes its tab's place.
     use_future(move || async move {
-        use crate::web_engine::Arrival;
         let Some(mut arrivals) = crate::web_engine::take_arrivals() else {
             return;
         };
         while let Some(arrival) = arrivals.recv().await {
-            let mut list = setlist.write();
-            match arrival {
-                Arrival::Song(song) => {
-                    if let Some(at) = list.pending.iter().position(|t| *t == song.name) {
-                        list.pending.remove(at);
-                    }
-                    list.songs.push(song);
-                }
-                Arrival::Failed(title) => list.pending.retain(|t| *t != title),
-            }
+            setlist.write().arrive(arrival);
         }
     });
     // Playing together, a song someone else picked is picked here too.

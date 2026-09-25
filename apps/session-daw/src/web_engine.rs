@@ -32,10 +32,7 @@ use daw_standalone::audio_engine::media_fetch::StreamedTake;
 
 use crate::song_stream::Heard;
 
-use crate::studio::{Planner, StudioSession};
-
-/// The scene the web demo lays the arrangement out by — the desktop app's.
-const SCENE: &str = "drum-mixing";
+use crate::studio::StudioSession;
 
 /// The engine, as the page's panels reach it.
 #[derive(Clone)]
@@ -104,12 +101,7 @@ pub enum Progress {
     Opening { title: String },
 }
 
-/// The set's other songs, as each opens after the first is on screen.
-pub enum Arrival {
-    Song(crate::setlist::Song),
-    /// A song that could not be opened: its tab goes.
-    Failed(String),
-}
+pub use crate::setlist::Arrival;
 
 /// A song the page will open, and where it comes from.
 struct Wanted {
@@ -346,9 +338,9 @@ pub async fn open(
         WebSource::Live { link, .. } => {
             let set = crate::collab::TaskSet::parse(&format!("share:{link}"));
             progress(Progress::Joining { retry: None });
-            let joined = until_ok(
+            let joined = crate::task_set::until_ok(
                 None,
-                || join_set(&set.url),
+                || crate::task_set::join(&set.url),
                 |why| {
                     progress(Progress::Joining { retry: Some(why) });
                 },
@@ -400,7 +392,7 @@ pub async fn open(
         title: first_title.clone(),
         retry: None,
     });
-    let fetched = until_ok(
+    let fetched = crate::task_set::until_ok(
         Some(8),
         || fetch_song(&first),
         |why| {
@@ -469,7 +461,8 @@ pub async fn open(
         for want in rest {
             let title = want.title.clone().unwrap_or_default();
             let opened = async {
-                let fetched = until_ok(Some(6), || fetch_song(&want), |_| {}).await?;
+                let fetched =
+                    crate::task_set::until_ok(Some(6), || fetch_song(&want), |_| {}).await?;
                 read_back(open_fetched(&standalone, want.title.clone(), fetched)?).await
             }
             .await;
@@ -527,47 +520,6 @@ pub async fn open(
         applier: Rc::new(crate::engine::Applier::start()),
     };
     Ok((engine, setlist))
-}
-
-/// Try `attempt` until it works — or `limit` times — waiting between
-/// tries from a second, doubling to fifteen; `failed` hears why each one
-/// did not, and when the next is.
-async fn until_ok<T, Fut>(
-    limit: Option<u32>,
-    mut attempt: impl FnMut() -> Fut,
-    mut failed: impl FnMut(String),
-) -> eyre::Result<T>
-where
-    Fut: std::future::Future<Output = eyre::Result<T>>,
-{
-    let mut wait = std::time::Duration::from_secs(1);
-    let mut tries = 0u32;
-    loop {
-        match attempt().await {
-            Ok(done) => return Ok(done),
-            Err(e) => {
-                tries += 1;
-                if limit.is_some_and(|limit| tries >= limit) {
-                    return Err(e);
-                }
-                tracing::debug!(error = %e, tries, "web: trying again");
-                failed(format!("{e} — trying again in {} s", wait.as_secs()));
-                architect::platform::sleep(wait).await;
-                wait = (wait * 2).min(std::time::Duration::from_secs(15));
-            }
-        }
-    }
-}
-
-/// Join the set a live link opens, on the Task at `url`.
-async fn join_set(url: &str) -> eyre::Result<live_proto::LiveSet> {
-    use live_proto::LiveSessionsClient;
-    let lane: LiveSessionsClient = task_dial::establish_at(url, None)
-        .await
-        .map_err(|e| eyre::eyre!("Task is not answering ({e})"))?;
-    lane.join(String::new())
-        .await
-        .map_err(|e| eyre::eyre!("the set could not be joined ({e:?})"))
 }
 
 /// A song's files, fetched: mirrored from its share link into memory (its
@@ -652,50 +604,15 @@ fn open_fetched(
 /// A song the page opened, read back as the studio lays it out — by its
 /// project, so a song opening behind the one on screen does not move it.
 async fn read_back(song: Loaded) -> eyre::Result<(crate::setlist::Song, WebSong)> {
-    // Say which step fails: `fetch` answers only yes or no.
-    let facade =
-        daw_control::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
-    let project = facade
-        .project(song.project.clone())
-        .await
-        .map_err(|e| eyre::eyre!("{} is not in the engine: {e}", song.title))?;
-    let raw = daw_ui::studio::project::fetch_of(project.clone())
-        .await
-        .ok_or_else(|| eyre::eyre!("could not read {} back", song.title))?;
-    let planner = Planner {
-        raw: Arc::new(raw),
-        scene: Some(SCENE),
-        kinds: Arc::new(crate::plan::Kinds::from_text(&song.rpp_text)),
-    };
-    let (studio, rows) = planner.plan(&planner.raw);
-    let previews = crate::midi::Previews::default();
-    previews
-        .fill_in(
-            &project,
-            studio
-                .0
-                .items
-                .values()
-                .flatten()
-                .filter(|item| studio.0.is_midi(&item.guid))
-                .map(|item| (item.guid.clone(), item.length.as_seconds()))
-                .collect(),
-        )
-        .await;
-    let chart = song.chart_text.as_deref().and_then(|text| {
-        keyflow::parse(text)
-            .inspect_err(|e| tracing::error!(error = %e, "chart: could not parse"))
-            .ok()
-            .map(Arc::new)
-    });
-    let session = StudioSession {
-        project: studio,
-        rows,
-        previews: previews.clone(),
-        chart,
-        chart_file: None,
-        planner,
-    };
+    let session = StudioSession::read_project(
+        &song.project,
+        &song.title,
+        &song.rpp_text,
+        song.chart_text.as_deref(),
+        false,
+    )
+    .await?;
+    let previews = session.previews.clone();
     let kept = WebSong {
         streamed: song.streamed.map(Rc::new),
         previews,
@@ -920,7 +837,9 @@ fn watch_set(url: String, setlist: String, epoch: u64) {
             }
             // The connection went: join again once Task answers.
             tracing::info!("web: lost Task; joining the set again");
-            let Ok(joined) = until_ok(None, || join_set(&url), |_| {}).await else {
+            let Ok(joined) =
+                crate::task_set::until_ok(None, || crate::task_set::join(&url), |_| {}).await
+            else {
                 continue;
             };
             if joined.setlist == setlist && joined.epoch != epoch {

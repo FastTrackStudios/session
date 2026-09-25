@@ -33,17 +33,17 @@
     "daw-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790285470,
-        "narHash": "sha256-f/Qoh2P4iscUA8mg9hRvR9+uHH+IImXuhVuSGreVSgc=",
+        "lastModified": 1790311044,
+        "narHash": "sha256-zDVAqjv78elfh/yLMRQvBLFii/AOETz8jRPnwr3I/0A=",
         "owner": "FastTrackStudios",
         "repo": "daw",
-        "rev": "3607e02afab5196d3f85c53a9388394acfd584f0",
+        "rev": "216c78246a0399e2d5fb94325afdd8c19fea2164",
         "type": "github"
       },
       "original": {
         "owner": "FastTrackStudios",
         "repo": "daw",
-        "rev": "3607e02afab5196d3f85c53a9388394acfd584f0",
+        "rev": "216c78246a0399e2d5fb94325afdd8c19fea2164",
         "type": "github"
       }
     },
@@ -221,17 +221,17 @@
     "processor-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790195447,
-        "narHash": "sha256-5J/zPmrUsm5FuuoDlJV6iIz7/rjOLxjLW4f3MNWLHCk=",
+        "lastModified": 1790310975,
+        "narHash": "sha256-FDM2o9dDFY/IHSjP8IdsvnL0HQpQcNXPZKngffohJdI=",
         "owner": "FastTrackStudios",
         "repo": "processor",
-        "rev": "bdf855f35e646ced8e08d31750dcf158e0b1bc60",
+        "rev": "473ade6c8cdd1d10e26b4baff19f30aefa56154f",
         "type": "github"
       },
       "original": {
         "owner": "FastTrackStudios",
         "repo": "processor",
-        "rev": "bdf855f35e646ced8e08d31750dcf158e0b1bc60",
+        "rev": "473ade6c8cdd1d10e26b4baff19f30aefa56154f",
         "type": "github"
       }
     },

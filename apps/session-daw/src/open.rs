@@ -67,7 +67,18 @@ static RUNTIME: OnceLock<&'static tokio::runtime::Runtime> = OnceLock::new();
 /// Parse the project, stand up its backend, install the facade, and
 /// start audio. Returns once the panels have something to read.
 pub fn open_and_serve(path: &Path) -> eyre::Result<Opened> {
-    open_with_audio(path, true)
+    open_with_audio(path, true, Media::All)
+}
+
+/// [`open_and_serve`] (with `audio`) or [`open_silent`], choosing when the
+/// media loads — deferred for a song streamed in, whose takes are attached
+/// to its streams once it is open (`crate::stream_set`).
+///
+/// # Errors
+///
+/// As [`open_and_serve`].
+pub fn open_first_with(path: &Path, audio: bool, media: Media) -> eyre::Result<Opened> {
+    open_with_audio(path, audio, media)
 }
 
 /// The same, without opening an audio device.
@@ -84,12 +95,12 @@ pub fn open_and_serve(path: &Path) -> eyre::Result<Opened> {
 /// minutes each on a box whose audio was working fine and merely busy,
 /// which is a long way to travel from "the picture is wrong".
 pub fn open_silent(path: &Path) -> eyre::Result<Opened> {
-    open_with_audio(path, false)
+    open_with_audio(path, false, Media::All)
 }
 
-fn open_with_audio(path: &Path, audio: bool) -> eyre::Result<Opened> {
+fn open_with_audio(path: &Path, audio: bool, media: Media) -> eyre::Result<Opened> {
     refuse_unless_local(path)?;
-    let opened = load(path)?;
+    let opened = load_into_with(engine(), path, media)?;
     bootstrap(&opened.daw)?;
     AUDIBLE.store(audio, std::sync::atomic::Ordering::Relaxed);
     switch_to(&opened.daw, &opened.project_guid, audio);
@@ -132,8 +143,17 @@ pub fn equip(daw: &Standalone) {
 ///
 /// The file could not be read or parsed, or its media did not materialize.
 pub fn open_another(path: &Path) -> eyre::Result<Opened> {
+    open_another_with(path, Media::All)
+}
+
+/// [`open_another`], choosing when the media loads.
+///
+/// # Errors
+///
+/// As [`open_another`].
+pub fn open_another_with(path: &Path, media: Media) -> eyre::Result<Opened> {
     refuse_unless_local(path)?;
-    load(path)
+    load_into_with(engine(), path, media)
 }
 
 /// Opening a file is standing it up in the local engine — which a Remote
@@ -439,18 +459,6 @@ pub fn set_song_color(project_guid: &str, rgb: u32, saved: Option<&Path>) {
     }
 }
 
-/// Step one: the file becomes a project in the engine.
-///
-/// Media references are anchored to the project's own folder (see
-/// `project_loader::anchor_media` — every song has its own
-/// `Media/Click.wav`), and uncompressed PCM is mmap'd rather than
-/// decoded. A source that cannot be found is a warning, never a failed
-/// open — a session with one missing take is still a session worth
-/// looking at.
-fn load(path: &Path) -> eyre::Result<Opened> {
-    load_into(engine(), path)
-}
-
 /// Step two: serve the backend and install the facade.
 ///
 /// The runtime is leaked multi-threaded with 16 MiB worker stacks — vox's
@@ -490,7 +498,7 @@ fn bootstrap(standalone: &Standalone) -> eyre::Result<()> {
 ///
 /// Shared by both ways in, so attaching to REAPER cannot end up on a
 /// runtime with different stacks from the one the owning path proved.
-fn engine_runtime() -> eyre::Result<&'static tokio::runtime::Runtime> {
+pub(crate) fn engine_runtime() -> eyre::Result<&'static tokio::runtime::Runtime> {
     if let Some(rt) = RUNTIME.get() {
         return Ok(rt);
     }

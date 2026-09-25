@@ -241,6 +241,77 @@ impl Setlist {
 }
 
 #[cfg(feature = "native")]
+impl Song {
+    /// The song opened from `path` into the engine as `project`: named by
+    /// `title`, or its file's; saved into its `.session` folder, when it has
+    /// one.
+    fn opened(
+        path: &std::path::Path,
+        title: Option<String>,
+        project: String,
+        session: StudioSession,
+    ) -> Self {
+        let name = title.unwrap_or_else(|| {
+            path.file_stem()
+                .map_or_else(|| path.to_string_lossy(), |s| s.to_string_lossy())
+                .into_owned()
+        });
+        let mut song = Self::of(name, project, session);
+        song.saved = Some(if crate::open::is_session(path) {
+            path.to_path_buf()
+        } else {
+            path.with_extension("session")
+        })
+        .filter(|dir| dir.is_dir());
+        song
+    }
+}
+
+/// A song of the set arriving after the set opened — the songs behind the
+/// first open one by one while it is on screen.
+pub enum Arrival {
+    Song(Song),
+    /// A song that could not be opened: its tab goes.
+    Failed(String),
+}
+
+impl Setlist {
+    /// `arrival` into the set: its song in its place, out of the pending.
+    pub fn arrive(&mut self, arrival: Arrival) {
+        match arrival {
+            Arrival::Song(song) => {
+                if let Some(at) = self.pending.iter().position(|t| *t == song.name) {
+                    self.pending.remove(at);
+                }
+                self.songs.push(song);
+            }
+            Arrival::Failed(title) => self.pending.retain(|t| *t != title),
+        }
+    }
+}
+
+/// A song for a set to open: its project — and, when it is streamed in
+/// rather than on this disk, the stream its media plays from (the project
+/// is then in the stream's mirror) and the title the set gives it.
+#[cfg(feature = "native")]
+pub struct Opening {
+    pub path: std::path::PathBuf,
+    pub title: Option<String>,
+    pub streamed: Option<crate::song_stream::StreamedSong>,
+}
+
+#[cfg(feature = "native")]
+impl From<std::path::PathBuf> for Opening {
+    fn from(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            title: None,
+            streamed: None,
+        }
+    }
+}
+
+#[cfg(feature = "native")]
 impl Setlist {
     /// Open every song into the one engine — each prepared once and saved
     /// as `.session` if it was not already (see `StudioSession::open`) —
@@ -253,7 +324,61 @@ impl Setlist {
     ///
     /// None of the songs opened.
     pub fn open(paths: &[std::path::PathBuf]) -> eyre::Result<Self> {
-        Self::open_with(paths, true)
+        Self::open_with(paths.iter().cloned().map(Opening::from).collect(), true)
+    }
+
+    /// [`Self::open`], for songs some of which are streamed in rather than
+    /// on this disk (`crate::stream_set`): each opens the same way, its
+    /// media deferred and then attached to its streams.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_streamed(songs: Vec<Opening>) -> eyre::Result<Self> {
+        Self::open_with(songs, true)
+    }
+
+    /// Open one more song into the engine the set is in, behind the one on
+    /// screen — it does not become current, and nothing on screen moves: a
+    /// streamed set's songs after the first, arriving (see [`Arrival`]).
+    ///
+    /// # Errors
+    ///
+    /// The song did not open, or could not be read back.
+    pub fn open_behind(opening: Opening) -> eyre::Result<Song> {
+        let Opening {
+            path,
+            title,
+            streamed,
+        } = opening;
+        let engine = crate::open::local_engine()
+            .ok_or_else(|| eyre::eyre!("this window has no engine of its own to open into"))?;
+        let media = if streamed.is_some() {
+            crate::open::Media::Deferred
+        } else {
+            crate::open::Media::All
+        };
+        let prepare = crate::prepare::Prepare::for_song(&path);
+        let (opened, plan) = crate::open::open_song_into_with(engine, &path, &prepare, media)?;
+        let guid = opened.project_guid.clone();
+        if let Some(streamed) = streamed {
+            crate::stream_set::stream(streamed, &guid);
+        }
+        let rpp_text = crate::open::project_text(&plan.open)?.text;
+        let chart_text = prepare
+            .chart
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok());
+        let mut session = crate::open::engine_runtime()?.block_on(StudioSession::read_project(
+            &guid,
+            &opened.name,
+            &rpp_text,
+            chart_text.as_deref(),
+            true,
+        ))?;
+        session.chart_file = prepare.chart.clone();
+        crate::collab::song_opened(&guid);
+        Ok(Song::opened(&path, title, guid, session))
     }
 
     /// [`Self::open`], with no audio device — for a test, or anything that
@@ -263,27 +388,36 @@ impl Setlist {
     ///
     /// As [`Self::open`].
     pub fn open_silent(paths: &[std::path::PathBuf]) -> eyre::Result<Self> {
-        Self::open_with(paths, false)
+        Self::open_with(paths.iter().cloned().map(Opening::from).collect(), false)
     }
 
-    fn open_with(paths: &[std::path::PathBuf], audio: bool) -> eyre::Result<Self> {
+    fn open_with(openings: Vec<Opening>, audio: bool) -> eyre::Result<Self> {
+        let count = openings.len();
         let mut songs = Vec::new();
-        for path in paths {
+        for Opening {
+            path,
+            title,
+            streamed,
+        } in openings
+        {
+            let path = &path;
             let prepare = crate::prepare::Prepare::for_song(path);
-            match StudioSession::open_first_as(path, &prepare, songs.is_empty().then_some(audio)) {
+            let media = if streamed.is_some() {
+                crate::open::Media::Deferred
+            } else {
+                crate::open::Media::All
+            };
+            match StudioSession::open_first_as(
+                path,
+                &prepare,
+                songs.is_empty().then_some(audio),
+                media,
+            ) {
                 Ok((session, guid)) => {
-                    let name = path
-                        .file_stem()
-                        .map_or_else(|| path.to_string_lossy(), |s| s.to_string_lossy())
-                        .into_owned();
-                    let mut song = Song::of(name, guid, session);
-                    song.saved = Some(if crate::open::is_session(path) {
-                        path.clone()
-                    } else {
-                        path.with_extension("session")
-                    })
-                    .filter(|dir| dir.is_dir());
-                    songs.push(song);
+                    if let Some(streamed) = streamed {
+                        crate::stream_set::stream(streamed, &guid);
+                    }
+                    songs.push(Song::opened(path, title, guid, session));
                 }
                 Err(e) => tracing::error!(
                     setlist.song = %path.display(),
@@ -294,7 +428,7 @@ impl Setlist {
         }
         let first = songs
             .first()
-            .ok_or_else(|| eyre::eyre!("none of the {} songs opened", paths.len()))?;
+            .ok_or_else(|| eyre::eyre!("none of the {count} songs opened"))?;
         crate::open::switch_song(&first.project);
         Ok(Self::of(songs))
     }
@@ -481,9 +615,10 @@ pub fn read_setlist(path: &std::path::Path) -> eyre::Result<Vec<std::path::PathB
     Ok(songs)
 }
 
-/// The song in a song folder: its `.session`, else its one `.RPP`.
+/// The song in a song folder: its `.session`, else its one `.RPP`. `None`
+/// for a folder that is not a song's (a setlist's folder of songs).
 #[cfg(feature = "native")]
-fn song_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+pub fn song_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .ok()?
         .filter_map(Result::ok)

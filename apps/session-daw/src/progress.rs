@@ -117,6 +117,9 @@ pub fn ProgressBar(
     /// Its height as CSS — slim on a phone (5rem unless given).
     #[props(default)]
     height: Option<String>,
+    /// Whether the sections are named on it (not on an upright phone).
+    #[props(default = true)]
+    labels: bool,
 ) -> Element {
     let session: StudioSession = use_context();
     let song = use_hook(|| Song::of(&session));
@@ -137,6 +140,7 @@ pub fn ProgressBar(
     rsx! {
         SongProgressBar {
             height,
+            labels,
             progress: song.progress(reading().at),
             sections: song.bar.clone(),
             on_section_click: move |index: usize| {

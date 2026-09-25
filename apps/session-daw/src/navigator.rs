@@ -38,7 +38,7 @@ pub fn Navigator(on_pick: EventHandler<usize>) -> Element {
     let pending = list.pending.clone();
     rsx! {
         div {
-            style: "position:absolute; top:0; left:0; right:0; bottom:0; overflow-y:auto; \
+            style: "position:absolute; top:0; left:0; width:100%; height:100%; box-sizing:border-box; overflow-y:auto; \
                     padding:10px 10px 16px; display:flex; flex-direction:column; gap:6px;",
             for (index, data, current, starts) in rows {
                 SongItem {
