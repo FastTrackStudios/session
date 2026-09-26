@@ -100,6 +100,12 @@ pub enum Request {
     },
     Back,
     Forward,
+    /// The track panel compact (names) or expanded: a finger swiping it.
+    /// Not a zoom, but the widget's one way to ask the panel for
+    /// anything, so it travels this way.
+    Shape {
+        compact: bool,
+    },
     /// Scroll by `dx` across and `dy` down, in screen pixels: a finger
     /// dragging the lanes.
     ScrollBy {
@@ -215,7 +221,7 @@ impl History {
                 self.visit(now);
                 Some(to)
             }
-            Request::ScrollBy { .. } => Some(framed()),
+            Request::ScrollBy { .. } | Request::Shape { .. } => Some(framed()),
             Request::Open { .. } => {
                 self.toggled = None;
                 Some(framed())

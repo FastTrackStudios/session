@@ -110,6 +110,12 @@ struct Finger {
     down: blitz_traits::events::BlitzPointerEvent,
     last: (f64, f64),
     scrolling: bool,
+    /// Pressed on the track panel: a sideways swipe there expands it or
+    /// folds it back to names.
+    on_panel: bool,
+    /// Swiped: the panel has been asked to change, and the rest of this
+    /// finger's gesture is spent.
+    swiped: bool,
     /// Holding the play cursor's handle: the transport follows it.
     scrubbing: bool,
     /// How fast it is going, to throw the view when it lets go.
@@ -141,6 +147,10 @@ fn paint_handle(out: &mut Scene, rect: vello::kurbo::Rect) {
     tip.close_path();
     out.fill(Fill::NonZero, Affine::IDENTITY, face, None, &tip);
 }
+
+/// How far sideways, in CSS pixels, a finger on the track panel travels
+/// before it is a swipe that expands or folds it.
+const SWIPE: f64 = 36.0;
 
 /// How many rows a touchscreen's view opens with down its lanes.
 const ROWS_DOWN: f64 = 12.0;
@@ -562,10 +572,7 @@ impl ArrangementWidget {
             rows,
             layout,
             previews,
-            crate::tcp::Tcp {
-                compact,
-                touch: false,
-            },
+            crate::tcp::Tcp { compact },
         );
         let bpm = scene.bpm;
         Self::new(
@@ -1231,7 +1238,6 @@ impl ArrangementWidget {
             &self.previews,
             crate::tcp::Tcp {
                 compact: self.compact.get(),
-                touch: self.ui.get() > 1.0,
             },
         );
         self.scene.lettering = lettering;
@@ -1449,7 +1455,6 @@ impl Widget for ArrangementWidget {
             // The toolbar changed the panel's shape: nothing else will
             // ask for the frame that re-cuts it.
             || self.scene.tcp.compact != self.compact.get()
-            || self.scene.tcp.touch != (self.ui.get() > 1.0)
             // Other people's pointers glide and their play cursors move
             // with nothing happening here.
             || crate::ghosts::active()
@@ -1497,9 +1502,17 @@ impl ArrangementWidget {
             }
             _ => None,
         };
-        let changed =
+        let mut changed =
             !self.stands_down(event) && self.fingered(event).unwrap_or_else(|| self.took(event));
         self.point(event, pressed);
+        // A finger has no hover: once it lifts, nothing is under it. Left
+        // as it was, the name it last touched kept the underline that
+        // says "double-click to rename".
+        if let UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) = event
+            && e.is_finger()
+        {
+            changed |= self.pointer.hover(None);
+        }
         self.dirty.set(changed);
     }
 
@@ -1675,13 +1688,21 @@ impl ArrangementWidget {
                         down: e.clone(),
                         last: (x, y),
                         scrolling: false,
+                        on_panel: false,
+                        swiped: false,
                         scrubbing: true,
                         speed: crate::touch::Speed::default(),
                     });
                     self.scrub(x);
                     return Some(true);
                 }
-                if self.spot_at(x, y).is_some() {
+                // A control takes its press; a track's name is where a
+                // finger swipes the panel or scrolls, and a tap there is
+                // the click it would have been.
+                if self
+                    .spot_at(x, y)
+                    .is_some_and(|spot| spot.control != crate::row::Control::Name)
+                {
                     return None;
                 }
                 let scrolls = self.hit(x, y).is_some_and(|hit| {
@@ -1702,6 +1723,8 @@ impl ArrangementWidget {
                     down: e.clone(),
                     last: (x, y),
                     scrolling: false,
+                    on_panel: x < self.scene.tcp.width(),
+                    swiped: false,
                     scrubbing: false,
                     speed: crate::touch::Speed::default(),
                 });
@@ -1714,10 +1737,32 @@ impl ArrangementWidget {
                     self.scrub(x);
                     return Some(true);
                 }
+                if finger.swiped {
+                    return Some(true);
+                }
+                // Sideways across the track panel, before it has become a
+                // scroll: a swipe — right expands the panel, left folds it
+                // back to names, as Logic's does.
+                let from = at(&finger.down);
+                let (dx, dy) = (x - from.0, y - from.1);
+                if finger.on_panel
+                    && !finger.scrolling
+                    && dx.abs() * self.ui.get() > SWIPE
+                    && dx.abs() > dy.abs() * 2.0
+                {
+                    finger.swiped = true;
+                    self.zooms
+                        .borrow_mut()
+                        .push(crate::zoom::Request::Shape { compact: dx < 0.0 });
+                    return Some(true);
+                }
                 let from = at(&finger.down);
                 // The slop is a fingertip's, in CSS pixels.
                 let wandered = (x - from.0).hypot(y - from.1) * self.ui.get();
-                if !finger.scrolling && wandered > crate::touch::SLOP {
+                // On the track panel, a finger going sideways is on its way
+                // to a swipe: it waits for that rather than scrolling.
+                let sideways = finger.on_panel && (x - from.0).abs() > (y - from.1).abs();
+                if !finger.scrolling && !sideways && wandered > crate::touch::SLOP {
                     finger.scrolling = true;
                 }
                 if finger.scrolling {
@@ -1737,8 +1782,9 @@ impl ArrangementWidget {
                     return self.finger.is_some().then_some(true);
                 }
                 let finger = self.finger.take()?;
-                if finger.scrubbing {
-                    // Where it was let go, the cursor already is.
+                if finger.scrubbing || finger.swiped {
+                    // Where it was let go, the cursor already is; a swipe
+                    // has already asked for its panel.
                 } else if finger.scrolling {
                     // Thrown: the view carries on the way the finger went.
                     let (vx, vy) = finger.speed.velocity();
@@ -1949,9 +1995,7 @@ impl ArrangementWidget {
         }
         // The panel's shape, if the toolbar has changed it: the rows are
         // RECORDED to it, so this re-cuts rather than re-scales.
-        if self.scene.tcp.compact != self.compact.get()
-            || self.scene.tcp.touch != (self.ui.get() > 1.0)
-        {
+        if self.scene.tcp.compact != self.compact.get() {
             self.recut();
         }
         let began = web_time::Instant::now();

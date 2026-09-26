@@ -39,6 +39,7 @@ pub fn Shell() -> Element {
         Ok("overview") => View::Overview,
         Ok("setup") => View::Setup,
         Ok("chart") => View::Chart,
+        Ok("lyrics") => View::Lyrics,
         Ok("mixer") => View::Mixer,
         _ => View::Daw,
     });
@@ -316,6 +317,7 @@ fn SongViews(
                     }
                 },
                 View::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
+                View::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
                 View::Mixer => rsx! {
                     session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
                 },

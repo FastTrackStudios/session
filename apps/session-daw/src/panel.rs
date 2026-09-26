@@ -630,6 +630,16 @@ impl ArrangementPanel {
             Vec::new()
         };
         for request in asked {
+            // A swipe on the track panel: its shape, as the toolbar's
+            // switch sets it.
+            if let crate::zoom::Request::Shape { compact } = request {
+                self.compact.set(compact);
+                let mut shape = self.shape;
+                if *shape.peek() != compact {
+                    shape.set(compact);
+                }
+                continue;
+            }
             let (zx, zy) = *zoom.peek();
             let now = crate::zoom::Target {
                 zoom_x: zx,
@@ -756,7 +766,6 @@ impl ArrangementPanel {
     pub fn tcp(&self) -> crate::tcp::Tcp {
         crate::tcp::Tcp {
             compact: self.compact.get(),
-            touch: self.ui.get() > 1.0,
         }
     }
 
@@ -815,7 +824,6 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
     // Read as a signal so a toggle re-renders what is sized to the panel.
     let tcp_w = crate::tcp::Tcp {
         compact: (panel.shape)(),
-        touch,
     }
     .width();
     rsx! {

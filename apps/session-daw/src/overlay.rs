@@ -1792,7 +1792,7 @@ fn control_row(
     ] {
         let Some(r) = row.rect(control) else { continue };
         // A touchscreen's fills its rect.
-        if row.tcp.big_buttons() {
+        if row.tcp.compact {
             crate::art::place(
                 &mut *out,
                 &art::gutter_button_sized(
@@ -1867,7 +1867,41 @@ fn control_row(
     }
 
     // The record arm, on rows tall enough to read one.
-    if let Some(r) = row.rect(C::RecArm) {
+    if let Some(r) = row.rect(C::RecArm).filter(|_| row.tcp.compact) {
+        // The compact panel's, on its second line: a button like the mute
+        // and solo beside it, the record ring on it.
+        let lit = crate::tcp::lit(palette).rec;
+        crate::art::place(
+            &mut *out,
+            &art::gutter_button_sized(
+                &palette.chrome,
+                "",
+                false,
+                lit,
+                look(C::RecArm),
+                (r.width(), r.height()),
+            ),
+            font,
+            r.x0,
+            r.y0,
+        );
+        let size = r.width().min(r.height()) * 0.66;
+        crate::art::scaled(
+            &mut *out,
+            &art::record_arm(
+                &palette.chrome,
+                lit,
+                live.armed,
+                look(C::RecArm),
+                art::Arm::Panel,
+                crate::tcp::to_theme(palette.tcp_field),
+            ),
+            font,
+            r.x0 + (r.width() - size) / 2.0,
+            r.y0 + (r.height() - size) / 2.0,
+            size / 20.0,
+        );
+    } else if let Some(r) = row.rect(C::RecArm) {
         crate::art::place(
             &mut *out,
             &art::record_arm(

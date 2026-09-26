@@ -77,15 +77,18 @@ pub enum View {
     Overview,
     /// The chart alone, the whole window.
     Chart,
+    /// The song's lyrics, the whole window.
+    Lyrics,
     /// The mixer alone, the whole window.
     Mixer,
 }
 
 impl View {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Performance,
         Self::Overview,
         Self::Chart,
+        Self::Lyrics,
         Self::Daw,
         Self::Mixer,
         Self::Setup,
@@ -99,6 +102,7 @@ impl View {
             Self::Daw => "Arrangement",
             Self::Overview => "Overview",
             Self::Chart => "Chart",
+            Self::Lyrics => "Lyrics",
             Self::Mixer => "Mixer",
         }
     }
@@ -173,13 +177,15 @@ fn bottom_button(on: bool) -> String {
 #[component]
 fn ViewIcon(view: View) -> Element {
     use lucide_dioxus::{
-        ChartNoAxesGantt, FileMusic, LayoutDashboard, ListMusic, Settings, SlidersVertical,
+        ChartNoAxesGantt, FileMusic, LayoutDashboard, ListMusic, MicVocal, Settings,
+        SlidersVertical,
     };
     let size = 19;
     match view {
         View::Performance => rsx! { ListMusic { size, color: "currentColor" } },
         View::Overview => rsx! { LayoutDashboard { size, color: "currentColor" } },
         View::Chart => rsx! { FileMusic { size, color: "currentColor" } },
+        View::Lyrics => rsx! { MicVocal { size, color: "currentColor" } },
         View::Daw => rsx! { ChartNoAxesGantt { size, color: "currentColor" } },
         View::Mixer => rsx! { SlidersVertical { size, color: "currentColor" } },
         View::Setup => rsx! { Settings { size, color: "currentColor" } },

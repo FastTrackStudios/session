@@ -851,6 +851,7 @@ fn SongViews(
                 },
                 View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone() } },
                 View::Chart => rsx! { crate::chart_panel::WebChart { paged: true } },
+                View::Lyrics => rsx! { crate::lyrics_panel::LyricsPanel {} },
                 View::Mixer => rsx! {
                     crate::mixer_panel::WebDawPanels { engine: engine.clone(), mixer_only: true }
                 },
