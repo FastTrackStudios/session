@@ -89,7 +89,7 @@ pub fn field(view: Viewport, origin: (f64, f64), row: usize, at: f64) -> Rect {
 /// press on the tempo, rather than making a marker in a lane of chords.
 pub fn lane_at(y: f64, top: f64) -> Option<usize> {
     let down = y - top;
-    (0..LANES).find(|&row| {
+    (0..LANES).filter(|&row| lane_shown(row)).find(|&row| {
         let from = row_top(row);
         down >= from && down < from + LANE_H
     })

@@ -149,7 +149,8 @@ pub fn chords_h() -> f64 {
 /// sit nearest the bars, where a SONGSTART flag is read against its bar.
 #[must_use]
 pub fn row_top(row: usize) -> f64 {
-    let lanes = LANE_H * crate::num::coord(row);
+    let above = (0..row).filter(|&r| lane_shown(r)).count();
+    let lanes = LANE_H * crate::num::coord(above);
     if row >= MARKS_ROW {
         lanes + chords_h()
     } else {
@@ -161,7 +162,38 @@ pub fn row_top(row: usize) -> f64 {
 /// bars under them.
 #[must_use]
 pub fn ruler_h() -> f64 {
-    BARS_H + TEMPO_H + LANE_H * 3.0 + chords_h()
+    let lanes = (0..LANES).filter(|&r| lane_shown(r)).count();
+    BARS_H + tempo_h() + LANE_H * crate::num::coord(lanes) + chords_h()
+}
+
+/// The slim ruler, for a touchscreen: the sections, their chords and the
+/// bars, and not the song band, the marks or the tempo. A finger's ruler
+/// is drawn a third bigger, and six lanes of it took a sixth of an iPad
+/// from the tracks; Logic's is one line.
+static SLIM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Make the ruler slim, or full.
+pub fn set_slim(on: bool) {
+    SLIM.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the ruler is slim ([`set_slim`]).
+#[must_use]
+pub fn slim() -> bool {
+    SLIM.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether a lane row is on the ruler: every one, or on a slim ruler the
+/// sections alone.
+#[must_use]
+pub fn lane_shown(row: usize) -> bool {
+    !slim() || row == SECTIONS_ROW
+}
+
+/// The TEMPO lane's height: nothing on a slim ruler.
+#[must_use]
+pub fn tempo_h() -> f64 {
+    if slim() { 0.0 } else { TEMPO_H }
 }
 
 /// As much of a name as fits a width, or nothing.

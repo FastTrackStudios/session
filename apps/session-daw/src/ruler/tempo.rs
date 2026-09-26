@@ -22,6 +22,9 @@ pub fn tempo(
     changes: &[daw_ui::studio::project::TempoChange],
 ) {
     const SIZE: f32 = 8.0;
+    if slim() {
+        return;
+    }
     let (ox, oy) = origin;
     let top = oy + ruler_h() - BARS_H - TEMPO_H;
     let left = ox + view.panel_w;

@@ -24,6 +24,9 @@ pub fn lanes(
     let right = ox + view.width;
     let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
     for (row, name) in LANE_NAMES.iter().enumerate() {
+        if !lane_shown(row) {
+            continue;
+        }
         let top = oy + row_top(row);
         // A rule under each lane, and the lane's name in the column.
         fill(
@@ -46,6 +49,9 @@ pub fn lanes(
     // long section still says what it is.
     for section in sections {
         let row = lane_row(section.lane);
+        if !lane_shown(row) {
+            continue;
+        }
         let top = oy + row_top(row) + 2.0;
         let x0 = x_of(section.start).max(left);
         let x1 = x_of(section.end).min(right);
@@ -85,6 +91,9 @@ pub fn lanes(
     // Markers: a flag on its lane, named to the right of it.
     for marker in markers {
         let row = lane_row(marker.lane);
+        if !lane_shown(row) {
+            continue;
+        }
         let top = oy + row_top(row) + 2.0;
         let x = x_of(marker.at);
         if x < left || x > right {
@@ -189,7 +198,13 @@ pub fn lane_lines(
         };
         // From the foot of the band or flag it belongs to — which is
         // drawn inset 2px from its lane — so the line continues it.
-        let top = oy + row_top(row) + LANE_H - 2.0;
+        // A lane the slim ruler leaves off drops its line from the
+        // ruler's foot.
+        let top = if lane_shown(row) {
+            oy + row_top(row) + LANE_H - 2.0
+        } else {
+            oy + ruler_h()
+        };
         let x = x.round();
         fill(
             painter,

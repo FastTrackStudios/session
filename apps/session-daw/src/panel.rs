@@ -240,6 +240,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     // would take half an iPad's width from the lanes.
     let compact = use_hook(|| Rc::new(Cell::new(docked || small || touch)));
     let ui = use_hook(|| Rc::new(Cell::new(crate::touch::arrange_zoom(touch, 0.0))));
+    crate::ruler::set_slim(touch);
     let shape = use_signal(|| compact.get());
     // On by default: in a service the view should always show where the
     // song is.
@@ -802,6 +803,7 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
     let touch = crate::touch::use_touch();
     let ui = crate::touch::arrange_zoom(touch, css.2);
     panel.ui.set(ui);
+    crate::ruler::set_slim(touch);
     let r = (css.0 / ui, css.1 / ui, css.2 / ui, css.3 / ui);
     let (fw, fh) = panel.frame(r);
     let (zx, zy) = (panel.zoom)();
