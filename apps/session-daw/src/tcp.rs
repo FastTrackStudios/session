@@ -553,17 +553,17 @@ fn row_one(
     // wrapped or shrunk — REAPER truncates here too. The type shrinks
     // with the row rather than being squashed with it: a flattened glyph
     // is unreadable where a smaller one is merely small.
-    let name_x = tcp.name_x() + indent;
+    let mut name_x = tcp.name_x() + indent;
     let mut name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
-    // The compact panel's icon, at the field's right end: what the track
-    // is, at a glance, in its colour. The name ends before it.
+    // The compact panel's icon, first in the field, where Logic puts it:
+    // what the track is, at a glance, in its colour, before its name.
     if tcp.compact && field_h >= 14.0 {
         let side = (field_h - 6.0).clamp(10.0, 18.0);
-        let right = field_x + field_w - 6.0;
+        let left = field_x + 8.0;
         let at = vello::kurbo::Rect::new(
-            right - side,
+            left,
             field_top + (field_h - side) / 2.0,
-            right,
+            left + side,
             field_top + (field_h + side) / 2.0,
         );
         crate::track_icon::paint(
@@ -572,6 +572,7 @@ fn row_one(
             at,
             icon_ink(palette, track),
         );
+        name_x += side + 6.0;
         name_w = (name_w - side - 6.0).max(0.0);
     }
     let ink = if track.selected {
