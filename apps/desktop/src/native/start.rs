@@ -85,10 +85,12 @@ pub fn App() -> Element {
 /// The page itself, edge to edge. Blitz's default stylesheet gives `body`
 /// an 8px margin, and Blitz places an absolutely positioned box against its
 /// parent — the body — so without this every view sat 8px right and down
-/// and ran off the right edge. And the canvas takes the page's background:
-/// the app's own dark, under a phone's status bar and home indicator too,
-/// rather than the renderer's clear colour.
-const ROOT_CSS: &str = "html, body { margin: 0; padding: 0; background: #0f1012; }";
+/// and ran off the right edge. And the canvas takes the page's background,
+/// which is what fills a phone's status bar and home indicator: the bars'
+/// colour (`session_daw::shell::BAR_BG`), so the top bar runs up under the
+/// status bar and the bottom bar down under the home indicator, into the
+/// screen's rounded corners, rather than stopping short of a darker strip.
+const ROOT_CSS: &str = "html, body { margin: 0; padding: 0; background: #17181b; }";
 
 /// What the launch chose to open as the window opens (see
 /// `super::choose`), if anything.
