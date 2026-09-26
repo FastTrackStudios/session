@@ -110,9 +110,40 @@ struct Finger {
     down: blitz_traits::events::BlitzPointerEvent,
     last: (f64, f64),
     scrolling: bool,
+    /// Holding the play cursor's handle: the transport follows it.
+    scrubbing: bool,
     /// How fast it is going, to throw the view when it lets go.
     speed: crate::touch::Speed,
 }
+
+/// The play cursor's handle, standing on the cursor at `x` in the bars
+/// lane: a pin a finger can take hold of.
+fn handle_rect(x: f64) -> vello::kurbo::Rect {
+    const W: f64 = 14.0;
+    const H: f64 = 18.0;
+    let bottom = ruler::ruler_h() - 3.0;
+    vello::kurbo::Rect::new(x - W / 2.0, bottom - H, x + W / 2.0, bottom)
+}
+
+/// The handle itself: a light rounded tab, pointed at its foot where it
+/// meets the line.
+fn paint_handle(out: &mut Scene, rect: vello::kurbo::Rect) {
+    use anyrender::PaintScene as _;
+    use vello::kurbo::{BezPath, RoundedRect};
+    use vello::peniko::{Color, Fill};
+    let face = Color::from_rgb8(0xc9, 0xcc, 0xd1);
+    let body = RoundedRect::new(rect.x0, rect.y0, rect.x1, rect.y1 - 4.0, 3.0);
+    out.fill(Fill::NonZero, Affine::IDENTITY, face, None, &body);
+    let mut tip = BezPath::new();
+    tip.move_to((rect.x0, rect.y1 - 5.0));
+    tip.line_to((rect.x1, rect.y1 - 5.0));
+    tip.line_to((rect.center().x, rect.y1));
+    tip.close_path();
+    out.fill(Fill::NonZero, Affine::IDENTITY, face, None, &tip);
+}
+
+/// How many rows a touchscreen's view opens with down its lanes.
+const ROWS_DOWN: f64 = 12.0;
 
 /// How tall a row opens at least, on a finger's screen: a fingertip.
 const OPEN_ROW_TOUCH: f64 = 44.0;
@@ -214,6 +245,9 @@ pub struct ArrangementWidget {
     redraw: Option<Rc<dyn Fn()>>,
     /// Touch mode, as the panel was opened in.
     touch: bool,
+    /// Where the play cursor's handle was last drawn, in the widget's
+    /// units: what a finger takes to scrub.
+    handle: Cell<Option<vello::kurbo::Rect>>,
     /// How much bigger the arrangement is drawn than laid out (touch
     /// mode's zoom, or 1), shared with the panel.
     ui: Rc<Cell<f64>>,
@@ -445,6 +479,7 @@ impl ArrangementWidget {
             fling: None,
             redraw: None,
             touch: false,
+            handle: Cell::new(None),
             ui: Rc::new(Cell::new(1.0)),
             replan: None,
             #[cfg(not(feature = "native"))]
@@ -862,19 +897,23 @@ impl ArrangementWidget {
     /// [`OPEN_PPS`] wide; the rest is a scroll away. The full DAW view on
     /// a desktop fits as it always has.
     fn opening_floor(&self) -> (f64, f64) {
+        let ui = self.ui.get().max(f64::EPSILON);
         let row = if self.touch {
-            OPEN_ROW_TOUCH
+            // Twelve rows down the lanes, as Logic shows an iPad on its
+            // side: their frame is the widget less the ruler and the
+            // scrollbar, in on-screen pixels. Never under a fingertip.
+            let lanes = (self.size.1 - ruler::ruler_h() - crate::panel::BAR).max(0.0) * ui;
+            (lanes / ROWS_DOWN).max(OPEN_ROW_TOUCH)
         } else if self.compact.get() {
             OPEN_ROW_COMPACT
         } else {
             return (0.0, 0.0);
         };
         // The floors are on-screen sizes, and the view is laid out at the
-        // touch zoom's fraction of them. The row that must reach `row` is
+        // touch zoom's fraction of them (`ui`). The row that must reach `row` is
         // the typical one, the median: a session's plan sizes its rows
         // anywhere from a sliver to a working track, and neither the
         // smallest nor the default stands for what is on screen.
-        let ui = self.ui.get().max(f64::EPSILON);
         let mut heights: Vec<f64> = self
             .rows
             .iter()
@@ -1030,6 +1069,13 @@ impl ArrangementWidget {
             crate::hit::Target::Item { index, .. } => Some(index),
             _ => None,
         }
+    }
+
+    /// The play cursor to the time under `x`, as a finger drags its
+    /// handle.
+    fn scrub(&self, x: f64) {
+        let view = self.viewport(self.size.0, self.size.1);
+        crate::engine::transport(crate::engine::Move::Seek, self.seconds_at(x, view));
     }
 
     /// The time under an x in the widget's coordinates.
@@ -1617,6 +1663,24 @@ impl ArrangementWidget {
                     return Some(true);
                 }
                 let (x, y) = at(e);
+                // On the play cursor's handle, give or take a fingertip:
+                // a scrub.
+                if self
+                    .handle
+                    .get()
+                    .is_some_and(|h| h.inflate(10.0, 8.0).contains((x, y)))
+                {
+                    self.fling = None;
+                    self.finger = Some(Finger {
+                        down: e.clone(),
+                        last: (x, y),
+                        scrolling: false,
+                        scrubbing: true,
+                        speed: crate::touch::Speed::default(),
+                    });
+                    self.scrub(x);
+                    return Some(true);
+                }
                 if self.spot_at(x, y).is_some() {
                     return None;
                 }
@@ -1638,6 +1702,7 @@ impl ArrangementWidget {
                     down: e.clone(),
                     last: (x, y),
                     scrolling: false,
+                    scrubbing: false,
                     speed: crate::touch::Speed::default(),
                 });
                 Some(true)
@@ -1645,6 +1710,10 @@ impl ArrangementWidget {
             UiEvent::PointerMove(e) => {
                 let finger = self.finger.as_mut().filter(|f| f.down.id == e.id)?;
                 let (x, y) = at(e);
+                if finger.scrubbing {
+                    self.scrub(x);
+                    return Some(true);
+                }
                 let from = at(&finger.down);
                 // The slop is a fingertip's, in CSS pixels.
                 let wandered = (x - from.0).hypot(y - from.1) * self.ui.get();
@@ -1668,7 +1737,9 @@ impl ArrangementWidget {
                     return self.finger.is_some().then_some(true);
                 }
                 let finger = self.finger.take()?;
-                if finger.scrolling {
+                if finger.scrubbing {
+                    // Where it was let go, the cursor already is.
+                } else if finger.scrolling {
                     // Thrown: the view carries on the way the finger went.
                     let (vx, vy) = finger.speed.velocity();
                     self.fling = crate::touch::Fling::thrown((-vx, -vy));
@@ -2173,6 +2244,20 @@ impl ArrangementWidget {
             view.height,
             self.scene.tcp.width(),
         );
+        // A touchscreen's handle on it, in the bars lane: a finger takes
+        // the cursor by this and scrubs, where a press elsewhere on the
+        // ruler is a scroll.
+        self.handle.set(None);
+        if self.ui.get() > 1.0 {
+            let x = at_now
+                .play_at
+                .mul_add(view.pps, self.scene.tcp.width() - view.scroll_x);
+            if x >= self.scene.tcp.width() && x <= view.width {
+                let rect = handle_rect(x);
+                paint_handle(&mut out, rect);
+                self.handle.set(Some(rect));
+            }
+        }
         // Everyone else in the session, faintly: their selections,
         // cursors and mouse. Over your cursors so a peer on the same spot
         // is still seen, but drawn thin and pale so theirs never reads as
