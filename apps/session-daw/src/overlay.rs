@@ -165,13 +165,20 @@ pub fn control(
             } else {
                 ("S", track.soloed, crate::tcp::solo_lit(palette))
             };
-            if let Some((x, y)) = at(spot.control) {
+            if let Some(r) = strip.rect(spot.control) {
                 crate::art::place(
                     &mut scene,
-                    &art::gutter_button(&palette.chrome, label, on, lit, state),
+                    &art::gutter_button_sized(
+                        &palette.chrome,
+                        label,
+                        on,
+                        lit,
+                        state,
+                        (r.width(), r.height()),
+                    ),
                     font,
-                    x,
-                    y,
+                    left + r.x0,
+                    r.y0,
                 );
             }
         }
@@ -191,6 +198,9 @@ pub fn control(
                     y,
                 );
             }
+        }
+        Control::RecArm if strip.big_buttons() => {
+            touch_arm(&mut scene, palette, font, &strip, track, state, left);
         }
         Control::RecArm => {
             crate::art::place(
@@ -711,6 +721,7 @@ pub fn controls(
             mixer.buttons_top,
             mixer.height,
             mixer.live,
+            mixer.touch,
         );
         // The racks of the strips that are not selected, darkened —
         // over the recording and everything live on it, so the
@@ -767,6 +778,7 @@ fn draw_strip_controls(
     buttons_top: f64,
     mixer_h: f64,
     live: bool,
+    touch: bool,
 ) {
     let strip = crate::strip::Strip::laid_out(
         width,
@@ -776,7 +788,8 @@ fn draw_strip_controls(
         buttons_top,
         settings.is_some_and(crate::tone::Tone::wants_column),
         live,
-    );
+    )
+    .touched(touch);
     // Every position comes from the layout, translated by the strip's
     // left edge. Nothing here works out where a control goes.
     let at = |control| strip.rect(control).map(|r| (left + r.x0, r.y0));
@@ -840,7 +853,17 @@ fn draw_strip_controls(
         );
     }
 
-    if let Some((x, y)) = at(Control::RecArm) {
+    if strip.big_buttons() {
+        touch_arm(
+            scene,
+            palette,
+            font,
+            &strip,
+            track,
+            state(Control::RecArm),
+            left,
+        );
+    } else if let Some((x, y)) = at(Control::RecArm) {
         crate::art::place(
             scene,
             &art::record_arm(
@@ -896,13 +919,23 @@ fn draw_strip_controls(
             crate::tcp::solo_lit(palette),
         ),
     ] {
-        let Some((x, y)) = at(control) else { continue };
+        // At the size the strip gives it: a touchscreen's are bigger.
+        let Some(r) = strip.rect(control) else {
+            continue;
+        };
         crate::art::place(
             scene,
-            &art::gutter_button(&palette.chrome, label, on, lit, state(control)),
+            &art::gutter_button_sized(
+                &palette.chrome,
+                label,
+                on,
+                lit,
+                state(control),
+                (r.width(), r.height()),
+            ),
             font,
-            x,
-            y,
+            left + r.x0,
+            r.y0,
         );
     }
 
@@ -1017,7 +1050,6 @@ fn draw_strip_controls(
     if strip.has_fader()
         && let Some((x, y)) = at(Control::Volume)
     {
-        let value = crate::tcp::volume_fraction(track.volume);
         let travel = strip.travel();
         // Each channel on its own half, not the louder of the two and
         // not their sum: a summed meter cannot tell you that a stereo
@@ -1080,14 +1112,18 @@ fn draw_strip_controls(
         );
         // The cap, centred in the column and narrower than the meter,
         // so a channel shows down each side of it whatever it covers.
-        let (cap_y, cap_h) = art::fader_cap_at(value, strip.columns.fader_w, travel);
-        let cap_w = art::cap_w(strip.columns.fader_w);
+        // Where `Strip::cap` puts it, which is also where a finger takes
+        // hold of it.
+        let Some(cap) = strip.cap(track.volume) else {
+            return;
+        };
+        let (cap_y, cap_h) = (cap.y0 - y, cap.height());
         crate::art::scaled(
             scene,
             &art::fader_cap_through(&palette.chrome, palette.chrome.hardware_mark, CAP_GLASS),
             font,
-            x + (strip.columns.fader_w - cap_w) / 2.0,
-            y + cap_y,
+            left + cap.x0,
+            cap.y0,
             cap_h / 53.0,
         );
         // What the fader is SET to, while it is being set. The numbers
@@ -1134,6 +1170,57 @@ fn draw_strip_controls(
             y,
         );
     }
+}
+
+/// A touchscreen strip's record arm: a button in its row, as its mute
+/// and solo are, with the record ring on it — the same ring, lit while
+/// armed, grown to the button.
+fn touch_arm(
+    scene: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    strip: &crate::strip::Strip,
+    track: &Track,
+    state: Interaction,
+    left: f64,
+) {
+    let Some(r) = strip.rect(Control::RecArm) else {
+        return;
+    };
+    let lit = crate::tcp::lit(palette).rec;
+    crate::art::place(
+        scene,
+        &art::gutter_button_sized(
+            &palette.chrome,
+            "",
+            false,
+            lit,
+            state,
+            (r.width(), r.height()),
+        ),
+        font,
+        left + r.x0,
+        r.y0,
+    );
+    // The panel's bare ring is 20 square; as big as two thirds of the
+    // button's shorter side, in its middle.
+    let size = r.width().min(r.height()) * 0.66;
+    let scale = size / 20.0;
+    crate::art::scaled(
+        scene,
+        &art::record_arm(
+            &palette.chrome,
+            lit,
+            track.armed,
+            state,
+            art::Arm::Panel,
+            crate::tcp::to_theme(crate::mcp::strip_ground(palette, track)),
+        ),
+        font,
+        left + r.x0 + (r.width() - size) / 2.0,
+        r.y0 + (r.height() - size) / 2.0,
+        scale,
+    );
 }
 
 /// Which tracks have clipped since anyone last looked.
@@ -1704,6 +1791,24 @@ fn control_row(
         (C::Solo, "S", live.soloed, crate::tcp::solo_lit(palette)),
     ] {
         let Some(r) = row.rect(control) else { continue };
+        // A touchscreen's fills its rect.
+        if row.tcp.compact {
+            crate::art::place(
+                &mut *out,
+                &art::gutter_button_sized(
+                    &palette.chrome,
+                    label,
+                    on,
+                    lit,
+                    look(control),
+                    (r.width(), r.height()),
+                ),
+                font,
+                r.x0,
+                r.y0,
+            );
+            continue;
+        }
         // Flattened to the rect on a row too short for the full
         // button — the row's shape says how tall, not the art.
         crate::art::squashed(
@@ -1762,7 +1867,41 @@ fn control_row(
     }
 
     // The record arm, on rows tall enough to read one.
-    if let Some(r) = row.rect(C::RecArm) {
+    if let Some(r) = row.rect(C::RecArm).filter(|_| row.tcp.compact) {
+        // The compact panel's, on its second line: a button like the mute
+        // and solo beside it, the record ring on it.
+        let lit = crate::tcp::lit(palette).rec;
+        crate::art::place(
+            &mut *out,
+            &art::gutter_button_sized(
+                &palette.chrome,
+                "",
+                false,
+                lit,
+                look(C::RecArm),
+                (r.width(), r.height()),
+            ),
+            font,
+            r.x0,
+            r.y0,
+        );
+        let size = r.width().min(r.height()) * 0.66;
+        crate::art::scaled(
+            &mut *out,
+            &art::record_arm(
+                &palette.chrome,
+                lit,
+                live.armed,
+                look(C::RecArm),
+                art::Arm::Panel,
+                crate::tcp::to_theme(palette.tcp_field),
+            ),
+            font,
+            r.x0 + (r.width() - size) / 2.0,
+            r.y0 + (r.height() - size) / 2.0,
+            size / 20.0,
+        );
+    } else if let Some(r) = row.rect(C::RecArm) {
         crate::art::place(
             &mut *out,
             &art::record_arm(

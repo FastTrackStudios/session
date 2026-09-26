@@ -38,6 +38,9 @@ pub fn Shell() -> Element {
         Ok("performance") => View::Performance,
         Ok("overview") => View::Overview,
         Ok("setup") => View::Setup,
+        Ok("chart") => View::Chart,
+        Ok("lyrics") => View::Lyrics,
+        Ok("mixer") => View::Mixer,
         _ => View::Daw,
     });
     // Live unless `FTS_SESSION_MODE` names another (`organize`, …): the
@@ -64,6 +67,9 @@ pub fn Shell() -> Element {
     // Whether the mixer is open, per mode (Organize starts closed) — above
     // the songs, so it holds across them.
     use_context_provider(session_daw::mixer_panel::MixerMemory::new);
+    // Touch mode: on where the screen is the pointer, switched in the
+    // record view's menu.
+    use_context_provider(session_daw::touch::Touch::detect);
     // The lyrics' Audience / Performer and layer, held across songs.
     use_context_provider(session_daw::lyrics_panel::LyricsChoice::new);
     // The songs, as the launch opened them — a signal from here on, which
@@ -140,7 +146,17 @@ pub fn Shell() -> Element {
             form_signal.set(now);
         }
     });
-    let phone_view = use_signal(|| session_daw::compact::PhoneView::Chart);
+    // On a phone, `FTS_SESSION_VIEW` names the tab it opens on, as it
+    // names the view on a wider screen; the chart otherwise.
+    let phone_view = use_signal(|| {
+        use session_daw::compact::PhoneView;
+        match std::env::var("FTS_SESSION_VIEW").as_deref() {
+            Ok("daw") => PhoneView::Arrangement,
+            Ok("performance") => PhoneView::Control,
+            Ok("mixer") => PhoneView::Mixer,
+            _ => PhoneView::Chart,
+        }
+    });
     // A song picked, from the tabs or the navigator: that song is current,
     // and the audio moves to it. Where the one it replaces had got to is
     // kept on its tab.
@@ -238,6 +254,9 @@ pub fn Shell() -> Element {
                 // on that song's session rather than patching the last one's.
                 SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
             }
+            // The views, across the foot of the window as the transport is
+            // across its head.
+            session_daw::shell::BottomBar { view }
         }
     }
 }
@@ -296,6 +315,11 @@ fn SongViews(
                     } else {
                         PerformanceView {}
                     }
+                },
+                View::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
+                View::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
+                View::Mixer => rsx! {
+                    session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
                 },
                 View::Overview => rsx! {
                     OverviewLayout {

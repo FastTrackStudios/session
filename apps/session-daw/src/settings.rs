@@ -47,6 +47,9 @@ pub struct Settings {
     /// tall as the pan knob and the record arm, and the height they gave
     /// up handed to the fader. The FX row stays. See `strip::shape`.
     pub live_strips: bool,
+    /// Touchscreen strips: mute and solo grown to fill their column
+    /// (`strip::Strip::touched`).
+    pub touch_strips: bool,
 }
 
 impl Default for Settings {
@@ -58,6 +61,7 @@ impl Default for Settings {
             fold_phases_together: true,
             folded_takes: true,
             live_strips: false,
+            touch_strips: false,
         }
     }
 }

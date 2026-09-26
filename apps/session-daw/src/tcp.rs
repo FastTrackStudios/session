@@ -102,6 +102,10 @@ pub const BUTTON: (f64, f64) = (21.0, 20.0);
 /// Between the two, so they read as two controls.
 pub const BUTTON_GAP: f64 = 1.0;
 
+/// The compact panel's name field: the knob and the gutter it gave up are
+/// the name's.
+const NAMES_FIELD_W: f64 = 112.0;
+
 /// Below this tall, volume and pan stop being knobs.
 ///
 /// A knob says its value with the angle of a ring, and an angle needs a
@@ -139,12 +143,11 @@ impl Density {
 /// indents.
 ///
 /// Two of them. **Full** is the measured REAPER panel — the name with the
-/// record arm on it, volume, pan, routing, the FX pill. **Compact** keeps
-/// what a row is scanned for while a session is being arranged (its
-/// colour, its name, its mute and solo, its level) and drops what is set
-/// once and then left alone: the record arm, pan, routing, FX. It is a
-/// little over half the width, and the width it gives up goes to the
-/// arrangement, which is the thing being looked at.
+/// record arm on it, volume, pan, routing, the FX pill. **Compact** is the
+/// track's name and colour, as Logic's iPad shows its tracks: what a row
+/// is scanned for when there is not room for more, a touchscreen's or a
+/// docked panel's. A row tall enough for a second line gets its arm, mute
+/// and solo on it; the rest is the full panel, which a swipe opens.
 ///
 /// A value rather than a constant because both panels are drawn from the
 /// same code: the recorded row, the live controls over it, and the hit
@@ -162,18 +165,19 @@ impl Tcp {
     #[must_use]
     pub fn width(self) -> f64 {
         if self.compact {
-            // The gutter's buttons, after the name and its level.
-            self.tint_w() + f64::from(g::GUTTER_W)
+            // The rail, the name, and a hair of margin: nothing else.
+            f64::from(g::NAME_FIELD_X) + NAMES_FIELD_W + 6.0
         } else {
             f64::from(g::ROW_W)
         }
     }
 
-    /// Where the gutter starts — the tinted part's width.
+    /// Where the gutter starts — the tinted part's width. The compact
+    /// panel has no gutter: it is all tint.
     #[must_use]
     pub fn tint_w(self) -> f64 {
         if self.compact {
-            self.volume_x() + 18.0
+            self.width()
         } else {
             f64::from(g::TINT_W)
         }
@@ -184,7 +188,7 @@ impl Tcp {
     pub fn name_field(self) -> (f64, f64) {
         let x = f64::from(g::NAME_FIELD_X);
         let w = if self.compact {
-            84.0
+            NAMES_FIELD_W
         } else {
             f64::from(g::NAME_FIELD_W)
         };
@@ -199,7 +203,8 @@ impl Tcp {
         if self.compact { x + 8.0 } else { 58.0 }
     }
 
-    /// The volume knob's centre — the field's right end, either way.
+    /// The volume knob's centre — the field's right end, either way. The
+    /// compact panel has no knob; the name runs to the field's end.
     #[must_use]
     pub fn volume_x(self) -> f64 {
         let (x, w) = self.name_field();
@@ -210,10 +215,14 @@ impl Tcp {
     #[must_use]
     pub fn shows(self, control: crate::row::Control) -> bool {
         use crate::row::Control;
+        // The compact panel is the track's name: its arm, mute and solo
+        // on a second line where the row is tall enough for one
+        // (`Row::rect`), and nothing else — the expanded panel has the
+        // rest, a swipe away.
         !self.compact
-            || !matches!(
+            || matches!(
                 control,
-                Control::Pan | Control::Routing | Control::Fx | Control::RecArm
+                Control::Folder | Control::Name | Control::Mute | Control::Solo | Control::RecArm
             )
     }
 
@@ -544,8 +553,28 @@ fn row_one(
     // wrapped or shrunk — REAPER truncates here too. The type shrinks
     // with the row rather than being squashed with it: a flattened glyph
     // is unreadable where a smaller one is merely small.
-    let name_x = tcp.name_x() + indent;
-    let name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
+    let mut name_x = tcp.name_x() + indent;
+    let mut name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
+    // The compact panel's icon, first in the field, where Logic puts it:
+    // what the track is, at a glance, in its colour, before its name.
+    if tcp.compact && field_h >= 14.0 {
+        let side = (field_h - 6.0).clamp(10.0, 18.0);
+        let left = field_x + 8.0;
+        let at = vello::kurbo::Rect::new(
+            left,
+            field_top + (field_h - side) / 2.0,
+            left + side,
+            field_top + (field_h + side) / 2.0,
+        );
+        crate::track_icon::paint(
+            scene,
+            crate::track_icon::Icon::of(&track.name, track.is_folder),
+            at,
+            icon_ink(palette, track),
+        );
+        name_x += side + 6.0;
+        name_w = (name_w - side - 6.0).max(0.0);
+    }
     let ink = if track.selected {
         palette.text
     } else {
@@ -708,6 +737,21 @@ pub fn folder_band(palette: &Palette, track: &Track) -> Color {
 /// vanish into them — a near-black track colour is the case it exists
 /// for, not the mid-tones.
 const INK_FLOOR: f32 = 0.179;
+
+/// A track's icon's ink: its own colour, lifted a third of the way to white
+/// so it reads bold on the dark field — or the panel's dim ink, for a track
+/// with no colour of its own.
+#[must_use]
+pub fn icon_ink(palette: &Palette, track: &Track) -> Color {
+    if track.color.is_none() {
+        return palette.text_dim;
+    }
+    mix(
+        track_color(palette, track),
+        Color::from_rgba8(0xff, 0xff, 0xff, 0xff),
+        0.35,
+    )
+}
 
 pub fn ink_on(background: Color) -> Color {
     let [r, g, b, _] = background.components;

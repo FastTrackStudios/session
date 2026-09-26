@@ -39,6 +39,13 @@ const PAN_FROM_EDGE: f64 = 5.0;
 /// the routing by four.
 const SPREAD: f64 = 4.0;
 
+/// A touchscreen strip's button row ([`Strip::touched`]): how tall, the
+/// gap between its buttons and around it, and its inset from the strip's
+/// edges.
+const TOUCH_ROW_H: f64 = 32.0;
+const TOUCH_GAP: f64 = 4.0;
+const TOUCH_INSET: f64 = 4.0;
+
 /// How far the monitor's cell reaches down into the arm's: the ring
 /// starts five pixels into its cell, so the lamp sits close over it
 /// without touching.
@@ -141,6 +148,9 @@ pub struct Strip {
     layout: Layout,
     /// A live-mode strip — see [`shape`].
     live: bool,
+    /// A touchscreen's strip: arm, mute and solo in a row across it
+    /// ([`Strip::touched`]).
+    touch: bool,
 }
 
 impl Strip {
@@ -190,7 +200,56 @@ impl Strip {
             buttons_top,
             layout,
             live,
+            touch: false,
         }
+    }
+
+    /// This strip on a touchscreen: the record arm, mute and solo in one
+    /// row across the strip under its pan, each a third of its width
+    /// ([`TOUCH_ROW_H`] tall), and the fader under them — shorter, and
+    /// centred with its scale now that no column needs the room beside
+    /// it. Routing and the monitoring lamp, set once and read rarely, are
+    /// left to the desktop. The measured column's 21-by-20 buttons are a
+    /// mouse's targets, beside a fader the whole strip tall.
+    #[must_use]
+    pub fn touched(mut self, touch: bool) -> Self {
+        self.touch = touch;
+        if self.big_buttons() {
+            // The scale and the fader, as one instrument, in the middle.
+            let shift = self.columns.scale_w / 2.0;
+            self.columns.scale_x += shift;
+            self.columns.fader_x += shift;
+        }
+        self
+    }
+
+    /// Whether this strip has the touchscreen's button row: touch mode, on
+    /// a strip wide enough for the measured column (a rail's centred
+    /// buttons stay as they are, with no room either side to grow into).
+    #[must_use]
+    pub fn big_buttons(&self) -> bool {
+        self.touch && self.squeeze.columns()
+    }
+
+    /// The touchscreen row's top: just under the coloured band.
+    fn touch_row_top(&self) -> f64 {
+        self.band_bottom() + TOUCH_GAP
+    }
+
+    /// A button's cell in the touchscreen row: the arm, mute and solo, in
+    /// that order, a third of the row each.
+    fn touch_cell(&self, control: Control) -> Option<Rect> {
+        let index = match control {
+            Control::RecArm => 0.0,
+            Control::Mute => 1.0,
+            Control::Solo => 2.0,
+            _ => return None,
+        };
+        let across = self.chrome_width() - TOUCH_INSET * 2.0;
+        let w = (across - TOUCH_GAP * 2.0) / 3.0;
+        let x = TOUCH_INSET + index * (w + TOUCH_GAP);
+        let y = self.touch_row_top();
+        Some(Rect::new(x, y, x + w, y + TOUCH_ROW_H))
     }
 
     /// Whether this is a live-mode strip (see [`shape`]).
@@ -230,6 +289,10 @@ impl Strip {
         // its neighbours'. A rail has no column — the buttons are
         // centred, over the fader — so the fader starts under the last
         // of them.
+        // A touchscreen's strip: under its button row.
+        if self.big_buttons() {
+            return self.touch_row_top() + TOUCH_ROW_H + TOUCH_GAP * 2.0;
+        }
         if self.squeeze.columns() {
             return self.band_bottom();
         }
@@ -350,6 +413,22 @@ impl Strip {
         (floor - self.fader_top()).clamp(0.0, self.stretch())
     }
 
+    /// The fader's cap at `volume`, in the strip's coordinates: where the
+    /// overlay draws it, and so where a finger can take hold of it. `None`
+    /// where the volume is a knob.
+    #[must_use]
+    pub fn cap(&self, volume: f64) -> Option<Rect> {
+        if !self.has_fader() {
+            return None;
+        }
+        let column = self.rect(Control::Volume)?;
+        let fader_w = self.columns.fader_w;
+        let (y, h) = art::fader_cap_at(crate::tcp::volume_fraction(volume), fader_w, self.travel());
+        let w = art::cap_w(fader_w);
+        let x = column.x0 + (fader_w - w) / 2.0;
+        Some(Rect::new(x, column.y0 + y, x + w, column.y0 + y + h))
+    }
+
     /// Whether the volume control is a fader rather than a knob.
     #[must_use]
     pub fn has_fader(&self) -> bool {
@@ -431,6 +510,16 @@ impl Strip {
     #[must_use]
     pub fn rect(&self, control: Control) -> Option<Rect> {
         let top = |y: f64, h: f64| Rect::new(0.0, y, self.chrome_width(), y + h);
+        // A touchscreen's strip: its row, and no routing or lamp.
+        if self.big_buttons() {
+            match control {
+                Control::RecArm | Control::Mute | Control::Solo => {
+                    return self.touch_cell(control);
+                }
+                Control::Routing | Control::Monitor => return None,
+                _ => {}
+            }
+        }
         match control {
             Control::Fx => self.squeeze.head().then(|| {
                 Rect::new(

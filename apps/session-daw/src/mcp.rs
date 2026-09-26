@@ -247,6 +247,8 @@ pub struct Mixer {
     pub rack_h: f64,
     /// Live-mode strips — see `strip::shape`.
     pub live: bool,
+    /// Touchscreen strips — see `strip::Strip::touched`.
+    pub touch: bool,
     /// Each strip's own height.
     ///
     /// NOT the mixer's: nesting shortens a strip from the bottom, so a
@@ -386,6 +388,7 @@ impl Mixer {
         // instead — it is shorter on a shortened strip, which is the
         // cost of the indent rather than a second inconsistency.
         let live = settings.live_strips;
+        let touch = settings.touch_strips;
         let shared = crate::strip::shape(height - rack_h, live);
         let buttons_top = rack_h
             + crate::strip::fx_section(live)
@@ -487,6 +490,7 @@ impl Mixer {
             buttons_top,
             rack_h,
             live,
+            touch,
             heights,
             columns,
             labels,
@@ -497,15 +501,18 @@ impl Mixer {
     #[must_use]
     pub fn strip(&self, row: usize) -> Option<crate::strip::Strip> {
         let (_, width, height) = self.strip_box(row)?;
-        Some(crate::strip::Strip::laid_out(
-            width,
-            height,
-            self.height,
-            self.rack_h,
-            self.buttons_top,
-            self.columns.get(row).copied().unwrap_or(false),
-            self.live,
-        ))
+        Some(
+            crate::strip::Strip::laid_out(
+                width,
+                height,
+                self.height,
+                self.rack_h,
+                self.buttons_top,
+                self.columns.get(row).copied().unwrap_or(false),
+                self.live,
+            )
+            .touched(self.touch),
+        )
     }
 
     /// How wide the whole mixer is, in content pixels.

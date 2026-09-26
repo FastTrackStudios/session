@@ -60,6 +60,11 @@ pub enum PanelEvent {
         dx: f64,
         dy: f64,
     },
+    /// Two fingers pinching: the zoom across grows by `by` (0.1 is ten
+    /// percent wider), about where they are.
+    Pinch {
+        by: f64,
+    },
     /// Once a frame, with where the play cursor is.
     Frame {
         play_at: f64,
@@ -139,8 +144,14 @@ pub struct ArrangementPanel {
     pub scroll: Signal<f64>,
     pub down: Signal<f64>,
     pub zoom: Signal<(f64, f64)>,
-    /// The panel's rectangle in the window, read back from the layout.
+    /// The panel's rectangle in the window, read back from the layout, in
+    /// CSS pixels. What the panel works in is this over [`Self::ui`]
+    /// ([`ArrangementPanel::units`]).
     pub rect: Signal<(f64, f64, f64, f64)>,
+    /// How much bigger the arrangement is drawn than it is laid out:
+    /// touch mode's [`crate::touch::ARRANGE_ZOOM`], or 1. Shared with the
+    /// widget, which draws at it.
+    pub ui: Rc<Cell<f64>>,
     span_x: f64,
     span_y: Signal<f64>,
     pub which_shown: Signal<Option<crate::which_key::WhichKey>>,
@@ -224,7 +235,12 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     // full in the DAW view.
     let docked = mixer.as_ref().is_some_and(|links| links.docked);
     let small = crate::compact::use_form().compact();
-    let compact = use_hook(|| Rc::new(Cell::new(docked || small)));
+    let touch = crate::touch::use_touch();
+    // A finger's screen starts compact too: at touch size the full panel
+    // would take half an iPad's width from the lanes.
+    let compact = use_hook(|| Rc::new(Cell::new(docked || small || touch)));
+    let ui = use_hook(|| Rc::new(Cell::new(crate::touch::arrange_zoom(touch, 0.0))));
+    crate::ruler::set_slim(touch);
     let shape = use_signal(|| compact.get());
     // On by default: in a service the view should always show where the
     // song is.
@@ -255,7 +271,10 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         .with_pointing(Rc::clone(&pointing))
         .with_view_links(Rc::clone(&which), Rc::clone(&zooms))
         .with_planner(session.planner.clone(), Rc::clone(&content_h))
-        .with_compact(Rc::clone(&compact));
+        .with_compact(Rc::clone(&compact))
+        .with_touch(touch)
+        .with_ui(Rc::clone(&ui))
+        .with_redraw(crate::touch::redraw_hook());
         let built = match &mixer {
             Some(links) => built.with_mixer(crate::widget::MixerLinks {
                 toggle: Rc::clone(&links.toggle),
@@ -289,6 +308,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         down,
         zoom,
         rect,
+        ui,
         span_x: (session.project.length_secs * PPS).max(1.0),
         span_y,
         which_shown,
@@ -370,6 +390,16 @@ pub fn NativeTree(panel: ArrangementPanel, widget: dioxus_native_dom::CustomWidg
 }
 
 impl ArrangementPanel {
+    /// The panel's rectangle in the units it lays out in: CSS pixels over
+    /// the touch zoom. Everything the panel works out — the frame, the
+    /// zoom limits, where the pointer is — is in these, as the widget is.
+    #[must_use]
+    pub fn units(&self) -> (f64, f64, f64, f64) {
+        let r = *self.rect.peek();
+        let ui = self.ui.get().max(f64::EPSILON);
+        (r.0 / ui, r.1 / ui, r.2 / ui, r.3 / ui)
+    }
+
     /// The lanes' frame: the panel less the track column and the ruler on
     /// one side, and the scrollbars on the other.
     #[must_use]
@@ -410,7 +440,7 @@ impl ArrangementPanel {
 
     /// Whether a window point is inside the panel.
     fn inside(&self, p: (f64, f64)) -> bool {
-        let r = *self.rect.peek();
+        let r = self.units();
         p.0 >= r.0 && p.0 < r.0 + r.2 && p.1 >= r.1 && p.1 < r.1 + r.3
     }
 
@@ -427,7 +457,7 @@ impl ArrangementPanel {
     /// Set the zoom, keeping the session point under `about` (a window
     /// position) where it is on screen.
     fn rezoom(&self, to: (f64, f64), about: (f64, f64)) {
-        let r = *self.rect.peek();
+        let r = self.units();
         let (mut zoom, mut scroll, mut down) = (self.zoom, self.scroll, self.down);
         let (was_x, was_y) = *zoom.peek();
         let (fw, fh) = self.frame(r);
@@ -443,7 +473,20 @@ impl ArrangementPanel {
 
     /// One event from the host.
     pub fn handle(&self, event: PanelEvent) {
-        let r = *self.rect.peek();
+        let r = self.units();
+        // The host's CSS pixels, in the panel's units.
+        let ui = self.ui.get().max(f64::EPSILON);
+        let event = match event {
+            PanelEvent::Pointer { x, y } => PanelEvent::Pointer {
+                x: x / ui,
+                y: y / ui,
+            },
+            PanelEvent::Wheel { dx, dy } => PanelEvent::Wheel {
+                dx: dx / ui,
+                dy: dy / ui,
+            },
+            other => other,
+        };
         let (mut scroll, mut down) = (self.scroll, self.down);
         match event {
             PanelEvent::ZKey { pressed, repeat } => {
@@ -514,6 +557,18 @@ impl ArrangementPanel {
                 };
                 self.reshape(&input);
             }
+            PanelEvent::Pinch { by } => {
+                // Time, as a pinch zooms a timeline everywhere else; the
+                // rows keep the height the view opened at.
+                let input = self.input.borrow();
+                if !self.inside(input.pointer) {
+                    return;
+                }
+                let (zx, zy) = *self.zoom.peek();
+                let ((x0, x1), _) = self.limits(r);
+                let to = ((zx * (1.0 + by).max(0.1)).clamp(x0, x1), zy);
+                self.rezoom(to, input.pointer);
+            }
             PanelEvent::Wheel { dx, dy } => {
                 let input = self.input.borrow();
                 if !self.inside(input.pointer) {
@@ -553,7 +608,7 @@ impl ArrangementPanel {
     /// Once a frame: the widget's view, the zooms the keys asked for, the
     /// popup, the edits each way, and the panel's rectangle.
     fn frame_tick(&self, play_at: f64) {
-        let r = *self.rect.peek();
+        let r = self.units();
         let (mut scroll, mut down, mut zoom) = (self.scroll, self.down, self.zoom);
         self.follow_cursor(r, play_at);
         // Four numbers, written every time because a missed write is a
@@ -575,6 +630,16 @@ impl ArrangementPanel {
             Vec::new()
         };
         for request in asked {
+            // A swipe on the track panel: its shape, as the toolbar's
+            // switch sets it.
+            if let crate::zoom::Request::Shape { compact } = request {
+                self.compact.set(compact);
+                let mut shape = self.shape;
+                if *shape.peek() != compact {
+                    shape.set(compact);
+                }
+                continue;
+            }
             let (zx, zy) = *zoom.peek();
             let now = crate::zoom::Target {
                 zoom_x: zx,
@@ -593,6 +658,20 @@ impl ArrangementPanel {
             };
             let framed = || match request {
                 crate::zoom::Request::Frame { time, rows, .. } => {
+                    crate::zoom::frame(now, at, time, rows)
+                }
+                crate::zoom::Request::ScrollBy { dx, dy } => crate::zoom::Target {
+                    scroll_x: now.scroll_x + dx,
+                    scroll_y: now.scroll_y + dy,
+                    ..now
+                },
+                crate::zoom::Request::Open { time, rows, floor } => {
+                    let raised = |(lo, hi): (f64, f64), least: f64| (lo.max(least).min(hi), hi);
+                    let at = crate::zoom::Frame {
+                        limits_x: raised(at.limits_x, floor.0),
+                        limits_y: raised(at.limits_y, floor.1),
+                        ..at
+                    };
                     crate::zoom::frame(now, at, time, rows)
                 }
                 crate::zoom::Request::Scale { vertical, by } => {
@@ -727,7 +806,14 @@ impl ArrangementPanel {
 /// and the two scrollbars. Ordinary DOM, the same under either host.
 #[component]
 pub fn PanelChrome(panel: ArrangementPanel) -> Element {
-    let r = (panel.rect)();
+    // Read as a signal, so a resize re-renders the chrome; in the panel's
+    // units, and placed in CSS pixels by `ui`.
+    let css = (panel.rect)();
+    let touch = crate::touch::use_touch();
+    let ui = crate::touch::arrange_zoom(touch, css.2);
+    panel.ui.set(ui);
+    crate::ruler::set_slim(touch);
+    let r = (css.0 / ui, css.1 / ui, css.2 / ui, css.3 / ui);
     let (fw, fh) = panel.frame(r);
     let (zx, zy) = (panel.zoom)();
     let travel = panel.extent(r, zx, zy);
@@ -748,10 +834,12 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             edits: panel.edits(),
             // The toolbar sits over the panel, so it is as wide as
             // whichever shape the panel is in.
-            width: tcp_w - crate::ruler::LABEL_W,
+            width: (tcp_w - crate::ruler::LABEL_W) * ui,
             compact: Rc::clone(&panel.compact),
             shape: panel.shape,
             follow: Rc::clone(&panel.follow),
+            touch,
+            mixer: panel.mixer.as_ref().map(|links| links.open),
         }
         crate::which_key::Panel { showing: (panel.which_shown)(), colors: colors.clone() }
         crate::studio::ScrollBar {
@@ -759,9 +847,10 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             at: scroll(),
             travel: travel.0,
             window: fw,
-            left: tcp_w,
-            top: (r.3 - BAR).max(0.0),
-            length: fw,
+            left: tcp_w * ui,
+            top: (r.3 - BAR).max(0.0) * ui,
+            length: fw * ui,
+            thick: BAR * ui,
             colors: colors.clone(),
             on_move: move |to: f64| scroll.set(to.clamp(0.0, travel.0)),
         }
@@ -770,9 +859,10 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             at: down(),
             travel: travel.1,
             window: fh,
-            left: (r.2 - BAR).max(0.0),
-            top: ruler,
-            length: fh,
+            left: (r.2 - BAR).max(0.0) * ui,
+            top: ruler * ui,
+            length: fh * ui,
+            thick: BAR * ui,
             colors,
             on_move: move |to: f64| down.set(to.clamp(0.0, travel.1)),
         }

@@ -28,7 +28,7 @@ use std::rc::Rc;
 
 use anyrender::{RenderContext, Scene};
 use blitz_dom::node::{ComputedStyles, Widget};
-use blitz_traits::events::{MouseEventButton, UiEvent};
+use blitz_traits::events::{BlitzPointerId, MouseEventButton, UiEvent};
 use dioxus::prelude::*;
 use vello::kurbo::Affine;
 
@@ -40,6 +40,34 @@ use crate::studio::StudioSession;
 /// How tall the docked mixer is: the strip height the mixer was designed
 /// at.
 pub const HEIGHT: f64 = crate::mcp::DEFAULT_HEIGHT;
+
+/// Where the arrangement stops and how tall the mixer under it is, as CSS
+/// lengths.
+///
+/// Alone, the mixer fills the panel. On a finger's screen the two share
+/// it — evenly in the Overview, a little more to the mixer in the DAW
+/// view: an iPad's pane is some six hundred pixels, and a fixed mixer at
+/// touch size left the arrangement a strip a third of a row tall.
+/// Otherwise the mixer is its own height, in pixels.
+fn split(open: bool, mixer_only: bool, docked: bool, touch: bool) -> (String, String) {
+    if mixer_only {
+        return ("0px".to_owned(), "100%".to_owned());
+    }
+    let mixer = if touch {
+        // The Overview's pane is shared with the chart beside it, so the
+        // arrangement keeps half; the DAW view's is the arrangement's own,
+        // and the mixer, opened there, gets the larger share.
+        if docked { "50%" } else { "55%" }.to_owned()
+    } else {
+        format!("{HEIGHT}px")
+    };
+    let bottom = if open {
+        mixer.clone()
+    } else {
+        "0px".to_owned()
+    };
+    (bottom, mixer)
+}
 
 type Rows = Vec<(daw_proto::Track, u32)>;
 type Queue = Rc<RefCell<Vec<Edit>>>;
@@ -74,6 +102,17 @@ pub struct Links {
     /// it without giving it to anything that reads keys, so the mixer
     /// hands it straight back: the keyboard is the arrangement's.
     pub arrange_node: Rc<RefCell<Option<Rc<MountedData>>>>,
+    /// No arrangement beside it — the phone's Mixer view, the record view
+    /// — so nothing else carries the mixer's edits to the engine: it
+    /// sends them itself.
+    pub alone: bool,
+    /// Strips whose record arm arms another track, by the strip's guid.
+    /// The record view's groups are folders, and a folder's arm is the
+    /// track under it that records; the strip shows that track's arm.
+    pub arm_of: Rc<std::collections::HashMap<String, daw_proto::Track>>,
+    /// A few strips given more room than they need (the record view's
+    /// five): drawn as big as fills it, rather than leaving it empty.
+    pub fill: bool,
 }
 
 /// A key the mixer passed on.
@@ -95,7 +134,21 @@ impl Links {
             to_arrange: Queue::default(),
             keys: Rc::default(),
             arrange_node: Rc::default(),
+            alone: false,
+            arm_of: Rc::default(),
+            fill: false,
         }
+    }
+
+    /// A mixer on its own: `rows` its strips, open, sending its edits to
+    /// the engine itself, with `arm_of`'s strips arming other tracks.
+    #[must_use]
+    pub fn alone(rows: Rows, arm_of: std::collections::HashMap<String, daw_proto::Track>) -> Self {
+        let mut links = Self::new(rows);
+        links.open = Signal::new(true);
+        links.alone = true;
+        links.arm_of = Rc::new(arm_of);
+        links
     }
 }
 
@@ -165,6 +218,7 @@ pub fn DawPanels(
         let mut links = Links::new(session.rows.as_slice().to_vec());
         links.open = Signal::new(MixerMemory::wanted(memory, docked, mode));
         links.docked = docked;
+        links.alone = mixer_only;
         links
     });
     // Into another mode: the mixer as that mode last had it.
@@ -187,17 +241,12 @@ pub fn DawPanels(
         }
     });
     let open = (links.open)() || mixer_only;
-    let arrange_bottom = if open { HEIGHT } else { 0.0 };
+    let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, crate::touch::use_touch());
     let mixer_display = if open { "block" } else { "none" };
-    let mixer_height = if mixer_only {
-        "100%".to_owned()
-    } else {
-        format!("{HEIGHT}px")
-    };
     rsx! {
         if !mixer_only {
             div {
-                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
+                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom};",
                 crate::studio::Arrangement {}
             }
         }
@@ -222,6 +271,8 @@ pub fn Mixer() -> Element {
     let live_mode = mode.is_some_and(|mode| mode() == session::modes::Mode::Live);
     let live = use_hook(|| Rc::new(Cell::new(false)));
     live.set(live_mode);
+    let touch = use_hook(|| Rc::new(Cell::new(false)));
+    touch.set(crate::touch::use_touch());
     let scroll = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let content_w = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let strips = use_hook(|| {
@@ -241,8 +292,10 @@ pub fn Mixer() -> Element {
             Rc::clone(&scroll),
             Rc::clone(&content_w),
             Rc::clone(&live),
+            Rc::clone(&touch),
         );
         widget.strips = Rc::clone(&strips);
+        widget.redraw = crate::touch::redraw_hook();
         dioxus_native_dom::CustomWidgetAttr::new(widget)
     });
 
@@ -257,21 +310,26 @@ pub fn Mixer() -> Element {
     let scrolling = Rc::clone(&scroll);
     let arrange_node = Rc::clone(&links.arrange_node);
     let refocus = use_hook(|| Rc::new(Cell::new(false)));
+    let window = dioxus_native::use_window();
     dioxus_native::use_window_event(move |event, _| match event {
         // A press here: hand the keyboard back to the arrangement. Not
         // from this event: the document is still borrowed while Blitz
         // handles it, and focusing from inside that panics ("RefCell
         // already borrowed"). The next redraw does it, as the rect is
         // read.
-        winit::event::WindowEvent::PointerButton { state, .. } if state.is_pressed() => {
+        winit::event::WindowEvent::PointerButton {
+            state, position, ..
+        } if state.is_pressed() => {
+            pointer.set(crate::studio::css_point(&*window, position.x, position.y));
             let r = *rect.peek();
             let (x, y) = pointer.get();
             if x >= r.0 && x < r.0 + r.2 && y >= r.1 && y < r.1 + r.3 {
                 refocus.set(true);
             }
         }
+        // In CSS pixels, as the rect is.
         winit::event::WindowEvent::PointerMoved { position, .. } => {
-            pointer.set((position.x, position.y));
+            pointer.set(crate::studio::css_point(&*window, position.x, position.y));
         }
         winit::event::WindowEvent::MouseWheel { delta, .. } => {
             let r = *rect.peek();
@@ -283,7 +341,9 @@ pub fn Mixer() -> Element {
                 winit::event::MouseScrollDelta::LineDelta(x, y) => {
                     (f64::from(*x) * 40.0, f64::from(*y) * 40.0)
                 }
-                winit::event::MouseScrollDelta::PixelDelta(at) => (at.x, at.y),
+                winit::event::MouseScrollDelta::PixelDelta(at) => {
+                    crate::studio::css_delta(&*window, at.x, at.y)
+                }
             };
             let most = (content_w.get() - r.2).max(0.0);
             scrolling.set((scrolling.get() - dx - dy).clamp(0.0, most));
@@ -352,15 +412,11 @@ pub fn WebDawPanels(
         let mut links = Links::new(session.rows.as_slice().to_vec());
         links.open = Signal::new(docked || mixer_only);
         links.docked = docked;
+        links.alone = mixer_only;
         links
     });
     let open = (links.open)() || mixer_only;
-    let arrange_bottom = if open { HEIGHT } else { 0.0 };
-    let mixer_height = if mixer_only {
-        "100%".to_owned()
-    } else {
-        format!("{HEIGHT}px")
-    };
+    let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, crate::touch::use_touch());
     // Hidden rather than removed: kept at its size, the mixer builds its
     // strips and its GPU context at load, so `x` opens it at once instead
     // of after the second a first build takes.
@@ -372,7 +428,7 @@ pub fn WebDawPanels(
     rsx! {
         if !mixer_only {
             div {
-                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom}px;",
+                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom};",
                 crate::web_host::WebArrangement { engine }
             }
         }
@@ -395,6 +451,8 @@ pub fn WebMixer(hidden: bool) -> Element {
     let live_mode = mode.is_some_and(|mode| mode() == session::modes::Mode::Live);
     let live = use_hook(|| Rc::new(Cell::new(false)));
     live.set(live_mode);
+    let touch = use_hook(|| Rc::new(Cell::new(false)));
+    touch.set(crate::touch::use_touch());
     let scroll = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let content_w = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let element = use_hook(|| Rc::new(RefCell::new(None::<web_sys::HtmlElement>)));
@@ -404,6 +462,7 @@ pub fn WebMixer(hidden: bool) -> Element {
             Rc::clone(&scroll),
             Rc::clone(&content_w),
             Rc::clone(&live),
+            Rc::clone(&touch),
         ))))
     });
     let slot = crate::web_host::ElementSlot(Rc::clone(&element));
@@ -450,9 +509,36 @@ impl crate::web_host::Hosted for MixerWidget {
 struct Turn {
     spot: Spot,
     from_y: f64,
+    /// How far, in content pixels, takes the value end to end: the
+    /// fader's own travel for a finger, so the cap stays under it.
+    travel: f64,
     /// The track as it was when the drag began: the drag is relative to
     /// where the value started, not to where it has got to.
     was: daw_proto::Track,
+}
+
+/// What one pointer is doing, from its press to its release. One each, so
+/// two fingers move two faders.
+enum Hold {
+    /// A fader or a knob, being turned.
+    Turn(Turn),
+    /// A press waiting to be a click: one if it lets go where it landed.
+    /// A finger that wanders past [`crate::touch::SLOP`] first is
+    /// scrolling instead.
+    Press {
+        spot: Option<Spot>,
+        from: (f64, f64),
+    },
+    /// A press in the overview band ([`OVERVIEW_H`]): the strips go
+    /// wherever it points, as it moves.
+    Overview,
+    /// A finger scrolling the strips, from where it and the scroll were,
+    /// and how fast it is going (to throw the strips when it lets go).
+    Pan {
+        from_x: f64,
+        was: f64,
+        speed: crate::touch::Speed,
+    },
 }
 
 /// The widget: the recorded strips and what the pointer is doing to them.
@@ -471,10 +557,27 @@ struct MixerWidget {
     scroll: Rc<Cell<f64>>,
     content_w: Rc<Cell<f64>>,
     pointer: Pointer<Spot>,
-    turning: Option<Turn>,
-    /// The latest value of a drag in flight, not yet sent (see
+    /// Each pointer's gesture in flight.
+    holds: Vec<(BlitzPointerId, Hold)>,
+    /// The latest value of each drag in flight, not yet sent (see
     /// [`MixerWidget::flush_drag`]).
-    dragged: Option<Edit>,
+    dragged: Vec<(Spot, Edit)>,
+    /// Touch mode, as the panel last said: bigger strips (drawn at
+    /// [`crate::touch::ZOOM`]).
+    touch: Rc<Cell<bool>>,
+    /// The engine's track events: what changed anywhere else — another
+    /// client, REAPER itself — so the strips do not silently disagree.
+    watch: Option<crate::engine::Watch>,
+    /// The engine, for a mixer with no arrangement beside it to hand its
+    /// edits to ([`Links::alone`]).
+    applier: Option<crate::engine::Applier>,
+    /// The tracks [`Links::arm_of`] arms in place of their strips'.
+    targets: Vec<daw_proto::Track>,
+    /// The strips still moving after a finger threw them.
+    fling: Option<crate::touch::Fling>,
+    /// Ask the host for another frame: Blitz paints a widget after an
+    /// event, and a fling has none. (The page paints every frame.)
+    redraw: Option<Rc<dyn Fn()>>,
     clips: crate::overlay::Clips,
     meters: Option<crate::engine::Meters>,
     /// Live-mode strips, as the panel last said, and as the recording
@@ -482,9 +585,29 @@ struct MixerWidget {
     live: Rc<Cell<bool>>,
     built_live: bool,
     dirty: Cell<bool>,
+    /// The widget's width as last painted, in CSS pixels: how far a
+    /// finger can scroll.
+    width: Cell<f64>,
+    /// The zoom the last paint drew at ([`MixerWidget::zoom_for`]).
+    drawn_zoom: Cell<f64>,
+    /// How tall the overview band over the strips was drawn, in CSS
+    /// pixels: 0 where there is none.
+    band: Cell<f64>,
     /// Each strip as last laid out, for anchoring others' pointers.
     strips: Rc<RefCell<Strips>>,
 }
+
+/// How tall the overview band over the strips is, in CSS pixels
+/// ([`MixerWidget::overview`]).
+const OVERVIEW_H: f64 = 30.0;
+
+/// The most a filling mixer ([`Links::fill`]) zooms its strips to fill
+/// its width: past this, four strips are four slabs.
+const FILL_MAX: f64 = 2.2;
+
+/// The shortest a strip is laid out when zoomed: where the name plate
+/// still clears the routing and the buttons over it.
+const MIN_STRIP_H: f64 = 230.0;
 
 /// Each strip's track, left edge and width, in content pixels.
 type Strips = Vec<(String, f64, f64)>;
@@ -518,8 +641,15 @@ impl MixerWidget {
         scroll: Rc<Cell<f64>>,
         content_w: Rc<Cell<f64>>,
         live: Rc<Cell<bool>>,
+        touch: Rc<Cell<bool>>,
     ) -> Self {
         let theme = daw_ui::theming::Theme::dark();
+        let applier = if links.alone {
+            crate::engine::Applier::start()
+        } else {
+            None
+        };
+        let targets = links.arm_of.values().cloned().collect();
         Self {
             links,
             palette: crate::arrangement::Palette::from_theme(&theme),
@@ -533,14 +663,23 @@ impl MixerWidget {
             scroll,
             content_w,
             pointer: Pointer::default(),
-            turning: None,
-            dragged: None,
+            holds: Vec::new(),
+            dragged: Vec::new(),
+            touch,
+            watch: crate::engine::Watch::start(),
+            applier,
+            targets,
+            fling: None,
+            redraw: None,
             clips: crate::overlay::Clips::default(),
             meters: crate::engine::Meters::start(),
             live,
             strips: Rc::default(),
             built_live: false,
             dirty: Cell::new(false),
+            width: Cell::new(0.0),
+            drawn_zoom: Cell::new(1.0),
+            band: Cell::new(0.0),
         }
     }
 
@@ -556,29 +695,138 @@ impl MixerWidget {
                 self.map = crate::plan::Rows::of(&self.rows, &self.tracks);
                 self.mixer = None;
                 self.pointer = Pointer::default();
-                self.turning = None;
+                self.holds.clear();
             }
         }
         let echoed: Vec<Edit> = self.links.to_mixer.borrow_mut().drain(..).collect();
         for edit in &echoed {
             predict(&mut self.tracks, edit);
         }
+        self.heard();
+    }
+
+    /// What the engine says changed, applied to the strips. A fader or a
+    /// knob in a hand keeps the hand's value: the engine's answer to an
+    /// earlier step of the same drag would pull it back.
+    fn heard(&mut self) {
+        let Some(watch) = &self.watch else { return };
+        let events: Vec<_> = watch.drain().collect();
+        for event in &events {
+            use daw_proto::track::TrackEvent as E;
+            // The rows are the arrangement's (or the panel's) to change;
+            // an event that adds, removes or reorders tracks would
+            // misalign them here.
+            if matches!(event, E::Added(_) | E::Removed(_) | E::Moved { .. }) {
+                continue;
+            }
+            if let Some(guid) = crate::engine::continuous_for(event)
+                && self
+                    .holds
+                    .iter()
+                    .any(|(_, hold)| matches!(hold, Hold::Turn(turn) if turn.was.guid == guid))
+            {
+                continue;
+            }
+            crate::engine::apply_event(&mut self.tracks, event);
+            crate::engine::apply_event(&mut self.targets, event);
+        }
+        self.show_targets();
+    }
+
+    /// A strip that arms another track shows that track's arm.
+    fn show_targets(&mut self) {
+        if self.targets.is_empty() {
+            return;
+        }
+        for track in &mut self.tracks {
+            if let Some(target) = self.links.arm_of.get(&track.guid)
+                && let Some(now) = self.targets.iter().find(|t| t.guid == target.guid)
+            {
+                track.armed = now.armed;
+                track.input_monitor = now.input_monitor;
+            }
+        }
+    }
+
+    /// The track a control on `track`'s strip acts on: the strip's own,
+    /// except an arm (and the monitoring under it) that [`Links::arm_of`]
+    /// sends elsewhere.
+    fn acts_on(&self, control: Control, track: &daw_proto::Track) -> daw_proto::Track {
+        if matches!(control, Control::RecArm | Control::Monitor)
+            && let Some(target) = self.links.arm_of.get(&track.guid)
+        {
+            return self
+                .targets
+                .iter()
+                .find(|t| t.guid == target.guid)
+                .unwrap_or(target)
+                .clone();
+        }
+        track.clone()
     }
 
     /// The control under a point in the widget's own coordinates.
     fn spot_at(&self, x: f64, y: f64) -> Option<Spot> {
+        let (content_x, content_y) = self.content(x, y);
         let mixer = self.mixer.as_ref()?;
-        let content_x = x + self.scroll.get();
         let row = mixer.strip_at(content_x)?;
         let (left, _, _) = mixer.strip_box(row)?;
-        let control = crate::mcp::control_at(mixer, row, content_x - left, y)?;
+        let control = crate::mcp::control_at(mixer, row, content_x - left, content_y)?;
         Some(Spot { row, control })
     }
 
-    /// Send the drag's latest value on, if it has moved since the last.
+    /// How much bigger the strips are drawn than they are laid out, as the
+    /// last paint drew them: what a press is read back through.
+    fn zoom(&self) -> f64 {
+        self.drawn_zoom.get()
+    }
+
+    /// How much bigger to draw strips in a `width` by `height` panel (CSS
+    /// pixels): touch mode's zoom for that width; for a mixer that
+    /// [`Links::fill`]s, as big as fills the width, up to [`FILL_MAX`];
+    /// and never so big that a strip is laid out shorter than
+    /// [`MIN_STRIP_H`] — below that its name runs into the buttons above
+    /// it, so a short dock (the Overview's, on a tablet) gets strips
+    /// somewhat less big instead.
+    fn zoom_for(&self, width: f64, height: f64) -> f64 {
+        let mut zoom = crate::touch::mixer_zoom(self.touch.get(), width);
+        if self.links.fill && !self.rows.is_empty() {
+            #[expect(clippy::cast_precision_loss, reason = "a strip count")]
+            let across = self.rows.len() as f64 * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP);
+            zoom = zoom.max((width / across).min(FILL_MAX));
+        }
+        zoom.min((height / MIN_STRIP_H).max(1.0))
+    }
+
+    /// A point in the widget, in the strips' own (content) coordinates.
+    /// The scroll is kept in CSS pixels, so the wheel and the ghosts'
+    /// anchors need not know about the zoom.
+    fn content(&self, x: f64, y: f64) -> (f64, f64) {
+        let zoom = self.zoom();
+        ((x + self.scroll.get()) / zoom, (y - self.band.get()) / zoom)
+    }
+
+    /// Whether a finger at `(x, y)` is on `row`'s fader cap, give or take
+    /// a fingertip's worth: in touch mode the fader moves only by its
+    /// cap, so a finger landing on the groove can scroll instead.
+    fn on_cap(&self, row: usize, x: f64, y: f64) -> bool {
+        let (content_x, content_y) = self.content(x, y);
+        let (Some(mixer), Some(track)) = (self.mixer.as_ref(), self.track_at(row)) else {
+            return false;
+        };
+        let (Some((left, _, _)), Some(strip)) = (mixer.strip_box(row), mixer.strip(row)) else {
+            return false;
+        };
+        strip.cap(track.volume).is_some_and(|cap| {
+            cap.inflate(6.0, 8.0)
+                .contains((content_x - left, content_y))
+        })
+    }
+
+    /// Send each drag's latest value on, if it has moved since the last.
     fn flush_drag(&mut self) {
-        if let Some(edit) = self.dragged.take() {
-            self.links.from_mixer.borrow_mut().push(edit);
+        for (_, edit) in std::mem::take(&mut self.dragged) {
+            self.send(edit);
         }
     }
 
@@ -586,7 +834,147 @@ impl MixerWidget {
     /// arrangement.
     fn commit(&mut self, edit: Edit) {
         predict(&mut self.tracks, &edit);
-        self.links.from_mixer.borrow_mut().push(edit);
+        predict(&mut self.targets, &edit);
+        self.show_targets();
+        self.send(edit);
+    }
+
+    /// Ask for another frame, where the host needs asking.
+    fn redraw(&self) {
+        if let Some(redraw) = &self.redraw {
+            redraw();
+        }
+    }
+
+    /// A thrown scroll's next step, if one is moving: carried along and
+    /// stopped at either end.
+    fn carry_fling(&mut self) {
+        let Some(fling) = self.fling.as_mut() else {
+            return;
+        };
+        let ((dx, _), going) = fling.step();
+        let most = (self.content_w.get() - self.width.get()).max(0.0);
+        let to = (self.scroll.get() + dx).clamp(0.0, most);
+        let stopped = !going || to <= 0.0 || to >= most;
+        self.scroll.set(to);
+        if stopped {
+            self.fling = None;
+        } else {
+            self.dirty.set(true);
+            self.redraw();
+        }
+    }
+
+    /// Scroll so the strips under `x` in the overview band are in the
+    /// middle of the panel.
+    fn overview_to(&mut self, x: f64) {
+        let (width, content) = (self.width.get().max(1.0), self.content_w.get());
+        let most = (content - width).max(0.0);
+        let at = (x / width).clamp(0.0, 1.0) * content - width / 2.0;
+        self.scroll.set(at.clamp(0.0, most));
+        self.fling = None;
+    }
+
+    /// The overview band: every strip at once, each a live meter over its
+    /// track's number on its track's colour, and the part of the mixer on screen
+    /// outlined — where a mixer wider than the screen is found, and, with
+    /// a press, gone to. In CSS pixels, `width` by `band`.
+    fn overview(&self, levels: &[daw_proto::TrackLevels], width: f64, band: f64) -> Scene {
+        use anyrender::PaintScene as _;
+        use vello::kurbo::Rect;
+        use vello::peniko::{Color, Fill};
+        let mut out = Scene::new();
+        let fill = |out: &mut Scene, rect: Rect, color: Color| {
+            out.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
+        };
+        fill(
+            &mut out,
+            Rect::new(0.0, 0.0, width, band),
+            Color::from_rgb8(0x0c, 0x0d, 0x0f),
+        );
+        let count = self.rows.len();
+        if count == 0 {
+            return out;
+        }
+        #[expect(clippy::cast_precision_loss, reason = "a strip count")]
+        let cell = width / count as f64;
+        let numbered = cell >= 14.0;
+        let meter_bottom = if numbered { band - 12.0 } else { band - 4.0 };
+        for row in 0..count {
+            #[expect(clippy::cast_precision_loss, reason = "a strip index")]
+            let x = row as f64 * cell;
+            let Some(track) = self.track_at(row) else {
+                continue;
+            };
+            // The track's colour, along the foot of its cell.
+            fill(
+                &mut out,
+                Rect::new(x + 1.0, band - 2.0, x + cell - 1.0, band),
+                crate::mcp::strip_ground(&self.palette, track),
+            );
+            // Its level, a sliver up the cell.
+            let level = usize::try_from(track.index)
+                .ok()
+                .and_then(|i| levels.get(i))
+                .map_or(0.0, |l| {
+                    crate::engine::meter_fraction(l.peak_left.max(l.peak_right))
+                });
+            let meter_w = (cell * 0.3).clamp(2.0, 5.0);
+            let mx = x + (cell - meter_w) / 2.0;
+            let top = 3.0;
+            fill(
+                &mut out,
+                Rect::new(mx, top, mx + meter_w, meter_bottom),
+                Color::from_rgb8(0x1c, 0x1e, 0x22),
+            );
+            if level > 0.0 {
+                let lit_top = meter_bottom - (meter_bottom - top) * level.clamp(0.0, 1.0);
+                fill(
+                    &mut out,
+                    Rect::new(mx, lit_top, mx + meter_w, meter_bottom),
+                    Color::from_rgb8(0x4a, 0xde, 0x80),
+                );
+            }
+            if numbered {
+                // The track's own number, as its strip shows it: a mixer
+                // with tracks hidden skips numbers.
+                let number = (track.index + 1).to_string();
+                let size = 8.0_f32;
+                let text_w = self.font.width(&number, size);
+                crate::tcp::glyphs(
+                    &mut out,
+                    &self.font,
+                    self.palette.text_dim,
+                    &number,
+                    x + (cell - text_w) / 2.0,
+                    band - 4.0,
+                    size,
+                );
+            }
+        }
+        // What is on screen.
+        let content = self.content_w.get().max(1.0);
+        let left = self.scroll.get() / content * width;
+        let shown = (width / content * width).min(width);
+        let window = Rect::new(left, 0.5, (left + shown).min(width), band - 0.5);
+        fill(&mut out, window, Color::from_rgba8(0xff, 0xff, 0xff, 0x14));
+        out.stroke(
+            &vello::kurbo::Stroke::new(1.0),
+            Affine::IDENTITY,
+            Color::from_rgba8(0xff, 0xff, 0xff, 0x66),
+            None,
+            &window,
+        );
+        out
+    }
+
+    /// An edit, to the engine: straight there when the mixer stands alone,
+    /// otherwise by way of the arrangement, which applies it too.
+    fn send(&self, edit: Edit) {
+        match &self.applier {
+            Some(applier) => applier.send(edit),
+            None => self.links.from_mixer.borrow_mut().push(edit),
+        }
     }
 
     fn track_at(&self, row: usize) -> Option<&daw_proto::Track> {
@@ -600,80 +988,36 @@ impl MixerWidget {
         match event {
             UiEvent::PointerMove(e) => {
                 let (x, y) = at(e);
-                if let Some(turn) = &self.turning {
-                    let travel = self
-                        .mixer
-                        .as_ref()
-                        .and_then(|m| m.strip_box(turn.spot.row))
-                        .map_or(1.0, |(_, _, h)| h * 0.4);
-                    // `drag_fraction` takes the screen delta and makes up
-                    // positive itself.
-                    let fraction = crate::gesture::drag_fraction(y - turn.from_y, travel);
-                    let edit =
-                        crate::engine::drag(turn.spot.control, &turn.was.guid, &turn.was, fraction);
-                    if let Some(edit) = edit {
-                        // Shown now, sent once a frame: a drag moves the
-                        // pointer many times a frame, and every edit sent
-                        // is an engine call and a re-record of the
-                        // arrangement's controls.
-                        predict(&mut self.tracks, &edit);
-                        self.dragged = Some(edit);
-                    }
-                    return true;
+                // A mouse let go outside the panel: its release went
+                // elsewhere, so whatever it was holding is over. Without
+                // this the next move over the mixer carried on a drag
+                // nobody was making.
+                if e.is_mouse() && e.buttons.is_empty() && self.hold_of(e.id).is_some() {
+                    self.let_go(e.id);
+                }
+                if self.hold_of(e.id).is_some() {
+                    return self.moved(e.id, x, y);
+                }
+                // A finger has no hover: it is only there while it
+                // presses.
+                if e.is_finger() {
+                    return false;
                 }
                 let spot = self.spot_at(x, y);
                 self.pointer.hover(spot)
             }
             UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => {
                 let (x, y) = at(e);
-                let spot = self.spot_at(x, y);
-                self.pointer.hover(spot);
-                self.pointer.press();
-                if let Some(spot) = spot.filter(|s| s.control.is_continuous())
-                    && let Some(track) = self.track_at(spot.row)
-                {
-                    self.turning = Some(Turn {
-                        spot,
-                        from_y: y,
-                        was: track.clone(),
-                    });
-                }
+                self.pressed(e.id, e.is_finger(), x, y);
                 true
             }
             UiEvent::PointerUp(e) if e.button == MouseEventButton::Main => {
                 let (x, y) = at(e);
-                if self.turning.take().is_some() {
-                    self.flush_drag();
-                    self.pointer.release();
-                    self.pointer.hover(self.spot_at(x, y));
-                    return true;
-                }
-                let up = self.spot_at(x, y);
-                if let Some(spot) = self.pointer.pressed()
-                    && up == Some(spot)
-                    && let Some(track) = self.track_at(spot.row).cloned()
-                {
-                    // The clip latch clears on a click while it is lit;
-                    // otherwise the band is the fader under it.
-                    let control = match spot.control {
-                        Control::Clip if self.clips.clear(&track.guid) => None,
-                        Control::Clip => Some(Control::Volume),
-                        other => Some(other),
-                    };
-                    let edit =
-                        control.and_then(|c| crate::engine::click(c, &track.guid, &track, false));
-                    if let Some(edit) = edit {
-                        self.commit(edit);
-                    }
-                }
-                self.pointer.release();
-                self.pointer.hover(up);
+                self.released(e.id, e.is_finger(), x, y);
                 true
             }
-            UiEvent::PointerCancel(_) => {
-                self.flush_drag();
-                self.turning = None;
-                self.pointer.release();
+            UiEvent::PointerCancel(e) => {
+                self.let_go(e.id);
                 true
             }
             UiEvent::KeyDown(e) => {
@@ -685,6 +1029,165 @@ impl MixerWidget {
                 false
             }
             _ => false,
+        }
+    }
+
+    fn hold_of(&self, id: BlitzPointerId) -> Option<usize> {
+        self.holds.iter().position(|(held, _)| *held == id)
+    }
+
+    /// A press: a turn if it lands on a fader or a knob, otherwise a
+    /// press waiting to be a click (or, by a finger, a scroll).
+    ///
+    /// A finger turns a fader only by its cap, and then one to one, so
+    /// the cap stays under it. A mouse takes the whole column, as REAPER
+    /// does, at the gearing the mixer always had.
+    fn pressed(&mut self, id: BlitzPointerId, finger: bool, x: f64, y: f64) {
+        // A press catches a thrown scroll, as it does on a phone.
+        self.fling = None;
+        // A second press by the same pointer means its release was lost.
+        self.let_go(id);
+        if y < self.band.get() {
+            self.overview_to(x);
+            self.holds.push((id, Hold::Overview));
+            return;
+        }
+        let spot = self.spot_at(x, y);
+        let turn = spot
+            .filter(|spot| spot.control.is_continuous())
+            .filter(|spot| {
+                !finger || spot.control != Control::Volume || self.on_cap(spot.row, x, y)
+            })
+            .and_then(|spot| {
+                let track = self.track_at(spot.row)?.clone();
+                let mixer = self.mixer.as_ref()?;
+                let height = mixer.strip_box(spot.row)?.2;
+                let travel = match mixer.strip(spot.row) {
+                    Some(strip) if finger && spot.control == Control::Volume => strip.travel(),
+                    _ => height * 0.4,
+                };
+                Some(Turn {
+                    spot,
+                    from_y: y,
+                    travel,
+                    was: track,
+                })
+            });
+        let hold = match turn {
+            Some(turn) => Hold::Turn(turn),
+            // A finger on a groove is not a decision about the level.
+            None => Hold::Press {
+                spot: spot.filter(|s| !finger || s.control != Control::Volume),
+                from: (x, y),
+            },
+        };
+        let shown = match &hold {
+            Hold::Turn(turn) => Some(turn.spot),
+            Hold::Press { spot, .. } => *spot,
+            Hold::Pan { .. } | Hold::Overview => None,
+        };
+        self.pointer.hover(shown);
+        self.pointer.press();
+        self.holds.push((id, hold));
+    }
+
+    fn moved(&mut self, id: BlitzPointerId, x: f64, y: f64) -> bool {
+        let zoom = self.zoom();
+        let Some(i) = self.hold_of(id) else {
+            return false;
+        };
+        match &mut self.holds[i].1 {
+            Hold::Overview => {
+                self.overview_to(x);
+                true
+            }
+            Hold::Turn(turn) => {
+                let fraction = crate::gesture::drag_fraction((y - turn.from_y) / zoom, turn.travel);
+                let spot = turn.spot;
+                if let Some(edit) =
+                    crate::engine::drag(spot.control, &turn.was.guid, &turn.was, fraction)
+                {
+                    // Shown now, sent once a frame: a drag moves the
+                    // pointer many times a frame, and every edit sent is
+                    // an engine call and a re-record of the arrangement's
+                    // controls.
+                    predict(&mut self.tracks, &edit);
+                    self.dragged.retain(|(held, _)| *held != spot);
+                    self.dragged.push((spot, edit));
+                }
+                true
+            }
+            Hold::Press { from, .. } => {
+                let (dx, dy) = (x - from.0, y - from.1);
+                if id != BlitzPointerId::Mouse && dx.hypot(dy) > crate::touch::SLOP {
+                    let from_x = from.0;
+                    self.holds[i].1 = Hold::Pan {
+                        from_x,
+                        was: self.scroll.get(),
+                        speed: crate::touch::Speed::default(),
+                    };
+                    self.pointer.release();
+                    self.pointer.hover(None);
+                    return self.moved(id, x, y);
+                }
+                false
+            }
+            Hold::Pan { from_x, was, speed } => {
+                speed.moved((x, y));
+                let most = (self.content_w.get() - self.width.get()).max(0.0);
+                self.scroll.set((*was - (x - *from_x)).clamp(0.0, most));
+                true
+            }
+        }
+    }
+
+    fn released(&mut self, id: BlitzPointerId, finger: bool, x: f64, y: f64) {
+        let Some(i) = self.hold_of(id) else {
+            return;
+        };
+        let (_, hold) = self.holds.remove(i);
+        let up = self.spot_at(x, y);
+        match hold {
+            Hold::Turn(_) => self.flush_drag(),
+            // Thrown: the strips carry on the way the finger was going.
+            Hold::Pan { speed, .. } => {
+                let (vx, _) = speed.velocity();
+                self.fling = crate::touch::Fling::thrown((-vx, 0.0));
+                self.redraw();
+            }
+            Hold::Press {
+                spot: Some(spot), ..
+            } if up == Some(spot) => {
+                if let Some(track) = self.track_at(spot.row).cloned() {
+                    // The clip latch clears on a click while it is lit;
+                    // otherwise the band is the fader under it.
+                    let control = match spot.control {
+                        Control::Clip if self.clips.clear(&track.guid) => None,
+                        Control::Clip => Some(Control::Volume),
+                        other => Some(other),
+                    };
+                    let edit = control.and_then(|c| {
+                        let target = self.acts_on(c, &track);
+                        crate::engine::click(c, &target.guid, &target, false)
+                    });
+                    if let Some(edit) = edit {
+                        self.commit(edit);
+                    }
+                }
+            }
+            Hold::Press { .. } | Hold::Overview => {}
+        }
+        self.pointer.release();
+        self.pointer.hover(if finger { None } else { up });
+    }
+
+    /// A pointer's gesture ended without a release here: cancelled, or
+    /// its release lost. What it had moved stays moved.
+    fn let_go(&mut self, id: BlitzPointerId) {
+        if let Some(i) = self.hold_of(id) {
+            self.holds.remove(i);
+            self.flush_drag();
+            self.pointer.release();
         }
     }
 }
@@ -718,11 +1221,35 @@ impl MixerWidget {
 
     /// The picture: what Blitz's `Widget::paint` returns, and what the web
     /// host draws into its canvas.
-    pub fn paint_scene(&mut self, width: u32, height: u32, _scale: f64) -> Scene {
+    pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         self.dirty.set(false);
         self.flush_drag();
         self.catch_up();
-        let (w, h) = (f64::from(width), f64::from(height));
+        self.carry_fling();
+        // Blitz hands a widget its size in device pixels, and the pointer
+        // in CSS pixels; the page hands both in CSS pixels (and `scale`
+        // 1). Laid out in CSS pixels, so the hit test agrees with the
+        // picture, then drawn at the device's scale. Drawing device pixels
+        // as if they were CSS put a 2x screen's strips at half size and
+        // every tap twice as far along as what it pressed.
+        let scale = scale.max(f64::EPSILON);
+        let (css_w, full_h) = (f64::from(width) / scale, f64::from(height) / scale);
+        self.width.set(css_w);
+        // The overview band over the strips: on a touchscreen, and
+        // wherever the strips run past the panel.
+        #[expect(clippy::cast_precision_loss, reason = "a strip count")]
+        let across = self.rows.len() as f64 * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP);
+        let band = if !self.links.fill && (self.touch.get() || across > css_w) {
+            OVERVIEW_H
+        } else {
+            0.0
+        };
+        self.band.set(band);
+        let css_h = (full_h - band).max(0.0);
+        let zoom = self.zoom_for(css_w, css_h);
+        self.drawn_zoom.set(zoom);
+        // Laid out at the size it has once zoomed, and drawn bigger.
+        let (w, h) = (css_w / zoom, css_h / zoom);
         let mut out = Scene::new();
         if w < 1.0 || h < 1.0 {
             return out;
@@ -731,7 +1258,7 @@ impl MixerWidget {
         let stale = self
             .mixer
             .as_ref()
-            .is_none_or(|m| (m.height - h).abs() > 0.5)
+            .is_none_or(|m| (m.height - h).abs() > 0.5 || m.touch != self.touch.get())
             || live != self.built_live;
         if stale {
             self.built_live = live;
@@ -750,6 +1277,7 @@ impl MixerWidget {
                 false,
                 crate::settings::Settings {
                     live_strips: live,
+                    touch_strips: self.touch.get(),
                     ..crate::settings::Settings::default()
                 },
                 &crate::tone::Store::default(),
@@ -758,25 +1286,30 @@ impl MixerWidget {
         let Some(mixer) = self.mixer.as_ref() else {
             return out;
         };
-        self.content_w.set(mixer.content_width());
+        // CSS pixels, as the scroll is.
+        self.content_w.set(mixer.content_width() * zoom);
         {
             let mut strips = self.strips.borrow_mut();
             strips.clear();
             for (row, (track, _)) in self.rows.iter().enumerate() {
                 if let Some((left, width, _)) = mixer.strip_box(row) {
-                    strips.push((track.guid.clone(), left, width));
+                    strips.push((track.guid.clone(), left * zoom, width * zoom));
                 }
             }
         }
-        let most = (mixer.content_width() - w).max(0.0);
-        let scroll = self.scroll.get().clamp(0.0, most);
-        self.scroll.set(scroll);
+        let most = (mixer.content_width() - w).max(0.0) * zoom;
+        let screen_scroll = self.scroll.get().clamp(0.0, most);
+        self.scroll.set(screen_scroll);
+        let scroll = screen_scroll / zoom;
         let levels = self
             .meters
             .as_ref()
             .map(crate::engine::Meters::levels)
             .unwrap_or_default();
-        let at = Affine::translate((-scroll, 0.0));
+        let at = Affine::scale(scale)
+            * Affine::translate((0.0, band))
+            * Affine::scale(zoom)
+            * Affine::translate((-scroll, 0.0));
         mixer.replay(&mut out, scroll, w, at);
         crate::overlay::controls(
             &mut out,
@@ -794,6 +1327,10 @@ impl MixerWidget {
             w,
             at,
         );
+        if band > 0.0 {
+            let overview = self.overview(&levels, css_w, band);
+            anyrender::PaintScene::append_scene(&mut out, overview, Affine::scale(scale));
+        }
         out
     }
 }
