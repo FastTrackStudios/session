@@ -80,6 +80,29 @@ pub struct MixerLinks {
 /// The finest grid division the ruler will draw.
 const FINEST: f64 = 1.0 / 16.0;
 
+/// `event` with its pointer position divided by `ui`: CSS pixels to the
+/// units the widget lays out in.
+fn in_units(event: &UiEvent, ui: f64) -> UiEvent {
+    let ui = ui.max(f64::EPSILON);
+    if (ui - 1.0).abs() < f64::EPSILON {
+        return event.clone();
+    }
+    #[expect(clippy::cast_possible_truncation, reason = "a coordinate")]
+    let scaled = |e: &blitz_traits::events::BlitzPointerEvent| {
+        let mut e = e.clone();
+        e.coords.client_x = (f64::from(e.coords.client_x) / ui) as f32;
+        e.coords.client_y = (f64::from(e.coords.client_y) / ui) as f32;
+        e
+    };
+    match event {
+        UiEvent::PointerMove(e) => UiEvent::PointerMove(scaled(e)),
+        UiEvent::PointerDown(e) => UiEvent::PointerDown(scaled(e)),
+        UiEvent::PointerUp(e) => UiEvent::PointerUp(scaled(e)),
+        UiEvent::PointerCancel(e) => UiEvent::PointerCancel(scaled(e)),
+        other => other.clone(),
+    }
+}
+
 /// A finger held on the lanes: its press, kept to play as a click if it
 /// turns out to be a tap; where it last was; whether it has become a
 /// scroll.
@@ -184,6 +207,9 @@ pub struct ArrangementWidget {
     finger: Option<Finger>,
     /// Touch mode, as the panel was opened in.
     touch: bool,
+    /// How much bigger the arrangement is drawn than laid out (touch
+    /// mode's zoom, or 1), shared with the panel.
+    ui: Rc<Cell<f64>>,
     /// How to plan the rows again, and the project as the engine has it
     /// (with the visibility this window has changed since): what a track
     /// shown or hidden re-plans from. `None` in a widget built without
@@ -410,6 +436,7 @@ impl ArrangementWidget {
             fit_on_open: true,
             finger: None,
             touch: false,
+            ui: Rc::new(Cell::new(1.0)),
             replan: None,
             #[cfg(not(feature = "native"))]
             read_back: Rc::default(),
@@ -523,6 +550,14 @@ impl ArrangementWidget {
     #[must_use]
     pub fn with_touch(mut self, touch: bool) -> Self {
         self.touch = touch;
+        self
+    }
+
+    /// Share the panel's touch zoom ([`crate::panel::ArrangementPanel::ui`]):
+    /// laid out in CSS pixels over it, drawn at it.
+    #[must_use]
+    pub fn with_ui(mut self, ui: Rc<Cell<f64>>) -> Self {
+        self.ui = ui;
         self
     }
 
@@ -814,10 +849,24 @@ impl ArrangementWidget {
         } else {
             return (0.0, 0.0);
         };
-        (
-            OPEN_PPS / crate::studio::PPS,
-            row / crate::layout::CONTROL_ROW,
-        )
+        // The floors are on-screen sizes, and the view is laid out at the
+        // touch zoom's fraction of them. The row that must reach `row` is
+        // the typical one, the median: a session's plan sizes its rows
+        // anywhere from a sliver to a working track, and neither the
+        // smallest nor the default stands for what is on screen.
+        let ui = self.ui.get().max(f64::EPSILON);
+        let mut heights: Vec<f64> = self
+            .rows
+            .iter()
+            .map(|(track, _)| self.layout.height_of(track.height))
+            .collect();
+        heights.sort_by(f64::total_cmp);
+        let typical = heights
+            .get(heights.len() / 2)
+            .copied()
+            .unwrap_or(crate::layout::CONTROL_ROW)
+            .max(1.0);
+        (OPEN_PPS / ui / crate::studio::PPS, row / ui / typical)
     }
 
     /// What the widget wants done, for the window to drain.
@@ -1363,6 +1412,10 @@ impl ArrangementWidget {
     /// One input event, in the widget's own coordinates: what Blitz's
     /// `Widget::handle_event` calls, and what the web host calls.
     pub fn event(&mut self, event: &UiEvent) {
+        // In the units the widget lays out in: the host's CSS pixels over
+        // the touch zoom.
+        let scaled = in_units(event, self.ui.get());
+        let event = &scaled;
         // What a press here would do, asked BEFORE the press is taken: a
         // razor starts as an area under the pointer, which would then
         // answer as the area rather than as the razor being drawn.
@@ -1397,7 +1450,11 @@ impl ArrangementWidget {
         // it, then drawn at the device's scale. Drawing device pixels as if
         // they were CSS put a 2x screen's arrangement at half size, and
         // every press twice as far along as what it seemed to hit.
-        let scale = scale.max(f64::EPSILON);
+        // And in touch mode, bigger again ([`crate::touch::ARRANGE_ZOOM`]):
+        // laid out that much smaller, drawn that much bigger, so every
+        // button, lane and name grows together and a press still lands on
+        // what it hits.
+        let scale = scale.max(f64::EPSILON) * self.ui.get().max(f64::EPSILON);
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -1548,7 +1605,9 @@ impl ArrangementWidget {
                 let finger = self.finger.as_mut().filter(|f| f.down.id == e.id)?;
                 let (x, y) = at(e);
                 let from = at(&finger.down);
-                if !finger.scrolling && (x - from.0).hypot(y - from.1) > crate::touch::SLOP {
+                // The slop is a fingertip's, in CSS pixels.
+                let wandered = (x - from.0).hypot(y - from.1) * self.ui.get();
+                if !finger.scrolling && wandered > crate::touch::SLOP {
                     finger.scrolling = true;
                 }
                 if finger.scrolling {

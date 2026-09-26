@@ -143,7 +143,16 @@ pub fn Shell() -> Element {
             form_signal.set(now);
         }
     });
-    let phone_view = use_signal(|| session_daw::compact::PhoneView::Chart);
+    // On a phone, `FTS_SESSION_VIEW` names the tab it opens on, as it
+    // names the view on a wider screen; the chart otherwise.
+    let phone_view = use_signal(|| {
+        use session_daw::compact::PhoneView;
+        match std::env::var("FTS_SESSION_VIEW").as_deref() {
+            Ok("daw") => PhoneView::Arrangement,
+            Ok("performance") => PhoneView::Control,
+            _ => PhoneView::Chart,
+        }
+    });
     // A song picked, from the tabs or the navigator: that song is current,
     // and the audio moves to it. Where the one it replaces had got to is
     // kept on its tab.

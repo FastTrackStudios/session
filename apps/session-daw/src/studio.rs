@@ -600,6 +600,10 @@ pub fn ScrollBar(
     left: f64,
     top: f64,
     length: f64,
+    /// How thick, in CSS pixels: the lanes' [`BAR`] as drawn, which touch
+    /// mode's zoom makes a finger's width.
+    #[props(default = BAR)]
+    thick: f64,
     colors: daw_ui::studio::lanes::Colors,
     on_move: EventHandler<f64>,
 ) -> Element {
@@ -610,31 +614,33 @@ pub fn ScrollBar(
     let mut held = use_signal(|| Option::<f64>::None);
     let (size, place) = if across {
         (
-            format!("left:{left}px; top:{top}px; width:{length}px; height:{BAR}px;"),
+            format!("left:{left}px; top:{top}px; width:{length}px; height:{thick}px;"),
             format!(
                 "left:{along:.1}px; top:2px; width:{thumb:.1}px; height:{}px;",
-                BAR - 4.0
+                thick - 4.0
             ),
         )
     } else {
         (
-            format!("left:{left}px; top:{top}px; width:{BAR}px; height:{length}px;"),
+            format!("left:{left}px; top:{top}px; width:{thick}px; height:{length}px;"),
             format!(
                 "left:2px; top:{along:.1}px; width:{}px; height:{thumb:.1}px;",
-                BAR - 4.0
+                thick - 4.0
             ),
         )
     };
     rsx! {
         div {
             style: "position:absolute; {size} background:{colors.tcp_column};",
-            onmousedown: move |event| {
+            // Pointer events rather than mouse ones: Blitz gives a finger
+            // pointer and touch events, never mouse ones.
+            onpointerdown: move |event| {
                 let at = event.data().element_coordinates();
                 held.set(Some(if across { at.x } else { at.y }));
             },
-            onmouseup: move |_| held.set(None),
-            onmouseleave: move |_| held.set(None),
-            onmousemove: move |event| {
+            onpointerup: move |_| held.set(None),
+            onpointerleave: move |_| held.set(None),
+            onpointermove: move |event| {
                 if held().is_none() {
                     return;
                 }

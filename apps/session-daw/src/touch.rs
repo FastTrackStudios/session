@@ -18,6 +18,32 @@ use dioxus::prelude::*;
 /// fingertip hits without looking.
 pub const ZOOM: f64 = 1.75;
 
+/// How much bigger the arrangement is drawn in touch mode: its track
+/// panel's 21-pixel buttons to 28, its ruler's 15-pixel lanes to 20, its
+/// nine-point names to twelve. Less than the mixer's [`ZOOM`]: the
+/// arrangement is mostly lanes, and every pixel of chrome it gains is one
+/// the music loses.
+pub const ARRANGE_ZOOM: f64 = 1.35;
+
+/// How much bigger to draw the arrangement, as touch mode is, in a panel
+/// `width` CSS pixels wide (0 while it is not yet measured).
+///
+/// A phone held upright is some four hundred wide, and the full zoom would
+/// give its track panel more of that than its lanes; there the zoom eases
+/// down, reaching the full [`ARRANGE_ZOOM`] at a tablet's width.
+#[must_use]
+pub fn arrange_zoom(touch: bool, width: f64) -> f64 {
+    if !touch {
+        return 1.0;
+    }
+    if width <= 0.0 {
+        return ARRANGE_ZOOM;
+    }
+    let narrow = 1.1;
+    let t = ((width - 400.0) / (700.0 - 400.0)).clamp(0.0, 1.0);
+    narrow + (ARRANGE_ZOOM - narrow) * t
+}
+
 /// How far a finger may wander, in CSS pixels, and still be a tap. Past
 /// it the press is a scroll.
 pub const SLOP: f64 = 10.0;
