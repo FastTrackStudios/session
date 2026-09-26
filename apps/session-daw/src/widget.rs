@@ -122,6 +122,54 @@ struct Finger {
     speed: crate::touch::Speed,
 }
 
+/// The track panel's grip: a pill standing on the panel's edge at `x`,
+/// centred on `y`.
+fn grip_rect(x: f64, y: f64) -> vello::kurbo::Rect {
+    const W: f64 = 14.0;
+    const H: f64 = 40.0;
+    vello::kurbo::Rect::new(x - W / 2.0, y - H / 2.0, x + W / 2.0, y + H / 2.0)
+}
+
+/// The grip itself: a dark pill with a light rule round it, and an arrow
+/// each way on it — the panel goes both ways.
+fn paint_grip(out: &mut Scene, rect: vello::kurbo::Rect) {
+    use anyrender::PaintScene as _;
+    use vello::kurbo::{BezPath, RoundedRect, Stroke};
+    use vello::peniko::{Color, Fill};
+    let pill = RoundedRect::from_rect(rect, rect.width() / 2.0);
+    out.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgb8(0x26, 0x28, 0x2d),
+        None,
+        &pill,
+    );
+    out.stroke(
+        &Stroke::new(1.0),
+        Affine::IDENTITY,
+        Color::from_rgb8(0x5a, 0x5f, 0x68),
+        None,
+        &pill,
+    );
+    let ink = Color::from_rgb8(0xc9, 0xcc, 0xd1);
+    let (cx, cy) = (rect.center().x, rect.center().y);
+    for (dir, dy) in [(-1.0_f64, -6.0_f64), (1.0, 6.0)] {
+        let mut arrow = BezPath::new();
+        arrow.move_to((cx - dir * 2.5, cy + dy - 4.0));
+        arrow.line_to((cx + dir * 2.5, cy + dy));
+        arrow.line_to((cx - dir * 2.5, cy + dy + 4.0));
+        out.stroke(
+            &Stroke::new(1.6)
+                .with_caps(vello::kurbo::Cap::Round)
+                .with_join(vello::kurbo::Join::Round),
+            Affine::IDENTITY,
+            ink,
+            None,
+            &arrow,
+        );
+    }
+}
+
 /// The play cursor's handle, standing on the cursor at `x` in the bars
 /// lane: a pin a finger can take hold of.
 fn handle_rect(x: f64) -> vello::kurbo::Rect {
@@ -258,6 +306,9 @@ pub struct ArrangementWidget {
     /// Where the play cursor's handle was last drawn, in the widget's
     /// units: what a finger takes to scrub.
     handle: Cell<Option<vello::kurbo::Rect>>,
+    /// Where the track panel's grip was last drawn: a finger on it slides
+    /// the panel open or shut.
+    grip: Cell<Option<vello::kurbo::Rect>>,
     /// How much bigger the arrangement is drawn than laid out (touch
     /// mode's zoom, or 1), shared with the panel.
     ui: Rc<Cell<f64>>,
@@ -490,6 +541,7 @@ impl ArrangementWidget {
             redraw: None,
             touch: false,
             handle: Cell::new(None),
+            grip: Cell::new(None),
             ui: Rc::new(Cell::new(1.0)),
             replan: None,
             #[cfg(not(feature = "native"))]
@@ -1696,6 +1748,25 @@ impl ArrangementWidget {
                     self.scrub(x);
                     return Some(true);
                 }
+                // On the track panel's grip: a swipe of the panel, whatever
+                // is under it.
+                if self
+                    .grip
+                    .get()
+                    .is_some_and(|g| g.inflate(10.0, 10.0).contains((x, y)))
+                {
+                    self.fling = None;
+                    self.finger = Some(Finger {
+                        down: e.clone(),
+                        last: (x, y),
+                        scrolling: false,
+                        on_panel: true,
+                        swiped: false,
+                        scrubbing: false,
+                        speed: crate::touch::Speed::default(),
+                    });
+                    return Some(true);
+                }
                 // A control takes its press; a track's name is where a
                 // finger swipes the panel or scrolls, and a tap there is
                 // the click it would have been.
@@ -2288,6 +2359,16 @@ impl ArrangementWidget {
             view.height,
             self.scene.tcp.width(),
         );
+        // A touchscreen's grip on the track panel's edge: the panel slides
+        // (a swipe, or a drag of this), and this says so.
+        self.grip.set(None);
+        if self.ui.get() > 1.0 {
+            let x = self.scene.tcp.width();
+            let top = ruler::ruler_h();
+            let rect = grip_rect(x, top + (view.height - top) / 2.0);
+            paint_grip(&mut out, rect);
+            self.grip.set(Some(rect));
+        }
         // A touchscreen's handle on it, in the bars lane: a finger takes
         // the cursor by this and scrubs, where a press elsewhere on the
         // ruler is a scroll.
