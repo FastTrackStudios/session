@@ -78,8 +78,6 @@ pub fn RecordView() -> Element {
                     }
                 }
                 div { style: "flex:none; width:132px; display:flex;", RatingPad { upright } }
-                // Room, for now.
-                div { style: "flex:1; min-width:0;" }
                 RecordMixer {}
             }
         }
@@ -486,19 +484,14 @@ fn RecordMixer() -> Element {
         }
     });
     let list = strips();
-    let shown = list.iter().filter(|s| s.track.is_some()).count();
-    if shown == 0 {
+    if list.iter().all(|s| s.track.is_none()) {
         return rsx! {};
     }
-    // As wide as its strips, drawn at touch mode's size, and no wider: the
-    // room left over stays with the view.
-    // The widest the strips can be drawn; a short one draws them smaller
-    // and leaves room over.
-    let zoom = crate::touch::zoom(crate::touch::use_touch());
-    let width = (shown as f64 * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP) * zoom).ceil();
+    // The room the view has left: the strips grow to fill it
+    // (`Links::fill`) rather than leaving a gap beside them.
     rsx! {
         div {
-            style: "position:relative; flex:none; width:{width}px; max-width:100%; height:100%; \
+            style: "position:relative; flex:1; min-width:0; height:100%; \
                     border-radius:16px; overflow:hidden; border:1px solid {RULE};",
             GroupMixer { key: "{guids(&list)}", strips: list }
         }
@@ -522,7 +515,9 @@ fn GroupMixer(strips: Vec<Strip>) -> Element {
                 (arm.guid != track.guid).then(|| (track.guid.clone(), arm.clone()))
             })
             .collect();
-        crate::mixer_panel::Links::alone(rows, arm_of)
+        let mut links = crate::mixer_panel::Links::alone(rows, arm_of);
+        links.fill = true;
+        links
     });
     #[cfg(feature = "native")]
     return rsx! { crate::mixer_panel::Mixer {} };

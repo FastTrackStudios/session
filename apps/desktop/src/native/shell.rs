@@ -150,6 +150,7 @@ pub fn Shell() -> Element {
         match std::env::var("FTS_SESSION_VIEW").as_deref() {
             Ok("daw") => PhoneView::Arrangement,
             Ok("performance") => PhoneView::Control,
+            Ok("mixer") => PhoneView::Mixer,
             _ => PhoneView::Chart,
         }
     });

@@ -110,6 +110,8 @@ struct Finger {
     down: blitz_traits::events::BlitzPointerEvent,
     last: (f64, f64),
     scrolling: bool,
+    /// How fast it is going, to throw the view when it lets go.
+    speed: crate::touch::Speed,
 }
 
 /// How tall a row opens at least, on a finger's screen: a fingertip.
@@ -205,6 +207,11 @@ pub struct ArrangementWidget {
     /// A finger held on the lanes, not yet a scroll or a tap
     /// ([`ArrangementWidget::fingered`]).
     finger: Option<Finger>,
+    /// The view still moving after a finger threw it.
+    fling: Option<crate::touch::Fling>,
+    /// Ask the host for another frame, for a fling: see
+    /// [`crate::touch::redraw_hook`].
+    redraw: Option<Rc<dyn Fn()>>,
     /// Touch mode, as the panel was opened in.
     touch: bool,
     /// How much bigger the arrangement is drawn than laid out (touch
@@ -435,6 +442,8 @@ impl ArrangementWidget {
             zooms: crate::zoom::Requests::default(),
             fit_on_open: true,
             finger: None,
+            fling: None,
+            redraw: crate::touch::redraw_hook(),
             touch: false,
             ui: Rc::new(Cell::new(1.0)),
             replan: None,
@@ -1464,6 +1473,22 @@ impl ArrangementWidget {
             (f64::from(width) / scale).round() as u32,
             (f64::from(height) / scale).round() as u32,
         );
+        // A thrown view's next step, to the panel as a scroll; the panel
+        // stops it at the ends.
+        if let Some(fling) = self.fling.as_mut() {
+            let ((dx, dy), going) = fling.step();
+            self.zooms
+                .borrow_mut()
+                .push(crate::zoom::Request::ScrollBy { dx, dy });
+            if going {
+                self.dirty.set(true);
+                if let Some(redraw) = &self.redraw {
+                    redraw();
+                }
+            } else {
+                self.fling = None;
+            }
+        }
         let drawn = self.draw(css_w, css_h, scale);
         let scene = if (scale - 1.0).abs() < f64::EPSILON {
             drawn
@@ -1594,10 +1619,13 @@ impl ArrangementWidget {
                 if !scrolls {
                     return None;
                 }
+                // A press catches a thrown view.
+                self.fling = None;
                 self.finger = Some(Finger {
                     down: e.clone(),
                     last: (x, y),
                     scrolling: false,
+                    speed: crate::touch::Speed::default(),
                 });
                 Some(true)
             }
@@ -1611,6 +1639,7 @@ impl ArrangementWidget {
                     finger.scrolling = true;
                 }
                 if finger.scrolling {
+                    finger.speed.moved((x, y));
                     let (dx, dy) = (finger.last.0 - x, finger.last.1 - y);
                     finger.last = (x, y);
                     self.zooms
@@ -1626,7 +1655,14 @@ impl ArrangementWidget {
                     return self.finger.is_some().then_some(true);
                 }
                 let finger = self.finger.take()?;
-                if !finger.scrolling {
+                if finger.scrolling {
+                    // Thrown: the view carries on the way the finger went.
+                    let (vx, vy) = finger.speed.velocity();
+                    self.fling = crate::touch::Fling::thrown((-vx, -vy));
+                    if let Some(redraw) = &self.redraw {
+                        redraw();
+                    }
+                } else {
                     // A tap: the press and the release, together.
                     self.took(&UiEvent::PointerDown(finger.down));
                     self.took(&UiEvent::PointerUp(e.clone()));

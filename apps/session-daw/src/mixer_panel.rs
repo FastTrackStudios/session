@@ -119,6 +119,9 @@ pub struct Links {
     /// The record view's groups are folders, and a folder's arm is the
     /// track under it that records; the strip shows that track's arm.
     pub arm_of: Rc<std::collections::HashMap<String, daw_proto::Track>>,
+    /// A few strips given more room than they need (the record view's
+    /// five): drawn as big as fills it, rather than leaving it empty.
+    pub fill: bool,
 }
 
 /// A key the mixer passed on.
@@ -142,6 +145,7 @@ impl Links {
             arrange_node: Rc::default(),
             alone: false,
             arm_of: Rc::default(),
+            fill: false,
         }
     }
 
@@ -300,6 +304,7 @@ pub fn Mixer() -> Element {
             Rc::clone(&touch),
         );
         widget.strips = Rc::clone(&strips);
+        widget.redraw = crate::touch::redraw_hook();
         dioxus_native_dom::CustomWidgetAttr::new(widget)
     });
 
@@ -533,8 +538,13 @@ enum Hold {
         spot: Option<Spot>,
         from: (f64, f64),
     },
-    /// A finger scrolling the strips, from where it and the scroll were.
-    Pan { from_x: f64, was: f64 },
+    /// A finger scrolling the strips, from where it and the scroll were,
+    /// and how fast it is going (to throw the strips when it lets go).
+    Pan {
+        from_x: f64,
+        was: f64,
+        speed: crate::touch::Speed,
+    },
 }
 
 /// The widget: the recorded strips and what the pointer is doing to them.
@@ -569,6 +579,11 @@ struct MixerWidget {
     applier: Option<crate::engine::Applier>,
     /// The tracks [`Links::arm_of`] arms in place of their strips'.
     targets: Vec<daw_proto::Track>,
+    /// The strips still moving after a finger threw them.
+    fling: Option<crate::touch::Fling>,
+    /// Ask the host for another frame: Blitz paints a widget after an
+    /// event, and a fling has none. (The page paints every frame.)
+    redraw: Option<Rc<dyn Fn()>>,
     clips: crate::overlay::Clips,
     meters: Option<crate::engine::Meters>,
     /// Live-mode strips, as the panel last said, and as the recording
@@ -584,6 +599,10 @@ struct MixerWidget {
     /// Each strip as last laid out, for anchoring others' pointers.
     strips: Rc<RefCell<Strips>>,
 }
+
+/// The most a filling mixer ([`Links::fill`]) zooms its strips to fill
+/// its width: past this, four strips are four slabs.
+const FILL_MAX: f64 = 2.2;
 
 /// The shortest a strip is laid out when zoomed: where the name plate
 /// still clears the routing and the buttons over it.
@@ -649,6 +668,8 @@ impl MixerWidget {
             watch: crate::engine::Watch::start(),
             applier,
             targets,
+            fling: None,
+            redraw: crate::touch::redraw_hook(),
             clips: crate::overlay::Clips::default(),
             meters: crate::engine::Meters::start(),
             live,
@@ -758,13 +779,21 @@ impl MixerWidget {
         self.drawn_zoom.get()
     }
 
-    /// How much bigger to draw strips `height` CSS pixels tall: touch
-    /// mode's zoom, but never so much that a strip is laid out shorter
-    /// than [`MIN_STRIP_H`] — below that its name runs into the buttons
-    /// above it, so a short dock (the Overview's, on a tablet) gets
-    /// strips somewhat less big instead.
-    fn zoom_for(&self, height: f64) -> f64 {
-        crate::touch::zoom(self.touch.get()).min((height / MIN_STRIP_H).max(1.0))
+    /// How much bigger to draw strips in a `width` by `height` panel (CSS
+    /// pixels): touch mode's zoom for that width; for a mixer that
+    /// [`Links::fill`]s, as big as fills the width, up to [`FILL_MAX`];
+    /// and never so big that a strip is laid out shorter than
+    /// [`MIN_STRIP_H`] — below that its name runs into the buttons above
+    /// it, so a short dock (the Overview's, on a tablet) gets strips
+    /// somewhat less big instead.
+    fn zoom_for(&self, width: f64, height: f64) -> f64 {
+        let mut zoom = crate::touch::mixer_zoom(self.touch.get(), width);
+        if self.links.fill && !self.rows.is_empty() {
+            #[expect(clippy::cast_precision_loss, reason = "a strip count")]
+            let across = self.rows.len() as f64 * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP);
+            zoom = zoom.max((width / across).min(FILL_MAX));
+        }
+        zoom.min((height / MIN_STRIP_H).max(1.0))
     }
 
     /// A point in the widget, in the strips' own (content) coordinates.
@@ -806,6 +835,32 @@ impl MixerWidget {
         predict(&mut self.targets, &edit);
         self.show_targets();
         self.send(edit);
+    }
+
+    /// Ask for another frame, where the host needs asking.
+    fn redraw(&self) {
+        if let Some(redraw) = &self.redraw {
+            redraw();
+        }
+    }
+
+    /// A thrown scroll's next step, if one is moving: carried along and
+    /// stopped at either end.
+    fn carry_fling(&mut self) {
+        let Some(fling) = self.fling.as_mut() else {
+            return;
+        };
+        let ((dx, _), going) = fling.step();
+        let most = (self.content_w.get() - self.width.get()).max(0.0);
+        let to = (self.scroll.get() + dx).clamp(0.0, most);
+        let stopped = !going || to <= 0.0 || to >= most;
+        self.scroll.set(to);
+        if stopped {
+            self.fling = None;
+        } else {
+            self.dirty.set(true);
+            self.redraw();
+        }
     }
 
     /// An edit, to the engine: straight there when the mixer stands alone,
@@ -883,6 +938,8 @@ impl MixerWidget {
     /// the cap stays under it. A mouse takes the whole column, as REAPER
     /// does, at the gearing the mixer always had.
     fn pressed(&mut self, id: BlitzPointerId, finger: bool, x: f64, y: f64) {
+        // A press catches a thrown scroll, as it does on a phone.
+        self.fling = None;
         // A second press by the same pointer means its release was lost.
         self.let_go(id);
         let spot = self.spot_at(x, y);
@@ -953,6 +1010,7 @@ impl MixerWidget {
                     self.holds[i].1 = Hold::Pan {
                         from_x,
                         was: self.scroll.get(),
+                        speed: crate::touch::Speed::default(),
                     };
                     self.pointer.release();
                     self.pointer.hover(None);
@@ -960,7 +1018,8 @@ impl MixerWidget {
                 }
                 false
             }
-            Hold::Pan { from_x, was } => {
+            Hold::Pan { from_x, was, speed } => {
+                speed.moved((x, y));
                 let most = (self.content_w.get() - self.width.get()).max(0.0);
                 self.scroll.set((*was - (x - *from_x)).clamp(0.0, most));
                 true
@@ -976,6 +1035,12 @@ impl MixerWidget {
         let up = self.spot_at(x, y);
         match hold {
             Hold::Turn(_) => self.flush_drag(),
+            // Thrown: the strips carry on the way the finger was going.
+            Hold::Pan { speed, .. } => {
+                let (vx, _) = speed.velocity();
+                self.fling = crate::touch::Fling::thrown((-vx, 0.0));
+                self.redraw();
+            }
             Hold::Press {
                 spot: Some(spot), ..
             } if up == Some(spot) => {
@@ -996,7 +1061,7 @@ impl MixerWidget {
                     }
                 }
             }
-            Hold::Press { .. } | Hold::Pan { .. } => {}
+            Hold::Press { .. } => {}
         }
         self.pointer.release();
         self.pointer.hover(if finger { None } else { up });
@@ -1046,6 +1111,7 @@ impl MixerWidget {
         self.dirty.set(false);
         self.flush_drag();
         self.catch_up();
+        self.carry_fling();
         // Blitz hands a widget its size in device pixels, and the pointer
         // in CSS pixels; the page hands both in CSS pixels (and `scale`
         // 1). Laid out in CSS pixels, so the hit test agrees with the
@@ -1055,7 +1121,7 @@ impl MixerWidget {
         let scale = scale.max(f64::EPSILON);
         let (css_w, css_h) = (f64::from(width) / scale, f64::from(height) / scale);
         self.width.set(css_w);
-        let zoom = self.zoom_for(css_h);
+        let zoom = self.zoom_for(css_w, css_h);
         self.drawn_zoom.set(zoom);
         // Laid out at the size it has once zoomed, and drawn bigger.
         let (w, h) = (css_w / zoom, css_h / zoom);
