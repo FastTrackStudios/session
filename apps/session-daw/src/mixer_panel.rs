@@ -669,7 +669,7 @@ impl MixerWidget {
             applier,
             targets,
             fling: None,
-            redraw: crate::touch::redraw_hook(),
+            redraw: None,
             clips: crate::overlay::Clips::default(),
             meters: crate::engine::Meters::start(),
             live,

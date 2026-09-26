@@ -109,7 +109,8 @@ impl Fling {
 /// to prompt a paint (a fling): the window's `request_redraw` under
 /// Blitz, which paints a widget only after an event; nothing on a page,
 /// which paints every frame anyway. Read from context, so call it where a
-/// context can be read (a component, or a hook's closure).
+/// context can be read (a component, or a hook's closure) — not in a
+/// widget's constructor, which tests call with no runtime.
 #[must_use]
 pub fn redraw_hook() -> Option<std::rc::Rc<dyn Fn()>> {
     #[cfg(feature = "native")]

@@ -272,7 +272,8 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         .with_planner(session.planner.clone(), Rc::clone(&content_h))
         .with_compact(Rc::clone(&compact))
         .with_touch(touch)
-        .with_ui(Rc::clone(&ui));
+        .with_ui(Rc::clone(&ui))
+        .with_redraw(crate::touch::redraw_hook());
         let built = match &mixer {
             Some(links) => built.with_mixer(crate::widget::MixerLinks {
                 toggle: Rc::clone(&links.toggle),

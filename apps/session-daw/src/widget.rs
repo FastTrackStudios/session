@@ -443,7 +443,7 @@ impl ArrangementWidget {
             fit_on_open: true,
             finger: None,
             fling: None,
-            redraw: crate::touch::redraw_hook(),
+            redraw: None,
             touch: false,
             ui: Rc::new(Cell::new(1.0)),
             replan: None,
@@ -559,6 +559,14 @@ impl ArrangementWidget {
     #[must_use]
     pub fn with_touch(mut self, touch: bool) -> Self {
         self.touch = touch;
+        self
+    }
+
+    /// How to ask the host for another frame, for a fling
+    /// ([`crate::touch::redraw_hook`]).
+    #[must_use]
+    pub fn with_redraw(mut self, redraw: Option<Rc<dyn Fn()>>) -> Self {
+        self.redraw = redraw;
         self
     }
 
