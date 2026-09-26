@@ -554,7 +554,26 @@ fn row_one(
     // with the row rather than being squashed with it: a flattened glyph
     // is unreadable where a smaller one is merely small.
     let name_x = tcp.name_x() + indent;
-    let name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
+    let mut name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
+    // The compact panel's icon, at the field's right end: what the track
+    // is, at a glance, in its colour. The name ends before it.
+    if tcp.compact && field_h >= 14.0 {
+        let side = (field_h - 6.0).clamp(10.0, 18.0);
+        let right = field_x + field_w - 6.0;
+        let at = vello::kurbo::Rect::new(
+            right - side,
+            field_top + (field_h - side) / 2.0,
+            right,
+            field_top + (field_h + side) / 2.0,
+        );
+        crate::track_icon::paint(
+            scene,
+            crate::track_icon::Icon::of(&track.name, track.is_folder),
+            at,
+            icon_ink(palette, track),
+        );
+        name_w = (name_w - side - 6.0).max(0.0);
+    }
     let ink = if track.selected {
         palette.text
     } else {
@@ -717,6 +736,21 @@ pub fn folder_band(palette: &Palette, track: &Track) -> Color {
 /// vanish into them — a near-black track colour is the case it exists
 /// for, not the mid-tones.
 const INK_FLOOR: f32 = 0.179;
+
+/// A track's icon's ink: its own colour, lifted a third of the way to white
+/// so it reads bold on the dark field — or the panel's dim ink, for a track
+/// with no colour of its own.
+#[must_use]
+pub fn icon_ink(palette: &Palette, track: &Track) -> Color {
+    if track.color.is_none() {
+        return palette.text_dim;
+    }
+    mix(
+        track_color(palette, track),
+        Color::from_rgba8(0xff, 0xff, 0xff, 0xff),
+        0.35,
+    )
+}
 
 pub fn ink_on(background: Color) -> Color {
     let [r, g, b, _] = background.components;

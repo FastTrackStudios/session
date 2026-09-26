@@ -162,6 +162,7 @@ pub mod tone;
 pub mod tool;
 pub mod toolbar;
 pub mod touch;
+pub mod track_icon;
 pub mod transport_bar;
 #[cfg(feature = "web")]
 pub mod web_audio;
