@@ -755,6 +755,7 @@ impl ArrangementPanel {
     pub fn tcp(&self) -> crate::tcp::Tcp {
         crate::tcp::Tcp {
             compact: self.compact.get(),
+            touch: self.ui.get() > 1.0,
         }
     }
 
@@ -812,6 +813,7 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
     // Read as a signal so a toggle re-renders what is sized to the panel.
     let tcp_w = crate::tcp::Tcp {
         compact: (panel.shape)(),
+        touch,
     }
     .width();
     rsx! {

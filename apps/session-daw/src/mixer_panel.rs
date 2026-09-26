@@ -1133,7 +1133,7 @@ impl MixerWidget {
         let stale = self
             .mixer
             .as_ref()
-            .is_none_or(|m| (m.height - h).abs() > 0.5)
+            .is_none_or(|m| (m.height - h).abs() > 0.5 || m.touch != self.touch.get())
             || live != self.built_live;
         if stale {
             self.built_live = live;
@@ -1152,6 +1152,7 @@ impl MixerWidget {
                 false,
                 crate::settings::Settings {
                     live_strips: live,
+                    touch_strips: self.touch.get(),
                     ..crate::settings::Settings::default()
                 },
                 &crate::tone::Store::default(),

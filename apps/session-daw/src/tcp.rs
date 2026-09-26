@@ -102,6 +102,10 @@ pub const BUTTON: (f64, f64) = (21.0, 20.0);
 /// Between the two, so they read as two controls.
 pub const BUTTON_GAP: f64 = 1.0;
 
+/// A touchscreen's gutter ([`Tcp::gutter_w`]): two 29-wide buttons with
+/// their margins.
+const TOUCH_GUTTER_W: f64 = 64.0;
+
 /// Below this tall, volume and pan stop being knobs.
 ///
 /// A knob says its value with the angle of a ring, and an angle needs a
@@ -152,18 +156,47 @@ impl Density {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tcp {
     pub compact: bool,
+    /// A touchscreen's panel: on the compact one, whose gutter holds only
+    /// the mute and the solo, a wider gutter and the two buttons filling
+    /// it ([`Tcp::big_buttons`]).
+    pub touch: bool,
 }
 
 impl Tcp {
-    pub const FULL: Self = Self { compact: false };
-    pub const COMPACT: Self = Self { compact: true };
+    pub const FULL: Self = Self {
+        compact: false,
+        touch: false,
+    };
+    pub const COMPACT: Self = Self {
+        compact: true,
+        touch: false,
+    };
+
+    /// Whether mute and solo fill the gutter: a touchscreen's compact
+    /// panel. The full panel's gutter holds routing and FX under them,
+    /// so there they stay REAPER's size.
+    #[must_use]
+    pub const fn big_buttons(self) -> bool {
+        self.touch && self.compact
+    }
+
+    /// The gutter's width: REAPER's, or a touchscreen's, wide enough for
+    /// two buttons a finger can tell apart.
+    #[must_use]
+    pub fn gutter_w(self) -> f64 {
+        if self.big_buttons() {
+            TOUCH_GUTTER_W
+        } else {
+            f64::from(g::GUTTER_W)
+        }
+    }
 
     /// The panel's width.
     #[must_use]
     pub fn width(self) -> f64 {
         if self.compact {
             // The gutter's buttons, after the name and its level.
-            self.tint_w() + f64::from(g::GUTTER_W)
+            self.tint_w() + self.gutter_w()
         } else {
             f64::from(g::ROW_W)
         }

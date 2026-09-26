@@ -165,13 +165,20 @@ pub fn control(
             } else {
                 ("S", track.soloed, crate::tcp::solo_lit(palette))
             };
-            if let Some((x, y)) = at(spot.control) {
+            if let Some(r) = strip.rect(spot.control) {
                 crate::art::place(
                     &mut scene,
-                    &art::gutter_button(&palette.chrome, label, on, lit, state),
+                    &art::gutter_button_sized(
+                        &palette.chrome,
+                        label,
+                        on,
+                        lit,
+                        state,
+                        (r.width(), r.height()),
+                    ),
                     font,
-                    x,
-                    y,
+                    left + r.x0,
+                    r.y0,
                 );
             }
         }
@@ -711,6 +718,7 @@ pub fn controls(
             mixer.buttons_top,
             mixer.height,
             mixer.live,
+            mixer.touch,
         );
         // The racks of the strips that are not selected, darkened —
         // over the recording and everything live on it, so the
@@ -767,6 +775,7 @@ fn draw_strip_controls(
     buttons_top: f64,
     mixer_h: f64,
     live: bool,
+    touch: bool,
 ) {
     let strip = crate::strip::Strip::laid_out(
         width,
@@ -776,7 +785,8 @@ fn draw_strip_controls(
         buttons_top,
         settings.is_some_and(crate::tone::Tone::wants_column),
         live,
-    );
+    )
+    .touched(touch);
     // Every position comes from the layout, translated by the strip's
     // left edge. Nothing here works out where a control goes.
     let at = |control| strip.rect(control).map(|r| (left + r.x0, r.y0));
@@ -896,13 +906,23 @@ fn draw_strip_controls(
             crate::tcp::solo_lit(palette),
         ),
     ] {
-        let Some((x, y)) = at(control) else { continue };
+        // At the size the strip gives it: a touchscreen's are bigger.
+        let Some(r) = strip.rect(control) else {
+            continue;
+        };
         crate::art::place(
             scene,
-            &art::gutter_button(&palette.chrome, label, on, lit, state(control)),
+            &art::gutter_button_sized(
+                &palette.chrome,
+                label,
+                on,
+                lit,
+                state(control),
+                (r.width(), r.height()),
+            ),
             font,
-            x,
-            y,
+            left + r.x0,
+            r.y0,
         );
     }
 
@@ -1707,6 +1727,24 @@ fn control_row(
         (C::Solo, "S", live.soloed, crate::tcp::solo_lit(palette)),
     ] {
         let Some(r) = row.rect(control) else { continue };
+        // A touchscreen's fills its rect.
+        if row.tcp.big_buttons() {
+            crate::art::place(
+                &mut *out,
+                &art::gutter_button_sized(
+                    &palette.chrome,
+                    label,
+                    on,
+                    lit,
+                    look(control),
+                    (r.width(), r.height()),
+                ),
+                font,
+                r.x0,
+                r.y0,
+            );
+            continue;
+        }
         // Flattened to the rect on a row too short for the full
         // button — the row's shape says how tall, not the art.
         crate::art::squashed(

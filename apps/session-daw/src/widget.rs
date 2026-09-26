@@ -527,7 +527,10 @@ impl ArrangementWidget {
             rows,
             layout,
             previews,
-            crate::tcp::Tcp { compact },
+            crate::tcp::Tcp {
+                compact,
+                touch: false,
+            },
         );
         let bpm = scene.bpm;
         Self::new(
@@ -1182,6 +1185,7 @@ impl ArrangementWidget {
             &self.previews,
             crate::tcp::Tcp {
                 compact: self.compact.get(),
+                touch: self.ui.get() > 1.0,
             },
         );
         self.scene.lettering = lettering;
@@ -1399,6 +1403,7 @@ impl Widget for ArrangementWidget {
             // The toolbar changed the panel's shape: nothing else will
             // ask for the frame that re-cuts it.
             || self.scene.tcp.compact != self.compact.get()
+            || self.scene.tcp.touch != (self.ui.get() > 1.0)
             // Other people's pointers glide and their play cursors move
             // with nothing happening here.
             || crate::ghosts::active()
@@ -1873,7 +1878,9 @@ impl ArrangementWidget {
         }
         // The panel's shape, if the toolbar has changed it: the rows are
         // RECORDED to it, so this re-cuts rather than re-scales.
-        if self.scene.tcp.compact != self.compact.get() {
+        if self.scene.tcp.compact != self.compact.get()
+            || self.scene.tcp.touch != (self.ui.get() > 1.0)
+        {
             self.recut();
         }
         let began = web_time::Instant::now();

@@ -140,6 +140,24 @@ impl Row {
             // is not: a compact row keeps its mute and its solo — they
             // are what a row is scanned for — and the routing and FX
             // that share the band at full height are the ones that go.
+            // A touchscreen's: the two filling the gutter, side by side,
+            // and as tall as the row less a margin.
+            Control::Mute | Control::Solo if self.tcp.big_buttons() => {
+                const MARGIN: f64 = 3.0;
+                let w = (self.tcp.gutter_w() - MARGIN * 3.0) / 2.0;
+                let x = self.tcp.tint_w()
+                    + MARGIN
+                    + if control == Control::Mute {
+                        0.0
+                    } else {
+                        w + MARGIN
+                    };
+                let h = (self.height - MARGIN * 2.0)
+                    .max(self.field_h.min(BUTTON.1))
+                    .min(self.height);
+                let top = self.y + (self.height - h) / 2.0;
+                Some(Rect::new(x, top, x + w, top + h))
+            }
             Control::Mute | Control::Solo => {
                 let x = self.tcp.tint_w()
                     + 2.0
