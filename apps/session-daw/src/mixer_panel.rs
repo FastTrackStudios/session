@@ -876,7 +876,7 @@ impl MixerWidget {
     }
 
     /// The overview band: every strip at once, each a live meter over its
-    /// number on its track's colour, and the part of the mixer on screen
+    /// track's number on its track's colour, and the part of the mixer on screen
     /// outlined — where a mixer wider than the screen is found, and, with
     /// a press, gone to. In CSS pixels, `width` by `band`.
     fn overview(&self, levels: &[daw_proto::TrackLevels], width: f64, band: f64) -> Scene {
@@ -936,7 +936,9 @@ impl MixerWidget {
                 );
             }
             if numbered {
-                let number = (row + 1).to_string();
+                // The track's own number, as its strip shows it: a mixer
+                // with tracks hidden skips numbers.
+                let number = (track.index + 1).to_string();
                 let size = 8.0_f32;
                 let text_w = self.font.width(&number, size);
                 crate::tcp::glyphs(

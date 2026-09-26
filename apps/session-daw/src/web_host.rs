@@ -664,6 +664,9 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                 // on that song's session rather than patching the last one's.
                 SongViews { key: "{song.project}", session: song.session.clone(), engine: engine.clone(), view }
             }
+            // The views, across the foot of the page as the transport is
+            // across its head.
+            crate::shell::BottomBar { view }
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
@@ -842,6 +845,10 @@ fn SongViews(
                     }
                 },
                 View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone() } },
+                View::Chart => rsx! { crate::chart_panel::WebChart { paged: true } },
+                View::Mixer => rsx! {
+                    crate::mixer_panel::WebDawPanels { engine: engine.clone(), mixer_only: true }
+                },
                 View::Overview => rsx! {
                     OverviewLayout {
                         progress: rsx! { crate::progress::ProgressBar {} },

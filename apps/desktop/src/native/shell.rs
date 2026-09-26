@@ -38,6 +38,8 @@ pub fn Shell() -> Element {
         Ok("performance") => View::Performance,
         Ok("overview") => View::Overview,
         Ok("setup") => View::Setup,
+        Ok("chart") => View::Chart,
+        Ok("mixer") => View::Mixer,
         _ => View::Daw,
     });
     // Live unless `FTS_SESSION_MODE` names another (`organize`, …): the
@@ -251,6 +253,9 @@ pub fn Shell() -> Element {
                 // on that song's session rather than patching the last one's.
                 SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
             }
+            // The views, across the foot of the window as the transport is
+            // across its head.
+            session_daw::shell::BottomBar { view }
         }
     }
 }
@@ -309,6 +314,10 @@ fn SongViews(
                     } else {
                         PerformanceView {}
                     }
+                },
+                View::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
+                View::Mixer => rsx! {
+                    session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
                 },
                 View::Overview => rsx! {
                     OverviewLayout {

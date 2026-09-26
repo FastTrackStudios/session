@@ -67,26 +67,112 @@ pub fn use_density() -> Density {
     try_use_context::<Signal<Density>>().map_or(Density::Full, |d| d())
 }
 
-/// The views the top bar switches between.
+/// The views the bars switch between.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     Setup,
     Performance,
+    /// The arrangement, and the mixer docked under it when it is open.
     Daw,
     Overview,
+    /// The chart alone, the whole window.
+    Chart,
+    /// The mixer alone, the whole window.
+    Mixer,
 }
 
 impl View {
-    pub const ALL: [Self; 4] = [Self::Setup, Self::Performance, Self::Daw, Self::Overview];
+    pub const ALL: [Self; 6] = [
+        Self::Performance,
+        Self::Overview,
+        Self::Chart,
+        Self::Daw,
+        Self::Mixer,
+        Self::Setup,
+    ];
 
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Setup => "Setup",
             Self::Performance => "Performance",
-            Self::Daw => "DAW",
+            Self::Daw => "Arrangement",
             Self::Overview => "Overview",
+            Self::Chart => "Chart",
+            Self::Mixer => "Mixer",
         }
+    }
+}
+
+/// How tall the bottom bar is.
+pub const BOTTOM_H: f64 = 34.0;
+
+/// The bottom bar: the views as icons across the foot of the window, the
+/// way the top bar runs across its head — Logic's iPad layout, where what
+/// you look at is picked at the bottom and what you play at the top.
+/// Icons alone, as Logic's are, with the view's name for a tooltip; the
+/// views in the middle, Setup to the right on its own. The left is kept
+/// for the panels a view can show beside itself (the inspector).
+#[component]
+pub fn BottomBar(view: Signal<View>) -> Element {
+    let button = move |each: View| {
+        rsx! {
+            button {
+                key: "{each.name()}",
+                title: each.name(),
+                style: bottom_button(view() == each),
+                onclick: move |_| view.set(each),
+                ViewIcon { view: each }
+            }
+        }
+    };
+    rsx! {
+        div {
+            style: "height:{BOTTOM_H}px; flex:none; display:flex; align-items:center; \
+                    padding:0 12px; background:{BAR_BG}; border-top:1px solid {RULE};",
+            div { style: "flex:1;" }
+            div {
+                style: "flex:none; display:flex; align-items:center; gap:6px;",
+                for each in View::ALL.into_iter().filter(|v| *v != View::Setup) {
+                    {button(each)}
+                }
+            }
+            div {
+                style: "flex:1; display:flex; justify-content:flex-end;",
+                {button(View::Setup)}
+            }
+        }
+    }
+}
+
+/// A bottom-bar button: a grey icon, or the view showing's, white on a
+/// light square.
+fn bottom_button(on: bool) -> String {
+    let (fg, bg) = if on {
+        (TEXT, "#3a3d44")
+    } else {
+        (DIM, "transparent")
+    };
+    format!(
+        "width:40px; height:28px; display:flex; align-items:center; justify-content:center; \
+         border:none; border-radius:8px; background:{bg}; color:{fg}; cursor:pointer;"
+    )
+}
+
+/// A view's icon, as the bottom bar shows it.
+#[component]
+fn ViewIcon(view: View) -> Element {
+    use lucide_dioxus::{
+        ChartNoAxesGantt, FileMusic, LayoutDashboard, ListMusic, Settings, SlidersVertical,
+    };
+    let size = 19;
+    match view {
+        View::Performance => rsx! { ListMusic { size, color: "currentColor" } },
+        View::Overview => rsx! { LayoutDashboard { size, color: "currentColor" } },
+        View::Chart => rsx! { FileMusic { size, color: "currentColor" } },
+        View::Daw => rsx! { ChartNoAxesGantt { size, color: "currentColor" } },
+        View::Mixer => rsx! { SlidersVertical { size, color: "currentColor" } },
+        View::Setup => rsx! { Settings { size, color: "currentColor" } },
     }
 }
 
@@ -115,7 +201,6 @@ pub fn TopBar(
     width: Option<f64>,
 ) -> Element {
     let mut picking = use_signal(|| false);
-    let mut choosing_view = use_signal(|| false);
     let density = width.map_or(Density::Full, Density::for_width);
     let mut shared = use_context_provider(|| Signal::new(density));
     use_effect(use_reactive!(|density| {
@@ -144,55 +229,6 @@ pub fn TopBar(
                     zoom.call(());
                 }
             },
-            if density == Density::Full {
-                // The views, as a segmented control.
-                div {
-                    style: "display:flex; gap:2px; padding:2px; background:#0f1012; \
-                            border:1px solid {RULE}; border-radius:7px; flex:none;",
-                    for each in View::ALL {
-                        button {
-                            style: segment(view() == each),
-                            onmousedown: move |event| event.stop_propagation(),
-                            onclick: move |_| view.set(each),
-                            "{each.name()}"
-                        }
-                    }
-                }
-            } else {
-                // The views, folded into a menu: the one showing, and a
-                // chevron.
-                div {
-                    style: "position:relative; flex:none;",
-                    onmousedown: move |event| event.stop_propagation(),
-                    button {
-                        style: "display:flex; align-items:center; gap:6px; height:26px; \
-                                padding:0 8px 0 10px; border-radius:6px; border:1px solid {RULE}; \
-                                background:#0f1012; color:{TEXT}; font-size:12px; font-weight:600; \
-                                cursor:pointer;",
-                        onclick: move |_| choosing_view.toggle(),
-                        "{view().name()}"
-                        Chevron {}
-                    }
-                    if choosing_view() {
-                        div {
-                            style: "position:absolute; left:0; top:30px; z-index:40; \
-                                    min-width:150px; padding:4px; background:{BAR_BG}; \
-                                    border:1px solid {RULE}; border-radius:8px; \
-                                    box-shadow:0 8px 24px rgba(0,0,0,0.5);",
-                            for each in View::ALL {
-                                div {
-                                    style: option(view() == each),
-                                    onclick: move |_| {
-                                        view.set(each);
-                                        choosing_view.set(false);
-                                    },
-                                    "{each.name()}"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             // The setlist, filling whatever the bar has left.
             SongTabs { on_pick, on_color }
             // A row: the transport, and anything the host puts beside it
