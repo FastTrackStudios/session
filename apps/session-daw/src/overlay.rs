@@ -199,6 +199,9 @@ pub fn control(
                 );
             }
         }
+        Control::RecArm if strip.big_buttons() => {
+            touch_arm(&mut scene, palette, font, &strip, track, state, left);
+        }
         Control::RecArm => {
             crate::art::place(
                 &mut scene,
@@ -850,7 +853,17 @@ fn draw_strip_controls(
         );
     }
 
-    if let Some((x, y)) = at(Control::RecArm) {
+    if strip.big_buttons() {
+        touch_arm(
+            scene,
+            palette,
+            font,
+            &strip,
+            track,
+            state(Control::RecArm),
+            left,
+        );
+    } else if let Some((x, y)) = at(Control::RecArm) {
         crate::art::place(
             scene,
             &art::record_arm(
@@ -1157,6 +1170,57 @@ fn draw_strip_controls(
             y,
         );
     }
+}
+
+/// A touchscreen strip's record arm: a button in its row, as its mute
+/// and solo are, with the record ring on it — the same ring, lit while
+/// armed, grown to the button.
+fn touch_arm(
+    scene: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    strip: &crate::strip::Strip,
+    track: &Track,
+    state: Interaction,
+    left: f64,
+) {
+    let Some(r) = strip.rect(Control::RecArm) else {
+        return;
+    };
+    let lit = crate::tcp::lit(palette).rec;
+    crate::art::place(
+        scene,
+        &art::gutter_button_sized(
+            &palette.chrome,
+            "",
+            false,
+            lit,
+            state,
+            (r.width(), r.height()),
+        ),
+        font,
+        left + r.x0,
+        r.y0,
+    );
+    // The panel's bare ring is 20 square; as big as two thirds of the
+    // button's shorter side, in its middle.
+    let size = r.width().min(r.height()) * 0.66;
+    let scale = size / 20.0;
+    crate::art::scaled(
+        scene,
+        &art::record_arm(
+            &palette.chrome,
+            lit,
+            track.armed,
+            state,
+            art::Arm::Panel,
+            crate::tcp::to_theme(crate::mcp::strip_ground(palette, track)),
+        ),
+        font,
+        left + r.x0 + (r.width() - size) / 2.0,
+        r.y0 + (r.height() - size) / 2.0,
+        scale,
+    );
 }
 
 /// Which tracks have clipped since anyone last looked.

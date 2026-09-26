@@ -44,18 +44,22 @@ pub const HEIGHT: f64 = crate::mcp::DEFAULT_HEIGHT;
 /// Where the arrangement stops and how tall the mixer under it is, as CSS
 /// lengths.
 ///
-/// Alone, the mixer fills the panel. Docked in the Overview on a finger's
-/// screen, the two share it evenly: an iPad's pane is some six hundred
-/// pixels, and a fixed mixer at touch size left the arrangement a strip a
-/// third of a row tall. Otherwise the mixer is its own height, in pixels.
+/// Alone, the mixer fills the panel. On a finger's screen the two share
+/// it — evenly in the Overview, a little more to the mixer in the DAW
+/// view: an iPad's pane is some six hundred pixels, and a fixed mixer at
+/// touch size left the arrangement a strip a third of a row tall.
+/// Otherwise the mixer is its own height, in pixels.
 fn split(open: bool, mixer_only: bool, docked: bool, touch: bool) -> (String, String) {
     if mixer_only {
         return ("0px".to_owned(), "100%".to_owned());
     }
-    let mixer = if docked && touch {
-        "50%".to_owned()
+    let mixer = if touch {
+        // The Overview's pane is shared with the chart beside it, so the
+        // arrangement keeps half; the DAW view's is the arrangement's own,
+        // and the mixer, opened there, gets the larger share.
+        if docked { "50%" } else { "55%" }.to_owned()
     } else {
-        format!("{}px", docked_height(touch))
+        format!("{HEIGHT}px")
     };
     let bottom = if open {
         mixer.clone()
@@ -63,19 +67,6 @@ fn split(open: bool, mixer_only: bool, docked: bool, touch: bool) -> (String, St
         "0px".to_owned()
     };
     (bottom, mixer)
-}
-
-/// How tall the docked mixer is, with touch mode on or off. Its strips are
-/// drawn [`crate::touch::ZOOM`] times bigger, so it is taller, though not
-/// by the whole zoom: the strips shed their small controls first, which
-/// is what they do in a short dock anyway.
-#[must_use]
-pub fn docked_height(touch: bool) -> f64 {
-    if touch {
-        (HEIGHT * 1.3).round()
-    } else {
-        HEIGHT
-    }
 }
 
 type Rows = Vec<(daw_proto::Track, u32)>;

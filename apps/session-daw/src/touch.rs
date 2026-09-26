@@ -45,18 +45,25 @@ pub fn arrange_zoom(touch: bool, width: f64) -> f64 {
 }
 
 /// How much bigger to draw the mixer's strips, as touch mode is, in a
-/// panel `width` CSS pixels wide: [`ZOOM`] on a tablet, easing down to
-/// 1.35 on an upright phone, where the full zoom fit two and a half
-/// strips across the screen.
+/// panel `width` CSS pixels wide: whatever puts [`STRIPS_ACROSS`] default
+/// strips across it — ten on an 11-inch iPad on its side, at about 1.36 —
+/// but never below [`MIXER_ZOOM_MIN`], where a finger stops hitting what
+/// it aims at (so an upright tablet or a phone scrolls instead), nor
+/// above [`ZOOM`].
 #[must_use]
 pub fn mixer_zoom(touch: bool, width: f64) -> f64 {
     if !touch {
         return 1.0;
     }
-    let narrow = 1.35;
-    let t = ((width - 400.0) / (700.0 - 400.0)).clamp(0.0, 1.0);
-    narrow + (ZOOM - narrow) * t
+    let across = STRIPS_ACROSS * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP);
+    (width / across).clamp(MIXER_ZOOM_MIN, ZOOM)
 }
+
+/// How many default strips a touchscreen's mixer aims to show across.
+pub const STRIPS_ACROSS: f64 = 10.0;
+/// The least a touchscreen's strips are zoomed: its buttons still a
+/// fingertip.
+pub const MIXER_ZOOM_MIN: f64 = 1.35;
 
 /// A scroll still moving after the finger let go: the speed it left at,
 /// dying away as a thrown list does on a phone.

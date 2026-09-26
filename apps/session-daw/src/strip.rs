@@ -39,13 +39,12 @@ const PAN_FROM_EDGE: f64 = 5.0;
 /// the routing by four.
 const SPREAD: f64 = 4.0;
 
-/// How tall a touchscreen's mute and solo are at least
-/// ([`Strip::touched`]) and at most, and the gap between them.
-const TOUCH_BUTTON_H: f64 = 26.0;
-const TOUCH_BUTTON_MAX: f64 = 48.0;
-/// How many levels of nesting the shared button size leaves room for.
-const NESTING_ALLOWED: f64 = 3.0;
+/// A touchscreen strip's button row ([`Strip::touched`]): how tall, the
+/// gap between its buttons and around it, and its inset from the strip's
+/// edges.
+const TOUCH_ROW_H: f64 = 32.0;
 const TOUCH_GAP: f64 = 4.0;
+const TOUCH_INSET: f64 = 4.0;
 
 /// How far the monitor's cell reaches down into the arm's: the ring
 /// starts five pixels into its cell, so the lamp sits close over it
@@ -149,12 +148,9 @@ pub struct Strip {
     layout: Layout,
     /// A live-mode strip — see [`shape`].
     live: bool,
-    /// A touchscreen's strip: mute and solo as big as their column lets
-    /// them be ([`Strip::touched`]).
+    /// A touchscreen's strip: arm, mute and solo in a row across it
+    /// ([`Strip::touched`]).
     touch: bool,
-    /// The mixer's height, which every strip's buttons are sized
-    /// against, so they stay on one line across strips of any depth.
-    mixer_h: f64,
 }
 
 impl Strip {
@@ -205,48 +201,55 @@ impl Strip {
             layout,
             live,
             touch: false,
-            mixer_h,
         }
     }
 
-    /// This strip on a touchscreen: its mute and solo grown to fill the
-    /// column, from the column's left edge to a hair short of the strip's
-    /// right one, and as tall as the column has room for
-    /// ([`Strip::touch_button_h`]) — the measured 21 by 20 is a mouse's
-    /// target and left the rest of the column empty.
+    /// This strip on a touchscreen: the record arm, mute and solo in one
+    /// row across the strip under its pan, each a third of its width
+    /// ([`TOUCH_ROW_H`] tall), and the fader under them — shorter, and
+    /// centred with its scale now that no column needs the room beside
+    /// it. Routing and the monitoring lamp, set once and read rarely, are
+    /// left to the desktop. The measured column's 21-by-20 buttons are a
+    /// mouse's targets, beside a fader the whole strip tall.
     #[must_use]
-    pub const fn touched(mut self, touch: bool) -> Self {
+    pub fn touched(mut self, touch: bool) -> Self {
         self.touch = touch;
+        if self.big_buttons() {
+            // The scale and the fader, as one instrument, in the middle.
+            let shift = self.columns.scale_w / 2.0;
+            self.columns.scale_x += shift;
+            self.columns.fader_x += shift;
+        }
         self
     }
 
-    /// Whether mute and solo are a touchscreen's size here: touch mode, on
-    /// a strip with the measured column (a rail's centred buttons stay
-    /// as they are, with no room either side to grow into).
-    fn big_buttons(&self) -> bool {
+    /// Whether this strip has the touchscreen's button row: touch mode, on
+    /// a strip wide enough for the measured column (a rail's centred
+    /// buttons stay as they are, with no room either side to grow into).
+    #[must_use]
+    pub fn big_buttons(&self) -> bool {
         self.touch && self.squeeze.columns()
     }
 
-    /// How tall a touchscreen's mute and solo are: as much of the column
-    /// as there is between the first of them and the name plate, less the
-    /// routing under them and the gaps, split between the two — at least
-    /// [`TOUCH_BUTTON_H`], and no taller than [`TOUCH_BUTTON_MAX`], past
-    /// which a button stops reading as one.
-    ///
-    /// Against the mixer's height less a few levels of nesting, not this
-    /// strip's own: the buttons are read across the mixer and stay on one
-    /// line. A strip nested deeper still is held to its own room, so its
-    /// buttons never reach its name.
-    fn touch_button_h(&self) -> f64 {
-        let first = self.arm_top() + f64::from(g::RECMON_FROM_ARM) + SPREAD;
-        let fits = |height: f64| {
-            let plate = height - crate::mcp::INDENT_STEP - f64::from(g::NAME_PLATE);
-            (plate - first - art::ROUTING_CELL_V.1 - TOUCH_GAP * 3.0 - 2.0) / 2.0
+    /// The touchscreen row's top: just under the coloured band.
+    fn touch_row_top(&self) -> f64 {
+        self.band_bottom() + TOUCH_GAP
+    }
+
+    /// A button's cell in the touchscreen row: the arm, mute and solo, in
+    /// that order, a third of the row each.
+    fn touch_cell(&self, control: Control) -> Option<Rect> {
+        let index = match control {
+            Control::RecArm => 0.0,
+            Control::Mute => 1.0,
+            Control::Solo => 2.0,
+            _ => return None,
         };
-        let shared = fits(self.mixer_h - crate::mcp::INDENT_STEP * NESTING_ALLOWED);
-        shared
-            .min(fits(self.height))
-            .clamp(TOUCH_BUTTON_H, TOUCH_BUTTON_MAX)
+        let across = self.chrome_width() - TOUCH_INSET * 2.0;
+        let w = (across - TOUCH_GAP * 2.0) / 3.0;
+        let x = TOUCH_INSET + index * (w + TOUCH_GAP);
+        let y = self.touch_row_top();
+        Some(Rect::new(x, y, x + w, y + TOUCH_ROW_H))
     }
 
     /// Whether this is a live-mode strip (see [`shape`]).
@@ -286,6 +289,10 @@ impl Strip {
         // its neighbours'. A rail has no column — the buttons are
         // centred, over the fader — so the fader starts under the last
         // of them.
+        // A touchscreen's strip: under its button row.
+        if self.big_buttons() {
+            return self.touch_row_top() + TOUCH_ROW_H + TOUCH_GAP * 2.0;
+        }
         if self.squeeze.columns() {
             return self.band_bottom();
         }
@@ -381,20 +388,11 @@ impl Strip {
             0.0
         };
         let mute = f64::from(g::RECMON_FROM_ARM) + spread;
-        let (to_solo, to_io) = if self.big_buttons() {
-            let h = self.touch_button_h();
-            (h + TOUCH_GAP, h + TOUCH_GAP + 2.0)
-        } else {
-            (
-                f64::from(g::SOLO_FROM_MUTE) + spread,
-                f64::from(g::IO_FROM_SOLO) + spread,
-            )
-        };
-        let solo = mute + to_solo;
+        let solo = mute + f64::from(g::SOLO_FROM_MUTE) + spread;
         match control {
             Control::Mute => mute,
             Control::Solo => solo,
-            _ => solo + to_io,
+            _ => solo + f64::from(g::IO_FROM_SOLO) + spread,
         }
     }
 
@@ -512,6 +510,16 @@ impl Strip {
     #[must_use]
     pub fn rect(&self, control: Control) -> Option<Rect> {
         let top = |y: f64, h: f64| Rect::new(0.0, y, self.chrome_width(), y + h);
+        // A touchscreen's strip: its row, and no routing or lamp.
+        if self.big_buttons() {
+            match control {
+                Control::RecArm | Control::Mute | Control::Solo => {
+                    return self.touch_cell(control);
+                }
+                Control::Routing | Control::Monitor => return None,
+                _ => {}
+            }
+        }
         match control {
             Control::Fx => self.squeeze.head().then(|| {
                 Rect::new(
@@ -586,16 +594,6 @@ impl Strip {
                     let (cell_w, cell_h) = art::ROUTING_CELL_V;
                     let x = self.columns.column_x - art::ROUTING_INSET_V;
                     return Some(Rect::new(x, y, x + cell_w, y + cell_h));
-                }
-                if self.big_buttons() {
-                    let right = (self.chrome_width() - 3.0)
-                        .max(self.columns.column_x + f64::from(g::BUTTON_W));
-                    return Some(Rect::new(
-                        self.columns.column_x,
-                        y,
-                        right,
-                        y + self.touch_button_h(),
-                    ));
                 }
                 Some(Rect::new(
                     self.columns.column_x,
