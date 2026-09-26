@@ -529,6 +529,9 @@ enum Hold {
         spot: Option<Spot>,
         from: (f64, f64),
     },
+    /// A press in the overview band ([`OVERVIEW_H`]): the strips go
+    /// wherever it points, as it moves.
+    Overview,
     /// A finger scrolling the strips, from where it and the scroll were,
     /// and how fast it is going (to throw the strips when it lets go).
     Pan {
@@ -587,9 +590,16 @@ struct MixerWidget {
     width: Cell<f64>,
     /// The zoom the last paint drew at ([`MixerWidget::zoom_for`]).
     drawn_zoom: Cell<f64>,
+    /// How tall the overview band over the strips was drawn, in CSS
+    /// pixels: 0 where there is none.
+    band: Cell<f64>,
     /// Each strip as last laid out, for anchoring others' pointers.
     strips: Rc<RefCell<Strips>>,
 }
+
+/// How tall the overview band over the strips is, in CSS pixels
+/// ([`MixerWidget::overview`]).
+const OVERVIEW_H: f64 = 30.0;
 
 /// The most a filling mixer ([`Links::fill`]) zooms its strips to fill
 /// its width: past this, four strips are four slabs.
@@ -669,6 +679,7 @@ impl MixerWidget {
             dirty: Cell::new(false),
             width: Cell::new(0.0),
             drawn_zoom: Cell::new(1.0),
+            band: Cell::new(0.0),
         }
     }
 
@@ -792,7 +803,7 @@ impl MixerWidget {
     /// anchors need not know about the zoom.
     fn content(&self, x: f64, y: f64) -> (f64, f64) {
         let zoom = self.zoom();
-        ((x + self.scroll.get()) / zoom, y / zoom)
+        ((x + self.scroll.get()) / zoom, (y - self.band.get()) / zoom)
     }
 
     /// Whether a finger at `(x, y)` is on `row`'s fader cap, give or take
@@ -852,6 +863,107 @@ impl MixerWidget {
             self.dirty.set(true);
             self.redraw();
         }
+    }
+
+    /// Scroll so the strips under `x` in the overview band are in the
+    /// middle of the panel.
+    fn overview_to(&mut self, x: f64) {
+        let (width, content) = (self.width.get().max(1.0), self.content_w.get());
+        let most = (content - width).max(0.0);
+        let at = (x / width).clamp(0.0, 1.0) * content - width / 2.0;
+        self.scroll.set(at.clamp(0.0, most));
+        self.fling = None;
+    }
+
+    /// The overview band: every strip at once, each a live meter over its
+    /// number on its track's colour, and the part of the mixer on screen
+    /// outlined — where a mixer wider than the screen is found, and, with
+    /// a press, gone to. In CSS pixels, `width` by `band`.
+    fn overview(&self, levels: &[daw_proto::TrackLevels], width: f64, band: f64) -> Scene {
+        use anyrender::PaintScene as _;
+        use vello::kurbo::Rect;
+        use vello::peniko::{Color, Fill};
+        let mut out = Scene::new();
+        let fill = |out: &mut Scene, rect: Rect, color: Color| {
+            out.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
+        };
+        fill(
+            &mut out,
+            Rect::new(0.0, 0.0, width, band),
+            Color::from_rgb8(0x0c, 0x0d, 0x0f),
+        );
+        let count = self.rows.len();
+        if count == 0 {
+            return out;
+        }
+        #[expect(clippy::cast_precision_loss, reason = "a strip count")]
+        let cell = width / count as f64;
+        let numbered = cell >= 14.0;
+        let meter_bottom = if numbered { band - 12.0 } else { band - 4.0 };
+        for row in 0..count {
+            #[expect(clippy::cast_precision_loss, reason = "a strip index")]
+            let x = row as f64 * cell;
+            let Some(track) = self.track_at(row) else {
+                continue;
+            };
+            // The track's colour, along the foot of its cell.
+            fill(
+                &mut out,
+                Rect::new(x + 1.0, band - 2.0, x + cell - 1.0, band),
+                crate::mcp::strip_ground(&self.palette, track),
+            );
+            // Its level, a sliver up the cell.
+            let level = usize::try_from(track.index)
+                .ok()
+                .and_then(|i| levels.get(i))
+                .map_or(0.0, |l| {
+                    crate::engine::meter_fraction(l.peak_left.max(l.peak_right))
+                });
+            let meter_w = (cell * 0.3).clamp(2.0, 5.0);
+            let mx = x + (cell - meter_w) / 2.0;
+            let top = 3.0;
+            fill(
+                &mut out,
+                Rect::new(mx, top, mx + meter_w, meter_bottom),
+                Color::from_rgb8(0x1c, 0x1e, 0x22),
+            );
+            if level > 0.0 {
+                let lit_top = meter_bottom - (meter_bottom - top) * level.clamp(0.0, 1.0);
+                fill(
+                    &mut out,
+                    Rect::new(mx, lit_top, mx + meter_w, meter_bottom),
+                    Color::from_rgb8(0x4a, 0xde, 0x80),
+                );
+            }
+            if numbered {
+                let number = (row + 1).to_string();
+                let size = 8.0_f32;
+                let text_w = self.font.width(&number, size);
+                crate::tcp::glyphs(
+                    &mut out,
+                    &self.font,
+                    self.palette.text_dim,
+                    &number,
+                    x + (cell - text_w) / 2.0,
+                    band - 4.0,
+                    size,
+                );
+            }
+        }
+        // What is on screen.
+        let content = self.content_w.get().max(1.0);
+        let left = self.scroll.get() / content * width;
+        let shown = (width / content * width).min(width);
+        let window = Rect::new(left, 0.5, (left + shown).min(width), band - 0.5);
+        fill(&mut out, window, Color::from_rgba8(0xff, 0xff, 0xff, 0x14));
+        out.stroke(
+            &vello::kurbo::Stroke::new(1.0),
+            Affine::IDENTITY,
+            Color::from_rgba8(0xff, 0xff, 0xff, 0x66),
+            None,
+            &window,
+        );
+        out
     }
 
     /// An edit, to the engine: straight there when the mixer stands alone,
@@ -933,6 +1045,11 @@ impl MixerWidget {
         self.fling = None;
         // A second press by the same pointer means its release was lost.
         self.let_go(id);
+        if y < self.band.get() {
+            self.overview_to(x);
+            self.holds.push((id, Hold::Overview));
+            return;
+        }
         let spot = self.spot_at(x, y);
         let turn = spot
             .filter(|spot| spot.control.is_continuous())
@@ -965,7 +1082,7 @@ impl MixerWidget {
         let shown = match &hold {
             Hold::Turn(turn) => Some(turn.spot),
             Hold::Press { spot, .. } => *spot,
-            Hold::Pan { .. } => None,
+            Hold::Pan { .. } | Hold::Overview => None,
         };
         self.pointer.hover(shown);
         self.pointer.press();
@@ -978,6 +1095,10 @@ impl MixerWidget {
             return false;
         };
         match &mut self.holds[i].1 {
+            Hold::Overview => {
+                self.overview_to(x);
+                true
+            }
             Hold::Turn(turn) => {
                 let fraction = crate::gesture::drag_fraction((y - turn.from_y) / zoom, turn.travel);
                 let spot = turn.spot;
@@ -1052,7 +1173,7 @@ impl MixerWidget {
                     }
                 }
             }
-            Hold::Press { .. } => {}
+            Hold::Press { .. } | Hold::Overview => {}
         }
         self.pointer.release();
         self.pointer.hover(if finger { None } else { up });
@@ -1110,8 +1231,19 @@ impl MixerWidget {
         // as if they were CSS put a 2x screen's strips at half size and
         // every tap twice as far along as what it pressed.
         let scale = scale.max(f64::EPSILON);
-        let (css_w, css_h) = (f64::from(width) / scale, f64::from(height) / scale);
+        let (css_w, full_h) = (f64::from(width) / scale, f64::from(height) / scale);
         self.width.set(css_w);
+        // The overview band over the strips: on a touchscreen, and
+        // wherever the strips run past the panel.
+        #[expect(clippy::cast_precision_loss, reason = "a strip count")]
+        let across = self.rows.len() as f64 * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP);
+        let band = if !self.links.fill && (self.touch.get() || across > css_w) {
+            OVERVIEW_H
+        } else {
+            0.0
+        };
+        self.band.set(band);
+        let css_h = (full_h - band).max(0.0);
         let zoom = self.zoom_for(css_w, css_h);
         self.drawn_zoom.set(zoom);
         // Laid out at the size it has once zoomed, and drawn bigger.
@@ -1172,7 +1304,10 @@ impl MixerWidget {
             .as_ref()
             .map(crate::engine::Meters::levels)
             .unwrap_or_default();
-        let at = Affine::scale(zoom * scale) * Affine::translate((-scroll, 0.0));
+        let at = Affine::scale(scale)
+            * Affine::translate((0.0, band))
+            * Affine::scale(zoom)
+            * Affine::translate((-scroll, 0.0));
         mixer.replay(&mut out, scroll, w, at);
         crate::overlay::controls(
             &mut out,
@@ -1190,6 +1325,10 @@ impl MixerWidget {
             w,
             at,
         );
+        if band > 0.0 {
+            let overview = self.overview(&levels, css_w, band);
+            anyrender::PaintScene::append_scene(&mut out, overview, Affine::scale(scale));
+        }
         out
     }
 }
