@@ -533,7 +533,7 @@ pub fn WebDemo(
 #[component]
 fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setlist) -> Element {
     use crate::compact::{CompactShell, PhoneView};
-    use crate::shell::{TopBar, View};
+    use crate::shell::{SAFE_AREA, TopBar, View};
     use session::modes::Mode;
 
     // Audio starts on the page's first press or key: the only place a
@@ -633,8 +633,12 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
         };
     }
     rsx! {
+        // Inset from a phone's or a tablet's safe areas, which the page's
+        // background (the bars' colour) fills — see `index.html`.
         div {
-            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
+            style: "{SAFE_AREA}",
+        div {
+            style: "flex:1; min-width:0; min-height:0; position:relative; display:flex; \
                     flex-direction:column; background:#0f1012; color:#e5e7eb; \
                     font-family:system-ui, sans-serif;",
             if !record_screen() {
@@ -670,6 +674,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
+        }
         }
     }
 }

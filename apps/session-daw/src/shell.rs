@@ -104,6 +104,16 @@ impl View {
     }
 }
 
+/// The app's outer box, inset from a phone's or a tablet's safe areas
+/// (the notch, the home indicator, a landscape screen's rounded sides) and
+/// filled round them with the bars' colour: in a page, where
+/// `viewport-fit=cover` runs the page under them. Blitz keeps them out of
+/// the page already, and there the insets are nothing.
+pub const SAFE_AREA: &str = "position:absolute; top:0; left:0; width:100vw; height:100vh; \
+    box-sizing:border-box; display:flex; background:#17181b; \
+    padding:env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) \
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);";
+
 /// How tall the bottom bar is.
 pub const BOTTOM_H: f64 = 34.0;
 
