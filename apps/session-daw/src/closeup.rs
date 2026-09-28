@@ -42,11 +42,12 @@ pub enum Closeup {
 }
 
 impl Closeup {
-    /// What the layer's header says.
+    /// The track's name, for the header — what the tabs beside it are
+    /// the parts of.
     #[must_use]
-    pub fn title(&self) -> String {
+    pub fn subject(&self) -> &str {
         match self {
-            Self::Rack { name, which, .. } => format!("{name} · {}", which.name()),
+            Self::Rack { name, .. } => name,
         }
     }
 }
@@ -111,9 +112,12 @@ pub fn mods_of(e: &BlitzPointerEvent) -> Mods {
 const SWIPE_CLOSE: f64 = 60.0;
 
 /// The close-up layer: over the whole window while something is shown,
-/// nothing otherwise. Mounted once, by the shell.
+/// nothing otherwise. Mounted once, by the shell, which says whether the
+/// window is on its side: then the tabs are a column down the left,
+/// where a wide screen has room, rather than a row taking height from
+/// a short one.
 #[component]
-pub fn CloseupLayer() -> Element {
+pub fn CloseupLayer(landscape: bool) -> Element {
     let closeups = try_use_context::<Closeups>();
     let mut swipe = use_signal(|| None::<f64>);
     #[cfg(feature = "native")]
@@ -140,7 +144,61 @@ pub fn CloseupLayer() -> Element {
     let Some(shown) = current() else {
         return rsx! {};
     };
-    let title = shown.title();
+    let subject = shown.subject().to_owned();
+    // The close-ups beside this one: a rack's other panels, as tabs, so
+    // going from its EQ to its compressor is one tap rather than out
+    // and back in.
+    let tabs: Vec<(Closeup, &'static str, bool)> = match &shown {
+        Closeup::Rack { guid, name, which } => {
+            let store = closeups.tone.store.borrow();
+            let chain = crate::tone::panels_for(session::mix_phases::MixPhase::Tone);
+            let panels = store.get(guid).map_or(chain, |tone| tone.panels(chain));
+            panels
+                .iter()
+                .filter(|w| !w.name().is_empty())
+                .map(|&w| {
+                    let to = Closeup::Rack {
+                        guid: guid.clone(),
+                        name: name.clone(),
+                        which: w,
+                    };
+                    (to, w.name(), w == *which)
+                })
+                .collect()
+        }
+    };
+    let tab_style = move |on: bool| {
+        let shape = if landscape {
+            "flex:none; height:40px; width:100%; padding:0 12px; text-align:left; \
+             display:flex; align-items:center;"
+        } else {
+            "flex:none; height:30px; padding:0 12px;"
+        };
+        let look = if on {
+            "border:1px solid #3b82f6; background:#1e3a5f; color:#e5e7eb; font-weight:650;"
+        } else {
+            "border:1px solid #2a2c31; background:#1c1e22; color:#9ca3af; font-weight:600;"
+        };
+        format!(
+            "{shape} {look} border-radius:7px; font-family:inherit; font-size:12px; \
+             letter-spacing:0.04em; white-space:nowrap;"
+        )
+    };
+    let tab_buttons = tabs.into_iter().map(move |(to, label, on)| {
+        rsx! {
+            button {
+                key: "{label}",
+                style: tab_style(on),
+                onclick: move |_| current.set(Some(to.clone())),
+                "{label}"
+            }
+        }
+    });
+    let (row_tabs, column_tabs) = if landscape {
+        (None, Some(tab_buttons))
+    } else {
+        (Some(tab_buttons), None)
+    };
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; z-index:300; \
@@ -168,14 +226,35 @@ pub fn CloseupLayer() -> Element {
                     lucide_dioxus::ChevronLeft { size: 18, color: "currentColor" }
                     "Back"
                 }
-                span { style: "font-size:15px; font-weight:650;", "{title}" }
+                span {
+                    style: "flex:none; font-size:15px; font-weight:650; white-space:nowrap;",
+                    "{subject}"
+                }
+                if let Some(tabs) = row_tabs {
+                    div {
+                        style: "flex:1; min-width:0; display:flex; gap:4px; overflow-x:auto; \
+                                scrollbar-width:none;",
+                        {tabs}
+                    }
+                }
             }
             div {
-                style: "position:relative; flex:1; min-height:0;",
-                match shown {
-                    Closeup::Rack { guid, which, .. } => rsx! {
-                        RackCloseup { key: "{guid}-{which:?}", guid, which }
-                    },
+                style: "flex:1; min-height:0; display:flex; flex-direction:row;",
+                if let Some(tabs) = column_tabs {
+                    div {
+                        style: "flex:none; width:150px; height:100%; display:flex; flex-direction:column; \
+                                gap:4px; padding:10px 8px; overflow-y:auto; background:#141518; \
+                                border-right:1px solid #2a2c31;",
+                        {tabs}
+                    }
+                }
+                div {
+                    style: "position:relative; flex:1; min-width:0; height:100%;",
+                    match shown {
+                        Closeup::Rack { guid, which, .. } => rsx! {
+                            RackCloseup { key: "{guid}-{which:?}", guid, which }
+                        },
+                    }
                 }
             }
             // A swipe begun on the header goes on below it, where a

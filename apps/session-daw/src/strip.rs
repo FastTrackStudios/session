@@ -204,9 +204,10 @@ impl Strip {
         }
     }
 
-    /// This strip on a touchscreen: the record arm, mute and solo in one
-    /// row across the strip under its pan, each a third of its width
-    /// ([`TOUCH_ROW_H`] tall), and the fader under them — shorter, and
+    /// This strip on a touchscreen: mute and solo in one row across the
+    /// strip under its band, each half its width ([`TOUCH_ROW_H`] tall),
+    /// the record arm in its housing on the band as on every strip, and
+    /// the fader under them — shorter, and
     /// centred with its scale now that no column needs the room beside
     /// it. Routing and the monitoring lamp, set once and read rarely, are
     /// left to the desktop. The measured column's 21-by-20 buttons are a
@@ -231,22 +232,24 @@ impl Strip {
         self.touch && self.squeeze.columns()
     }
 
-    /// The touchscreen row's top: just under the coloured band.
+    /// The touchscreen row's top: under the coloured band, and under the
+    /// record arm's housing where it hangs below the band.
     fn touch_row_top(&self) -> f64 {
-        self.band_bottom() + TOUCH_GAP
+        self.band_bottom() + f64::from(g::ARM_OVERHANG) + TOUCH_GAP
     }
 
-    /// A button's cell in the touchscreen row: the arm, mute and solo, in
-    /// that order, a third of the row each.
+    /// A button's cell in the touchscreen row: mute and solo, half the
+    /// row each. The record arm is not in it: it is the housing sunk
+    /// into the band, where every strip has it, and at a touch zoom that
+    /// is already a finger's target.
     fn touch_cell(&self, control: Control) -> Option<Rect> {
         let index = match control {
-            Control::RecArm => 0.0,
-            Control::Mute => 1.0,
-            Control::Solo => 2.0,
+            Control::Mute => 0.0,
+            Control::Solo => 1.0,
             _ => return None,
         };
         let across = self.chrome_width() - TOUCH_INSET * 2.0;
-        let w = (across - TOUCH_GAP * 2.0) / 3.0;
+        let w = (across - TOUCH_GAP) / 2.0;
         let x = TOUCH_INSET + index * (w + TOUCH_GAP);
         let y = self.touch_row_top();
         Some(Rect::new(x, y, x + w, y + TOUCH_ROW_H))
@@ -513,7 +516,7 @@ impl Strip {
         // A touchscreen's strip: its row, and no routing or lamp.
         if self.big_buttons() {
             match control {
-                Control::RecArm | Control::Mute | Control::Solo => {
+                Control::Mute | Control::Solo => {
                     return self.touch_cell(control);
                 }
                 Control::Routing | Control::Monitor => return None,

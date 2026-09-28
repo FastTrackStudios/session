@@ -576,8 +576,13 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     });
     // The page's shape: a phone's (or a window that small) takes the
     // small-screen layout, the same panels rearranged.
-    let form = use_viewport_form();
+    let viewport = use_viewport_size();
+    let form = use_viewport_form(viewport);
     use_context_provider(|| form);
+    let landscape = move || {
+        let (w, h) = viewport();
+        w > h
+    };
     let phone_view = use_signal(|| PhoneView::Chart);
     // A song picked, from the tabs or the navigator: that song is current,
     // and the audio moves to it. Where the one it replaces had got to is
@@ -630,7 +635,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                     }
                 },
             }
-            crate::closeup::CloseupLayer {}
+            crate::closeup::CloseupLayer { landscape: landscape() }
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
@@ -676,7 +681,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
             // across its head.
             crate::shell::BottomBar { view }
             // Whatever is zoomed into, over all of it.
-            crate::closeup::CloseupLayer {}
+            crate::closeup::CloseupLayer { landscape: landscape() }
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
@@ -685,28 +690,45 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     }
 }
 
-/// The page's shape, measured now and a few times a second after — a phone
-/// turned on its side, a window resized.
-fn use_viewport_form() -> Signal<crate::compact::Form> {
-    fn measure() -> crate::compact::Form {
-        let size = web_sys::window().map(|w| {
+/// The page's size in CSS pixels, measured now and a few times a second
+/// after — a phone turned on its side, a window resized.
+fn use_viewport_size() -> Signal<(f64, f64)> {
+    fn measure() -> (f64, f64) {
+        web_sys::window().map_or((0.0, 0.0), |w| {
             let px = |v: Result<wasm_bindgen::JsValue, _>| {
                 v.ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
             };
             (px(w.inner_width()), px(w.inner_height()))
-        });
-        size.map_or(crate::compact::Form::Wide, |(w, h)| {
-            crate::compact::Form::of(w, h)
         })
     }
-    let mut form = use_signal(measure);
+    let mut size = use_signal(measure);
     use_future(move || async move {
         loop {
             gloo_timers::future::TimeoutFuture::new(250).await;
             let now = measure();
-            if *form.peek() != now {
-                form.set(now);
+            if *size.peek() != now {
+                size.set(now);
             }
+        }
+    });
+    size
+}
+
+/// The page's shape, from its size.
+fn use_viewport_form(size: Signal<(f64, f64)>) -> Signal<crate::compact::Form> {
+    let of = move || {
+        let (w, h) = size();
+        if w <= 0.0 {
+            crate::compact::Form::Wide
+        } else {
+            crate::compact::Form::of(w, h)
+        }
+    };
+    let mut form = use_signal(of);
+    use_effect(move || {
+        let now = of();
+        if *form.peek() != now {
+            form.set(now);
         }
     });
     form
@@ -892,7 +914,7 @@ fn WebPerformance() -> Element {
             div {
                 style: "position:relative; flex:1; min-height:0; border-radius:8px; \
                         overflow:hidden; border:1px solid #2a2c31;",
-                crate::chart_panel::WebChart {}
+                crate::chart_panel::WebChart { paged: true }
             }
             crate::progress::TransportButtons {}
         }

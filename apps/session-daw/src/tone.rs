@@ -2866,7 +2866,13 @@ fn comp(
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    let at = comp_split(at, rack);
+    let body = at;
+    let at = comp_split(body, rack);
+    if rack.detailed()
+        && let Some(square) = transfer_area(body)
+    {
+        transfer_curve(scene, palette, font, comp, square, lit);
+    }
     let right = at.x + at.width;
     // The comp editor's own axis: 0 dB at the top, −60 at the floor.
     // Taken from the plugin so the threshold line, the ladder and
@@ -7924,7 +7930,11 @@ pub fn grip_at(
         // except on the machine glyph, which cycles the machine.
         if y >= at.y && y < body.y {
             let inner = at.inset(2.0);
-            if rack.detailed() && !folded.is_zoomed() && x >= inner.x + inner.width - EXPAND_W - 4.0
+            // Wider than the mark: it is ten pixels, and the corner
+            // it sits in is the target, so a finger finds it.
+            if rack.detailed()
+                && !folded.is_zoomed()
+                && x >= inner.x + inner.width - EXPAND_W - 14.0
             {
                 return Some(Grip::Zoom(which));
             }
@@ -8153,9 +8163,204 @@ fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: 
 /// put the two controls away from the thing they act on — while the
 /// display beside them was already showing a reduction over time, which
 /// is exactly what they shape. See `envelope`.
+///
+/// Unless the panel is wide enough to give up a square at its right for
+/// the transfer curve (`transfer_area`): then the display is what is
+/// left of it.
 #[must_use]
-pub const fn comp_split(body: Panel, _rack: Rack) -> Panel {
-    body
+pub fn comp_split(body: Panel, _rack: Rack) -> Panel {
+    match transfer_area(body) {
+        // Stacked: the display is what is under the square.
+        Some(square) if square.y + square.height < body.y + body.height - STRIPS_H => {
+            let top = square.y + square.height + TRANSFER_GAP;
+            Panel {
+                y: top,
+                height: (body.y + body.height - top).max(0.0),
+                ..body
+            }
+        }
+        Some(square) => Panel {
+            width: (square.x - TRANSFER_GAP - body.x).max(0.0),
+            ..body
+        },
+        None => body,
+    }
+}
+
+/// The narrowest compressor panel with room for a transfer curve beside
+/// its display — a close-up's, a wide editor's. A strip's is a fraction
+/// of it, and there the arrow says what the curve would.
+const TRANSFER_MIN_W: f64 = 380.0;
+const TRANSFER_MIN_H: f64 = 180.0;
+/// The narrowest tall panel that stacks one.
+const TRANSFER_MIN_TALL_W: f64 = 260.0;
+/// Between the display and the curve.
+const TRANSFER_GAP: f64 = 10.0;
+
+/// The transfer curve's square, at the right of a compressor panel wide
+/// enough to have one: level in along the bottom, level out up the side,
+/// -60 to 0 dB on both. A panel taller than it is wide — a close-up on
+/// a phone or a portrait tablet — has it on top instead, and the display
+/// under it, since beside it would be a stamp in a corner of a tall
+/// empty column.
+#[must_use]
+pub fn transfer_area(body: Panel) -> Option<Panel> {
+    if body.height >= body.width * 1.2 && body.width >= TRANSFER_MIN_TALL_W {
+        let side = body.width.min(body.height * 0.5);
+        return Some(Panel {
+            x: body.x + (body.width - side) / 2.0,
+            y: body.y,
+            width: side,
+            height: side,
+        });
+    }
+    if body.width < TRANSFER_MIN_W || body.height < TRANSFER_MIN_H {
+        return None;
+    }
+    let side = (body.height - STRIPS_H).min(body.width * 0.45).max(0.0);
+    Some(Panel {
+        x: body.x + body.width - side,
+        y: body.y,
+        width: side,
+        height: side,
+    })
+}
+
+/// The level out of a compressor for a level in, both in dBFS: straight
+/// through below the knee, `1 / ratio` of the rise above it, and the
+/// soft knee's curve between. The plugin's own law, so the curve drawn
+/// is the reduction heard.
+#[must_use]
+pub fn transfer(comp: Comp, input: f64) -> f64 {
+    let threshold = f64::from(comp.threshold);
+    let ratio = f64::from(comp.ratio).max(1.0);
+    let knee = f64::from(comp.knee).max(0.0);
+    let over = input - threshold;
+    if knee > 0.0 && over.abs() <= knee / 2.0 {
+        let into = over + knee / 2.0;
+        input + (1.0 / ratio - 1.0) * into * into / (2.0 * knee)
+    } else if over > 0.0 {
+        threshold + over / ratio
+    } else {
+        input
+    }
+}
+
+/// The transfer curve in its square: the one-to-one diagonal, the curve
+/// bending off it at the threshold, and the threshold's point on it.
+fn transfer_curve(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    comp: Comp,
+    at: Panel,
+    lit: Option<Grip>,
+) {
+    let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
+    let right = at.x + at.width;
+    let bottom = at.y + at.height;
+    // Level to position: 0 dB at the top and the right, -60 at the floor
+    // and the left edge.
+    let to_x = |db: f64| at.x + (db + 60.0).clamp(0.0, 60.0) / 60.0 * at.width;
+    let to_y = |db: f64| bottom - (db + 60.0).clamp(0.0, 60.0) / 60.0 * at.height;
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.tcp_meter_well.multiply_alpha(0.5),
+        None,
+        &at.rect(),
+    );
+    const SIZE: f32 = 6.0;
+    for db in [-12.0, -24.0, -36.0, -48.0] {
+        rule(
+            scene,
+            palette.grid_beat,
+            Line::new((to_x(db), at.y), (to_x(db), bottom)),
+        );
+        rule(
+            scene,
+            palette.grid_beat,
+            Line::new((at.x, to_y(db)), (right, to_y(db))),
+        );
+        let label = format!("{db:.0}");
+        let w = font.width(&label, SIZE);
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text_faint,
+            &label,
+            to_x(db) - w / 2.0,
+            bottom - 2.0,
+            SIZE,
+        );
+    }
+    crate::tcp::glyphs(
+        scene,
+        font,
+        palette.text_faint,
+        "IN",
+        right - font.width("IN", SIZE) - 3.0,
+        bottom - 2.0,
+        SIZE,
+    );
+    crate::tcp::glyphs(
+        scene,
+        font,
+        palette.text_faint,
+        "OUT",
+        at.x + 3.0,
+        at.y + 8.0,
+        SIZE,
+    );
+    // One to one: what the signal would do with no compressor.
+    rule(
+        scene,
+        palette.grid,
+        Line::new((at.x, bottom), (right, at.y)),
+    );
+    // The threshold, where the curve leaves the diagonal.
+    let threshold = f64::from(comp.threshold);
+    let (tx, ty) = (to_x(threshold), to_y(threshold));
+    let held = matches!(lit, Some(Grip::Threshold(_)));
+    let faint = red.multiply_alpha(if held { 0.6 } else { 0.3 });
+    rule(scene, faint, Line::new((tx, ty), (tx, bottom)));
+    rule(scene, faint, Line::new((at.x, ty), (tx, ty)));
+    const STEPS: usize = 96;
+    let points = (0..=STEPS).map(|i| {
+        let input = crate::num::coord(i) / crate::num::coord(STEPS) * 60.0 - 60.0;
+        (to_x(input), to_y(transfer(comp, input)))
+    });
+    let ratio_held = matches!(lit, Some(Grip::Ratio(_)));
+    curve(scene, red, points, if ratio_held { 3.0 } else { 2.0 });
+    dot(
+        scene,
+        red,
+        (tx, ty),
+        if held { HANDLE + 2.4 } else { HANDLE + 1.2 },
+    );
+    let label = format!("{:.1}:1", comp.ratio);
+    let end = (to_x(0.0), to_y(transfer(comp, 0.0)));
+    crate::tcp::glyphs(
+        scene,
+        font,
+        red,
+        &label,
+        end.0 - font.width(&label, SIZE) - 3.0,
+        end.1 + 10.0,
+        SIZE,
+    );
+}
+
+/// What a press in the transfer square holds: the curve above the
+/// threshold is the ratio — pulled down for more, the way the arrow is —
+/// and the rest is the threshold.
+fn transfer_grip(comp: Comp, which: Which, at: Panel, x: f64) -> Grip {
+    let tx = at.x + (f64::from(comp.threshold) + 60.0).clamp(0.0, 60.0) / 60.0 * at.width;
+    if x > tx + 12.0 {
+        Grip::Ratio(which)
+    } else {
+        Grip::Threshold(which)
+    }
 }
 
 /// How far down the display the ratio's arrow hangs, in pixels.
@@ -8193,6 +8398,13 @@ pub fn ratio_reduction(comp: Comp) -> f64 {
 /// fader's groove is a fader's.
 fn comp_grip(comp: Comp, which: Which, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
     let display = comp_split(body, rack);
+    if rack.detailed()
+        && let Some(square) = transfer_area(body)
+        && x >= square.x - TRANSFER_GAP / 2.0
+        && y < square.y + square.height + TRANSFER_GAP / 2.0
+    {
+        return transfer_grip(comp, which, square, x);
+    }
     // The envelope's parts first — they are lines inside the display,
     // and the display would otherwise swallow them.
     if rack.detailed() {

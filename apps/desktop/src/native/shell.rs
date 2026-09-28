@@ -204,7 +204,7 @@ pub fn Shell() -> Element {
                     }
                 },
             }
-            session_daw::closeup::CloseupLayer {}
+            session_daw::closeup::CloseupLayer { landscape: size().0 > size().1 }
         };
     }
     rsx! {
@@ -262,7 +262,7 @@ pub fn Shell() -> Element {
             // across its head.
             session_daw::shell::BottomBar { view }
             // Whatever is zoomed into, over all of it.
-            session_daw::closeup::CloseupLayer {}
+            session_daw::closeup::CloseupLayer { landscape: size().0 > size().1 }
         }
     }
 }
@@ -417,7 +417,7 @@ fn PerformanceView() -> Element {
                 div {
                     style: "position:relative; flex:1; min-width:0; height:100%; border-radius:8px; \
                             overflow:hidden; border:1px solid {RULE};",
-                    session_daw::chart_panel::Chart {}
+                    session_daw::chart_panel::Chart { paged: true }
                 }
                 div {
                     style: "position:relative; width:38%; min-width:320px; height:100%; border-radius:8px; \

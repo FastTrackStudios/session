@@ -267,11 +267,6 @@ pub fn DawPanels(
 #[component]
 pub fn Mixer() -> Element {
     let links: Links = use_context();
-    // Live mode: live strips (a short band) — see `strip::shape`.
-    let mode: Option<Signal<session::modes::Mode>> = try_use_context();
-    let live_mode = mode.is_some_and(|mode| mode() == session::modes::Mode::Live);
-    let live = use_hook(|| Rc::new(Cell::new(false)));
-    live.set(live_mode);
     let touch = use_hook(|| Rc::new(Cell::new(false)));
     touch.set(crate::touch::use_touch());
     let scroll = use_hook(|| Rc::new(Cell::new(0.0_f64)));
@@ -292,7 +287,6 @@ pub fn Mixer() -> Element {
             links.clone(),
             Rc::clone(&scroll),
             Rc::clone(&content_w),
-            Rc::clone(&live),
             Rc::clone(&touch),
         );
         widget.strips = Rc::clone(&strips);
@@ -459,10 +453,6 @@ pub fn WebDawPanels(
 pub fn WebMixer(hidden: bool) -> Element {
     use crate::panel::PanelEvent;
     let links: Links = use_context();
-    let mode: Option<Signal<session::modes::Mode>> = try_use_context();
-    let live_mode = mode.is_some_and(|mode| mode() == session::modes::Mode::Live);
-    let live = use_hook(|| Rc::new(Cell::new(false)));
-    live.set(live_mode);
     let touch = use_hook(|| Rc::new(Cell::new(false)));
     touch.set(crate::touch::use_touch());
     let scroll = use_hook(|| Rc::new(Cell::new(0.0_f64)));
@@ -474,7 +464,6 @@ pub fn WebMixer(hidden: bool) -> Element {
             links.clone(),
             Rc::clone(&scroll),
             Rc::clone(&content_w),
-            Rc::clone(&live),
             Rc::clone(&touch),
         );
         if let Some(closeups) = try_consume_context::<crate::closeup::Closeups>() {
@@ -645,10 +634,6 @@ struct MixerWidget {
     redraw: Option<Rc<dyn Fn()>>,
     clips: crate::overlay::Clips,
     meters: Option<crate::engine::Meters>,
-    /// Live-mode strips, as the panel last said, and as the recording
-    /// was built.
-    live: Rc<Cell<bool>>,
-    built_live: bool,
     dirty: Cell<bool>,
     /// The widget's width as last painted, in CSS pixels: how far a
     /// finger can scroll.
@@ -705,7 +690,6 @@ impl MixerWidget {
         links: Links,
         scroll: Rc<Cell<f64>>,
         content_w: Rc<Cell<f64>>,
-        live: Rc<Cell<bool>>,
         touch: Rc<Cell<bool>>,
     ) -> Self {
         let theme = daw_ui::theming::Theme::dark();
@@ -748,9 +732,7 @@ impl MixerWidget {
             built_open: None,
             clips: crate::overlay::Clips::default(),
             meters: crate::engine::Meters::start(),
-            live,
             strips: Rc::default(),
-            built_live: false,
             dirty: Cell::new(false),
             width: Cell::new(0.0),
             drawn_zoom: Cell::new(1.0),
@@ -1572,7 +1554,6 @@ impl MixerWidget {
         if w < 1.0 || h < 1.0 {
             return out;
         }
-        let live = self.live.get();
         // The selected track's strip opens to show its rack: given the
         // working width, which turns the racks on, the mixer's own widths
         // open it further (`mcp::widths`). None selected, no racks — the
@@ -1599,10 +1580,8 @@ impl MixerWidget {
             .mixer
             .as_ref()
             .is_none_or(|m| (m.height - h).abs() > 0.5 || m.touch != self.touch.get())
-            || live != self.built_live
             || open != self.built_open;
         if stale {
-            self.built_live = live;
             self.built_open.clone_from(&open);
             for analyser in self.spectra.values_mut() {
                 analyser.invalidate();
@@ -1635,7 +1614,6 @@ impl MixerWidget {
                 if open.is_some() { rack_panels() } else { &[] },
                 open.is_some(),
                 crate::settings::Settings {
-                    live_strips: live,
                     touch_strips: self.touch.get(),
                     ..crate::settings::Settings::default()
                 },
