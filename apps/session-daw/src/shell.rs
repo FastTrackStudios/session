@@ -266,19 +266,20 @@ fn PinButton(on: Signal<bool>, what: Pinned) -> Element {
     use lucide_dioxus::{PanelBottom, PanelTop};
     let mut on = on;
     let lit = on();
-    let title = match what {
-        Pinned::Progress => "Song progress on every view",
-        Pinned::Transport => "Transport on every view",
+    let (title, label) = match what {
+        Pinned::Progress => ("Song progress on every view", "Progress"),
+        Pinned::Transport => ("Transport on every view", "Transport"),
     };
     rsx! {
         button {
             title,
-            style: bottom_button(lit, false),
+            style: bottom_button(lit, true),
             onclick: move |_| on.toggle(),
             match what {
                 Pinned::Progress => rsx! { PanelTop { size: 19, color: "currentColor" } },
                 Pinned::Transport => rsx! { PanelBottom { size: 19, color: "currentColor" } },
             }
+            span { style: "font-size:12px; font-weight:600;", "{label}" }
         }
     }
 }
