@@ -606,6 +606,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     // What is shown full screen, if anything, and the racks' settings
     // every view of them shares (`crate::closeup`).
     use_context_provider(crate::closeup::Closeups::new);
+    use_context_provider(crate::shell::Pins::new);
     // Record mode's performance view stands in for the top bar.
     let record_screen =
         move || mode() == session::modes::Mode::Record && view() == crate::shell::View::Performance;
@@ -866,6 +867,7 @@ fn SongViews(
     use_context_provider(|| session);
     let mode: Signal<session::modes::Mode> = use_context();
     rsx! {
+        crate::shell::PinnedProgress { view: view() }
         div {
             style: "position:relative; flex:1; min-height:0;",
             match view() {
@@ -900,6 +902,7 @@ fn SongViews(
                 },
             }
         }
+        crate::shell::PinnedTransport { view: view() }
     }
 }
 

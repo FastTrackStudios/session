@@ -106,6 +106,83 @@ impl View {
             Self::Mixer => "Mixer",
         }
     }
+
+    /// The word under the view's icon in the bottom bar: the name, cut to
+    /// a verb where the name is long.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Performance => "Perform",
+            Self::Daw => "Arrange",
+            other => other.name(),
+        }
+    }
+}
+
+/// What stays on screen over every view — the song's progress along the
+/// top, the performance transport along the foot — each a setting a
+/// button in the bottom bar (and a switch on the Setup page) turns on;
+/// a context the shell provides.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Pins {
+    pub progress: Signal<bool>,
+    pub transport: Signal<bool>,
+}
+
+impl Pins {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            progress: Signal::new(false),
+            transport: Signal::new(false),
+        }
+    }
+}
+
+impl Default for Pins {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Whether a view carries the progress bar and the transport already
+/// (Performance, Overview), or is not about the song (Setup).
+const fn carries_its_own(view: View) -> bool {
+    matches!(view, View::Performance | View::Overview | View::Setup)
+}
+
+/// The song's progress bar over a view, when it is pinned: where the song
+/// is and what comes next, whatever else is being looked at — and a
+/// section pressed on it plays from there, from any view.
+#[component]
+pub fn PinnedProgress(view: View) -> Element {
+    let pinned = try_use_context::<Pins>().is_some_and(|pins| (pins.progress)());
+    if !pinned || carries_its_own(view) {
+        return rsx! {};
+    }
+    rsx! {
+        div {
+            style: "flex:none; padding:8px 10px 0;",
+            crate::progress::ProgressBar { height: "3rem".to_owned() }
+        }
+    }
+}
+
+/// The performance transport under a view, when it is pinned: back a
+/// section, play, loop (record, in Record mode), on a section.
+#[component]
+pub fn PinnedTransport(view: View) -> Element {
+    let pinned = try_use_context::<Pins>().is_some_and(|pins| (pins.transport)());
+    let record = try_use_context::<Signal<Mode>>().is_some_and(|mode| mode() == Mode::Record);
+    if !pinned || carries_its_own(view) {
+        return rsx! {};
+    }
+    rsx! {
+        div {
+            style: "flex:none; padding:6px 10px 8px;",
+            crate::progress::TransportButtons { record }
+        }
+    }
 }
 
 /// The app's outer box, inset from a phone's or a tablet's safe areas
@@ -124,19 +201,28 @@ pub const BOTTOM_H: f64 = 34.0;
 /// The bottom bar: the views as icons across the foot of the window, the
 /// way the top bar runs across its head — Logic's iPad layout, where what
 /// you look at is picked at the bottom and what you play at the top.
-/// Icons alone, as Logic's are, with the view's name for a tooltip; the
-/// views in the middle, Setup to the right on its own. The left is kept
-/// for the panels a view can show beside itself (the inspector).
+/// Each view an icon and its word; the views in the middle, Setup to the
+/// right on its own, an icon alone. The left is kept for the panels a
+/// view can show beside itself (the inspector).
+///
+/// On a touchscreen there is no Overview: it is every view at once, which
+/// a tablet or a phone has no room for, and each of its parts is a view
+/// of its own here.
 #[component]
 pub fn BottomBar(view: Signal<View>) -> Element {
-    let button = move |each: View| {
+    let touch = crate::touch::use_touch();
+    let pins = try_use_context::<Pins>();
+    let button = move |each: View, label: bool| {
         rsx! {
             button {
                 key: "{each.name()}",
                 title: each.name(),
-                style: bottom_button(view() == each),
+                style: bottom_button(view() == each, label),
                 onclick: move |_| view.set(each),
                 ViewIcon { view: each }
+                if label {
+                    span { style: "font-size:12px; font-weight:600;", "{each.label()}" }
+                }
             }
         }
     };
@@ -147,29 +233,73 @@ pub fn BottomBar(view: Signal<View>) -> Element {
             div { style: "flex:1;" }
             div {
                 style: "flex:none; display:flex; align-items:center; gap:6px;",
-                for each in View::ALL.into_iter().filter(|v| *v != View::Setup) {
-                    {button(each)}
+                for each in View::ALL
+                    .into_iter()
+                    .filter(|v| *v != View::Setup && !(touch && *v == View::Overview))
+                {
+                    {button(each, true)}
                 }
             }
             div {
-                style: "flex:1; display:flex; justify-content:flex-end;",
-                {button(View::Setup)}
+                style: "flex:1; display:flex; justify-content:flex-end; align-items:center; gap:6px;",
+                if let Some(pins) = pins {
+                    PinButton { on: pins.progress, what: Pinned::Progress }
+                    PinButton { on: pins.transport, what: Pinned::Transport }
+                    div { style: "width:1px; height:18px; background:{RULE}; margin:0 4px;" }
+                }
+                {button(View::Setup, false)}
             }
         }
     }
 }
 
-/// A bottom-bar button: a grey icon, or the view showing's, white on a
-/// light square.
-fn bottom_button(on: bool) -> String {
+/// What a pin button in the bottom bar pins.
+#[derive(Clone, Copy, PartialEq)]
+enum Pinned {
+    Progress,
+    Transport,
+}
+
+/// A bottom-bar toggle: the progress bar or the transport over every view.
+#[component]
+fn PinButton(on: Signal<bool>, what: Pinned) -> Element {
+    use lucide_dioxus::{PanelBottom, PanelTop};
+    let mut on = on;
+    let lit = on();
+    let title = match what {
+        Pinned::Progress => "Song progress on every view",
+        Pinned::Transport => "Transport on every view",
+    };
+    rsx! {
+        button {
+            title,
+            style: bottom_button(lit, false),
+            onclick: move |_| on.toggle(),
+            match what {
+                Pinned::Progress => rsx! { PanelTop { size: 19, color: "currentColor" } },
+                Pinned::Transport => rsx! { PanelBottom { size: 19, color: "currentColor" } },
+            }
+        }
+    }
+}
+
+/// A bottom-bar button: a grey icon and its word, or the view showing's,
+/// white on a light pill.
+fn bottom_button(on: bool, label: bool) -> String {
     let (fg, bg) = if on {
         (TEXT, "#3a3d44")
     } else {
         (DIM, "transparent")
     };
+    let shape = if label {
+        "padding:0 12px 0 10px; gap:6px;"
+    } else {
+        "width:40px;"
+    };
     format!(
-        "width:40px; height:28px; display:flex; align-items:center; justify-content:center; \
-         border:none; border-radius:8px; background:{bg}; color:{fg}; cursor:pointer;"
+        "{shape} height:28px; display:flex; align-items:center; justify-content:center; \
+         border:none; border-radius:8px; background:{bg}; color:{fg}; cursor:pointer; \
+         font-family:inherit;"
     )
 }
 
@@ -229,6 +359,50 @@ pub fn TopBar(
     } else {
         "Mode"
     };
+    let controls = rsx! {
+        // A row: the transport, and anything the host puts beside it
+        // (the collaboration bar).
+        div {
+            style: "flex:none; display:flex; align-items:center;",
+            onmousedown: move |event| event.stop_propagation(),
+            {transport}
+        }
+        // Where the sound comes from: Engine / Cue / Remote.
+        AudioBadge { density }
+        // The mode, visible in every view.
+        div {
+            style: "position:relative; flex:none;",
+            onmousedown: move |event| event.stop_propagation(),
+            button {
+                style: "display:flex; align-items:center; gap:6px; height:26px; \
+                        padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
+                        background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer;",
+                onclick: move |_| picking.toggle(),
+                if !mode_label.is_empty() {
+                    span { style: "color:{DIM};", "{mode_label}" }
+                }
+                span { style: "font-weight:600;", "{mode().display_name()}" }
+            }
+            if picking() {
+                div {
+                    style: "position:absolute; right:0; top:30px; z-index:40; \
+                            min-width:160px; padding:4px; background:{BAR_BG}; \
+                            border:1px solid {RULE}; border-radius:8px; \
+                            box-shadow:0 8px 24px rgba(0,0,0,0.5);",
+                    for each in Mode::ALL {
+                        div {
+                            style: option(mode() == each),
+                            onclick: move |_| {
+                                mode.set(each);
+                                picking.set(false);
+                            },
+                            "{each.display_name()}"
+                        }
+                    }
+                }
+            }
+        }
+    };
     rsx! {
         div {
             style: "position:relative; height:{BAR_H}px; flex:none; display:flex; \
@@ -247,48 +421,7 @@ pub fn TopBar(
             },
             // The setlist, filling whatever the bar has left.
             SongTabs { on_pick, on_color }
-            // A row: the transport, and anything the host puts beside it
-            // (the collaboration bar).
-            div {
-                style: "flex:none; display:flex; align-items:center;",
-                onmousedown: move |event| event.stop_propagation(),
-                {transport}
-            }
-            // Where the sound comes from: Engine / Cue / Remote.
-            AudioBadge { density }
-            // The mode, visible in every view.
-            div {
-                style: "position:relative; flex:none;",
-                onmousedown: move |event| event.stop_propagation(),
-                button {
-                    style: "display:flex; align-items:center; gap:6px; height:26px; \
-                            padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
-                            background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer;",
-                    onclick: move |_| picking.toggle(),
-                    if !mode_label.is_empty() {
-                        span { style: "color:{DIM};", "{mode_label}" }
-                    }
-                    span { style: "font-weight:600;", "{mode().display_name()}" }
-                }
-                if picking() {
-                    div {
-                        style: "position:absolute; right:0; top:30px; z-index:40; \
-                                min-width:160px; padding:4px; background:{BAR_BG}; \
-                                border:1px solid {RULE}; border-radius:8px; \
-                                box-shadow:0 8px 24px rgba(0,0,0,0.5);",
-                        for each in Mode::ALL {
-                            div {
-                                style: option(mode() == each),
-                                onclick: move |_| {
-                                    mode.set(each);
-                                    picking.set(false);
-                                },
-                                "{each.display_name()}"
-                            }
-                        }
-                    }
-                }
-            }
+            {controls}
         }
     }
 }

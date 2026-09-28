@@ -18,6 +18,7 @@ pub fn SetupView(
     on_pick: Option<EventHandler<usize>>,
 ) -> Element {
     let setlist = try_use_context::<Signal<Setlist>>();
+    let pins = try_use_context::<crate::shell::Pins>();
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; right:0; bottom:0; overflow:auto; \
@@ -31,6 +32,22 @@ pub fn SetupView(
                     },
                 }
             }
+            if let Some(pins) = pins {
+                Panel { title: "Display".to_owned(), width: "minmax(280px, 0.6fr)".to_owned(),
+                    Switch {
+                        on: pins.progress,
+                        label: "Song progress on every view",
+                        detail: "The sections across the top of the Arrange, Chart, Lyrics \
+                                 and Mixer views too — press one to play from it.",
+                    }
+                    Switch {
+                        on: pins.transport,
+                        label: "Transport on every view",
+                        detail: "Back, Play, Loop and Advance along the foot of every view, \
+                                 as Perform has them.",
+                    }
+                }
+            }
             Panel { title: "Routing".to_owned(), width: "minmax(280px, 0.6fr)".to_owned(),
                 div {
                     style: "color:{DIM}; line-height:1.6;",
@@ -42,6 +59,39 @@ pub fn SetupView(
                         "Not wired yet — the browser plays one stereo output, and the \
                          desktop engine's device routing is next."
                     }
+                }
+            }
+        }
+    }
+}
+
+/// A setting that is on or off: its words, and a switch a finger can hit.
+#[component]
+fn Switch(on: Signal<bool>, label: &'static str, detail: &'static str) -> Element {
+    let mut signal = on;
+    let lit = signal();
+    let (track, knob) = if lit {
+        ("#2563eb", "22px")
+    } else {
+        ("#3a3d44", "2px")
+    };
+    rsx! {
+        button {
+            style: "width:100%; display:flex; align-items:center; gap:14px; padding:6px 0; \
+                    border:none; background:transparent; color:{TEXT}; text-align:left; \
+                    font-family:inherit; cursor:pointer;",
+            onclick: move |_| signal.toggle(),
+            div {
+                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;",
+                span { style: "font-size:13px; font-weight:600;", "{label}" }
+                span { style: "font-size:12px; color:{DIM}; line-height:1.5;", "{detail}" }
+            }
+            div {
+                style: "position:relative; flex:none; width:44px; height:24px; border-radius:12px; \
+                        background:{track};",
+                div {
+                    style: "position:absolute; top:2px; left:{knob}; width:20px; height:20px; \
+                            border-radius:10px; background:#f3f4f6;",
                 }
             }
         }

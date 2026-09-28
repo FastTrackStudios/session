@@ -73,6 +73,7 @@ pub fn Shell() -> Element {
     // What is shown full screen, if anything, and the racks' settings
     // every view of them shares (`session_daw::closeup`).
     use_context_provider(session_daw::closeup::Closeups::new);
+    use_context_provider(session_daw::shell::Pins::new);
     // The lyrics' Audience / Performer and layer, held across songs.
     use_context_provider(session_daw::lyrics_panel::LyricsChoice::new);
     // The songs, as the launch opened them — a signal from here on, which
@@ -310,6 +311,7 @@ fn SongViews(
     let mode: Signal<session::modes::Mode> = use_context();
     let record_mode = move || mode() == session::modes::Mode::Record;
     rsx! {
+        session_daw::shell::PinnedProgress { view: view() }
         div {
             style: "position:relative; flex:1; min-height:0;",
             match view() {
@@ -339,6 +341,7 @@ fn SongViews(
                 },
             }
         }
+        session_daw::shell::PinnedTransport { view: view() }
     }
 }
 
