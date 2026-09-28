@@ -102,6 +102,9 @@ pub const BUTTON: (f64, f64) = (21.0, 20.0);
 /// Between the two, so they read as two controls.
 pub const BUTTON_GAP: f64 = 1.0;
 
+/// The space between the track number and the icon under it, in the rail.
+const ICON_GAP: f64 = 4.0;
+
 /// The compact panel's name field: the knob and the gutter it gave up are
 /// the name's.
 const NAMES_FIELD_W: f64 = 112.0;
@@ -427,6 +430,16 @@ pub fn draw_row(
     // the space that is left, and gives way entirely when a folder's
     // mark has taken the rail — the mark is the fact worth keeping when
     // only one of the two fits.
+    // And under the number, the track's icon: what it is, at a glance —
+    // the folder's mark, the number, then the instrument, down the rail.
+    // Only where the row has the height for both; otherwise the number.
+    let icon = (rail - 6.0).min(16.0);
+    let with_icon = h - mark_h >= 11.0 + ICON_GAP + icon + 6.0;
+    let group = if with_icon {
+        11.0 + ICON_GAP + icon
+    } else {
+        0.0
+    };
     if h - mark_h >= 11.0 {
         // Sized and centred to sit INSIDE the rail.
         //
@@ -438,15 +451,34 @@ pub fn draw_row(
         let number = track.index.saturating_add(1).to_string();
         let (number, size) = font.fit(&number, 11.0, 6.0, rail - 3.0);
         let width = font.width(&number, size);
+        // With the icon under it, the two are centred together.
+        let middle = y + mark_h + (h - mark_h - group) / 2.0;
+        let baseline = if with_icon {
+            middle + 9.0
+        } else {
+            middle + f64::from(size) / 3.0
+        };
         glyphs(
             scene,
             font,
             ink_on(folder_band(palette, track)),
             &number,
             indent + (rail - width) / 2.0,
-            y + mark_h + (h - mark_h) / 2.0 + f64::from(size) / 3.0,
+            baseline,
             size,
         );
+        if with_icon {
+            // In the number's ink: on the rail's own colour, a lifted
+            // track colour would all but vanish.
+            let top = middle + 11.0 + ICON_GAP;
+            let left = indent + (rail - icon) / 2.0;
+            crate::track_icon::paint(
+                scene,
+                crate::track_icon::Icon::of(&track.name, track.is_folder),
+                vello::kurbo::Rect::new(left, top, left + icon, top + icon),
+                ink_on(folder_band(palette, track)),
+            );
+        }
     }
 
     match density {
@@ -553,28 +585,8 @@ fn row_one(
     // wrapped or shrunk — REAPER truncates here too. The type shrinks
     // with the row rather than being squashed with it: a flattened glyph
     // is unreadable where a smaller one is merely small.
-    let mut name_x = tcp.name_x() + indent;
-    let mut name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
-    // The compact panel's icon, first in the field, where Logic puts it:
-    // what the track is, at a glance, in its colour, before its name.
-    if tcp.compact && field_h >= 14.0 {
-        let side = (field_h - 6.0).clamp(10.0, 18.0);
-        let left = field_x + 8.0;
-        let at = vello::kurbo::Rect::new(
-            left,
-            field_top + (field_h - side) / 2.0,
-            left + side,
-            field_top + (field_h + side) / 2.0,
-        );
-        crate::track_icon::paint(
-            scene,
-            crate::track_icon::Icon::of(&track.name, track.is_folder),
-            at,
-            icon_ink(palette, track),
-        );
-        name_x += side + 6.0;
-        name_w = (name_w - side - 6.0).max(0.0);
-    }
+    let name_x = tcp.name_x() + indent;
+    let name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
     let ink = if track.selected {
         palette.text
     } else {

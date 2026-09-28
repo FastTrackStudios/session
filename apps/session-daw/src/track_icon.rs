@@ -264,6 +264,27 @@ mod tests {
     }
 
     #[test]
+    fn no_icon_has_a_point_that_is_not_a_number() {
+        use vello::kurbo::PathEl;
+        for icon in Icon::ALL {
+            for path in super::paths(icon) {
+                for el in path.elements() {
+                    let points: Vec<vello::kurbo::Point> = match *el {
+                        PathEl::MoveTo(p) | PathEl::LineTo(p) => vec![p],
+                        PathEl::QuadTo(a, b) => vec![a, b],
+                        PathEl::CurveTo(a, b, c) => vec![a, b, c],
+                        PathEl::ClosePath => vec![],
+                    };
+                    assert!(
+                        points.iter().all(|p| p.x.is_finite() && p.y.is_finite()),
+                        "{icon:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn every_icon_has_something_to_draw() {
         for icon in Icon::ALL {
             assert!(!super::paths(icon).is_empty(), "{icon:?}");
