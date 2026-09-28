@@ -28,6 +28,9 @@ use crate::song_stream::{FetchGuard, Keep, ShareSource, SongSource, StreamedSong
 
 /// A setlist in an org's library, as [`setlists`] lists them.
 pub use session_library::Setlist as LibrarySetlist;
+/// A song in an org's library, and what a list is for — for the window's
+/// list editor.
+pub use session_library::{Library, ListKind, Song as LibrarySong};
 
 /// A set Task keeps, to stream in.
 pub enum Remote {
@@ -50,6 +53,23 @@ pub enum Remote {
 /// The library could not be reached, or refused.
 pub fn setlists(library: &session_library::Library) -> eyre::Result<Vec<session_library::Setlist>> {
     crate::open::engine_runtime()?.block_on(library.setlists())
+}
+
+/// `work` against the library, to its end: what a window calls on a
+/// thread of its own to change its lists (see `session_library::Library`'s
+/// `create_list`, `set_songs` and the rest).
+///
+/// # Errors
+///
+/// The engine's runtime did not start, or `work` failed.
+pub fn with_library<T, F>(
+    library: &session_library::Library,
+    work: impl FnOnce(session_library::Library) -> F,
+) -> eyre::Result<T>
+where
+    F: std::future::Future<Output = eyre::Result<T>>,
+{
+    crate::open::engine_runtime()?.block_on(work(library.clone()))
 }
 
 /// Open `remote`'s songs into this window's engine, the first current, and

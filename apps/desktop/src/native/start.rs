@@ -27,16 +27,16 @@ use session_daw::setlist::Setlist;
 use session_daw::stream_set::{LibrarySetlist, Remote};
 use session_daw::task_account::{self, Account, Started};
 
-const BG: &str = "#0f1012";
-const BAR: &str = "#17181b";
-const RULE: &str = "#2a2c31";
-const TEXT: &str = "#e5e7eb";
-const DIM: &str = "#8b9099";
-const ACCENT: &str = "#3aa0ff";
-const WARN: &str = "#e3b341";
+pub(super) const BG: &str = "#0f1012";
+pub(super) const BAR: &str = "#17181b";
+pub(super) const RULE: &str = "#2a2c31";
+pub(super) const TEXT: &str = "#e5e7eb";
+pub(super) const DIM: &str = "#8b9099";
+pub(super) const ACCENT: &str = "#3aa0ff";
+pub(super) const WARN: &str = "#e3b341";
 /// Room at the top: on macOS the window's traffic lights sit over the
 /// page (its title bar is transparent, as the shell's).
-const TOP: u32 = if cfg!(target_os = "macos") { 44 } else { 28 };
+pub(super) const TOP: u32 = if cfg!(target_os = "macos") { 44 } else { 28 };
 
 /// The public demo's live link (`SESSION_DEMO_LINK` at build time, as the
 /// site's /demo page takes it).
@@ -133,14 +133,16 @@ enum SignIn {
 
 /// Something loaded in the background.
 #[derive(Clone, PartialEq)]
-enum Load<T> {
+pub(super) enum Load<T> {
     Waiting,
     Ready(T),
     Failed(String),
 }
 
 /// `work` on a thread of its own; its answer, awaited.
-async fn off_thread<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+pub(super) async fn off_thread<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     let (done, answer) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let _ = done.send(work());
@@ -153,7 +155,7 @@ async fn off_thread<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static
 type OpenWork = Box<dyn FnOnce(&dyn Fn(Progress)) -> eyre::Result<Setlist> + Send>;
 
 /// An error for a person: the whole chain, in a few words.
-fn brief(e: &eyre::Report) -> String {
+pub(super) fn brief(e: &eyre::Report) -> String {
     session_daw::task_set::brief(&format!("{e:#}"))
 }
 
@@ -216,6 +218,9 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let mut orgs = use_signal(|| Load::<Vec<String>>::Waiting);
     let mut org = use_signal(|| None::<String>);
     let mut setlists = use_signal(|| Load::<Vec<LibrarySetlist>>::Waiting);
+    // The list editor, over the page; leaving it reads the lists again.
+    let mut managing = use_signal(|| false);
+    let mut reread = use_signal(|| 0_u32);
     // The signed-in person's orgs, and the chosen org's setlists, as they
     // change.
     let account = match sign_in() {
@@ -239,9 +244,9 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             }
         });
     }));
-    let for_setlists = account.clone().zip(org());
+    let for_setlists = account.clone().zip(org()).map(|(a, o)| (a, o, reread()));
     use_effect(use_reactive!(|for_setlists| {
-        let Some((account, org)) = for_setlists else {
+        let Some((account, org, _)) = for_setlists else {
             return;
         };
         setlists.set(Load::Waiting);
@@ -345,6 +350,56 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     // Opening: the loading screen, whole.
     if let Opening::Busy(progress) = opening() {
         return rsx! { Loading { progress } };
+    }
+    // Streaming one of the library's lists in, as the member signed in.
+    let mut play_list = move |account: Account, setlist: LibrarySetlist| {
+        let Some(org) = org() else { return };
+        let library = account.library(&org);
+        let name = account.name();
+        let first = setlist
+            .songs
+            .first()
+            .map(|s| s.title.clone())
+            .unwrap_or_default();
+        open_set(
+            Progress::Fetching {
+                title: first,
+                retry: None,
+            },
+            Box::new(move |progress| {
+                session_daw::stream_set::open(
+                    Remote::Library {
+                        library,
+                        setlist,
+                        name,
+                    },
+                    progress,
+                )
+            }),
+        );
+    };
+    // The list editor, whole.
+    if managing()
+        && let (Some(account), Some(slug)) = (account.clone(), org())
+    {
+        let lists = match setlists() {
+            Load::Ready(list) => list,
+            _ => Vec::new(),
+        };
+        return rsx! {
+            super::library::LibraryEditor {
+                library: account.library(&slug),
+                lists,
+                on_back: move |()| {
+                    managing.set(false);
+                    reread += 1;
+                },
+                on_play: move |setlist: LibrarySetlist| {
+                    managing.set(false);
+                    play_list(account.clone(), setlist);
+                },
+            }
+        };
     }
 
     rsx! {
@@ -521,21 +576,11 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                                 orgs: orgs(),
                                 org,
                                 setlists: setlists(),
-                                on_open: move |setlist: LibrarySetlist| {
-                                    let Some(org) = org() else { return };
-                                    let library = account.library(&org);
-                                    let name = account.name();
-                                    let first = setlist.songs.first().map(|s| s.title.clone()).unwrap_or_default();
-                                    open_set(
-                                        Progress::Fetching { title: first, retry: None },
-                                        Box::new(move |progress| {
-                                            session_daw::stream_set::open(
-                                                Remote::Library { library, setlist, name },
-                                                progress,
-                                            )
-                                        }),
-                                    );
+                                on_open: {
+                                    let account = account.clone();
+                                    move |setlist: LibrarySetlist| play_list(account.clone(), setlist)
                                 },
+                                on_manage: move |()| managing.set(true),
                                 on_sign_out: move |()| {
                                     task_account::sign_out();
                                     sign_in.set(SignIn::Out);
@@ -595,8 +640,11 @@ fn TaskLibrary(
     org: Signal<Option<String>>,
     setlists: Load<Vec<LibrarySetlist>>,
     on_open: EventHandler<LibrarySetlist>,
+    /// Open the list editor.
+    on_manage: EventHandler<()>,
     on_sign_out: EventHandler<()>,
 ) -> Element {
+    use session_daw::stream_set::ListKind;
     let who = account
         .session
         .email
@@ -626,17 +674,32 @@ fn TaskLibrary(
                 Card { span { style: "font-size:14px; color:{DIM};", "Finding your setlists…" } }
             },
             (_, Load::Ready(list)) if list.is_empty() => rsx! {
-                Card { span { style: "font-size:14px; color:{DIM};", "No setlists in this library yet." } }
+                Card { span { style: "font-size:14px; color:{DIM};", "No lists in this library yet — make a song list, then a setlist from it." } }
             },
             (_, Load::Ready(list)) => rsx! {
-                for setlist in list.clone() {
-                    SetlistCard {
-                        key: "{setlist.id}",
-                        setlist: setlist.clone(),
-                        on_press: move |()| on_open.call(setlist.clone()),
+                // Sets first: what is played. Then the song lists they are
+                // picked from — each can be played whole too.
+                for (kind, label) in [(ListKind::Set, "Setlists"), (ListKind::Songs, "Song lists")] {
+                    if list.iter().any(|l| l.kind == kind) {
+                        span {
+                            key: "{label}",
+                            style: "font-size:11px; font-weight:700; letter-spacing:0.06em; color:#6b7280; padding:4px 4px 0;",
+                            "{label.to_uppercase()}"
+                        }
+                        for setlist in list.iter().filter(|l| l.kind == kind).cloned() {
+                            SetlistCard {
+                                key: "{setlist.id}",
+                                setlist: setlist.clone(),
+                                on_press: move |()| on_open.call(setlist.clone()),
+                            }
+                        }
                     }
                 }
             },
+        }
+        div {
+            style: "display:flex; justify-content:flex-end;",
+            Pill { label: "Make and edit lists", primary: false, on_press: move |()| on_manage.call(()) }
         }
         div {
             style: "display:flex; align-items:center; gap:8px; padding:0 4px; font-size:12px; color:#6b7280;",
@@ -865,7 +928,7 @@ fn kind_of(path: &std::path::Path) -> String {
 
 /// A section's heading.
 #[component]
-fn Heading(label: String) -> Element {
+pub(super) fn Heading(label: String) -> Element {
     rsx! {
         span {
             style: "font-size:12px; font-weight:700; letter-spacing:0.08em; color:{DIM}; padding-left:4px;",
@@ -915,7 +978,7 @@ fn ListRow(first: bool, title: String, detail: String, on_press: EventHandler<()
 
 /// A rounded button: the primary one filled.
 #[component]
-fn Pill(label: String, primary: bool, on_press: EventHandler<()>) -> Element {
+pub(super) fn Pill(label: String, primary: bool, on_press: EventHandler<()>) -> Element {
     let (fg, bg, border) = if primary {
         ("#0b0c0e", ACCENT, ACCENT)
     } else {
@@ -932,7 +995,7 @@ fn Pill(label: String, primary: bool, on_press: EventHandler<()>) -> Element {
 }
 
 #[component]
-fn Chip(label: String, on: bool, on_press: EventHandler<()>) -> Element {
+pub(super) fn Chip(label: String, on: bool, on_press: EventHandler<()>) -> Element {
     let (fg, bg, border) = if on {
         (ACCENT, "#3aa0ff1f", "#3aa0ff66")
     } else {

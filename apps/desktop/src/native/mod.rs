@@ -18,6 +18,7 @@
 
 #[cfg(target_os = "ios")]
 mod ios_scene;
+mod library;
 mod shell;
 mod start;
 
