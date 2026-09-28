@@ -1006,6 +1006,39 @@ inherits = "release"
 incremental = true
 codegen-units = 256
 
+# The browser's app (`session-daw-web`): one module every visitor
+# downloads and compiles, so its size is paid on every first visit.
+# Whole-program LTO in one codegen unit lets LLVM drop what no path from
+# `main` reaches across crate boundaries, and `s` stops it trading size
+# for speed where speed does not matter (the UI, the parsers, the RPC).
+# Measured after wasm-opt -Oz (Sep 2026): release 27.6 MB (6.65 MB
+# brotli) → this 20.8 MB (5.55 MB).
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# Except the audio path — decode and mix run on the page's main thread
+# into an AudioWorklet, twenty-odd stems in real time — which stays at
+# full speed. These overrides do hold under fat LTO: without them the
+# module is 0.2 MB smaller, which is what they cost.
+[profile.wasm-release.package.audiocore-dsp]
+opt-level = 3
+[profile.wasm-release.package.daw-audio-graph]
+opt-level = 3
+[profile.wasm-release.package.daw-standalone]
+opt-level = 3
+[profile.wasm-release.package.fts-sample]
+opt-level = 3
+[profile.wasm-release.package.symphonia-core]
+opt-level = 3
+[profile.wasm-release.package.symphonia-format-ogg]
+opt-level = 3
+[profile.wasm-release.package.symphonia-codec-vorbis]
+opt-level = 3
+
 [profile.dev-dbg]
 inherits = "dev"
 debug = 2

@@ -14,6 +14,7 @@ files-client.workspace = true
 task-dial.workspace = true
 vox-core.workspace = true
 eyre.workspace = true
+futures-util.workspace = true
 # The library id rule (slugify) lives with the live session's code.
 session-sync = { path = "../sync" }
 # `sync` only: a page has no tokio runtime (timers are architect::platform).

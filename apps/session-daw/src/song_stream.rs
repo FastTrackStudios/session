@@ -46,6 +46,14 @@ pub trait SongSource: Send + Sync + 'static {
     fn chart(&self) -> Pending<eyre::Result<Option<String>>> {
         Box::pin(async { Ok(None) })
     }
+    /// Many whole documents in one request, when the source has one: each
+    /// path with its bytes, or `None` for a path to fetch on its own.
+    /// `None` altogether when it has no such request (or it failed) — the
+    /// caller reads them one by one.
+    fn read_many(&self, paths: Vec<String>) -> Pending<Option<Vec<(String, Option<Vec<u8>>)>>> {
+        let _ = paths;
+        Box::pin(async { None })
+    }
 }
 
 /// Where a song's files come from (see the native definition: here a
@@ -62,6 +70,14 @@ pub trait SongSource: 'static {
     /// (the library's) — it replaces the folder's `.kf`.
     fn chart(&self) -> Pending<eyre::Result<Option<String>>> {
         Box::pin(async { Ok(None) })
+    }
+    /// Many whole documents in one request, when the source has one: each
+    /// path with its bytes, or `None` for a path to fetch on its own.
+    /// `None` altogether when it has no such request (or it failed) — the
+    /// caller reads them one by one.
+    fn read_many(&self, paths: Vec<String>) -> Pending<Option<Vec<(String, Option<Vec<u8>>)>>> {
+        let _ = paths;
+        Box::pin(async { None })
     }
 }
 
@@ -252,6 +268,31 @@ impl ShareSource {
     }
 }
 
+/// A `docs` batch's records — `u8 status | u32le path length | path |
+/// u32le length | bytes`, one per path (Task's
+/// `share_documents_batch_handler`) — or `None` if the body is not one.
+fn batch_records(mut body: &[u8]) -> Option<Vec<(String, u8, Vec<u8>)>> {
+    fn take<'b>(body: &mut &'b [u8], n: usize) -> Option<&'b [u8]> {
+        let (head, rest) = body.split_at_checked(n)?;
+        *body = rest;
+        Some(head)
+    }
+    fn len(body: &mut &[u8]) -> Option<usize> {
+        let bytes: [u8; 4] = take(body, 4)?.try_into().ok()?;
+        usize::try_from(u32::from_le_bytes(bytes)).ok()
+    }
+    let mut out = Vec::new();
+    while !body.is_empty() {
+        let status = take(&mut body, 1)?[0];
+        let path_len = len(&mut body)?;
+        let path = String::from_utf8(take(&mut body, path_len)?.to_vec()).ok()?;
+        let bytes_len = len(&mut body)?;
+        let bytes = take(&mut body, bytes_len)?.to_vec();
+        out.push((path, status, bytes));
+    }
+    Some(out)
+}
+
 /// The media path whose audio rendition is the proxy at `proxy`
 /// (`Media/Proxies/Bass.ogg` → `Media/Bass.ogg`: a link streams the
 /// committed proxy beside a take by the take's stem), when it is one.
@@ -300,6 +341,29 @@ impl SongSource for ShareSource {
                 entries,
                 version: listed["commit"].as_str().map(str::to_owned),
             })
+        })
+    }
+
+    /// The link's `docs` batch: one POST for a whole song folder's small
+    /// files (a Task that has no such route answers 404/405, and the
+    /// caller reads them one by one).
+    fn read_many(&self, paths: Vec<String>) -> Pending<Option<Vec<(String, Option<Vec<u8>>)>>> {
+        let request = self
+            .http
+            .post(self.url("docs", ""))
+            // Plain text: a browser sends it without asking first.
+            .header(reqwest::header::CONTENT_TYPE, "text/plain")
+            .body(paths.join("\n"));
+        Box::pin(async move {
+            let response = request.send().await.ok()?.error_for_status().ok()?;
+            let body = response.bytes().await.ok()?;
+            let records = batch_records(&body)?;
+            Some(
+                records
+                    .into_iter()
+                    .map(|(path, status, bytes)| (path, (status == 0).then_some(bytes)))
+                    .collect(),
+            )
         })
     }
 
@@ -485,8 +549,12 @@ fn is_media(lower: &str) -> bool {
 /// The source lists nothing, or a file could not be fetched or kept.
 pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<StreamedSong> {
     use futures_util::{StreamExt as _, TryStreamExt as _};
-    /// Files fetched at once: each is a round trip.
-    const AT_ONCE: usize = 8;
+    /// Files fetched at once: each is a round trip, and most are a few
+    /// hundred bytes (a session's objects — one per MIDI item), so what
+    /// they cost is latency, not bandwidth. At 8 a prepared song's 138
+    /// objects took 17 round trips (four seconds in a browser); HTTP/2 and
+    /// /3 carry this many on one connection.
+    const AT_ONCE: usize = 32;
     let Listing {
         entries: list,
         version,
@@ -529,7 +597,50 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
     }
     let fetched = wanted.len();
     let docs = Docs::new(&source, &label, version.as_deref()).await;
-    let arrived: Vec<(PathBuf, Vec<u8>)> = futures_util::stream::iter(wanted)
+    // What is kept already, then the rest in one batch where the source
+    // has one, then whatever the batch did not bring, one by one.
+    let looked: Vec<((String, u64, PathBuf), Option<Vec<u8>>)> = futures_util::stream::iter(wanted)
+        .map(|want| {
+            let docs = &docs;
+            async move {
+                let kept = docs.cached(&want.0).await;
+                (want, kept)
+            }
+        })
+        .buffer_unordered(AT_ONCE)
+        .collect()
+        .await;
+    let mut arrived: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    let mut missing = Vec::new();
+    for (want, kept) in looked {
+        match kept {
+            Some(bytes) => arrived.push((want.2, bytes)),
+            None => missing.push(want),
+        }
+    }
+    let mut batched = 0;
+    if missing.len() > 1 {
+        let paths = missing.iter().map(|(path, ..)| path.clone()).collect();
+        if let Some(got) = source.read_many(paths).await {
+            let mut got: HashMap<String, Vec<u8>> = got
+                .into_iter()
+                .filter_map(|(path, bytes)| Some((path, bytes?)))
+                .collect();
+            let mut rest = Vec::new();
+            for (path, size, local) in missing {
+                match got.remove(&path) {
+                    Some(bytes) => {
+                        docs.store(&path, &bytes).await;
+                        batched += 1;
+                        arrived.push((local, bytes));
+                    }
+                    None => rest.push((path, size, local)),
+                }
+            }
+            missing = rest;
+        }
+    }
+    let one_by_one: Vec<(PathBuf, Vec<u8>)> = futures_util::stream::iter(missing)
         .map(|(path, size, local)| {
             let docs = &docs;
             async move { Ok::<_, eyre::Report>((local, docs.read(path, size).await?)) }
@@ -537,6 +648,7 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
         .buffer_unordered(AT_ONCE)
         .try_collect()
         .await?;
+    arrived.extend(one_by_one);
     for (local, bytes) in arrived {
         keep.write(&local, bytes)?;
     }
@@ -548,6 +660,7 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
         stream.files = list.len(),
         stream.fetched = fetched,
         stream.kept = docs.kept(),
+        stream.batched = batched,
         stream.proxies = proxies.len(),
         "song-stream: mirrored"
     );
@@ -567,34 +680,47 @@ pub async fn mirror(source: Arc<dyn SongSource>, keep: Keep) -> eyre::Result<Str
 /// its Cache Storage when the source says what version they are at — so a
 /// page opening the song again (a playground set starting over, a reload)
 /// fetches none of them until the song's files change.
+///
+/// A session's objects are cached by their own name whatever the version:
+/// each is named by the hash of its bytes, so a name read once is those
+/// bytes for good — in every song that shares it, at every commit.
 struct Docs<'a> {
     source: &'a Arc<dyn SongSource>,
     #[cfg(target_arch = "wasm32")]
-    cache: Option<(web_sys::Cache, String)>,
+    cache: Option<web_sys::Cache>,
+    /// Where this version's documents are kept in `cache`: `None` when the
+    /// source does not say which version it lists.
+    #[cfg(target_arch = "wasm32")]
+    versioned: Option<String>,
     kept: std::sync::atomic::AtomicUsize,
+}
+
+/// A content-addressed object's name, if `path` is one: `…/objects/sha256-…`.
+#[cfg(any(target_arch = "wasm32", test))]
+fn object_name(path: &str) -> Option<&str> {
+    let (_, name) = path.rsplit_once("/objects/")?;
+    (name.starts_with("sha256-") && !name.contains('/')).then_some(name)
 }
 
 impl<'a> Docs<'a> {
     #[allow(unused_variables)]
     async fn new(source: &'a Arc<dyn SongSource>, label: &str, version: Option<&str>) -> Docs<'a> {
         #[cfg(target_arch = "wasm32")]
-        let cache = match version {
-            Some(version) => CachedFetch::cache().await.ok().map(|cache| {
-                (
-                    cache,
-                    format!(
-                        "https://fts-cache.invalid/{}/docs/{}",
-                        safe_name(label),
-                        safe_name(version)
-                    ),
-                )
-            }),
-            None => None,
-        };
+        let cache = CachedFetch::cache().await.ok();
+        #[cfg(target_arch = "wasm32")]
+        let versioned = version.map(|version| {
+            format!(
+                "https://fts-cache.invalid/{}/docs/{}",
+                safe_name(label),
+                safe_name(version)
+            )
+        });
         Docs {
             source,
             #[cfg(target_arch = "wasm32")]
             cache,
+            #[cfg(target_arch = "wasm32")]
+            versioned,
             kept: std::sync::atomic::AtomicUsize::new(0),
         }
     }
@@ -604,30 +730,56 @@ impl<'a> Docs<'a> {
         self.kept.load(Ordering::Relaxed)
     }
 
-    async fn read(&self, path: String, size: u64) -> eyre::Result<Vec<u8>> {
+    /// Where `path` is kept in the cache, if it is kept at all.
+    #[cfg(target_arch = "wasm32")]
+    fn key(&self, path: &str) -> Option<String> {
+        match (object_name(path), &self.versioned) {
+            (Some(name), _) => Some(format!("https://fts-cache.invalid/objects/{name}")),
+            (None, Some(base)) => Some(format!("{base}/{}", url_path(path))),
+            (None, None) => None,
+        }
+    }
+
+    /// `path` from the cache, when it is there.
+    #[allow(clippy::unused_async, unused_variables)]
+    async fn cached(&self, path: &str) -> Option<Vec<u8>> {
         #[cfg(target_arch = "wasm32")]
-        if let Some((cache, base)) = &self.cache {
-            let key = format!("{base}/{}", url_path(&path));
-            if let Some(bytes) = cache_get(cache, &key).await {
+        if let (Some(cache), Some(key)) = (&self.cache, self.key(path)) {
+            let bytes = cache_get(cache, &key).await;
+            if bytes.is_some() {
                 self.kept.fetch_add(1, Ordering::Relaxed);
-                return Ok(bytes);
             }
-            let mut bytes = self
-                .source
-                .read(path, 0..size)
-                .await
-                .map_err(|e| eyre::eyre!(e))?;
-            if let Ok(response) = web_sys::Response::new_with_opt_u8_array(Some(&mut bytes)) {
-                // A cache that is full or refused only costs a fetch next time.
+            return bytes;
+        }
+        None
+    }
+
+    /// Keep `bytes` as `path`. A cache that is full or refused only costs
+    /// a fetch next time.
+    #[allow(clippy::unused_async, unused_variables)]
+    async fn store(&self, path: &str, bytes: &[u8]) {
+        #[cfg(target_arch = "wasm32")]
+        if let (Some(cache), Some(key)) = (&self.cache, self.key(path)) {
+            let mut owned = bytes.to_vec();
+            if let Ok(response) = web_sys::Response::new_with_opt_u8_array(Some(&mut owned)) {
                 let _ =
                     wasm_bindgen_futures::JsFuture::from(cache.put_with_str(&key, &response)).await;
             }
+        }
+    }
+
+    /// `path` whole: kept, else fetched and kept.
+    async fn read(&self, path: String, size: u64) -> eyre::Result<Vec<u8>> {
+        if let Some(bytes) = self.cached(&path).await {
             return Ok(bytes);
         }
-        self.source
-            .read(path, 0..size)
+        let bytes = self
+            .source
+            .read(path.clone(), 0..size)
             .await
-            .map_err(|e| eyre::eyre!(e))
+            .map_err(|e| eyre::eyre!(e))?;
+        self.store(&path, &bytes).await;
+        Ok(bytes)
     }
 }
 
@@ -1137,6 +1289,38 @@ impl Drop for FetchGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_docs_batch_reads_back_record_by_record() {
+        let mut body = Vec::new();
+        for (status, path, bytes) in [(0_u8, "Song.RPP", &b"<REAPER"[..]), (2, "take.txt", b"")] {
+            body.push(status);
+            body.extend_from_slice(&u32::try_from(path.len()).unwrap().to_le_bytes());
+            body.extend_from_slice(path.as_bytes());
+            body.extend_from_slice(&u32::try_from(bytes.len()).unwrap().to_le_bytes());
+            body.extend_from_slice(bytes);
+        }
+        assert_eq!(
+            batch_records(&body),
+            Some(vec![
+                ("Song.RPP".to_owned(), 0, b"<REAPER".to_vec()),
+                ("take.txt".to_owned(), 2, Vec::new()),
+            ])
+        );
+        body.pop();
+        assert_eq!(batch_records(&body), None, "a cut body is not a batch");
+    }
+
+    #[test]
+    fn only_a_sessions_hashed_objects_are_cached_by_name() {
+        assert_eq!(
+            object_name("Song.session/objects/sha256-0123abcd"),
+            Some("sha256-0123abcd")
+        );
+        assert_eq!(object_name("Song.session/Song.session"), None);
+        assert_eq!(object_name("Song.session/objects/notes.txt"), None);
+        assert_eq!(object_name("Media/Proxies/Bass.ogg.idx"), None);
+    }
 
     #[test]
     fn a_proxy_is_the_rendition_of_its_take_stem() {
