@@ -297,6 +297,12 @@ pub fn Mixer() -> Element {
         );
         widget.strips = Rc::clone(&strips);
         widget.redraw = crate::touch::redraw_hook();
+        // The racks' settings, shared with a close-up; and where the
+        // widget asks for one.
+        if let Some(closeups) = try_consume_context::<crate::closeup::Closeups>() {
+            widget.tone = Rc::clone(&closeups.tone);
+            widget.closeups = Some(closeups);
+        }
         dioxus_native_dom::CustomWidgetAttr::new(widget)
     });
 
@@ -312,6 +318,7 @@ pub fn Mixer() -> Element {
     let arrange_node = Rc::clone(&links.arrange_node);
     let refocus = use_hook(|| Rc::new(Cell::new(false)));
     let window = dioxus_native::use_window();
+    let asking = try_use_context::<crate::closeup::Closeups>();
     dioxus_native::use_window_event(move |event, _| match event {
         // A press here: hand the keyboard back to the arrangement. Not
         // from this event: the document is still borrowed while Blitz
@@ -350,6 +357,10 @@ pub fn Mixer() -> Element {
             scrolling.set((scrolling.get() - dx - dy).clamp(0.0, most));
         }
         winit::event::WindowEvent::RedrawRequested => {
+            // A close-up the widget asked for, shown.
+            if let Some(closeups) = &asking {
+                closeups.take_ask();
+            }
             if refocus.take()
                 && let Some(node) = arrange_node.borrow().clone()
             {
@@ -457,14 +468,20 @@ pub fn WebMixer(hidden: bool) -> Element {
     let scroll = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let content_w = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let element = use_hook(|| Rc::new(RefCell::new(None::<web_sys::HtmlElement>)));
+    let asking = try_use_context::<crate::closeup::Closeups>();
     let widget = use_hook(|| {
-        crate::web_host::HostedRef(Rc::new(RefCell::new(MixerWidget::new(
+        let mut widget = MixerWidget::new(
             links.clone(),
             Rc::clone(&scroll),
             Rc::clone(&content_w),
             Rc::clone(&live),
             Rc::clone(&touch),
-        ))))
+        );
+        if let Some(closeups) = try_consume_context::<crate::closeup::Closeups>() {
+            widget.tone = Rc::clone(&closeups.tone);
+            widget.closeups = Some(closeups);
+        }
+        crate::web_host::HostedRef(Rc::new(RefCell::new(widget)))
     });
     let slot = crate::web_host::ElementSlot(Rc::clone(&element));
     let arrange_node = Rc::clone(&links.arrange_node);
@@ -491,7 +508,18 @@ pub fn WebMixer(hidden: bool) -> Element {
         div {
             style: "position:absolute; top:0; left:0; right:0; bottom:0; overflow:hidden; \
                     background:{colors.surface};",
-            crate::web_host::WidgetCanvas { widget, panel: on_input, element: Some(slot), hidden }
+            crate::web_host::WidgetCanvas {
+                widget,
+                panel: on_input,
+                element: Some(slot),
+                hidden,
+                // A close-up the widget asked for, shown.
+                frame: move |()| {
+                    if let Some(closeups) = &asking {
+                        closeups.take_ask();
+                    }
+                },
+            }
         }
     }
 }
@@ -586,7 +614,12 @@ struct MixerWidget {
     /// The Tone rack: each track's EQ, compression and saturation
     /// settings (`crate::tone`), what its strip draws in the rack and what
     /// a grip edits.
-    tone: crate::tone::Store,
+    tone: Rc<crate::tone::Shared>,
+    /// The settings' generation the racks were last drawn at: an edit
+    /// elsewhere (a close-up) makes them stale.
+    tone_seen: u64,
+    /// Where a close-up is asked for ([`crate::closeup`]).
+    closeups: Option<crate::closeup::Closeups>,
     /// Each rack's cached picture and live meters, one per track: every
     /// rack is drawn live (so a fold or a scroll applies to all of them),
     /// from a cache an edit invalidates.
@@ -703,7 +736,9 @@ impl MixerWidget {
             targets,
             fling: None,
             redraw: None,
-            tone: crate::tone::Store::default(),
+            tone: Rc::default(),
+            tone_seen: 0,
+            closeups: None,
             spectra: std::collections::HashMap::new(),
             levels: std::collections::HashMap::new(),
             folds: crate::tone::Fold::rest(),
@@ -737,7 +772,7 @@ impl MixerWidget {
                 self.pointer = Pointer::default();
                 self.holds.clear();
                 // Every track a rack: its settings, and a live picture.
-                self.tone.seed(&self.rows);
+                self.tone.store.borrow_mut().seed(&self.rows);
                 for (track, _) in &self.rows {
                     self.spectra.entry(track.guid.clone()).or_default();
                 }
@@ -919,7 +954,8 @@ impl MixerWidget {
         let panel =
             crate::tone::Panel::of(mixer.strip(row)?.rack_rect()?, left).up(self.rack_scroll);
         let track = self.track_at(row)?;
-        let tone = self.tone.get(&track.guid)?;
+        let store = self.tone.store.borrow();
+        let tone = store.get(&track.guid)?;
         let grip = crate::tone::grip_at(
             tone.panels(rack_panels()),
             tone,
@@ -977,16 +1013,27 @@ impl MixerWidget {
         });
         self.rack_pressed = Some((row, grip, now));
         if grip.is_switch() {
-            if let Grip::Phase(phase) = grip {
+            if let Grip::Zoom(which) = grip {
+                // The panel, full screen: asked of the shell, which the
+                // host carries out on its next frame.
+                if let (Some(closeups), Some(track)) = (&self.closeups, self.track_at(row)) {
+                    closeups.ask(crate::closeup::Closeup::Rack {
+                        guid: guid.clone(),
+                        name: track.name.clone(),
+                        which,
+                    });
+                    self.redraw();
+                }
+            } else if let Grip::Phase(phase) = grip {
                 // What the mixer is showing, not a setting of the track.
                 self.folds.toggle(&guid, phase);
                 for analyser in self.spectra.values_mut() {
                     analyser.invalidate();
                 }
-            } else if let Some(tone) = self.tone.edit(&guid) {
-                toggle(tone, grip);
-                self.invalidate_rack(&guid);
+            } else if let Some(tone) = self.tone.store.borrow_mut().edit(&guid) {
+                crate::tone::toggle(tone, grip);
             }
+            self.invalidate_rack(&guid);
             self.holds.push((
                 id,
                 Hold::Press {
@@ -997,7 +1044,7 @@ impl MixerWidget {
             return true;
         }
         if again {
-            if let Some(tone) = self.tone.edit(&guid) {
+            if let Some(tone) = self.tone.store.borrow_mut().edit(&guid) {
                 crate::tone::reset(tone, grip);
             }
             self.invalidate_rack(&guid);
@@ -1013,6 +1060,8 @@ impl MixerWidget {
         if let Grip::Band(which, index) = grip
             && self
                 .tone
+                .store
+                .borrow_mut()
                 .edit(&guid)
                 .is_some_and(|tone| crate::tone::dot_click(tone, which, index, mods))
         {
@@ -1048,7 +1097,7 @@ impl MixerWidget {
             return;
         };
         let folded = self.folds.of(&guid);
-        if let Some(tone) = self.tone.edit(&guid) {
+        if let Some(tone) = self.tone.store.borrow_mut().edit(&guid) {
             let panels = tone.panels(rack_panels());
             crate::tone::drag(tone, grip, panels, panel, folded, Mods::default(), dx, dy);
         }
@@ -1066,6 +1115,8 @@ impl MixerWidget {
             .map(|(track, _)| {
                 crate::tone::scroll_span(
                     self.tone
+                        .store
+                        .borrow()
                         .get(&track.guid)
                         .map_or(rack_panels(), |t| t.panels(rack_panels())),
                     mixer.rack_h,
@@ -1075,11 +1126,15 @@ impl MixerWidget {
             .fold(0.0_f64, f64::max)
     }
 
-    /// Throw a track's cached rack away: its settings moved.
+    /// Throw a track's cached rack away: its settings moved. Said to the
+    /// shared settings too, so a close-up of the same panel follows —
+    /// and taken as seen here, since this strip is already redrawn.
     fn invalidate_rack(&mut self, guid: &str) {
         if let Some(analyser) = self.spectra.get_mut(guid) {
             analyser.invalidate();
         }
+        self.tone.edited();
+        self.tone_seen = self.tone.generation();
     }
 
     /// The same, for the tracks under some strips' grips.
@@ -1243,7 +1298,7 @@ impl MixerWidget {
             }
             UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => {
                 let (x, y) = at(e);
-                self.pressed(e.id, e.is_finger(), x, y, rack_mods(e));
+                self.pressed(e.id, e.is_finger(), x, y, crate::closeup::mods_of(e));
                 true
             }
             UiEvent::PointerUp(e) if e.button == MouseEventButton::Main => {
@@ -1455,38 +1510,6 @@ fn rack_panels() -> &'static [crate::tone::Which] {
     crate::tone::panels_for(session::mix_phases::MixPhase::Tone)
 }
 
-/// A pointer's modifiers, as the rack's editing reads them: Alt, Shift,
-/// and Ctrl or Command.
-fn rack_mods(e: &blitz_traits::events::BlitzPointerEvent) -> Mods {
-    use blitz_traits::events::Modifiers;
-    Mods::new(
-        e.mods.contains(Modifiers::ALT),
-        e.mods.contains(Modifiers::SHIFT),
-        e.mods.contains(Modifiers::CONTROL) || e.mods.contains(Modifiers::META),
-    )
-}
-
-/// Flip a rack switch: the grips that are not values.
-fn toggle(tone: &mut crate::tone::Tone, grip: crate::tone::Grip) {
-    use crate::tone::{Grip, Which};
-    match grip {
-        Grip::Bypass(which) => tone.bypass.toggle(which),
-        // Clicking the zoom steps it on; the wheel walks it either way.
-        Grip::Scale(_) => tone.cycle_eq_range(),
-        // The machine glyph cycles the machine.
-        Grip::Family(Which::Sat) => tone.cycle_sat(),
-        Grip::Family(Which::Delay) => tone.delay.cycle_style(),
-        Grip::Family(Which::Reverb) => tone.reverb.cycle_algorithm(),
-        // A chip in the selector strip picks its family.
-        Grip::Choose(Which::Sat, i) => tone.choose_sat_family(i),
-        Grip::Choose(Which::Delay, i) => tone.delay.choose_family(i),
-        Grip::Choose(Which::Reverb, i) => tone.reverb.choose_family(i),
-        // A preset chip loads the preset: the whole rack follows.
-        Grip::Preset(i) => tone.load_preset(i),
-        _ => {}
-    }
-}
-
 /// What an edit does to the track it names, predicted here rather than
 /// waited for (the engine is in-process but not instant).
 fn predict(tracks: &mut [daw_proto::Track], edit: &Edit) {
@@ -1554,6 +1577,16 @@ impl MixerWidget {
         // working width, which turns the racks on, the mixer's own widths
         // open it further (`mcp::widths`). None selected, no racks — the
         // faders keep the whole height.
+        // An edit elsewhere — a close-up of one of these panels — leaves
+        // every cached rack stale.
+        if self.tone.generation() != self.tone_seen {
+            self.tone_seen = self.tone.generation();
+            for analyser in self.spectra.values_mut() {
+                analyser.invalidate();
+            }
+        }
+        let tone = Rc::clone(&self.tone);
+        let store = tone.store.borrow();
         let open = if self.links.fill {
             None
         } else {
@@ -1606,7 +1639,7 @@ impl MixerWidget {
                     touch_strips: self.touch.get(),
                     ..crate::settings::Settings::default()
                 },
-                &self.tone,
+                &store,
             ));
         }
         let Some(mixer) = self.mixer.as_ref() else {
@@ -1649,7 +1682,7 @@ impl MixerWidget {
             &self.clips,
             self.rack_scroll,
             &mut crate::overlay::Racks {
-                settings: &self.tone,
+                settings: &store,
                 history: &mut self.levels,
                 spectra: &mut self.spectra,
                 lit: self

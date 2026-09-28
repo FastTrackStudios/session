@@ -70,6 +70,9 @@ pub fn Shell() -> Element {
     // Touch mode: on where the screen is the pointer, switched in the
     // record view's menu.
     use_context_provider(session_daw::touch::Touch::detect);
+    // What is shown full screen, if anything, and the racks' settings
+    // every view of them shares (`session_daw::closeup`).
+    use_context_provider(session_daw::closeup::Closeups::new);
     // The lyrics' Audience / Performer and layer, held across songs.
     use_context_provider(session_daw::lyrics_panel::LyricsChoice::new);
     // The songs, as the launch opened them — a signal from here on, which
@@ -201,6 +204,7 @@ pub fn Shell() -> Element {
                     }
                 },
             }
+            session_daw::closeup::CloseupLayer {}
         };
     }
     rsx! {
@@ -257,6 +261,8 @@ pub fn Shell() -> Element {
             // The views, across the foot of the window as the transport is
             // across its head.
             session_daw::shell::BottomBar { view }
+            // Whatever is zoomed into, over all of it.
+            session_daw::closeup::CloseupLayer {}
         }
     }
 }

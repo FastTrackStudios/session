@@ -598,6 +598,9 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     use_context_provider(|| crate::record_view::PickSong(Callback::new(pick)));
     // Touch mode: on where the page's pointer is a finger.
     use_context_provider(crate::touch::Touch::detect);
+    // What is shown full screen, if anything, and the racks' settings
+    // every view of them shares (`crate::closeup`).
+    use_context_provider(crate::closeup::Closeups::new);
     // Record mode's performance view stands in for the top bar.
     let record_screen =
         move || mode() == session::modes::Mode::Record && view() == crate::shell::View::Performance;
@@ -627,6 +630,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                     }
                 },
             }
+            crate::closeup::CloseupLayer {}
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
@@ -671,6 +675,8 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
             // The views, across the foot of the page as the transport is
             // across its head.
             crate::shell::BottomBar { view }
+            // Whatever is zoomed into, over all of it.
+            crate::closeup::CloseupLayer {}
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
