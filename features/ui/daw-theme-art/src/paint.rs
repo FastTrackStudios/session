@@ -1308,16 +1308,41 @@ pub mod tcp {
         lit: Color,
         at: Interaction,
     ) -> Drawing {
-        let (w, h) = (21.0_f64, 20.0_f64);
+        gutter_button_sized(chrome, label, on, lit, at, (21.0, 20.0))
+    }
+
+    /// The same button at `size`: a touchscreen's, grown to fill the room
+    /// it has. The letter grows with it, from the measured button's 10 at
+    /// 20 high.
+    #[must_use]
+    pub fn gutter_button_sized(
+        chrome: &Chrome,
+        label: &str,
+        on: bool,
+        lit: Color,
+        at: Interaction,
+        (w, h): (f64, f64),
+    ) -> Drawing {
         let ink = ink_in(chrome, on.then_some(lit), at, false, 0.25);
         let mut drawing = Drawing::new(w, h);
-        drawing.fill(rect(0.0, 0.0, w, h, 3.0), ink.face);
+        let radius = (h * 0.15).max(3.0);
+        drawing.fill(rect(0.0, 0.0, w, h, radius), ink.face);
         drawing.stroke(
-            rect(0.5, 0.5, w - 1.0, h - 1.0, 3.0),
+            rect(0.5, 0.5, w - 1.0, h - 1.0, radius),
             ink.border,
             Stroke::new(1.0),
         );
-        drawing.text(label, w / 2.0, h / 2.0 + 3.5, 10.0, ink.text, Align::Centre);
+        let size = (h * 0.5).max(10.0);
+        #[expect(clippy::cast_possible_truncation, reason = "a type size")]
+        let points = size as f32;
+        drawing.text(
+            label,
+            w / 2.0,
+            h / 2.0 + size * 0.35,
+            points,
+            ink.text,
+            Align::Centre,
+        );
         drawing
     }
 

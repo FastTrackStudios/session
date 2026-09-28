@@ -80,6 +80,137 @@ pub struct MixerLinks {
 /// The finest grid division the ruler will draw.
 const FINEST: f64 = 1.0 / 16.0;
 
+/// `event` with its pointer position divided by `ui`: CSS pixels to the
+/// units the widget lays out in.
+fn in_units(event: &UiEvent, ui: f64) -> UiEvent {
+    let ui = ui.max(f64::EPSILON);
+    if (ui - 1.0).abs() < f64::EPSILON {
+        return event.clone();
+    }
+    #[expect(clippy::cast_possible_truncation, reason = "a coordinate")]
+    let scaled = |e: &blitz_traits::events::BlitzPointerEvent| {
+        let mut e = e.clone();
+        e.coords.client_x = (f64::from(e.coords.client_x) / ui) as f32;
+        e.coords.client_y = (f64::from(e.coords.client_y) / ui) as f32;
+        e
+    };
+    match event {
+        UiEvent::PointerMove(e) => UiEvent::PointerMove(scaled(e)),
+        UiEvent::PointerDown(e) => UiEvent::PointerDown(scaled(e)),
+        UiEvent::PointerUp(e) => UiEvent::PointerUp(scaled(e)),
+        UiEvent::PointerCancel(e) => UiEvent::PointerCancel(scaled(e)),
+        other => other.clone(),
+    }
+}
+
+/// A finger held on the lanes: its press, kept to play as a click if it
+/// turns out to be a tap; where it last was; whether it has become a
+/// scroll.
+struct Finger {
+    down: blitz_traits::events::BlitzPointerEvent,
+    last: (f64, f64),
+    scrolling: bool,
+    /// Pressed on the track panel: a sideways swipe there expands it or
+    /// folds it back to names.
+    on_panel: bool,
+    /// Swiped: the panel has been asked to change, and the rest of this
+    /// finger's gesture is spent.
+    swiped: bool,
+    /// Holding the play cursor's handle: the transport follows it.
+    scrubbing: bool,
+    /// How fast it is going, to throw the view when it lets go.
+    speed: crate::touch::Speed,
+}
+
+/// The track panel's grip: a pill standing on the panel's edge at `x`,
+/// centred on `y`.
+fn grip_rect(x: f64, y: f64) -> vello::kurbo::Rect {
+    const W: f64 = 14.0;
+    const H: f64 = 40.0;
+    vello::kurbo::Rect::new(x - W / 2.0, y - H / 2.0, x + W / 2.0, y + H / 2.0)
+}
+
+/// The grip itself: a dark pill with a light rule round it, and an arrow
+/// each way on it — the panel goes both ways.
+fn paint_grip(out: &mut Scene, rect: vello::kurbo::Rect) {
+    use anyrender::PaintScene as _;
+    use vello::kurbo::{BezPath, RoundedRect, Stroke};
+    use vello::peniko::{Color, Fill};
+    let pill = RoundedRect::from_rect(rect, rect.width() / 2.0);
+    out.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgb8(0x26, 0x28, 0x2d),
+        None,
+        &pill,
+    );
+    out.stroke(
+        &Stroke::new(1.0),
+        Affine::IDENTITY,
+        Color::from_rgb8(0x5a, 0x5f, 0x68),
+        None,
+        &pill,
+    );
+    let ink = Color::from_rgb8(0xc9, 0xcc, 0xd1);
+    let (cx, cy) = (rect.center().x, rect.center().y);
+    for (dir, dy) in [(-1.0_f64, -6.0_f64), (1.0, 6.0)] {
+        let mut arrow = BezPath::new();
+        arrow.move_to((cx - dir * 2.5, cy + dy - 4.0));
+        arrow.line_to((cx + dir * 2.5, cy + dy));
+        arrow.line_to((cx - dir * 2.5, cy + dy + 4.0));
+        out.stroke(
+            &Stroke::new(1.6)
+                .with_caps(vello::kurbo::Cap::Round)
+                .with_join(vello::kurbo::Join::Round),
+            Affine::IDENTITY,
+            ink,
+            None,
+            &arrow,
+        );
+    }
+}
+
+/// The play cursor's handle, standing on the cursor at `x` in the bars
+/// lane: a pin a finger can take hold of.
+fn handle_rect(x: f64) -> vello::kurbo::Rect {
+    const W: f64 = 14.0;
+    const H: f64 = 18.0;
+    let bottom = ruler::ruler_h() - 3.0;
+    vello::kurbo::Rect::new(x - W / 2.0, bottom - H, x + W / 2.0, bottom)
+}
+
+/// The handle itself: a light rounded tab, pointed at its foot where it
+/// meets the line.
+fn paint_handle(out: &mut Scene, rect: vello::kurbo::Rect) {
+    use anyrender::PaintScene as _;
+    use vello::kurbo::{BezPath, RoundedRect};
+    use vello::peniko::{Color, Fill};
+    let face = Color::from_rgb8(0xc9, 0xcc, 0xd1);
+    let body = RoundedRect::new(rect.x0, rect.y0, rect.x1, rect.y1 - 4.0, 3.0);
+    out.fill(Fill::NonZero, Affine::IDENTITY, face, None, &body);
+    let mut tip = BezPath::new();
+    tip.move_to((rect.x0, rect.y1 - 5.0));
+    tip.line_to((rect.x1, rect.y1 - 5.0));
+    tip.line_to((rect.center().x, rect.y1));
+    tip.close_path();
+    out.fill(Fill::NonZero, Affine::IDENTITY, face, None, &tip);
+}
+
+/// How far sideways, in CSS pixels, a finger on the track panel travels
+/// before it is a swipe that expands or folds it.
+const SWIPE: f64 = 36.0;
+
+/// How many rows a touchscreen's view opens with down its lanes.
+const ROWS_DOWN: f64 = 12.0;
+
+/// How tall a row opens at least, on a finger's screen: a fingertip.
+const OPEN_ROW_TOUCH: f64 = 44.0;
+/// How tall a row opens at least on a compact panel: a name you can read.
+const OPEN_ROW_COMPACT: f64 = 28.0;
+/// How wide a second opens at least on either, in CSS pixels: a bar of a
+/// song at 120 is two dozen pixels, an item a thing you can take hold of.
+const OPEN_PPS: f64 = 12.0;
+
 /// Where the view is, shared between the window and the widget.
 ///
 /// A plain cell rather than a signal. The paint happens inside Blitz's
@@ -162,6 +293,25 @@ pub struct ArrangementWidget {
     /// whole song across (`z x`) — asked once, on the first paint, when
     /// the rows have their places.
     fit_on_open: bool,
+    /// A finger held on the lanes, not yet a scroll or a tap
+    /// ([`ArrangementWidget::fingered`]).
+    finger: Option<Finger>,
+    /// The view still moving after a finger threw it.
+    fling: Option<crate::touch::Fling>,
+    /// Ask the host for another frame, for a fling: see
+    /// [`crate::touch::redraw_hook`].
+    redraw: Option<Rc<dyn Fn()>>,
+    /// Touch mode, as the panel was opened in.
+    touch: bool,
+    /// Where the play cursor's handle was last drawn, in the widget's
+    /// units: what a finger takes to scrub.
+    handle: Cell<Option<vello::kurbo::Rect>>,
+    /// Where the track panel's grip was last drawn: a finger on it slides
+    /// the panel open or shut.
+    grip: Cell<Option<vello::kurbo::Rect>>,
+    /// How much bigger the arrangement is drawn than laid out (touch
+    /// mode's zoom, or 1), shared with the panel.
+    ui: Rc<Cell<f64>>,
     /// How to plan the rows again, and the project as the engine has it
     /// (with the visibility this window has changed since): what a track
     /// shown or hidden re-plans from. `None` in a widget built without
@@ -386,6 +536,13 @@ impl ArrangementWidget {
             which: crate::which_key::Shared::default(),
             zooms: crate::zoom::Requests::default(),
             fit_on_open: true,
+            finger: None,
+            fling: None,
+            redraw: None,
+            touch: false,
+            handle: Cell::new(None),
+            grip: Cell::new(None),
+            ui: Rc::new(Cell::new(1.0)),
             replan: None,
             #[cfg(not(feature = "native"))]
             read_back: Rc::default(),
@@ -493,6 +650,29 @@ impl ArrangementWidget {
     #[must_use]
     pub const fn scene(&self) -> &Arrangement {
         &self.scene
+    }
+
+    /// Touch mode: the view opens with rows a finger can hit.
+    #[must_use]
+    pub fn with_touch(mut self, touch: bool) -> Self {
+        self.touch = touch;
+        self
+    }
+
+    /// How to ask the host for another frame, for a fling
+    /// ([`crate::touch::redraw_hook`]).
+    #[must_use]
+    pub fn with_redraw(mut self, redraw: Option<Rc<dyn Fn()>>) -> Self {
+        self.redraw = redraw;
+        self
+    }
+
+    /// Share the panel's touch zoom ([`crate::panel::ArrangementPanel::ui`]):
+    /// laid out in CSS pixels over it, drawn at it.
+    #[must_use]
+    pub fn with_ui(mut self, ui: Rc<Cell<f64>>) -> Self {
+        self.ui = ui;
+        self
     }
 
     /// Share the panel's shape with whoever toggles it.
@@ -765,6 +945,48 @@ impl ArrangementWidget {
         }
     }
 
+    /// The least zoom the opening view may have on each axis (across,
+    /// down).
+    ///
+    /// Fitting a forty-track session into an iPad's docked arrangement
+    /// made every row a hairline and every item a sliver: the whole song
+    /// on screen, and none of it usable. So on a finger's screen a row
+    /// opens at least [`OPEN_ROW_TOUCH`] tall, on a compact panel at least
+    /// [`OPEN_ROW_COMPACT`], and either way a second at least
+    /// [`OPEN_PPS`] wide; the rest is a scroll away. The full DAW view on
+    /// a desktop fits as it always has.
+    fn opening_floor(&self) -> (f64, f64) {
+        let ui = self.ui.get().max(f64::EPSILON);
+        let row = if self.touch {
+            // Twelve rows down the lanes, as Logic shows an iPad on its
+            // side: their frame is the widget less the ruler and the
+            // scrollbar, in on-screen pixels. Never under a fingertip.
+            let lanes = (self.size.1 - ruler::ruler_h() - crate::panel::BAR).max(0.0) * ui;
+            (lanes / ROWS_DOWN).max(OPEN_ROW_TOUCH)
+        } else if self.compact.get() {
+            OPEN_ROW_COMPACT
+        } else {
+            return (0.0, 0.0);
+        };
+        // The floors are on-screen sizes, and the view is laid out at the
+        // touch zoom's fraction of them (`ui`). The row that must reach `row` is
+        // the typical one, the median: a session's plan sizes its rows
+        // anywhere from a sliver to a working track, and neither the
+        // smallest nor the default stands for what is on screen.
+        let mut heights: Vec<f64> = self
+            .rows
+            .iter()
+            .map(|(track, _)| self.layout.height_of(track.height))
+            .collect();
+        heights.sort_by(f64::total_cmp);
+        let typical = heights
+            .get(heights.len() / 2)
+            .copied()
+            .unwrap_or(crate::layout::CONTROL_ROW)
+            .max(1.0);
+        (OPEN_PPS / ui / crate::studio::PPS, row / ui / typical)
+    }
+
     /// What the widget wants done, for the window to drain.
     #[must_use]
     pub fn edits(&self) -> Rc<RefCell<Vec<crate::engine::Edit>>> {
@@ -906,6 +1128,13 @@ impl ArrangementWidget {
             crate::hit::Target::Item { index, .. } => Some(index),
             _ => None,
         }
+    }
+
+    /// The play cursor to the time under `x`, as a finger drags its
+    /// handle.
+    fn scrub(&self, x: f64) {
+        let view = self.viewport(self.size.0, self.size.1);
+        crate::engine::transport(crate::engine::Move::Seek, self.seconds_at(x, view));
     }
 
     /// The time under an x in the widget's coordinates.
@@ -1308,6 +1537,10 @@ impl ArrangementWidget {
     /// One input event, in the widget's own coordinates: what Blitz's
     /// `Widget::handle_event` calls, and what the web host calls.
     pub fn event(&mut self, event: &UiEvent) {
+        // In the units the widget lays out in: the host's CSS pixels over
+        // the touch zoom.
+        let scaled = in_units(event, self.ui.get());
+        let event = &scaled;
         // What a press here would do, asked BEFORE the press is taken: a
         // razor starts as an area under the pointer, which would then
         // answer as the area rather than as the razor being drawn.
@@ -1321,8 +1554,17 @@ impl ArrangementWidget {
             }
             _ => None,
         };
-        let changed = !self.stands_down(event) && self.took(event);
+        let mut changed =
+            !self.stands_down(event) && self.fingered(event).unwrap_or_else(|| self.took(event));
         self.point(event, pressed);
+        // A finger has no hover: once it lifts, nothing is under it. Left
+        // as it was, the name it last touched kept the underline that
+        // says "double-click to rename".
+        if let UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) = event
+            && e.is_finger()
+        {
+            changed |= self.pointer.hover(None);
+        }
         self.dirty.set(changed);
     }
 
@@ -1335,16 +1577,63 @@ impl ArrangementWidget {
             self.previews_seen = generation;
             self.recut();
         }
-        let scene = self.draw(width, height, scale);
-        if std::mem::take(&mut self.fit_on_open) {
-            for command in [
-                crate::zoom::Command::FitTracks,
-                crate::zoom::Command::Project,
-            ] {
-                if let Some(request) = self.zoom_request(command) {
-                    self.zooms.borrow_mut().push(request);
+        // Blitz hands a widget its size in device pixels and the pointer in
+        // CSS pixels; the page hands both in CSS pixels (and `scale` 1).
+        // Laid out in CSS pixels, so a press lands on what is drawn under
+        // it, then drawn at the device's scale. Drawing device pixels as if
+        // they were CSS put a 2x screen's arrangement at half size, and
+        // every press twice as far along as what it seemed to hit.
+        // And in touch mode, bigger again ([`crate::touch::ARRANGE_ZOOM`]):
+        // laid out that much smaller, drawn that much bigger, so every
+        // button, lane and name grows together and a press still lands on
+        // what it hits.
+        let scale = scale.max(f64::EPSILON) * self.ui.get().max(f64::EPSILON);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a widget's size"
+        )]
+        let (css_w, css_h) = (
+            (f64::from(width) / scale).round() as u32,
+            (f64::from(height) / scale).round() as u32,
+        );
+        // A thrown view's next step, to the panel as a scroll; the panel
+        // stops it at the ends.
+        if let Some(fling) = self.fling.as_mut() {
+            let ((dx, dy), going) = fling.step();
+            self.zooms
+                .borrow_mut()
+                .push(crate::zoom::Request::ScrollBy { dx, dy });
+            if going {
+                self.dirty.set(true);
+                if let Some(redraw) = &self.redraw {
+                    redraw();
                 }
+            } else {
+                self.fling = None;
             }
+        }
+        let drawn = self.draw(css_w, css_h, scale);
+        let scene = if (scale - 1.0).abs() < f64::EPSILON {
+            drawn
+        } else {
+            let mut scene = Scene::new();
+            anyrender::PaintScene::append_scene(&mut scene, drawn, Affine::scale(scale));
+            scene
+        };
+        if std::mem::take(&mut self.fit_on_open) {
+            // The whole song and every row, as far as they fit readably.
+            let framed = |command| match self.zoom_request(command) {
+                Some(crate::zoom::Request::Frame { time, rows, .. }) => (time, rows),
+                _ => (None, None),
+            };
+            let (_, rows) = framed(crate::zoom::Command::FitTracks);
+            let (time, _) = framed(crate::zoom::Command::Project);
+            self.zooms.borrow_mut().push(crate::zoom::Request::Open {
+                time,
+                rows,
+                floor: self.opening_floor(),
+            });
         }
         scene
     }
@@ -1419,6 +1708,173 @@ impl ArrangementWidget {
     /// The answer is whether the picture changed. Most moves do not: a
     /// pointer crossing the panel raises an event per pixel and changes
     /// which control it is on perhaps twice.
+    /// A finger, before the mouse's handling: on a lane, the ruler or a
+    /// track's name, a press is held back — dragged past
+    /// [`crate::touch::SLOP`] it scrolls the view, and let go where it
+    /// landed it is the click it would have been, played then. A mouse
+    /// press there moves the cursor at once and drags out a selection;
+    /// a finger that did would make every scroll an edit. On an item or a
+    /// control it is a press like any other, so items still drag.
+    ///
+    /// One finger at a time: a second one down while the first is held is
+    /// ignored, rather than starting an edit under the first.
+    fn fingered(&mut self, event: &UiEvent) -> Option<bool> {
+        let at = |e: &blitz_traits::events::BlitzPointerEvent| {
+            (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
+        };
+        match event {
+            UiEvent::PointerDown(e) if e.is_finger() => {
+                if self.finger.is_some() {
+                    return Some(true);
+                }
+                let (x, y) = at(e);
+                // On the play cursor's handle, give or take a fingertip:
+                // a scrub.
+                if self
+                    .handle
+                    .get()
+                    .is_some_and(|h| h.inflate(10.0, 8.0).contains((x, y)))
+                {
+                    self.fling = None;
+                    self.finger = Some(Finger {
+                        down: e.clone(),
+                        last: (x, y),
+                        scrolling: false,
+                        on_panel: false,
+                        swiped: false,
+                        scrubbing: true,
+                        speed: crate::touch::Speed::default(),
+                    });
+                    self.scrub(x);
+                    return Some(true);
+                }
+                // On the track panel's grip: a swipe of the panel, whatever
+                // is under it.
+                if self
+                    .grip
+                    .get()
+                    .is_some_and(|g| g.inflate(10.0, 10.0).contains((x, y)))
+                {
+                    self.fling = None;
+                    self.finger = Some(Finger {
+                        down: e.clone(),
+                        last: (x, y),
+                        scrolling: false,
+                        on_panel: true,
+                        swiped: false,
+                        scrubbing: false,
+                        speed: crate::touch::Speed::default(),
+                    });
+                    return Some(true);
+                }
+                // A control takes its press; a track's name is where a
+                // finger swipes the panel or scrolls, and a tap there is
+                // the click it would have been.
+                if self
+                    .spot_at(x, y)
+                    .is_some_and(|spot| spot.control != crate::row::Control::Name)
+                {
+                    return None;
+                }
+                let scrolls = self.hit(x, y).is_some_and(|hit| {
+                    matches!(
+                        hit.target,
+                        crate::hit::Target::Lane { .. }
+                            | crate::hit::Target::Ruler { .. }
+                            | crate::hit::Target::Track { .. }
+                            | crate::hit::Target::Empty
+                    )
+                });
+                if !scrolls {
+                    return None;
+                }
+                // A press catches a thrown view.
+                self.fling = None;
+                self.finger = Some(Finger {
+                    down: e.clone(),
+                    last: (x, y),
+                    scrolling: false,
+                    on_panel: x < self.scene.tcp.width(),
+                    swiped: false,
+                    scrubbing: false,
+                    speed: crate::touch::Speed::default(),
+                });
+                Some(true)
+            }
+            UiEvent::PointerMove(e) => {
+                let finger = self.finger.as_mut().filter(|f| f.down.id == e.id)?;
+                let (x, y) = at(e);
+                if finger.scrubbing {
+                    self.scrub(x);
+                    return Some(true);
+                }
+                if finger.swiped {
+                    return Some(true);
+                }
+                // Sideways across the track panel, before it has become a
+                // scroll: a swipe — right expands the panel, left folds it
+                // back to names, as Logic's does.
+                let from = at(&finger.down);
+                let (dx, dy) = (x - from.0, y - from.1);
+                if finger.on_panel
+                    && !finger.scrolling
+                    && dx.abs() * self.ui.get() > SWIPE
+                    && dx.abs() > dy.abs() * 2.0
+                {
+                    finger.swiped = true;
+                    self.zooms
+                        .borrow_mut()
+                        .push(crate::zoom::Request::Shape { compact: dx < 0.0 });
+                    return Some(true);
+                }
+                let from = at(&finger.down);
+                // The slop is a fingertip's, in CSS pixels.
+                let wandered = (x - from.0).hypot(y - from.1) * self.ui.get();
+                // On the track panel, a finger going sideways is on its way
+                // to a swipe: it waits for that rather than scrolling.
+                let sideways = finger.on_panel && (x - from.0).abs() > (y - from.1).abs();
+                if !finger.scrolling && !sideways && wandered > crate::touch::SLOP {
+                    finger.scrolling = true;
+                }
+                if finger.scrolling {
+                    finger.speed.moved((x, y));
+                    let (dx, dy) = (finger.last.0 - x, finger.last.1 - y);
+                    finger.last = (x, y);
+                    self.zooms
+                        .borrow_mut()
+                        .push(crate::zoom::Request::ScrollBy { dx, dy });
+                }
+                Some(true)
+            }
+            UiEvent::PointerUp(e) => {
+                if self.finger.as_ref().is_none_or(|f| f.down.id != e.id) {
+                    // Another finger's lift, while one is held: ignored,
+                    // as its press was.
+                    return self.finger.is_some().then_some(true);
+                }
+                let finger = self.finger.take()?;
+                if finger.scrubbing || finger.swiped {
+                    // Where it was let go, the cursor already is; a swipe
+                    // has already asked for its panel.
+                } else if finger.scrolling {
+                    // Thrown: the view carries on the way the finger went.
+                    let (vx, vy) = finger.speed.velocity();
+                    self.fling = crate::touch::Fling::thrown((-vx, -vy));
+                    if let Some(redraw) = &self.redraw {
+                        redraw();
+                    }
+                } else {
+                    // A tap: the press and the release, together.
+                    self.took(&UiEvent::PointerDown(finger.down));
+                    self.took(&UiEvent::PointerUp(e.clone()));
+                }
+                Some(true)
+            }
+            UiEvent::PointerCancel(e) => self.finger.take_if(|f| f.down.id == e.id).map(|_| true),
+            _ => None,
+        }
+    }
+
     fn took(&mut self, event: &UiEvent) -> bool {
         let at = |e: &blitz_traits::events::BlitzPointerEvent| {
             (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
@@ -1813,6 +2269,17 @@ impl ArrangementWidget {
             );
             self.controls = Some((recorded, view.zoom_y));
         }
+        // Kept below the ruler. The ruler covers the recorded panel by
+        // being drawn after it, but these come after the ruler, so a row
+        // scrolled halfway under it drew its knob and buttons over the
+        // ruler's lanes.
+        let under_ruler = vello::kurbo::Rect::new(
+            0.0,
+            ruler::ruler_h(),
+            view.width.max(0.0),
+            view.height.max(ruler::ruler_h()),
+        );
+        anyrender::PaintScene::push_clip_layer(&mut out, Affine::IDENTITY, &under_ruler);
         let controls = match self.controls.as_ref() {
             Some((controls, _)) => {
                 let counts = controls.replay(&mut out, &self.scene, view, at);
@@ -1861,6 +2328,7 @@ impl ArrangementWidget {
             );
             self.meters_lit.set(lit);
         }
+        anyrender::PaintScene::pop_layer(&mut out);
         // The edit cursor and the time selection, over the lanes and
         // up through the ruler. Drawn from the editor's own state,
         // which is what a click on the ruler moves.
@@ -1891,6 +2359,30 @@ impl ArrangementWidget {
             view.height,
             self.scene.tcp.width(),
         );
+        // A touchscreen's grip on the track panel's edge: the panel slides
+        // (a swipe, or a drag of this), and this says so.
+        self.grip.set(None);
+        if self.ui.get() > 1.0 {
+            let x = self.scene.tcp.width();
+            let top = ruler::ruler_h();
+            let rect = grip_rect(x, top + (view.height - top) / 2.0);
+            paint_grip(&mut out, rect);
+            self.grip.set(Some(rect));
+        }
+        // A touchscreen's handle on it, in the bars lane: a finger takes
+        // the cursor by this and scrubs, where a press elsewhere on the
+        // ruler is a scroll.
+        self.handle.set(None);
+        if self.ui.get() > 1.0 {
+            let x = at_now
+                .play_at
+                .mul_add(view.pps, self.scene.tcp.width() - view.scroll_x);
+            if x >= self.scene.tcp.width() && x <= view.width {
+                let rect = handle_rect(x);
+                paint_handle(&mut out, rect);
+                self.handle.set(Some(rect));
+            }
+        }
         // Everyone else in the session, faintly: their selections,
         // cursors and mouse. Over your cursors so a peer on the same spot
         // is still seen, but drawn thin and pale so theirs never reads as

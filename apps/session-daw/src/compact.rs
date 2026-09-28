@@ -179,12 +179,14 @@ pub fn CompactShell(
     rsx! {
         // An explicit size, not insets: Blitz gives an absolutely placed box
         // stretched by `top`/`bottom` no height, and the column collapses to
-        // its content (the wide shell does the same). On a phone the viewport
-        // is already the safe area: Blitz's shell keeps the notch and the
-        // home indicator out of it.
+        // its content (the wide shell does the same). In the app the
+        // viewport is already the safe area (Blitz's shell keeps the notch
+        // and the home indicator out of it); in a page the outer box insets
+        // itself from them (`shell::SAFE_AREA`).
         div {
-            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; box-sizing:border-box; \
-                    display:flex; \
+            style: "{crate::shell::SAFE_AREA}",
+        div {
+            style: "flex:1; min-width:0; min-height:0; display:flex; \
                     flex-direction:{direction}; \
                     background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
             if landscape {
@@ -210,6 +212,7 @@ pub fn CompactShell(
                 }
                 Tabs { view, rail: false }
             }
+        }
         }
     }
 }

@@ -67,26 +67,259 @@ pub fn use_density() -> Density {
     try_use_context::<Signal<Density>>().map_or(Density::Full, |d| d())
 }
 
-/// The views the top bar switches between.
+/// The views the bars switch between.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     Setup,
     Performance,
+    /// The arrangement, and the mixer docked under it when it is open.
     Daw,
     Overview,
+    /// The chart alone, the whole window.
+    Chart,
+    /// The song's lyrics, the whole window.
+    Lyrics,
+    /// The mixer alone, the whole window.
+    Mixer,
 }
 
 impl View {
-    pub const ALL: [Self; 4] = [Self::Setup, Self::Performance, Self::Daw, Self::Overview];
+    pub const ALL: [Self; 7] = [
+        Self::Performance,
+        Self::Overview,
+        Self::Chart,
+        Self::Lyrics,
+        Self::Daw,
+        Self::Mixer,
+        Self::Setup,
+    ];
 
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Setup => "Setup",
             Self::Performance => "Performance",
-            Self::Daw => "DAW",
+            Self::Daw => "Arrangement",
             Self::Overview => "Overview",
+            Self::Chart => "Chart",
+            Self::Lyrics => "Lyrics",
+            Self::Mixer => "Mixer",
         }
+    }
+
+    /// The word under the view's icon in the bottom bar: the name, cut to
+    /// a verb where the name is long.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Performance => "Perform",
+            Self::Daw => "Arrange",
+            other => other.name(),
+        }
+    }
+}
+
+/// What stays on screen over every view — the song's progress along the
+/// top, the performance transport along the foot — each a setting a
+/// button in the bottom bar (and a switch on the Setup page) turns on;
+/// a context the shell provides.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Pins {
+    pub progress: Signal<bool>,
+    pub transport: Signal<bool>,
+}
+
+impl Pins {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            progress: Signal::new(false),
+            transport: Signal::new(false),
+        }
+    }
+}
+
+impl Default for Pins {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Whether a view carries the progress bar and the transport already
+/// (Performance, Overview), or is not about the song (Setup).
+const fn carries_its_own(view: View) -> bool {
+    matches!(view, View::Performance | View::Overview | View::Setup)
+}
+
+/// The song's progress bar over a view, when it is pinned: where the song
+/// is and what comes next, whatever else is being looked at — and a
+/// section pressed on it plays from there, from any view.
+#[component]
+pub fn PinnedProgress(view: View) -> Element {
+    let pinned = try_use_context::<Pins>().is_some_and(|pins| (pins.progress)());
+    if !pinned || carries_its_own(view) {
+        return rsx! {};
+    }
+    rsx! {
+        div {
+            style: "flex:none; padding:8px 10px 0;",
+            crate::progress::ProgressBar { height: "3rem".to_owned() }
+        }
+    }
+}
+
+/// The performance transport under a view, when it is pinned: back a
+/// section, play, loop (record, in Record mode), on a section.
+#[component]
+pub fn PinnedTransport(view: View) -> Element {
+    let pinned = try_use_context::<Pins>().is_some_and(|pins| (pins.transport)());
+    let record = try_use_context::<Signal<Mode>>().is_some_and(|mode| mode() == Mode::Record);
+    if !pinned || carries_its_own(view) {
+        return rsx! {};
+    }
+    rsx! {
+        div {
+            style: "flex:none; padding:6px 10px 8px;",
+            crate::progress::TransportButtons { record }
+        }
+    }
+}
+
+/// The app's outer box, inset from a phone's or a tablet's safe areas
+/// (the notch, the home indicator, a landscape screen's rounded sides) and
+/// filled round them with the bars' colour: in a page, where
+/// `viewport-fit=cover` runs the page under them. Blitz keeps them out of
+/// the page already, and there the insets are nothing.
+pub const SAFE_AREA: &str = "position:absolute; top:0; left:0; width:100vw; height:100vh; \
+    box-sizing:border-box; display:flex; background:#17181b; \
+    padding:env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) \
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);";
+
+/// How tall the bottom bar is.
+pub const BOTTOM_H: f64 = 34.0;
+
+/// The bottom bar: the views as icons across the foot of the window, the
+/// way the top bar runs across its head — Logic's iPad layout, where what
+/// you look at is picked at the bottom and what you play at the top.
+/// Each view an icon and its word; the views in the middle, Setup to the
+/// right on its own, an icon alone. The left is kept for the panels a
+/// view can show beside itself (the inspector).
+///
+/// On a touchscreen there is no Overview: it is every view at once, which
+/// a tablet or a phone has no room for, and each of its parts is a view
+/// of its own here.
+#[component]
+pub fn BottomBar(view: Signal<View>) -> Element {
+    let touch = crate::touch::use_touch();
+    let pins = try_use_context::<Pins>();
+    let button = move |each: View, label: bool| {
+        rsx! {
+            button {
+                key: "{each.name()}",
+                title: each.name(),
+                style: bottom_button(view() == each, label),
+                onclick: move |_| view.set(each),
+                ViewIcon { view: each }
+                if label {
+                    span { style: "font-size:12px; font-weight:600;", "{each.label()}" }
+                }
+            }
+        }
+    };
+    rsx! {
+        div {
+            style: "height:{BOTTOM_H}px; flex:none; display:flex; align-items:center; \
+                    padding:0 12px; background:{BAR_BG}; border-top:1px solid {RULE};",
+            div { style: "flex:1;" }
+            div {
+                style: "flex:none; display:flex; align-items:center; gap:6px;",
+                for each in View::ALL
+                    .into_iter()
+                    .filter(|v| *v != View::Setup && !(touch && *v == View::Overview))
+                {
+                    {button(each, true)}
+                }
+            }
+            div {
+                style: "flex:1; display:flex; justify-content:flex-end; align-items:center; gap:6px;",
+                if let Some(pins) = pins {
+                    PinButton { on: pins.progress, what: Pinned::Progress }
+                    PinButton { on: pins.transport, what: Pinned::Transport }
+                    div { style: "width:1px; height:18px; background:{RULE}; margin:0 4px;" }
+                }
+                {button(View::Setup, false)}
+            }
+        }
+    }
+}
+
+/// What a pin button in the bottom bar pins.
+#[derive(Clone, Copy, PartialEq)]
+enum Pinned {
+    Progress,
+    Transport,
+}
+
+/// A bottom-bar toggle: the progress bar or the transport over every view.
+#[component]
+fn PinButton(on: Signal<bool>, what: Pinned) -> Element {
+    use lucide_dioxus::{PanelBottom, PanelTop};
+    let mut on = on;
+    let lit = on();
+    let (title, label) = match what {
+        Pinned::Progress => ("Song progress on every view", "Progress"),
+        Pinned::Transport => ("Transport on every view", "Transport"),
+    };
+    rsx! {
+        button {
+            title,
+            style: bottom_button(lit, true),
+            onclick: move |_| on.toggle(),
+            match what {
+                Pinned::Progress => rsx! { PanelTop { size: 19, color: "currentColor" } },
+                Pinned::Transport => rsx! { PanelBottom { size: 19, color: "currentColor" } },
+            }
+            span { style: "font-size:12px; font-weight:600;", "{label}" }
+        }
+    }
+}
+
+/// A bottom-bar button: a grey icon and its word, or the view showing's,
+/// white on a light pill.
+fn bottom_button(on: bool, label: bool) -> String {
+    let (fg, bg) = if on {
+        (TEXT, "#3a3d44")
+    } else {
+        (DIM, "transparent")
+    };
+    let shape = if label {
+        "padding:0 12px 0 10px; gap:6px;"
+    } else {
+        "width:40px;"
+    };
+    format!(
+        "{shape} height:28px; display:flex; align-items:center; justify-content:center; \
+         border:none; border-radius:8px; background:{bg}; color:{fg}; cursor:pointer; \
+         font-family:inherit;"
+    )
+}
+
+/// A view's icon, as the bottom bar shows it.
+#[component]
+fn ViewIcon(view: View) -> Element {
+    use lucide_dioxus::{
+        ChartNoAxesGantt, FileMusic, LayoutDashboard, ListMusic, MicVocal, Settings,
+        SlidersVertical,
+    };
+    let size = 19;
+    match view {
+        View::Performance => rsx! { ListMusic { size, color: "currentColor" } },
+        View::Overview => rsx! { LayoutDashboard { size, color: "currentColor" } },
+        View::Chart => rsx! { FileMusic { size, color: "currentColor" } },
+        View::Lyrics => rsx! { MicVocal { size, color: "currentColor" } },
+        View::Daw => rsx! { ChartNoAxesGantt { size, color: "currentColor" } },
+        View::Mixer => rsx! { SlidersVertical { size, color: "currentColor" } },
+        View::Setup => rsx! { Settings { size, color: "currentColor" } },
     }
 }
 
@@ -115,7 +348,6 @@ pub fn TopBar(
     width: Option<f64>,
 ) -> Element {
     let mut picking = use_signal(|| false);
-    let mut choosing_view = use_signal(|| false);
     let density = width.map_or(Density::Full, Density::for_width);
     let mut shared = use_context_provider(|| Signal::new(density));
     use_effect(use_reactive!(|density| {
@@ -127,6 +359,50 @@ pub fn TopBar(
         ""
     } else {
         "Mode"
+    };
+    let controls = rsx! {
+        // A row: the transport, and anything the host puts beside it
+        // (the collaboration bar).
+        div {
+            style: "flex:none; display:flex; align-items:center;",
+            onmousedown: move |event| event.stop_propagation(),
+            {transport}
+        }
+        // Where the sound comes from: Engine / Cue / Remote.
+        AudioBadge { density }
+        // The mode, visible in every view.
+        div {
+            style: "position:relative; flex:none;",
+            onmousedown: move |event| event.stop_propagation(),
+            button {
+                style: "display:flex; align-items:center; gap:6px; height:26px; \
+                        padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
+                        background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer;",
+                onclick: move |_| picking.toggle(),
+                if !mode_label.is_empty() {
+                    span { style: "color:{DIM};", "{mode_label}" }
+                }
+                span { style: "font-weight:600;", "{mode().display_name()}" }
+            }
+            if picking() {
+                div {
+                    style: "position:absolute; right:0; top:30px; z-index:40; \
+                            min-width:160px; padding:4px; background:{BAR_BG}; \
+                            border:1px solid {RULE}; border-radius:8px; \
+                            box-shadow:0 8px 24px rgba(0,0,0,0.5);",
+                    for each in Mode::ALL {
+                        div {
+                            style: option(mode() == each),
+                            onclick: move |_| {
+                                mode.set(each);
+                                picking.set(false);
+                            },
+                            "{each.display_name()}"
+                        }
+                    }
+                }
+            }
+        }
     };
     rsx! {
         div {
@@ -144,99 +420,9 @@ pub fn TopBar(
                     zoom.call(());
                 }
             },
-            if density == Density::Full {
-                // The views, as a segmented control.
-                div {
-                    style: "display:flex; gap:2px; padding:2px; background:#0f1012; \
-                            border:1px solid {RULE}; border-radius:7px; flex:none;",
-                    for each in View::ALL {
-                        button {
-                            style: segment(view() == each),
-                            onmousedown: move |event| event.stop_propagation(),
-                            onclick: move |_| view.set(each),
-                            "{each.name()}"
-                        }
-                    }
-                }
-            } else {
-                // The views, folded into a menu: the one showing, and a
-                // chevron.
-                div {
-                    style: "position:relative; flex:none;",
-                    onmousedown: move |event| event.stop_propagation(),
-                    button {
-                        style: "display:flex; align-items:center; gap:6px; height:26px; \
-                                padding:0 8px 0 10px; border-radius:6px; border:1px solid {RULE}; \
-                                background:#0f1012; color:{TEXT}; font-size:12px; font-weight:600; \
-                                cursor:pointer;",
-                        onclick: move |_| choosing_view.toggle(),
-                        "{view().name()}"
-                        Chevron {}
-                    }
-                    if choosing_view() {
-                        div {
-                            style: "position:absolute; left:0; top:30px; z-index:40; \
-                                    min-width:150px; padding:4px; background:{BAR_BG}; \
-                                    border:1px solid {RULE}; border-radius:8px; \
-                                    box-shadow:0 8px 24px rgba(0,0,0,0.5);",
-                            for each in View::ALL {
-                                div {
-                                    style: option(view() == each),
-                                    onclick: move |_| {
-                                        view.set(each);
-                                        choosing_view.set(false);
-                                    },
-                                    "{each.name()}"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             // The setlist, filling whatever the bar has left.
             SongTabs { on_pick, on_color }
-            // A row: the transport, and anything the host puts beside it
-            // (the collaboration bar).
-            div {
-                style: "flex:none; display:flex; align-items:center;",
-                onmousedown: move |event| event.stop_propagation(),
-                {transport}
-            }
-            // Where the sound comes from: Engine / Cue / Remote.
-            AudioBadge { density }
-            // The mode, visible in every view.
-            div {
-                style: "position:relative; flex:none;",
-                onmousedown: move |event| event.stop_propagation(),
-                button {
-                    style: "display:flex; align-items:center; gap:6px; height:26px; \
-                            padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
-                            background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer;",
-                    onclick: move |_| picking.toggle(),
-                    if !mode_label.is_empty() {
-                        span { style: "color:{DIM};", "{mode_label}" }
-                    }
-                    span { style: "font-weight:600;", "{mode().display_name()}" }
-                }
-                if picking() {
-                    div {
-                        style: "position:absolute; right:0; top:30px; z-index:40; \
-                                min-width:160px; padding:4px; background:{BAR_BG}; \
-                                border:1px solid {RULE}; border-radius:8px; \
-                                box-shadow:0 8px 24px rgba(0,0,0,0.5);",
-                        for each in Mode::ALL {
-                            div {
-                                style: option(mode() == each),
-                                onclick: move |_| {
-                                    mode.set(each);
-                                    picking.set(false);
-                                },
-                                "{each.display_name()}"
-                            }
-                        }
-                    }
-                }
-            }
+            {controls}
         }
     }
 }

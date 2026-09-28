@@ -261,10 +261,14 @@ impl ChartWidget {
             return;
         }
         // A panel taller than wide (a phone held upright), or too short for
-        // a page to be read at its full height (one on its side), shows the
-        // page across its width — and, when that is taller than the panel,
-        // follows the song down it.
-        let fit_width = w < h || page_w / page_h * h < w * 0.5;
+        // a page to be read at its full height (one on its side, a tablet's
+        // Performance pane), shows the page across its width — and, when
+        // that is taller than the panel, follows the song down it. A whole
+        // page in under seven tenths of the width is a page too small to
+        // read from a music stand. (The Overview's pane is shaped for the
+        // page and its peek — `FITTED_WIDTH_OVER_HEIGHT`, the page about
+        // 0.73 of it — and stays across.)
+        let fit_width = w < h || page_w / page_h * h < w * 0.7;
         if fit_width {
             let zoom = w / (page_w * per_pt);
             let visible = h / (zoom * per_pt);

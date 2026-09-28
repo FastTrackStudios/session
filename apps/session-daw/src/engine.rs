@@ -1476,6 +1476,35 @@ pub struct Watch {
 
 impl Watch {
     /// Subscribe. `None` if the facade is not up.
+    ///
+    /// The browser: no thread to subscribe on, so a task on the page's
+    /// event loop, as [`Meters::start`] does.
+    #[cfg(not(feature = "native"))]
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        let daw = daw::rpc::Daw::try_get()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let alive = Alive::new();
+        let mine = alive.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _end = scopeguard(move || mine.ended());
+            let Ok(project) = daw.current_project().await else {
+                return;
+            };
+            let Ok(mut stream) = project.tracks().subscribe().await else {
+                return;
+            };
+            while let Ok(Some(event)) = stream.recv().await {
+                if tx.send(event.get().event.clone()).is_err() {
+                    break;
+                }
+            }
+        });
+        Some(Self { changes: rx, alive })
+    }
+
+    /// Subscribe. `None` if the facade is not up.
+    #[cfg(feature = "native")]
     #[must_use]
     pub fn start() -> Option<Self> {
         let runtime = crate::open::runtime()?;

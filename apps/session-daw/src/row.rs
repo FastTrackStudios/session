@@ -113,6 +113,34 @@ impl Row {
         }
     }
 
+    /// A compact row's second line, under its name: mute, solo and the
+    /// arm, in that order across the name field, as Logic's taller rows
+    /// put them. Only on a row tall enough for two lines (`Density::Full`),
+    /// and only where the second one has room for a button.
+    fn second_line(&self, control: Control) -> Option<Rect> {
+        const GAP: f64 = 4.0;
+        if self.density != Density::Full {
+            return None;
+        }
+        let index = match control {
+            Control::Mute => 0.0,
+            Control::Solo => 1.0,
+            Control::RecArm => 2.0,
+            _ => return None,
+        };
+        let top = self.field_top + self.field_h + GAP;
+        let h = (self.y + self.height - top - GAP).min(26.0);
+        if h < 16.0 {
+            return None;
+        }
+        let (x, w) = self.tcp.name_field();
+        let x = x + self.indent;
+        let across = (w - self.indent).max(0.0);
+        let cell = ((across - GAP * 2.0) / 3.0).min(34.0);
+        let x = x + index * (cell + GAP);
+        Some(Rect::new(x, top, x + cell, top + h))
+    }
+
     /// Where a control is, or `None` if this row does not show it.
     #[must_use]
     pub fn rect(&self, control: Control) -> Option<Rect> {
@@ -140,6 +168,13 @@ impl Row {
             // is not: a compact row keeps its mute and its solo — they
             // are what a row is scanned for — and the routing and FX
             // that share the band at full height are the ones that go.
+            // A touchscreen's: the two filling the gutter, side by side,
+            // and as tall as the row less a margin.
+            // The compact panel's: mute, solo and the arm on a second line
+            // under the name, where the row is tall enough to have one.
+            Control::Mute | Control::Solo | Control::RecArm if self.tcp.compact => {
+                self.second_line(control)
+            }
             Control::Mute | Control::Solo => {
                 let x = self.tcp.tint_w()
                     + 2.0

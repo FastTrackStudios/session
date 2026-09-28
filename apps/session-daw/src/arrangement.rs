@@ -1836,6 +1836,10 @@ pub fn titles(
             );
             continue;
         }
+        // Held at the lanes' left edge while the item's start is off
+        // screen, as the lettering is: a long stem scrolled into its
+        // middle still says what it is.
+        let left = left.max(origin.0 + view.scroll_x);
         let room = right - left - PAD * 2.0;
         if room < 12.0 {
             continue;

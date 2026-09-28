@@ -1224,6 +1224,9 @@ pub fn wanted(panels: &[Which]) -> f64 {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Folded {
     shut: u16,
+    /// One panel, filling the box: a close-up (`crate::closeup`), with
+    /// no containers and no chain around it.
+    zoomed: bool,
 }
 
 impl Folded {
@@ -1247,6 +1250,22 @@ impl Folded {
     #[must_use]
     pub const fn any(self) -> bool {
         self.shut != 0
+    }
+
+    /// A close-up: the first panel alone, filling the whole box, drawn
+    /// and hit and dragged exactly as it is in a strip — only bigger.
+    #[must_use]
+    pub fn zoomed() -> Self {
+        Self {
+            zoomed: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether this is a close-up ([`Folded::zoomed`]).
+    #[must_use]
+    pub const fn is_zoomed(self) -> bool {
+        self.zoomed
     }
 
     /// Where a mixer opens: Rescue shut, the rest open.
@@ -1666,6 +1685,17 @@ pub fn draw(
                 );
             }
             if let Some(head) = head {
+                // The way into a close-up, at the header's right end;
+                // the value moves over for it.
+                let expands = rack.detailed() && !folded.is_zoomed();
+                let text = if expands {
+                    Panel {
+                        width: (head.width - EXPAND_W).max(0.0),
+                        ..head
+                    }
+                } else {
+                    head
+                };
                 header(
                     scene,
                     palette,
@@ -1674,8 +1704,19 @@ pub fn draw(
                     which.glyph(tone),
                     &which.summary(tone, rack),
                     tone.bypass.is(which),
-                    head,
+                    text,
                 );
+                if expands {
+                    expand_mark(
+                        scene,
+                        if lit == Some(Grip::Zoom(which)) {
+                            palette.text
+                        } else {
+                            palette.text_faint
+                        },
+                        head,
+                    );
+                }
             }
         }
     }
@@ -1728,6 +1769,11 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
     // No chain, no rack: a track that carries nothing gets no bars
     // either, blank or otherwise.
     if panels.is_empty() {
+        return out;
+    }
+    // A close-up: the one panel, the whole box.
+    if folded.is_zoomed() {
+        out.push((Row::Unit(panels[0]), panel));
         return out;
     }
     let mut y = panel.y;
@@ -1897,7 +1943,8 @@ pub enum Which {
 }
 
 impl Which {
-    const fn name(self) -> &'static str {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
         match self {
             Self::RescueEq => "RESCUE EQ",
             Self::Gate => "GATE",
@@ -2372,7 +2419,10 @@ fn eq_from_plugin(
         config.fill_background = false;
         config.show_freq_labels = editing;
         config.show_db_labels = editing;
-        config.show_grid = editing;
+        // The grid is the rack's at every tier: at Focus its lines are
+        // where its figures are (`focus_grid`), which the painter's, at
+        // its own fractions of the range, were not.
+        config.show_grid = false;
         config.fill_curve = true;
         config.node_scale = if editing { 1.0 } else { 0.0 };
         config.scale = 1.0;
@@ -2472,6 +2522,9 @@ fn eq(
             gain += step;
         }
     }
+    if rack.editing() {
+        focus_grid(scene, palette, tone, at);
+    }
     // Unity, always: without it a boost and a cut look the same.
     let zero = db.db_to_y(0.0, at.y, bottom);
     rule(scene, palette.grid, Line::new((at.x, zero), (right, zero)));
@@ -2547,6 +2600,9 @@ fn eq(
             );
         }
         curve(scene, tint.unwrap_or(EQ_INK), points.into_iter(), 1.5);
+    }
+    if rack.editing() {
+        focus_labels(scene, palette, font, tone, at);
     }
 
     // The bands themselves, as handles on the curve.
@@ -2691,6 +2747,101 @@ fn scale(
 /// find once bands are draggable.
 const HANDLE: f64 = 2.6;
 
+/// The frequencies a graph with room to be worked in is labelled at.
+const FOCUS_MARKS: [(f64, &str); 9] = [
+    (50.0, "50"),
+    (100.0, "100"),
+    (200.0, "200"),
+    (500.0, "500"),
+    (1_000.0, "1k"),
+    (2_000.0, "2k"),
+    (5_000.0, "5k"),
+    (10_000.0, "10k"),
+    (20_000.0, "20k"),
+];
+
+/// The gains a worked-in graph is ruled and labelled at: the ladder's
+/// steps, halved where it has only its ends, which are the edges.
+fn focus_steps(range: f64) -> (f64, impl Iterator<Item = f64>) {
+    let step = ladder_step(range);
+    let step = if range / step < 2.0 { step / 2.0 } else { step };
+    let count = crate::num::index((range / step).floor());
+    (
+        step,
+        (1..=count).flat_map(move |i| {
+            let gain = step * crate::num::coord(i);
+            [gain, -gain]
+        }),
+    )
+}
+
+/// A worked-in graph's grid: a line at each frequency and gain
+/// `focus_labels` names.
+fn focus_grid(scene: &mut Scene, palette: &Palette, tone: &Tone, at: Panel) {
+    let freq = FreqAxis::audible();
+    let db = DbAxis::symmetric(tone.eq_db_range());
+    let right = at.x + at.width;
+    let bottom = at.y + at.height;
+    for (hz, _) in FOCUS_MARKS {
+        let x = freq.freq_to_x(hz, at.x, right);
+        rule(scene, palette.grid_beat, Line::new((x, at.y), (x, bottom)));
+    }
+    for gain in focus_steps(tone.eq_db_range()).1 {
+        let y = db.db_to_y(gain, at.y, bottom);
+        rule(scene, palette.grid_beat, Line::new((at.x, y), (right, y)));
+    }
+}
+
+/// A worked-in graph's scales: its frequencies along the floor and its
+/// gains up the left edge.
+///
+/// The painter draws the grid at this tier but not the numbers on it —
+/// those are its DOM editor's, which a painted graph does not have — so
+/// without these a close-up's lines were a ruler with no figures.
+fn focus_labels(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel) {
+    const SIZE: f32 = 7.0;
+    let freq = FreqAxis::audible();
+    let right = at.x + at.width;
+    let bottom = at.y + at.height;
+    for (hz, name) in FOCUS_MARKS {
+        let x = freq.freq_to_x(hz, at.x, right);
+        let w = font.width(name, SIZE);
+        let left = (x - w / 2.0).clamp(at.x + 2.0, right - w - 2.0);
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text_faint,
+            name,
+            left,
+            bottom - 3.0,
+            SIZE,
+        );
+    }
+    let range = tone.eq_db_range();
+    let db = DbAxis::symmetric(range);
+    let (step, gains) = focus_steps(range);
+    for at_db in gains {
+        let y = db.db_to_y(at_db, at.y, bottom);
+        // Clear of the floor's frequencies and the header above.
+        if y > at.y + 10.0 && y < bottom - 12.0 {
+            let label = if step < 1.0 {
+                format!("{at_db:+.1}")
+            } else {
+                format!("{at_db:+.0}")
+            };
+            crate::tcp::glyphs(
+                scene,
+                font,
+                palette.text_faint,
+                &label,
+                at.x + 3.0,
+                y - 2.0,
+                SIZE,
+            );
+        }
+    }
+}
+
 /// The decades the frequency axis is labelled at.
 ///
 /// Three, not five: at a strip's width the labels are 6pt and four of
@@ -2715,7 +2866,13 @@ fn comp(
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    let at = comp_split(at, rack);
+    let body = at;
+    let at = comp_split(body, rack);
+    if rack.detailed()
+        && let Some(square) = transfer_area(body)
+    {
+        transfer_curve(scene, palette, font, comp, square, lit);
+    }
     let right = at.x + at.width;
     // The comp editor's own axis: 0 dB at the top, −60 at the floor.
     // Taken from the plugin so the threshold line, the ladder and
@@ -4247,6 +4404,55 @@ pub enum Glyph {
 
 /// How wide a header glyph is, with its gap to the name.
 pub const GLYPH_W: f64 = 11.0;
+
+/// How wide the expand mark at a header's right end is ([`Grip::Zoom`]).
+const EXPAND_W: f64 = 10.0;
+
+/// The expand mark: two corners pointing out, at the right end of a
+/// panel's header `head`.
+fn expand_mark(scene: &mut Scene, ink: Color, head: Panel) {
+    use vello::kurbo::{BezPath, Cap, Join, Stroke};
+    let side = (head.height - 3.0).clamp(5.0, 8.0);
+    let x1 = head.x + head.width - 1.0;
+    let x0 = x1 - side;
+    let y0 = head.y + (head.height - side) / 2.0;
+    let y1 = y0 + side;
+    let arm = side * 0.45;
+    let mut path = BezPath::new();
+    // Top right corner, and bottom left: out to the edges.
+    path.move_to((x1 - arm, y0));
+    path.line_to((x1, y0));
+    path.line_to((x1, y0 + arm));
+    path.move_to((x0, y1 - arm));
+    path.line_to((x0, y1));
+    path.line_to((x0 + arm, y1));
+    let line = Stroke::new(1.1)
+        .with_caps(Cap::Round)
+        .with_join(Join::Round);
+    scene.stroke(&line, Affine::IDENTITY, ink, None, &path);
+}
+
+/// Flip a rack switch — the grips that are not values — on `tone`. A
+/// fold and a close-up are the caller's: they change what is shown,
+/// not the track.
+pub fn toggle(tone: &mut Tone, grip: Grip) {
+    match grip {
+        Grip::Bypass(which) => tone.bypass.toggle(which),
+        // Clicking the zoom steps it on; the wheel walks it either way.
+        Grip::Scale(_) => tone.cycle_eq_range(),
+        // The machine glyph cycles the machine.
+        Grip::Family(Which::Sat) => tone.cycle_sat(),
+        Grip::Family(Which::Delay) => tone.delay.cycle_style(),
+        Grip::Family(Which::Reverb) => tone.reverb.cycle_algorithm(),
+        // A chip in the selector strip picks its family.
+        Grip::Choose(Which::Sat, i) => tone.choose_sat_family(i),
+        Grip::Choose(Which::Delay, i) => tone.delay.choose_family(i),
+        Grip::Choose(Which::Reverb, i) => tone.reverb.choose_family(i),
+        // A preset chip loads the preset: the whole rack follows.
+        Grip::Preset(i) => tone.load_preset(i),
+        _ => {}
+    }
+}
 
 /// Draw a glyph with its left edge at `x`, sitting on `baseline`.
 ///
@@ -7550,6 +7756,10 @@ pub enum Grip {
     /// thing in the panel you point at, and everything in a panel you
     /// point at has to be something the one hit test can name.
     Scale(Which),
+    /// The expand mark at the right of a panel's header: the panel,
+    /// full screen (`crate::closeup`). Not a parameter either — it
+    /// changes where you are looking, not what you hear.
+    Zoom(Which),
 }
 
 impl Grip {
@@ -7578,6 +7788,7 @@ impl Grip {
                 | Self::Family(_)
                 | Self::Choose(..)
                 | Self::Preset(_)
+                | Self::Zoom(_)
         )
     }
 
@@ -7599,6 +7810,7 @@ impl Grip {
             | Self::Choose(which, _)
             | Self::Knob(which, _)
             | Self::Scale(which)
+            | Self::Zoom(which)
             | Self::Bypass(which) => which,
             Self::Drive | Self::Bias | Self::Tilt => Which::Sat,
             Self::Range => Which::Gate,
@@ -7718,6 +7930,14 @@ pub fn grip_at(
         // except on the machine glyph, which cycles the machine.
         if y >= at.y && y < body.y {
             let inner = at.inset(2.0);
+            // Wider than the mark: it is ten pixels, and the corner
+            // it sits in is the target, so a finger finds it.
+            if rack.detailed()
+                && !folded.is_zoomed()
+                && x >= inner.x + inner.width - EXPAND_W - 14.0
+            {
+                return Some(Grip::Zoom(which));
+            }
             if rack.detailed() && which.glyph_switches() && x >= inner.x && x < inner.x + GLYPH_W {
                 return Some(Grip::Family(which));
             }
@@ -7943,9 +8163,204 @@ fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: 
 /// put the two controls away from the thing they act on — while the
 /// display beside them was already showing a reduction over time, which
 /// is exactly what they shape. See `envelope`.
+///
+/// Unless the panel is wide enough to give up a square at its right for
+/// the transfer curve (`transfer_area`): then the display is what is
+/// left of it.
 #[must_use]
-pub const fn comp_split(body: Panel, _rack: Rack) -> Panel {
-    body
+pub fn comp_split(body: Panel, _rack: Rack) -> Panel {
+    match transfer_area(body) {
+        // Stacked: the display is what is under the square.
+        Some(square) if square.y + square.height < body.y + body.height - STRIPS_H => {
+            let top = square.y + square.height + TRANSFER_GAP;
+            Panel {
+                y: top,
+                height: (body.y + body.height - top).max(0.0),
+                ..body
+            }
+        }
+        Some(square) => Panel {
+            width: (square.x - TRANSFER_GAP - body.x).max(0.0),
+            ..body
+        },
+        None => body,
+    }
+}
+
+/// The narrowest compressor panel with room for a transfer curve beside
+/// its display — a close-up's, a wide editor's. A strip's is a fraction
+/// of it, and there the arrow says what the curve would.
+const TRANSFER_MIN_W: f64 = 380.0;
+const TRANSFER_MIN_H: f64 = 180.0;
+/// The narrowest tall panel that stacks one.
+const TRANSFER_MIN_TALL_W: f64 = 260.0;
+/// Between the display and the curve.
+const TRANSFER_GAP: f64 = 10.0;
+
+/// The transfer curve's square, at the right of a compressor panel wide
+/// enough to have one: level in along the bottom, level out up the side,
+/// -60 to 0 dB on both. A panel taller than it is wide — a close-up on
+/// a phone or a portrait tablet — has it on top instead, and the display
+/// under it, since beside it would be a stamp in a corner of a tall
+/// empty column.
+#[must_use]
+pub fn transfer_area(body: Panel) -> Option<Panel> {
+    if body.height >= body.width * 1.2 && body.width >= TRANSFER_MIN_TALL_W {
+        let side = body.width.min(body.height * 0.5);
+        return Some(Panel {
+            x: body.x + (body.width - side) / 2.0,
+            y: body.y,
+            width: side,
+            height: side,
+        });
+    }
+    if body.width < TRANSFER_MIN_W || body.height < TRANSFER_MIN_H {
+        return None;
+    }
+    let side = (body.height - STRIPS_H).min(body.width * 0.45).max(0.0);
+    Some(Panel {
+        x: body.x + body.width - side,
+        y: body.y,
+        width: side,
+        height: side,
+    })
+}
+
+/// The level out of a compressor for a level in, both in dBFS: straight
+/// through below the knee, `1 / ratio` of the rise above it, and the
+/// soft knee's curve between. The plugin's own law, so the curve drawn
+/// is the reduction heard.
+#[must_use]
+pub fn transfer(comp: Comp, input: f64) -> f64 {
+    let threshold = f64::from(comp.threshold);
+    let ratio = f64::from(comp.ratio).max(1.0);
+    let knee = f64::from(comp.knee).max(0.0);
+    let over = input - threshold;
+    if knee > 0.0 && over.abs() <= knee / 2.0 {
+        let into = over + knee / 2.0;
+        input + (1.0 / ratio - 1.0) * into * into / (2.0 * knee)
+    } else if over > 0.0 {
+        threshold + over / ratio
+    } else {
+        input
+    }
+}
+
+/// The transfer curve in its square: the one-to-one diagonal, the curve
+/// bending off it at the threshold, and the threshold's point on it.
+fn transfer_curve(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    comp: Comp,
+    at: Panel,
+    lit: Option<Grip>,
+) {
+    let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
+    let right = at.x + at.width;
+    let bottom = at.y + at.height;
+    // Level to position: 0 dB at the top and the right, -60 at the floor
+    // and the left edge.
+    let to_x = |db: f64| at.x + (db + 60.0).clamp(0.0, 60.0) / 60.0 * at.width;
+    let to_y = |db: f64| bottom - (db + 60.0).clamp(0.0, 60.0) / 60.0 * at.height;
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.tcp_meter_well.multiply_alpha(0.5),
+        None,
+        &at.rect(),
+    );
+    const SIZE: f32 = 6.0;
+    for db in [-12.0, -24.0, -36.0, -48.0] {
+        rule(
+            scene,
+            palette.grid_beat,
+            Line::new((to_x(db), at.y), (to_x(db), bottom)),
+        );
+        rule(
+            scene,
+            palette.grid_beat,
+            Line::new((at.x, to_y(db)), (right, to_y(db))),
+        );
+        let label = format!("{db:.0}");
+        let w = font.width(&label, SIZE);
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text_faint,
+            &label,
+            to_x(db) - w / 2.0,
+            bottom - 2.0,
+            SIZE,
+        );
+    }
+    crate::tcp::glyphs(
+        scene,
+        font,
+        palette.text_faint,
+        "IN",
+        right - font.width("IN", SIZE) - 3.0,
+        bottom - 2.0,
+        SIZE,
+    );
+    crate::tcp::glyphs(
+        scene,
+        font,
+        palette.text_faint,
+        "OUT",
+        at.x + 3.0,
+        at.y + 8.0,
+        SIZE,
+    );
+    // One to one: what the signal would do with no compressor.
+    rule(
+        scene,
+        palette.grid,
+        Line::new((at.x, bottom), (right, at.y)),
+    );
+    // The threshold, where the curve leaves the diagonal.
+    let threshold = f64::from(comp.threshold);
+    let (tx, ty) = (to_x(threshold), to_y(threshold));
+    let held = matches!(lit, Some(Grip::Threshold(_)));
+    let faint = red.multiply_alpha(if held { 0.6 } else { 0.3 });
+    rule(scene, faint, Line::new((tx, ty), (tx, bottom)));
+    rule(scene, faint, Line::new((at.x, ty), (tx, ty)));
+    const STEPS: usize = 96;
+    let points = (0..=STEPS).map(|i| {
+        let input = crate::num::coord(i) / crate::num::coord(STEPS) * 60.0 - 60.0;
+        (to_x(input), to_y(transfer(comp, input)))
+    });
+    let ratio_held = matches!(lit, Some(Grip::Ratio(_)));
+    curve(scene, red, points, if ratio_held { 3.0 } else { 2.0 });
+    dot(
+        scene,
+        red,
+        (tx, ty),
+        if held { HANDLE + 2.4 } else { HANDLE + 1.2 },
+    );
+    let label = format!("{:.1}:1", comp.ratio);
+    let end = (to_x(0.0), to_y(transfer(comp, 0.0)));
+    crate::tcp::glyphs(
+        scene,
+        font,
+        red,
+        &label,
+        end.0 - font.width(&label, SIZE) - 3.0,
+        end.1 + 10.0,
+        SIZE,
+    );
+}
+
+/// What a press in the transfer square holds: the curve above the
+/// threshold is the ratio — pulled down for more, the way the arrow is —
+/// and the rest is the threshold.
+fn transfer_grip(comp: Comp, which: Which, at: Panel, x: f64) -> Grip {
+    let tx = at.x + (f64::from(comp.threshold) + 60.0).clamp(0.0, 60.0) / 60.0 * at.width;
+    if x > tx + 12.0 {
+        Grip::Ratio(which)
+    } else {
+        Grip::Threshold(which)
+    }
 }
 
 /// How far down the display the ratio's arrow hangs, in pixels.
@@ -7983,6 +8398,13 @@ pub fn ratio_reduction(comp: Comp) -> f64 {
 /// fader's groove is a fader's.
 fn comp_grip(comp: Comp, which: Which, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
     let display = comp_split(body, rack);
+    if rack.detailed()
+        && let Some(square) = transfer_area(body)
+        && x >= square.x - TRANSFER_GAP / 2.0
+        && y < square.y + square.height + TRANSFER_GAP / 2.0
+    {
+        return transfer_grip(comp, which, square, x);
+    }
     // The envelope's parts first — they are lines inside the display,
     // and the display would otherwise swallow them.
     if rack.detailed() {
@@ -8083,7 +8505,7 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
             }
         }
         // A switch does not turn, and neither does a container.
-        Grip::Bypass(_) | Grip::Phase(_) | Grip::Family(_) | Grip::Choose(..) => {}
+        Grip::Bypass(_) | Grip::Phase(_) | Grip::Family(_) | Grip::Choose(..) | Grip::Zoom(_) => {}
         // A notch is a stop, not a fraction of one: the range is a list
         // the plugin publishes and the wheel walks it. Down is further
         // out, which is the direction a wheel zooms out everywhere
@@ -8359,7 +8781,7 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         // A machine is a choice, not a value with a default to go back
         // to; and folding is not a setting on the track, so there is
         // nothing to put back — see `Fold`.
-        Grip::Family(_) | Grip::Choose(..) | Grip::Phase(_) | Grip::Preset(_) => {}
+        Grip::Family(_) | Grip::Choose(..) | Grip::Phase(_) | Grip::Preset(_) | Grip::Zoom(_) => {}
         // Back to what the loaded preset had, if one was loaded — a
         // knob's default is the preset's value, not a number.
         Grip::Knob(which, index) => {
@@ -8509,7 +8931,7 @@ pub fn drag(
         // A switch has no drag. Dragging off one is how you change your
         // mind about pressing it, which is the mixer's own rule — and a
         // zoom is a switch between stops.
-        Grip::Bypass(_) | Grip::Scale(_) | Grip::Phase(_) => {}
+        Grip::Bypass(_) | Grip::Scale(_) | Grip::Phase(_) | Grip::Zoom(_) => {}
         Grip::Drive => {
             // A quarter of the panel's height is the whole range, so a
             // short drag is a real change — drive is the parameter you
@@ -8774,6 +9196,28 @@ fn preset_chip_width(name: &str) -> f64 {
 
 /// How tall the preset row is.
 pub const PRESETS_H: f64 = 18.0;
+
+/// The racks' settings shared between everything that shows them — the
+/// mixer's strips, a close-up — with a generation that goes up on every
+/// edit, so each can tell its picture is stale.
+#[derive(Default)]
+pub struct Shared {
+    pub store: std::cell::RefCell<Store>,
+    generation: std::cell::Cell<u64>,
+}
+
+impl Shared {
+    /// Say the settings moved.
+    pub fn edited(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+    }
+
+    /// Which edit the settings are at.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+}
 
 /// The Tone settings for every track the window has opened.
 ///

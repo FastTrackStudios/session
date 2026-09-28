@@ -16,6 +16,7 @@ pub mod balance;
 #[cfg(feature = "native")]
 pub mod chart_editor;
 pub mod chart_panel;
+pub mod closeup;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod collab;
 #[cfg(any(feature = "native", feature = "web"))]
@@ -161,6 +162,8 @@ pub mod text;
 pub mod tone;
 pub mod tool;
 pub mod toolbar;
+pub mod touch;
+pub mod track_icon;
 pub mod transport_bar;
 #[cfg(feature = "web")]
 pub mod web_audio;

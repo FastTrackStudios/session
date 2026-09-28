@@ -185,9 +185,27 @@ fn pointer(e: &PointerData) -> BlitzPointerEvent {
         Some(dioxus::html::input_data::MouseButton::Secondary) => MouseEventButton::Secondary,
         _ => MouseEventButton::Main,
     };
+    // Which pointer, so a widget can tell fingers apart (two faders at
+    // once) and a finger from a mouse (touch gestures).
+    let id = match e.pointer_type().as_str() {
+        "touch" => BlitzPointerId::Finger(u64::from(e.pointer_id().unsigned_abs())),
+        "pen" => BlitzPointerId::Pen,
+        _ => BlitzPointerId::Mouse,
+    };
+    let mut buttons = MouseEventButtons::empty();
+    for held in e.held_buttons() {
+        buttons |= match held {
+            dioxus::html::input_data::MouseButton::Primary => MouseEventButtons::Primary,
+            dioxus::html::input_data::MouseButton::Secondary => MouseEventButtons::Secondary,
+            dioxus::html::input_data::MouseButton::Auxiliary => MouseEventButtons::Auxiliary,
+            dioxus::html::input_data::MouseButton::Fourth => MouseEventButtons::Fourth,
+            dioxus::html::input_data::MouseButton::Fifth => MouseEventButtons::Fifth,
+            dioxus::html::input_data::MouseButton::Unknown => MouseEventButtons::empty(),
+        };
+    }
     BlitzPointerEvent {
-        id: BlitzPointerId::Mouse,
-        is_primary: true,
+        id,
+        is_primary: e.is_primary(),
         coords: PointerCoords {
             page_x: x,
             page_y: y,
@@ -197,7 +215,7 @@ fn pointer(e: &PointerData) -> BlitzPointerEvent {
             client_y: y,
         },
         button,
-        buttons: MouseEventButtons::empty(),
+        buttons,
         mods: modifiers(e.modifiers()),
         details: PointerDetails::default(),
         element: blitz_traits::events::Point { x, y },
@@ -258,7 +276,8 @@ pub fn WidgetCanvas(
             panel.call(event);
         }
     };
-    let (w1, w2, w3, w4, w5) = (
+    let (w1, w2, w3, w4, w5, w6) = (
+        widget.clone(),
         widget.clone(),
         widget.clone(),
         widget.clone(),
@@ -310,6 +329,11 @@ pub fn WidgetCanvas(
             onpointerup: move |e| {
                 to_panel(PanelEvent::Button { button: panel_button(&e), pressed: false });
                 w3.0.borrow_mut().event(&UiEvent::PointerUp(pointer(&e)));
+            },
+            // The browser took the pointer back (a system gesture, the
+            // page scrolling): what it was doing ends here.
+            onpointercancel: move |e| {
+                w6.0.borrow_mut().event(&UiEvent::PointerCancel(pointer(&e)));
             },
             oncontextmenu: move |e| e.prevent_default(),
             onwheel: move |e| {
@@ -509,7 +533,7 @@ pub fn WebDemo(
 #[component]
 fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setlist) -> Element {
     use crate::compact::{CompactShell, PhoneView};
-    use crate::shell::{TopBar, View};
+    use crate::shell::{SAFE_AREA, TopBar, View};
     use session::modes::Mode;
 
     // Audio starts on the page's first press or key: the only place a
@@ -552,8 +576,13 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     });
     // The page's shape: a phone's (or a window that small) takes the
     // small-screen layout, the same panels rearranged.
-    let form = use_viewport_form();
+    let viewport = use_viewport_size();
+    let form = use_viewport_form(viewport);
     use_context_provider(|| form);
+    let landscape = move || {
+        let (w, h) = viewport();
+        w > h
+    };
     let phone_view = use_signal(|| PhoneView::Chart);
     // A song picked, from the tabs or the navigator: that song is current,
     // and the audio moves to it. Where the one it replaces had got to is
@@ -572,6 +601,12 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     };
     // The record view's song menu picks the same way.
     use_context_provider(|| crate::record_view::PickSong(Callback::new(pick)));
+    // Touch mode: on where the page's pointer is a finger.
+    use_context_provider(crate::touch::Touch::detect);
+    // What is shown full screen, if anything, and the racks' settings
+    // every view of them shares (`crate::closeup`).
+    use_context_provider(crate::closeup::Closeups::new);
+    use_context_provider(crate::shell::Pins::new);
     // Record mode's performance view stands in for the top bar.
     let record_screen =
         move || mode() == session::modes::Mode::Record && view() == crate::shell::View::Performance;
@@ -601,14 +636,19 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                     }
                 },
             }
+            crate::closeup::CloseupLayer { landscape: landscape() }
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
         };
     }
     rsx! {
+        // Inset from a phone's or a tablet's safe areas, which the page's
+        // background (the bars' colour) fills — see `index.html`.
         div {
-            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
+            style: "{SAFE_AREA}",
+        div {
+            style: "flex:1; min-width:0; min-height:0; position:relative; display:flex; \
                     flex-direction:column; background:#0f1012; color:#e5e7eb; \
                     font-family:system-ui, sans-serif;",
             if !record_screen() {
@@ -638,35 +678,58 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                 // on that song's session rather than patching the last one's.
                 SongViews { key: "{song.project}", session: song.session.clone(), engine: engine.clone(), view }
             }
+            // The views, across the foot of the page as the transport is
+            // across its head.
+            crate::shell::BottomBar { view }
+            // Whatever is zoomed into, over all of it.
+            crate::closeup::CloseupLayer { landscape: landscape() }
             if asking() {
                 LoadMultitracks { listening: listening(), asking }
             }
         }
+        }
     }
 }
 
-/// The page's shape, measured now and a few times a second after — a phone
-/// turned on its side, a window resized.
-fn use_viewport_form() -> Signal<crate::compact::Form> {
-    fn measure() -> crate::compact::Form {
-        let size = web_sys::window().map(|w| {
+/// The page's size in CSS pixels, measured now and a few times a second
+/// after — a phone turned on its side, a window resized.
+fn use_viewport_size() -> Signal<(f64, f64)> {
+    fn measure() -> (f64, f64) {
+        web_sys::window().map_or((0.0, 0.0), |w| {
             let px = |v: Result<wasm_bindgen::JsValue, _>| {
                 v.ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
             };
             (px(w.inner_width()), px(w.inner_height()))
-        });
-        size.map_or(crate::compact::Form::Wide, |(w, h)| {
-            crate::compact::Form::of(w, h)
         })
     }
-    let mut form = use_signal(measure);
+    let mut size = use_signal(measure);
     use_future(move || async move {
         loop {
             gloo_timers::future::TimeoutFuture::new(250).await;
             let now = measure();
-            if *form.peek() != now {
-                form.set(now);
+            if *size.peek() != now {
+                size.set(now);
             }
+        }
+    });
+    size
+}
+
+/// The page's shape, from its size.
+fn use_viewport_form(size: Signal<(f64, f64)>) -> Signal<crate::compact::Form> {
+    let of = move || {
+        let (w, h) = size();
+        if w <= 0.0 {
+            crate::compact::Form::Wide
+        } else {
+            crate::compact::Form::of(w, h)
+        }
+    };
+    let mut form = use_signal(of);
+    use_effect(move || {
+        let now = of();
+        if *form.peek() != now {
+            form.set(now);
         }
     });
     form
@@ -804,6 +867,7 @@ fn SongViews(
     use_context_provider(|| session);
     let mode: Signal<session::modes::Mode> = use_context();
     rsx! {
+        crate::shell::PinnedProgress { view: view() }
         div {
             style: "position:relative; flex:1; min-height:0;",
             match view() {
@@ -816,6 +880,11 @@ fn SongViews(
                     }
                 },
                 View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone() } },
+                View::Chart => rsx! { crate::chart_panel::WebChart { paged: true } },
+                View::Lyrics => rsx! { crate::lyrics_panel::LyricsPanel {} },
+                View::Mixer => rsx! {
+                    crate::mixer_panel::WebDawPanels { engine: engine.clone(), mixer_only: true }
+                },
                 View::Overview => rsx! {
                     OverviewLayout {
                         progress: rsx! { crate::progress::ProgressBar {} },
@@ -833,6 +902,7 @@ fn SongViews(
                 },
             }
         }
+        crate::shell::PinnedTransport { view: view() }
     }
 }
 
@@ -847,7 +917,7 @@ fn WebPerformance() -> Element {
             div {
                 style: "position:relative; flex:1; min-height:0; border-radius:8px; \
                         overflow:hidden; border:1px solid #2a2c31;",
-                crate::chart_panel::WebChart {}
+                crate::chart_panel::WebChart { paged: true }
             }
             crate::progress::TransportButtons {}
         }

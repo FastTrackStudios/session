@@ -102,6 +102,13 @@ pub const BUTTON: (f64, f64) = (21.0, 20.0);
 /// Between the two, so they read as two controls.
 pub const BUTTON_GAP: f64 = 1.0;
 
+/// The space between the track number and the icon under it, in the rail.
+const ICON_GAP: f64 = 4.0;
+
+/// The compact panel's name field: the knob and the gutter it gave up are
+/// the name's.
+const NAMES_FIELD_W: f64 = 112.0;
+
 /// Below this tall, volume and pan stop being knobs.
 ///
 /// A knob says its value with the angle of a ring, and an angle needs a
@@ -139,12 +146,11 @@ impl Density {
 /// indents.
 ///
 /// Two of them. **Full** is the measured REAPER panel — the name with the
-/// record arm on it, volume, pan, routing, the FX pill. **Compact** keeps
-/// what a row is scanned for while a session is being arranged (its
-/// colour, its name, its mute and solo, its level) and drops what is set
-/// once and then left alone: the record arm, pan, routing, FX. It is a
-/// little over half the width, and the width it gives up goes to the
-/// arrangement, which is the thing being looked at.
+/// record arm on it, volume, pan, routing, the FX pill. **Compact** is the
+/// track's name and colour, as Logic's iPad shows its tracks: what a row
+/// is scanned for when there is not room for more, a touchscreen's or a
+/// docked panel's. A row tall enough for a second line gets its arm, mute
+/// and solo on it; the rest is the full panel, which a swipe opens.
 ///
 /// A value rather than a constant because both panels are drawn from the
 /// same code: the recorded row, the live controls over it, and the hit
@@ -162,18 +168,19 @@ impl Tcp {
     #[must_use]
     pub fn width(self) -> f64 {
         if self.compact {
-            // The gutter's buttons, after the name and its level.
-            self.tint_w() + f64::from(g::GUTTER_W)
+            // The rail, the name, and a hair of margin: nothing else.
+            f64::from(g::NAME_FIELD_X) + NAMES_FIELD_W + 6.0
         } else {
             f64::from(g::ROW_W)
         }
     }
 
-    /// Where the gutter starts — the tinted part's width.
+    /// Where the gutter starts — the tinted part's width. The compact
+    /// panel has no gutter: it is all tint.
     #[must_use]
     pub fn tint_w(self) -> f64 {
         if self.compact {
-            self.volume_x() + 18.0
+            self.width()
         } else {
             f64::from(g::TINT_W)
         }
@@ -184,7 +191,7 @@ impl Tcp {
     pub fn name_field(self) -> (f64, f64) {
         let x = f64::from(g::NAME_FIELD_X);
         let w = if self.compact {
-            84.0
+            NAMES_FIELD_W
         } else {
             f64::from(g::NAME_FIELD_W)
         };
@@ -199,7 +206,8 @@ impl Tcp {
         if self.compact { x + 8.0 } else { 58.0 }
     }
 
-    /// The volume knob's centre — the field's right end, either way.
+    /// The volume knob's centre — the field's right end, either way. The
+    /// compact panel has no knob; the name runs to the field's end.
     #[must_use]
     pub fn volume_x(self) -> f64 {
         let (x, w) = self.name_field();
@@ -210,10 +218,14 @@ impl Tcp {
     #[must_use]
     pub fn shows(self, control: crate::row::Control) -> bool {
         use crate::row::Control;
+        // The compact panel is the track's name: its arm, mute and solo
+        // on a second line where the row is tall enough for one
+        // (`Row::rect`), and nothing else — the expanded panel has the
+        // rest, a swipe away.
         !self.compact
-            || !matches!(
+            || matches!(
                 control,
-                Control::Pan | Control::Routing | Control::Fx | Control::RecArm
+                Control::Folder | Control::Name | Control::Mute | Control::Solo | Control::RecArm
             )
     }
 
@@ -418,6 +430,16 @@ pub fn draw_row(
     // the space that is left, and gives way entirely when a folder's
     // mark has taken the rail — the mark is the fact worth keeping when
     // only one of the two fits.
+    // And under the number, the track's icon: what it is, at a glance —
+    // the folder's mark, the number, then the instrument, down the rail.
+    // Only where the row has the height for both; otherwise the number.
+    let icon = (rail - 6.0).min(16.0);
+    let with_icon = h - mark_h >= 11.0 + ICON_GAP + icon + 6.0;
+    let group = if with_icon {
+        11.0 + ICON_GAP + icon
+    } else {
+        0.0
+    };
     if h - mark_h >= 11.0 {
         // Sized and centred to sit INSIDE the rail.
         //
@@ -429,15 +451,34 @@ pub fn draw_row(
         let number = track.index.saturating_add(1).to_string();
         let (number, size) = font.fit(&number, 11.0, 6.0, rail - 3.0);
         let width = font.width(&number, size);
+        // With the icon under it, the two are centred together.
+        let middle = y + mark_h + (h - mark_h - group) / 2.0;
+        let baseline = if with_icon {
+            middle + 9.0
+        } else {
+            middle + f64::from(size) / 3.0
+        };
         glyphs(
             scene,
             font,
             ink_on(folder_band(palette, track)),
             &number,
             indent + (rail - width) / 2.0,
-            y + mark_h + (h - mark_h) / 2.0 + f64::from(size) / 3.0,
+            baseline,
             size,
         );
+        if with_icon {
+            // In the number's ink: on the rail's own colour, a lifted
+            // track colour would all but vanish.
+            let top = middle + 11.0 + ICON_GAP;
+            let left = indent + (rail - icon) / 2.0;
+            crate::track_icon::paint(
+                scene,
+                crate::track_icon::Icon::of(&track.name, track.is_folder),
+                vello::kurbo::Rect::new(left, top, left + icon, top + icon),
+                ink_on(folder_band(palette, track)),
+            );
+        }
     }
 
     match density {
@@ -708,6 +749,21 @@ pub fn folder_band(palette: &Palette, track: &Track) -> Color {
 /// vanish into them — a near-black track colour is the case it exists
 /// for, not the mid-tones.
 const INK_FLOOR: f32 = 0.179;
+
+/// A track's icon's ink: its own colour, lifted a third of the way to white
+/// so it reads bold on the dark field — or the panel's dim ink, for a track
+/// with no colour of its own.
+#[must_use]
+pub fn icon_ink(palette: &Palette, track: &Track) -> Color {
+    if track.color.is_none() {
+        return palette.text_dim;
+    }
+    mix(
+        track_color(palette, track),
+        Color::from_rgba8(0xff, 0xff, 0xff, 0xff),
+        0.35,
+    )
+}
 
 pub fn ink_on(background: Color) -> Color {
     let [r, g, b, _] = background.components;
