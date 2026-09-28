@@ -30,6 +30,7 @@ use anyrender::{RenderContext, Scene};
 use blitz_dom::node::{ComputedStyles, Widget};
 use blitz_traits::events::{BlitzPointerId, MouseEventButton, UiEvent};
 use dioxus::prelude::*;
+use eq_ui::eq_graph_interaction::Mods;
 use vello::kurbo::Affine;
 
 use crate::engine::Edit;
@@ -532,6 +533,15 @@ enum Hold {
     /// A press in the overview band ([`OVERVIEW_H`]): the strips go
     /// wherever it points, as it moves.
     Overview,
+    /// A rack grip in a hand — an EQ band, a threshold, a knob — moved by
+    /// the pointer's travel in layout pixels since `last`.
+    Rack {
+        row: usize,
+        grip: crate::tone::Grip,
+        last: (f64, f64),
+    },
+    /// A finger on a rack where no grip is: the chain scrolls under it.
+    RackScroll { from_y: f64, was: f64 },
     /// A finger scrolling the strips, from where it and the scroll were,
     /// and how fast it is going (to throw the strips when it lets go).
     Pan {
@@ -573,6 +583,28 @@ struct MixerWidget {
     applier: Option<crate::engine::Applier>,
     /// The tracks [`Links::arm_of`] arms in place of their strips'.
     targets: Vec<daw_proto::Track>,
+    /// The Tone rack: each track's EQ, compression and saturation
+    /// settings (`crate::tone`), what its strip draws in the rack and what
+    /// a grip edits.
+    tone: crate::tone::Store,
+    /// Each rack's cached picture and live meters, one per track: every
+    /// rack is drawn live (so a fold or a scroll applies to all of them),
+    /// from a cache an edit invalidates.
+    spectra: std::collections::HashMap<String, crate::tone::Analyser>,
+    /// Each track's level history, for the rack's compressors.
+    levels: std::collections::HashMap<String, crate::tone::Levels>,
+    /// Which mix phases are folded shut in the racks.
+    folds: crate::tone::Fold,
+    /// How far the racks' chains are scrolled under their boxes.
+    rack_scroll: f64,
+    /// The rack grip under a mouse, lit.
+    rack_hover: Option<(usize, crate::tone::Grip)>,
+    /// The last rack grip pressed, and when: a second press on it soon
+    /// after puts it back to its default.
+    rack_pressed: Option<(usize, crate::tone::Grip, web_time::Instant)>,
+    /// The selected track the mixer was built with: another selection
+    /// opens another strip, which is a rebuild.
+    built_open: Option<String>,
     /// The strips still moving after a finger threw them.
     fling: Option<crate::touch::Fling>,
     /// Ask the host for another frame: Blitz paints a widget after an
@@ -671,6 +703,14 @@ impl MixerWidget {
             targets,
             fling: None,
             redraw: None,
+            tone: crate::tone::Store::default(),
+            spectra: std::collections::HashMap::new(),
+            levels: std::collections::HashMap::new(),
+            folds: crate::tone::Fold::rest(),
+            rack_scroll: 0.0,
+            rack_hover: None,
+            rack_pressed: None,
+            built_open: None,
             clips: crate::overlay::Clips::default(),
             meters: crate::engine::Meters::start(),
             live,
@@ -696,6 +736,11 @@ impl MixerWidget {
                 self.mixer = None;
                 self.pointer = Pointer::default();
                 self.holds.clear();
+                // Every track a rack: its settings, and a live picture.
+                self.tone.seed(&self.rows);
+                for (track, _) in &self.rows {
+                    self.spectra.entry(track.guid.clone()).or_default();
+                }
             }
         }
         let echoed: Vec<Edit> = self.links.to_mixer.borrow_mut().drain(..).collect();
@@ -865,6 +910,190 @@ impl MixerWidget {
         }
     }
 
+    /// The rack grip under a widget point, with its strip and track.
+    fn rack_grip_at(&self, x: f64, y: f64) -> Option<(usize, crate::tone::Grip, String)> {
+        let (cx, cy) = self.content(x, y);
+        let mixer = self.mixer.as_ref()?;
+        let row = mixer.strip_at(cx)?;
+        let (left, _, _) = mixer.strip_box(row)?;
+        let panel =
+            crate::tone::Panel::of(mixer.strip(row)?.rack_rect()?, left).up(self.rack_scroll);
+        let track = self.track_at(row)?;
+        let tone = self.tone.get(&track.guid)?;
+        let grip = crate::tone::grip_at(
+            tone.panels(rack_panels()),
+            tone,
+            panel,
+            self.folds.of(&track.guid),
+            cx,
+            cy,
+        )?;
+        Some((row, grip, track.guid.clone()))
+    }
+
+    /// Whether a widget point is in a strip's rack box.
+    fn in_rack(&self, x: f64, y: f64) -> bool {
+        let (cx, cy) = self.content(x, y);
+        let Some(mixer) = self.mixer.as_ref() else {
+            return false;
+        };
+        let Some(row) = mixer.strip_at(cx) else {
+            return false;
+        };
+        let (Some((left, _, _)), Some(strip)) = (mixer.strip_box(row), mixer.strip(row)) else {
+            return false;
+        };
+        strip
+            .rack_rect()
+            .is_some_and(|r| r.contains((cx - left, cy)))
+    }
+
+    /// A press in a rack: a switch flips at once, a second press on a
+    /// grip puts it back to its default, a modified press on an EQ band
+    /// bypasses or reshapes it, and any other grip is taken hold of. A
+    /// finger on the rack away from every grip scrolls the chain.
+    /// `false` where the press is not the rack's.
+    fn rack_pressed_at(
+        &mut self,
+        id: BlitzPointerId,
+        finger: bool,
+        x: f64,
+        y: f64,
+        mods: Mods,
+    ) -> bool {
+        use crate::tone::Grip;
+        let Some((row, grip, guid)) = self.rack_grip_at(x, y) else {
+            if finger && self.in_rack(x, y) {
+                let (_, cy) = self.content(x, y);
+                let was = self.rack_scroll;
+                self.holds.push((id, Hold::RackScroll { from_y: cy, was }));
+                return true;
+            }
+            return false;
+        };
+        let now = web_time::Instant::now();
+        let again = self.rack_pressed.is_some_and(|(r, g, at)| {
+            r == row && g == grip && now.duration_since(at) < crate::gesture::DOUBLE
+        });
+        self.rack_pressed = Some((row, grip, now));
+        if grip.is_switch() {
+            if let Grip::Phase(phase) = grip {
+                // What the mixer is showing, not a setting of the track.
+                self.folds.toggle(&guid, phase);
+                for analyser in self.spectra.values_mut() {
+                    analyser.invalidate();
+                }
+            } else if let Some(tone) = self.tone.edit(&guid) {
+                toggle(tone, grip);
+                self.invalidate_rack(&guid);
+            }
+            self.holds.push((
+                id,
+                Hold::Press {
+                    spot: None,
+                    from: (x, y),
+                },
+            ));
+            return true;
+        }
+        if again {
+            if let Some(tone) = self.tone.edit(&guid) {
+                crate::tone::reset(tone, grip);
+            }
+            self.invalidate_rack(&guid);
+            self.holds.push((
+                id,
+                Hold::Press {
+                    spot: None,
+                    from: (x, y),
+                },
+            ));
+            return true;
+        }
+        if let Grip::Band(which, index) = grip
+            && self
+                .tone
+                .edit(&guid)
+                .is_some_and(|tone| crate::tone::dot_click(tone, which, index, mods))
+        {
+            self.invalidate_rack(&guid);
+            self.holds.push((
+                id,
+                Hold::Press {
+                    spot: None,
+                    from: (x, y),
+                },
+            ));
+            return true;
+        }
+        let last = self.content(x, y);
+        self.holds.push((id, Hold::Rack { row, grip, last }));
+        self.invalidate_rack(&guid);
+        true
+    }
+
+    /// Move a rack grip by a travel in layout pixels.
+    fn drag_rack(&mut self, row: usize, grip: crate::tone::Grip, dx: f64, dy: f64) {
+        let Some(mixer) = self.mixer.as_ref() else {
+            return;
+        };
+        let Some((left, _, _)) = mixer.strip_box(row) else {
+            return;
+        };
+        let Some(rack) = mixer.strip(row).and_then(|s| s.rack_rect()) else {
+            return;
+        };
+        let panel = crate::tone::Panel::of(rack, left).up(self.rack_scroll);
+        let Some(guid) = self.track_at(row).map(|t| t.guid.clone()) else {
+            return;
+        };
+        let folded = self.folds.of(&guid);
+        if let Some(tone) = self.tone.edit(&guid) {
+            let panels = tone.panels(rack_panels());
+            crate::tone::drag(tone, grip, panels, panel, folded, Mods::default(), dx, dy);
+        }
+        self.invalidate_rack(&guid);
+    }
+
+    /// How far the racks can scroll: the longest chain's overrun of its
+    /// box, since the scroll is shared.
+    fn rack_span(&self) -> f64 {
+        let Some(mixer) = self.mixer.as_ref() else {
+            return 0.0;
+        };
+        self.rows
+            .iter()
+            .map(|(track, _)| {
+                crate::tone::scroll_span(
+                    self.tone
+                        .get(&track.guid)
+                        .map_or(rack_panels(), |t| t.panels(rack_panels())),
+                    mixer.rack_h,
+                    self.folds.of(&track.guid),
+                )
+            })
+            .fold(0.0_f64, f64::max)
+    }
+
+    /// Throw a track's cached rack away: its settings moved.
+    fn invalidate_rack(&mut self, guid: &str) {
+        if let Some(analyser) = self.spectra.get_mut(guid) {
+            analyser.invalidate();
+        }
+    }
+
+    /// The same, for the tracks under some strips' grips.
+    fn invalidate_rack_rows(&mut self, rows: &[Option<(usize, crate::tone::Grip)>]) {
+        let guids: Vec<String> = rows
+            .iter()
+            .flatten()
+            .filter_map(|(row, _)| self.track_at(*row).map(|t| t.guid.clone()))
+            .collect();
+        for guid in guids {
+            self.invalidate_rack(&guid);
+        }
+    }
+
     /// Scroll so the strips under `x` in the overview band are in the
     /// middle of the panel.
     fn overview_to(&mut self, x: f64) {
@@ -1004,11 +1233,17 @@ impl MixerWidget {
                     return false;
                 }
                 let spot = self.spot_at(x, y);
-                self.pointer.hover(spot)
+                let grip = self.rack_grip_at(x, y).map(|(row, grip, _)| (row, grip));
+                let lit = grip != self.rack_hover;
+                if lit {
+                    self.invalidate_rack_rows(&[self.rack_hover, grip]);
+                    self.rack_hover = grip;
+                }
+                self.pointer.hover(spot) || lit
             }
             UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => {
                 let (x, y) = at(e);
-                self.pressed(e.id, e.is_finger(), x, y);
+                self.pressed(e.id, e.is_finger(), x, y, rack_mods(e));
                 true
             }
             UiEvent::PointerUp(e) if e.button == MouseEventButton::Main => {
@@ -1042,11 +1277,16 @@ impl MixerWidget {
     /// A finger turns a fader only by its cap, and then one to one, so
     /// the cap stays under it. A mouse takes the whole column, as REAPER
     /// does, at the gearing the mixer always had.
-    fn pressed(&mut self, id: BlitzPointerId, finger: bool, x: f64, y: f64) {
+    fn pressed(&mut self, id: BlitzPointerId, finger: bool, x: f64, y: f64, mods: Mods) {
         // A press catches a thrown scroll, as it does on a phone.
         self.fling = None;
         // A second press by the same pointer means its release was lost.
         self.let_go(id);
+        // The rack sits over the strip's own controls, so it answers
+        // first: a press lands on what it looks like it landed on.
+        if y >= self.band.get() && self.rack_pressed_at(id, finger, x, y, mods) {
+            return;
+        }
         if y < self.band.get() {
             self.overview_to(x);
             self.holds.push((id, Hold::Overview));
@@ -1084,7 +1324,7 @@ impl MixerWidget {
         let shown = match &hold {
             Hold::Turn(turn) => Some(turn.spot),
             Hold::Press { spot, .. } => *spot,
-            Hold::Pan { .. } | Hold::Overview => None,
+            Hold::Pan { .. } | Hold::Overview | Hold::Rack { .. } | Hold::RackScroll { .. } => None,
         };
         self.pointer.hover(shown);
         self.pointer.press();
@@ -1096,9 +1336,26 @@ impl MixerWidget {
         let Some(i) = self.hold_of(id) else {
             return false;
         };
+        // In the strips' own units, for a rack grip's travel.
+        let (cx, cy) = self.content(x, y);
         match &mut self.holds[i].1 {
             Hold::Overview => {
                 self.overview_to(x);
+                true
+            }
+            Hold::Rack { row, grip, last } => {
+                let (row, grip) = (*row, *grip);
+                let (dx, dy) = (cx - last.0, cy - last.1);
+                *last = (cx, cy);
+                self.drag_rack(row, grip, dx, dy);
+                true
+            }
+            Hold::RackScroll { from_y, was } => {
+                let (from_y, was) = (*from_y, *was);
+                self.rack_scroll = (was - (cy - from_y)).clamp(0.0, self.rack_span());
+                for analyser in self.spectra.values_mut() {
+                    analyser.invalidate();
+                }
                 true
             }
             Hold::Turn(turn) => {
@@ -1175,7 +1432,7 @@ impl MixerWidget {
                     }
                 }
             }
-            Hold::Press { .. } | Hold::Overview => {}
+            Hold::Press { .. } | Hold::Overview | Hold::Rack { .. } | Hold::RackScroll { .. } => {}
         }
         self.pointer.release();
         self.pointer.hover(if finger { None } else { up });
@@ -1189,6 +1446,44 @@ impl MixerWidget {
             self.flush_drag();
             self.pointer.release();
         }
+    }
+}
+
+/// The panels a rack shows: the Tone phase's — EQ, compression and
+/// saturation, with the rest of the chain around them.
+fn rack_panels() -> &'static [crate::tone::Which] {
+    crate::tone::panels_for(session::mix_phases::MixPhase::Tone)
+}
+
+/// A pointer's modifiers, as the rack's editing reads them: Alt, Shift,
+/// and Ctrl or Command.
+fn rack_mods(e: &blitz_traits::events::BlitzPointerEvent) -> Mods {
+    use blitz_traits::events::Modifiers;
+    Mods::new(
+        e.mods.contains(Modifiers::ALT),
+        e.mods.contains(Modifiers::SHIFT),
+        e.mods.contains(Modifiers::CONTROL) || e.mods.contains(Modifiers::META),
+    )
+}
+
+/// Flip a rack switch: the grips that are not values.
+fn toggle(tone: &mut crate::tone::Tone, grip: crate::tone::Grip) {
+    use crate::tone::{Grip, Which};
+    match grip {
+        Grip::Bypass(which) => tone.bypass.toggle(which),
+        // Clicking the zoom steps it on; the wheel walks it either way.
+        Grip::Scale(_) => tone.cycle_eq_range(),
+        // The machine glyph cycles the machine.
+        Grip::Family(Which::Sat) => tone.cycle_sat(),
+        Grip::Family(Which::Delay) => tone.delay.cycle_style(),
+        Grip::Family(Which::Reverb) => tone.reverb.cycle_algorithm(),
+        // A chip in the selector strip picks its family.
+        Grip::Choose(Which::Sat, i) => tone.choose_sat_family(i),
+        Grip::Choose(Which::Delay, i) => tone.delay.choose_family(i),
+        Grip::Choose(Which::Reverb, i) => tone.reverb.choose_family(i),
+        // A preset chip loads the preset: the whole rack follows.
+        Grip::Preset(i) => tone.load_preset(i),
+        _ => {}
     }
 }
 
@@ -1255,17 +1550,48 @@ impl MixerWidget {
             return out;
         }
         let live = self.live.get();
+        // The selected track's strip opens to show its rack: given the
+        // working width, which turns the racks on, the mixer's own widths
+        // open it further (`mcp::widths`). None selected, no racks — the
+        // faders keep the whole height.
+        let open = if self.links.fill {
+            None
+        } else {
+            self.tracks
+                .iter()
+                .find(|t| t.selected)
+                .map(|t| t.guid.clone())
+        };
         let stale = self
             .mixer
             .as_ref()
             .is_none_or(|m| (m.height - h).abs() > 0.5 || m.touch != self.touch.get())
-            || live != self.built_live;
+            || live != self.built_live
+            || open != self.built_open;
         if stale {
             self.built_live = live;
+            self.built_open.clone_from(&open);
+            for analyser in self.spectra.values_mut() {
+                analyser.invalidate();
+            }
             let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(
                 daw_ui::studio::project::Project::default(),
             ));
-            let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(self.rows.clone()));
+            let mut rows = self.rows.clone();
+            for (track, _) in &mut rows {
+                let selected = open.as_deref() == Some(track.guid.as_str());
+                track.selected = selected;
+                if selected {
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "a strip width"
+                    )]
+                    let working = crate::tone::WORKING as u32;
+                    track.width = Some(track.width.unwrap_or(0).max(working));
+                }
+            }
+            let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(rows));
             self.mixer = Some(crate::mcp::Mixer::build(
                 &self.palette,
                 &self.font,
@@ -1273,14 +1599,14 @@ impl MixerWidget {
                 &rows,
                 h,
                 self.layout,
-                &[],
-                false,
+                if open.is_some() { rack_panels() } else { &[] },
+                open.is_some(),
                 crate::settings::Settings {
                     live_strips: live,
                     touch_strips: self.touch.get(),
                     ..crate::settings::Settings::default()
                 },
-                &crate::tone::Store::default(),
+                &self.tone,
             ));
         }
         let Some(mixer) = self.mixer.as_ref() else {
@@ -1321,8 +1647,22 @@ impl MixerWidget {
             &self.pointer,
             &levels,
             &self.clips,
-            0.0,
-            &mut crate::overlay::Racks::none(),
+            self.rack_scroll,
+            &mut crate::overlay::Racks {
+                settings: &self.tone,
+                history: &mut self.levels,
+                spectra: &mut self.spectra,
+                lit: self
+                    .holds
+                    .iter()
+                    .find_map(|(_, hold)| match hold {
+                        Hold::Rack { row, grip, .. } => Some((*row, *grip)),
+                        _ => None,
+                    })
+                    .or(self.rack_hover),
+                panels: rack_panels(),
+                folded: &self.folds,
+            },
             scroll,
             w,
             at,
