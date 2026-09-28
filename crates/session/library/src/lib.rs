@@ -26,6 +26,11 @@ use resources_proto::ResourcesServiceClient;
 /// The collection kind a setlist is — keyflow's word for it.
 pub const SETLIST_KIND: &str = "songlist";
 
+/// Every collection kind that is a set of songs to play in order: keyflow's
+/// `songlist`, and Task's own `setlist` (what a service or a show's set is
+/// filed as — the kind most setlists in an org have).
+pub const SETLIST_KINDS: [&str; 2] = [SETLIST_KIND, "setlist"];
+
 /// The File Root a song's session lives in.
 #[must_use]
 pub fn session_root_dir(song_slug: &str) -> String {
@@ -120,46 +125,86 @@ impl Library {
         ))
     }
 
-    /// Every setlist in the org, with its songs in order.
+    /// Every setlist in the org, of either kind ([`SETLIST_KINDS`]), with
+    /// its songs in order.
+    ///
+    /// A song is looked up once however many sets it is in, and the
+    /// lookups go at once: one after another, an org's dozen sets of a
+    /// dozen songs was a hundred and forty round trips before the start
+    /// screen had anything to show.
     ///
     /// # Errors
     /// When the server cannot be reached or refuses.
     pub async fn setlists(&self) -> eyre::Result<Vec<Setlist>> {
+        use futures_util::StreamExt as _;
+        /// Song lookups in flight at once.
+        const AT_ONCE: usize = 16;
         let collections: CollectionServiceClient = self.client().await?;
         let resources: ResourcesServiceClient = self.client().await?;
-        let lists = collections
-            .list(self.org.clone(), Some(CollectionKind::new(SETLIST_KIND)))
-            .await
-            .map_err(|e| eyre::eyre!("listing setlists: {e:?}"))?;
-        let mut out = Vec::new();
-        for list in lists {
-            let mut songs = Vec::new();
-            for item in list.items.iter().filter(|i| i.node.kind == NodeKind::Song) {
-                let slug = item.node.id.clone();
-                let song = match resources.song(slug.clone()).await {
-                    Ok(doc) => Song {
-                        slug,
-                        title: doc.title,
-                        writers: doc.writers,
-                        key: doc.key,
-                    },
-                    // A dangling reference still has a place in the order.
-                    Err(_) => Song {
-                        title: slug.clone(),
-                        slug,
-                        writers: Vec::new(),
-                        key: String::new(),
-                    },
-                };
-                songs.push(song);
-            }
-            out.push(Setlist {
-                id: list.id,
-                title: list.title,
-                songs,
-            });
+        let mut lists = Vec::new();
+        for kind in SETLIST_KINDS {
+            lists.extend(
+                collections
+                    .list(self.org.clone(), Some(CollectionKind::new(kind)))
+                    .await
+                    .map_err(|e| eyre::eyre!("listing setlists: {e:?}"))?,
+            );
         }
-        Ok(out)
+        let mut slugs: Vec<String> = lists
+            .iter()
+            .flat_map(|list| list.items.iter())
+            .filter(|i| i.node.kind == NodeKind::Song)
+            .map(|i| i.node.id.clone())
+            .collect();
+        slugs.sort();
+        slugs.dedup();
+        let found: std::collections::HashMap<String, Song> = futures_util::stream::iter(slugs)
+            .map(|slug| {
+                let resources = &resources;
+                async move {
+                    let doc = resources.song(slug.clone()).await.ok()?;
+                    Some((
+                        slug.clone(),
+                        Song {
+                            slug,
+                            title: doc.title,
+                            writers: doc.writers,
+                            key: doc.key,
+                        },
+                    ))
+                }
+            })
+            .buffer_unordered(AT_ONCE)
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        Ok(lists
+            .into_iter()
+            .map(|mut list| {
+                list.sort_items();
+                let songs = list
+                    .items
+                    .iter()
+                    .filter(|i| i.node.kind == NodeKind::Song)
+                    .map(|item| {
+                        found.get(&item.node.id).cloned().unwrap_or_else(|| {
+                            // A dangling reference still has a place in the order.
+                            Song {
+                                title: item.node.id.clone(),
+                                slug: item.node.id.clone(),
+                                writers: Vec::new(),
+                                key: String::new(),
+                            }
+                        })
+                    })
+                    .collect();
+                Setlist {
+                    id: list.id,
+                    title: list.title,
+                    songs,
+                }
+            })
+            .collect())
     }
 
     /// Download a song's session into `into` (created), returning the

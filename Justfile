@@ -1788,7 +1788,7 @@ ci FROM="lockfile":
 # demo session's project and chart under dist/session/. Host toolchain
 # (rustup target add wasm32-unknown-unknown; cargo install
 # wasm-bindgen-cli --version 0.2.126). Serve with `just web-daw-serve`.
-web-daw SESSION="../sessions/Always On Time" RPP="Always On Time.RPP" CHART="Always_on_Time.kf" PROFILE="release":
+web-daw SESSION="../sessions/Always On Time" RPP="Always On Time.RPP" CHART="Always_on_Time.kf" PROFILE="wasm-release":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build -p session-daw-web --target wasm32-unknown-unknown --profile {{PROFILE}}

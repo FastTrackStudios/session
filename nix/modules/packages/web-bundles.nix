@@ -95,10 +95,12 @@
         nativeBuildInputs = dxWebNativeInputs;
         doNotPostBuildInstallCargoBinaries = true;
         buildPhaseCargoCommand = ''
-          cargo build --release -p session-daw-web --target wasm32-unknown-unknown
+          # `wasm-release`: size-optimized with whole-program LTO, the
+          # audio path at full speed (see the profile in Cargo.toml).
+          cargo build --profile wasm-release -p session-daw-web --target wasm32-unknown-unknown
           mkdir -p dist
           wasm-bindgen --target web --no-typescript --out-dir dist \
-            target/wasm32-unknown-unknown/release/session-daw-web.wasm
+            target/wasm32-unknown-unknown/wasm-release/session-daw-web.wasm
           wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
             --enable-sign-ext --enable-mutable-globals --enable-reference-types \
             --enable-multivalue dist/session-daw-web_bg.wasm -o dist/session-daw-web_bg.wasm
@@ -107,8 +109,10 @@
           mkdir -p $out/www
           cp -R dist/. $out/www/
           cp apps/session-daw-web/www/index.html $out/www/
+          # The best brotli there is: done once per build, and the wasm
+          # comes out 6.4 MB against 7.5 at Cloudflare's own level.
           find $out/www -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.html' \) \
-            -exec brotli --keep --quality=9 {} +
+            -exec brotli --keep --quality=11 --lgwin=24 {} +
         '';
         doCheck = false;
       });
@@ -192,8 +196,15 @@
         cp -R ${session-app-web}/www/. $out/app/
         chmod -R u+w $out/app
         v=$(sha256sum $out/app/session-daw-web_bg.wasm | cut -c1-16)
+        # The snippets the module imports, preloaded beside it: their
+        # directories are named by crate hash, so they are listed here from
+        # what was built rather than written into the page.
+        snippets=$(cd $out/app && find snippets -name '*.js' | sort \
+          | sed 's|.*|    <link rel="modulepreload" href="./&" />|')
         substituteInPlace $out/app/index.html \
           --replace-fail '"./session-daw-web.js"' "\"./session-daw-web.js?v=$v\"" \
+          --replace-fail 'href="./session-daw-web_bg.wasm"' "href=\"./session-daw-web_bg.wasm?v=$v\"" \
+          --replace-fail '    <!-- snippets -->' "$snippets" \
           --replace-fail 'init();' "init({ module_or_path: \"./session-daw-web_bg.wasm?v=$v\" });"
         # Its precompressed copy is the old page: served first, it would
         # undo the above.
