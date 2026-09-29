@@ -21,8 +21,10 @@ use dioxus::prelude::*;
 
 use crate::studio::{PPS, StudioSession};
 
-/// The scrollbar's thickness.
-pub const BAR: f64 = 12.0;
+/// The scrollbar's thickness: a hairline that says where the view is,
+/// not a control to aim at — a finger or a wheel scrolls the lanes
+/// themselves, and a thumb still takes a drag.
+pub const BAR: f64 = 5.0;
 /// One wheel notch, for a wheel that counts in lines.
 pub const WHEEL_LINE: f64 = 40.0;
 /// How far in each zoom may go.
@@ -676,6 +678,16 @@ impl ArrangementPanel {
                         ..at
                     };
                     crate::zoom::frame(now, at, time, rows)
+                }
+                crate::zoom::Request::Pinch { sx, sy, at, dx, dy } => {
+                    let zoom_x = (zx * sx).clamp(x0, x1);
+                    let zoom_y = (zy * sy).clamp(y0, y1);
+                    crate::zoom::Target {
+                        zoom_x,
+                        zoom_y,
+                        scroll_x: zoom_about(at.0, now.scroll_x, zx, zoom_x) + dx,
+                        scroll_y: zoom_about(at.1, now.scroll_y, zy, zoom_y) + dy,
+                    }
                 }
                 crate::zoom::Request::Scale { vertical, by } => {
                     // About the middle of the lanes.

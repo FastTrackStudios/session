@@ -618,16 +618,16 @@ pub fn ScrollBar(
         (
             format!("left:{left}px; top:{top}px; width:{length}px; height:{thick}px;"),
             format!(
-                "left:{along:.1}px; top:2px; width:{thumb:.1}px; height:{}px;",
-                thick - 4.0
+                "left:{along:.1}px; top:1px; width:{thumb:.1}px; height:{}px;",
+                thick - 2.0
             ),
         )
     } else {
         (
             format!("left:{left}px; top:{top}px; width:{thick}px; height:{length}px;"),
             format!(
-                "left:2px; top:{along:.1}px; width:{}px; height:{thumb:.1}px;",
-                thick - 4.0
+                "left:1px; top:{along:.1}px; width:{}px; height:{thumb:.1}px;",
+                thick - 2.0
             ),
         )
     };

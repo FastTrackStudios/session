@@ -120,6 +120,10 @@ struct Finger {
     scrubbing: bool,
     /// How fast it is going, to throw the view when it lets go.
     speed: crate::touch::Speed,
+    /// A second finger, and where it was: the two are a pinch — spread
+    /// across, time zooms; spread down, the rows grow; moved together,
+    /// the view goes with them.
+    second: Option<(blitz_traits::events::BlitzPointerId, (f64, f64))>,
 }
 
 /// The track panel's grip: a pill standing on the panel's edge at `x`,
@@ -620,6 +624,7 @@ impl ArrangementWidget {
         let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
         let layout = crate::layout::Layout::from_env();
+        crate::tcp::fit_names(&font, rows.as_slice(), layout);
         let scene = Arrangement::build(
             &palette,
             &font,
@@ -837,6 +842,7 @@ impl ArrangementWidget {
         project: daw_ui::studio::project::Project,
         rows: Vec<(daw_proto::Track, u32)>,
     ) {
+        crate::tcp::fit_names(&self.font, &rows, self.layout);
         self.tracks = rows.iter().map(|(t, _)| t.clone()).collect();
         self.map = crate::plan::Rows::of(&rows, &self.tracks);
         self.content_h.set(
@@ -1746,8 +1752,22 @@ impl ArrangementWidget {
             (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
         };
         match event {
-            UiEvent::PointerDown(e) if e.is_finger() => {
-                if self.finger.is_some() {
+            // A finger — or, locked, the mouse: a drag that moves nothing
+            // moves the view, whichever hand it is.
+            UiEvent::PointerDown(e)
+                if e.is_finger()
+                    || (crate::options::LOCKING.get()
+                        && e.button == blitz_traits::events::MouseEventButton::Main
+                        && e.id == blitz_traits::events::BlitzPointerId::Mouse) =>
+            {
+                if let Some(finger) = self.finger.as_mut() {
+                    // A second finger: the gesture is a pinch from here.
+                    if finger.second.is_none() && e.id != finger.down.id && e.is_finger() {
+                        finger.second = Some((e.id, at(e)));
+                        finger.scrolling = true;
+                        finger.scrubbing = false;
+                        self.fling = None;
+                    }
                     return Some(true);
                 }
                 let (x, y) = at(e);
@@ -1767,6 +1787,7 @@ impl ArrangementWidget {
                         swiped: false,
                         scrubbing: true,
                         speed: crate::touch::Speed::default(),
+                        second: None,
                     });
                     self.scrub(x);
                     return Some(true);
@@ -1787,6 +1808,7 @@ impl ArrangementWidget {
                         swiped: false,
                         scrubbing: false,
                         speed: crate::touch::Speed::default(),
+                        second: None,
                     });
                     return Some(true);
                 }
@@ -1824,12 +1846,39 @@ impl ArrangementWidget {
                     swiped: false,
                     scrubbing: false,
                     speed: crate::touch::Speed::default(),
+                    second: None,
                 });
                 Some(true)
             }
             UiEvent::PointerMove(e) => {
-                let finger = self.finger.as_mut().filter(|f| f.down.id == e.id)?;
                 let (x, y) = at(e);
+                // Two fingers down: a pinch.
+                if let Some(finger) = self.finger.as_mut()
+                    && let Some((second_id, second_at)) = finger.second
+                    && (e.id == second_id || e.id == finger.down.id)
+                {
+                    let (a0, b0) = (finger.last, second_at);
+                    let (a1, b1) = if e.id == second_id {
+                        (a0, (x, y))
+                    } else {
+                        ((x, y), b0)
+                    };
+                    let step = crate::touch::pinch_step(a0, b0, a1, b1);
+                    finger.last = a1;
+                    finger.second = Some((second_id, b1));
+                    self.zooms.borrow_mut().push(crate::zoom::Request::Pinch {
+                        sx: step.sx,
+                        sy: step.sy,
+                        at: (
+                            step.mid.0 - self.scene.tcp.width(),
+                            step.mid.1 - ruler::ruler_h(),
+                        ),
+                        dx: -step.dx,
+                        dy: -step.dy,
+                    });
+                    return Some(true);
+                }
+                let finger = self.finger.as_mut().filter(|f| f.down.id == e.id)?;
                 if finger.scrubbing {
                     self.scrub(x);
                     return Some(true);
@@ -1873,6 +1922,15 @@ impl ArrangementWidget {
                 Some(true)
             }
             UiEvent::PointerUp(e) => {
+                // Either finger of a pinch lifted: the pinch is over, and
+                // the other finger's lift is nothing.
+                if self.finger.as_ref().is_some_and(|f| {
+                    f.second.is_some_and(|(id, _)| id == e.id)
+                        || (f.second.is_some() && f.down.id == e.id)
+                }) {
+                    self.finger = None;
+                    return Some(true);
+                }
                 if self.finger.as_ref().is_none_or(|f| f.down.id != e.id) {
                     // Another finger's lift, while one is held: ignored,
                     // as its press was.

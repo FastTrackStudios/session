@@ -105,9 +105,41 @@ pub const BUTTON_GAP: f64 = 1.0;
 /// The space between the track number and the icon under it, in the rail.
 const ICON_GAP: f64 = 4.0;
 
-/// The compact panel's name field: the knob and the gutter it gave up are
-/// the name's.
+/// The compact panel's name field at its widest: the knob and the gutter
+/// it gave up are the name's.
 const NAMES_FIELD_W: f64 = 112.0;
+/// And at its narrowest: a short name still gets a field to press.
+const NAMES_FIELD_MIN: f64 = 48.0;
+
+/// The compact panel's name field as the rows shown need it
+/// ([`fit_names`]): as wide as the longest name, never wider than
+/// [`NAMES_FIELD_W`]. The window's, as the panel's shape is — the
+/// arrangement, its chrome and its hit test read the same width.
+static NAMES_FIT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(NAMES_FIELD_W.to_bits());
+
+fn names_field_w() -> f64 {
+    f64::from_bits(NAMES_FIT.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Fit the compact panel's name field to `rows`: the longest name at the
+/// size its row draws it, its indent, and the field's own margins.
+/// `true` when the width changed.
+pub fn fit_names(font: &Font, rows: &[(Track, u32)], layout: crate::layout::Layout) -> bool {
+    let tcp = Tcp::COMPACT;
+    let widest = rows
+        .iter()
+        .map(|(track, depth)| {
+            let size = tcp.name_size(layout.height_of(track.height));
+            let indent = (f64::from(*depth) * tcp.indent()).min(tcp.max_indent());
+            font.width(&track.name, size) + indent + 16.0
+        })
+        .fold(0.0_f64, f64::max);
+    let fit = widest.ceil().clamp(NAMES_FIELD_MIN, NAMES_FIELD_W);
+    let was = names_field_w();
+    NAMES_FIT.store(fit.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    (was - fit).abs() > 0.5
+}
 
 /// Below this tall, volume and pan stop being knobs.
 ///
@@ -169,7 +201,7 @@ impl Tcp {
     pub fn width(self) -> f64 {
         if self.compact {
             // The rail, the name, and a hair of margin: nothing else.
-            f64::from(g::NAME_FIELD_X) + NAMES_FIELD_W + 6.0
+            f64::from(g::NAME_FIELD_X) + names_field_w() + 6.0
         } else {
             f64::from(g::ROW_W)
         }
@@ -191,7 +223,7 @@ impl Tcp {
     pub fn name_field(self) -> (f64, f64) {
         let x = f64::from(g::NAME_FIELD_X);
         let w = if self.compact {
-            NAMES_FIELD_W
+            names_field_w()
         } else {
             f64::from(g::NAME_FIELD_W)
         };

@@ -62,10 +62,10 @@ pub fn App() -> Element {
             {
                 super::ios_scene::window_created(uikit.ui_view);
             }
-            // Two fingers pinching zoom the arrangement's timeline; winit
-            // leaves UIKit's pinch recognizer off unless asked.
-            use winit::platform::ios::WindowExtIOS as _;
-            window.recognize_pinch_gesture(true);
+            // No UIKit pinch recognizer: the arrangement reads both
+            // fingers itself (a pinch zooms time across and the rows
+            // down, and carries the view), and a recognizer that took the
+            // gesture would cancel the touches it is made of.
         });
     }
     let initial: Option<Setlist> = use_context();

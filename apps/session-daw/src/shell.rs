@@ -567,14 +567,12 @@ pub fn TopBar(
             if let Some(Back(back)) = back {
                 button {
                     title: "Back to your sets",
-                    style: "flex:none; height:28px; display:flex; align-items:center; gap:4px; \
-                            padding:0 10px 0 6px; border-radius:7px; border:1px solid {RULE}; \
-                            background:#0f1012; color:{TEXT}; font-family:inherit; font-size:12px; \
-                            font-weight:600; cursor:pointer;",
+                    style: "flex:none; width:32px; height:28px; display:flex; align-items:center; \
+                            justify-content:center; padding:0; border-radius:7px; border:1px solid {RULE}; \
+                            background:#0f1012; color:{TEXT}; cursor:pointer;",
                     onmousedown: move |event| event.stop_propagation(),
                     onclick: move |_| back.call(()),
-                    lucide_dioxus::ChevronLeft { size: 16, color: "currentColor" }
-                    "Sets"
+                    lucide_dioxus::ChevronLeft { size: 18, color: "currentColor" }
                 }
             }
             // The setlist, filling whatever the bar has left.

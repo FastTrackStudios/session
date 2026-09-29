@@ -117,6 +117,17 @@ pub enum Request {
         vertical: bool,
         by: f64,
     },
+    /// Two fingers: each axis's zoom multiplied by how far they spread on
+    /// it (`sx` across, `sy` down), about `at` (where they are, in screen
+    /// pixels from the lanes' corner), and the view carried `dx`, `dy`
+    /// with them.
+    Pinch {
+        sx: f64,
+        sy: f64,
+        at: (f64, f64),
+        dx: f64,
+        dy: f64,
+    },
 }
 
 /// The queue from the widget to the panel, drained once a frame.
@@ -221,7 +232,9 @@ impl History {
                 self.visit(now);
                 Some(to)
             }
-            Request::ScrollBy { .. } | Request::Shape { .. } => Some(framed()),
+            Request::ScrollBy { .. } | Request::Shape { .. } | Request::Pinch { .. } => {
+                Some(framed())
+            }
             Request::Open { .. } => {
                 self.toggled = None;
                 Some(framed())

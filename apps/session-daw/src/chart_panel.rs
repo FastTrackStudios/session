@@ -79,6 +79,9 @@ struct Live {
     /// fitting the page and following the song until a double-click hands
     /// it back.
     manual: bool,
+    /// When two fingers last pinched: their lift arrives as two clicks,
+    /// which is a double-click — the fit's way back — and is not one.
+    pinched_at: Option<web_time::Instant>,
 }
 
 type Shared = Rc<RefCell<Live>>;
@@ -118,6 +121,10 @@ struct ChartWidget {
     live_seen: u64,
     /// The chart the measure boxes in [`Live`] were taken from.
     boxes_key: u64,
+    /// Fingers on the page: one drags it, two pinch it (`touch::Fingers`).
+    fingers: crate::touch::Fingers,
+    /// Moved by a finger since the last paint: paint again.
+    moved: std::cell::Cell<bool>,
 }
 
 /// A collaborator's pointer over the chart, anchored to the music: the
@@ -301,7 +308,69 @@ impl ChartWidget {
     }
 }
 
+impl ChartWidget {
+    /// A finger on the page: dragged, the page goes with it; two, and it
+    /// zooms about the point between them — the arrangement's gesture
+    /// (`touch::pinch_step`), both axes alike, since a page has one zoom.
+    /// Either takes the view off the fitted page, as a wheel does.
+    fn touched(&mut self, event: &blitz_traits::events::UiEvent) -> bool {
+        use blitz_traits::events::UiEvent;
+        let at = |e: &blitz_traits::events::BlitzPointerEvent| {
+            (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
+        };
+        match event {
+            UiEvent::PointerDown(e) if e.is_finger() => {
+                self.fingers.down(e.id, at(e));
+                false
+            }
+            UiEvent::PointerMove(e) if e.is_finger() => {
+                let Some(step) = self.fingers.moved(e.id, at(e)) else {
+                    return false;
+                };
+                let scale = self.live.borrow().scale.max(f64::EPSILON);
+                let by = match (step.sx == 1.0, step.sy == 1.0) {
+                    (true, true) => 1.0,
+                    (false, true) => step.sx,
+                    (true, false) => step.sy,
+                    (false, false) => (step.sx * step.sy).sqrt(),
+                };
+                if (by - 1.0).abs() > f64::EPSILON {
+                    let mut live = self.live.borrow_mut();
+                    live.manual = true;
+                    live.pinched_at = Some(web_time::Instant::now());
+                    let was = live.px_per_pt.max(f64::EPSILON);
+                    let zoom = (live.zoom * by).clamp(ZOOM_MIN, ZOOM_MAX);
+                    let now = was * zoom / live.zoom.max(f64::EPSILON);
+                    // The point under the fingers stays under them.
+                    let (mx, my) = (step.mid.0 * scale, step.mid.1 * scale);
+                    live.scroll_pt.0 += mx / was - mx / now;
+                    live.scroll_pt.1 += my / was - my / now;
+                    live.zoom = zoom;
+                    live.px_per_pt = now;
+                }
+                pan_by(&self.live, step.dx * scale, step.dy * scale);
+                true
+            }
+            UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) if e.is_finger() => {
+                self.fingers.up(e.id);
+                false
+            }
+            _ => false,
+        }
+    }
+}
+
 impl Widget for ChartWidget {
+    fn handle_event(&mut self, event: &blitz_traits::events::UiEvent) {
+        if self.touched(event) {
+            self.moved.set(true);
+        }
+    }
+
+    fn needs_redraw(&self) -> bool {
+        self.moved.get()
+    }
+
     fn paint(
         &mut self,
         _render_ctx: &mut dyn RenderContext,
@@ -310,6 +379,7 @@ impl Widget for ChartWidget {
         height: u32,
         scale: f64,
     ) -> Scene {
+        self.moved.set(false);
         self.paint_scene(width, height, scale)
     }
 }
@@ -334,6 +404,7 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         content_pt: (1.0, 1.0),
         px_per_pt: 1.0,
         manual: false,
+        pinched_at: None,
         scale: 1.0,
         boxes: Vec::new(),
     }));
@@ -357,6 +428,8 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         page: 1,
         live_seen: 0,
         boxes_key: 0,
+        fingers: crate::touch::Fingers::default(),
+        moved: std::cell::Cell::new(false),
     };
     Some((widget, live))
 }
@@ -457,7 +530,12 @@ pub fn WebChart(
             style: "position:absolute; top:0; left:0; width:100%; height:100%; \
                     overflow:hidden; background:#1a1b1e;",
             // Back to the whole page, following the song.
-            ondoubleclick: move |_| refit.borrow_mut().manual = false,
+            ondoubleclick: move |_| {
+                let mut live = refit.borrow_mut();
+                if live.pinched_at.is_none_or(|at| at.elapsed().as_millis() > 600) {
+                    live.manual = false;
+                }
+            },
             crate::web_host::WidgetCanvas { widget, panel: on_input }
         }
     }
@@ -468,7 +546,9 @@ impl crate::web_host::Hosted for ChartWidget {
     fn paint(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         self.paint_scene(width, height, scale)
     }
-    fn event(&mut self, _event: &blitz_traits::events::UiEvent) {}
+    fn event(&mut self, event: &blitz_traits::events::UiEvent) {
+        self.touched(event);
+    }
 }
 
 #[cfg(feature = "native")]
@@ -595,7 +675,12 @@ pub fn Chart(
             // Back to the whole page, following the song.
             ondoubleclick: {
                 let live = Rc::clone(&live);
-                move |_| live.borrow_mut().manual = false
+                move |_| {
+                    let mut live = live.borrow_mut();
+                    if live.pinched_at.is_none_or(|at| at.elapsed().as_millis() > 600) {
+                        live.manual = false;
+                    }
+                }
             },
             object {
                 style: "position:absolute; top:0; left:0; width:100%; height:100%;",

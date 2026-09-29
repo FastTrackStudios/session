@@ -203,3 +203,146 @@ fn coarse_pointer() -> bool {
 const fn coarse_pointer() -> bool {
     false
 }
+
+/// One step of a two-finger gesture: how far the fingers spread on each
+/// axis since the last (`sx` across, `sy` down — 1.0 is no change), where
+/// they are now (`mid`), and how far that moved (`dx`, `dy`). What any
+/// view that pinches and pans does with it is its own: a timeline zooms
+/// time across and rows down; a page zooms both alike.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Step {
+    pub sx: f64,
+    pub sy: f64,
+    pub mid: (f64, f64),
+    pub dx: f64,
+    pub dy: f64,
+}
+
+/// How far apart two fingers must be on an axis for a pinch to spread it:
+/// nearer than this they are side by side, not apart, and that axis's zoom
+/// stays.
+pub const PINCH_SPAN: f64 = 40.0;
+
+/// The step between two fingers at `a0`, `b0` and the same two at `a1`,
+/// `b1`. Each axis's spread is held to a quarter either way per step, so a
+/// finger that jumps (a dropped event) does not throw the zoom.
+#[must_use]
+pub fn pinch_step(a0: (f64, f64), b0: (f64, f64), a1: (f64, f64), b1: (f64, f64)) -> Step {
+    let spread = |old: f64, new: f64| {
+        if old.abs() < PINCH_SPAN || new.abs() < 1.0 {
+            1.0
+        } else {
+            (new.abs() / old.abs()).clamp(0.8, 1.25)
+        }
+    };
+    let mid0 = ((a0.0 + b0.0) / 2.0, (a0.1 + b0.1) / 2.0);
+    let mid1 = ((a1.0 + b1.0) / 2.0, (a1.1 + b1.1) / 2.0);
+    Step {
+        sx: spread(a0.0 - b0.0, a1.0 - b1.0),
+        sy: spread(a0.1 - b0.1, a1.1 - b1.1),
+        mid: mid1,
+        dx: mid1.0 - mid0.0,
+        dy: mid1.1 - mid0.1,
+    }
+}
+
+/// The fingers on a view, for one that only pans and pinches (a chart, a
+/// page): one finger drags it, two pinch and drag it together. Fed the
+/// view's pointer events; says what each move did.
+#[derive(Clone, Debug, Default)]
+pub struct Fingers {
+    down: Vec<(blitz_traits::events::BlitzPointerId, (f64, f64))>,
+}
+
+impl Fingers {
+    /// A finger down at `at`. The third and later are not followed.
+    pub fn down(&mut self, id: blitz_traits::events::BlitzPointerId, at: (f64, f64)) {
+        if self.down.len() < 2 && !self.down.iter().any(|(each, _)| *each == id) {
+            self.down.push((id, at));
+        }
+    }
+
+    /// A finger moved to `at`: what the view should do, if it is one of
+    /// the fingers followed — one finger, a drag (spread 1.0); two, a pinch.
+    pub fn moved(
+        &mut self,
+        id: blitz_traits::events::BlitzPointerId,
+        at: (f64, f64),
+    ) -> Option<Step> {
+        let i = self.down.iter().position(|(each, _)| *each == id)?;
+        let was = self.down[i].1;
+        self.down[i].1 = at;
+        Some(match self.down.as_slice() {
+            [(_, other0), (_, other1)] => {
+                // The other finger stayed where it was.
+                let other = if i == 0 { *other1 } else { *other0 };
+                pinch_step(was, other, at, other)
+            }
+            _ => Step {
+                sx: 1.0,
+                sy: 1.0,
+                mid: at,
+                dx: at.0 - was.0,
+                dy: at.1 - was.1,
+            },
+        })
+    }
+
+    /// A finger lifted (or cancelled). The other, if any, carries on as a
+    /// drag from where it is.
+    pub fn up(&mut self, id: blitz_traits::events::BlitzPointerId) {
+        self.down.retain(|(each, _)| *each != id);
+    }
+
+    /// Whether any finger is down.
+    #[must_use]
+    pub fn any(&self) -> bool {
+        !self.down.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod gesture_tests {
+    use super::*;
+
+    #[test]
+    fn a_pinch_spreads_each_axis_on_its_own_and_carries_the_middle() {
+        // Apart across only: time zooms, rows do not.
+        let step = pinch_step(
+            (100.0, 200.0),
+            (200.0, 200.0),
+            (80.0, 200.0),
+            (220.0, 200.0),
+        );
+        assert!((step.sx - 1.25).abs() < 1e-9, "{step:?}");
+        assert!((step.sy - 1.0).abs() < 1e-9);
+        assert_eq!((step.dx, step.dy), (0.0, 0.0), "spread about its middle");
+        // Both fingers moved together: a drag, no zoom.
+        let step = pinch_step(
+            (100.0, 100.0),
+            (200.0, 200.0),
+            (110.0, 90.0),
+            (210.0, 190.0),
+        );
+        assert_eq!((step.sx, step.sy), (1.0, 1.0));
+        assert_eq!((step.dx, step.dy), (10.0, -10.0));
+    }
+
+    #[test]
+    fn one_finger_drags_and_a_second_makes_it_a_pinch() {
+        use blitz_traits::events::BlitzPointerId::Finger;
+        let mut fingers = Fingers::default();
+        fingers.down(Finger(1), (100.0, 100.0));
+        let drag = fingers.moved(Finger(1), (110.0, 105.0)).expect("a drag");
+        assert_eq!((drag.sx, drag.dx, drag.dy), (1.0, 10.0, 5.0));
+        fingers.down(Finger(2), (210.0, 105.0));
+        let pinch = fingers.moved(Finger(2), (310.0, 105.0)).expect("a pinch");
+        assert!(pinch.sx > 1.0, "{pinch:?}");
+        fingers.up(Finger(1));
+        assert!(fingers.any(), "the other finger carries on");
+        assert!(
+            fingers.moved(Finger(3), (0.0, 0.0)).is_none(),
+            "an unfollowed finger"
+        );
+    }
+}
