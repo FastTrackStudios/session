@@ -299,11 +299,13 @@ fn PhoneViews(
         PhoneView::Control | PhoneView::More | PhoneView::Setup | PhoneView::Editor => rsx! {},
         PhoneView::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
         PhoneView::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
+                // Keyed apart: the same component in the same place would otherwise
+        // be kept and handed the other view's props.
         PhoneView::Arrangement => rsx! {
-            session_daw::mixer_panel::DawPanels { mode: Some(mode()) }
+            session_daw::mixer_panel::DawPanels { key: "{view():?}", mode: Some(mode()) }
         },
         PhoneView::Mixer => rsx! {
-            session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
+            session_daw::mixer_panel::DawPanels { key: "{view():?}", mode: Some(mode()), mixer_only: true }
         },
     }
 }

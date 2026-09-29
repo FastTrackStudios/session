@@ -207,12 +207,12 @@ fn Switch(on: Signal<bool>, label: &'static str, detail: &'static str) -> Elemen
 
 /// How wide the page is: the window, less the navigator beside it when it
 /// is open.
+/// Both contexts read every time: `try_use_context` is a hook, never to
+/// be called on some renders and not others.
 fn room() -> f64 {
-    try_use_context::<crate::shell::WindowSize>().map_or(f64::INFINITY, |window| {
-        let navigator =
-            try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.navigator)());
-        window.0().0 - if navigator { 300.0 } else { 0.0 }
-    })
+    let window = try_use_context::<crate::shell::WindowSize>();
+    let navigator = try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.navigator)());
+    window.map_or(f64::INFINITY, |window| window.0().0 - if navigator { 300.0 } else { 0.0 })
 }
 
 /// A length as a person reads it: `4:05`, `1:02:30`.

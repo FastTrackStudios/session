@@ -763,11 +763,13 @@ fn PhoneViews(
         PhoneView::Control | PhoneView::More | PhoneView::Setup | PhoneView::Editor => rsx! {},
         PhoneView::Chart => rsx! { crate::chart_panel::WebChart { paged: true } },
         PhoneView::Lyrics => rsx! { crate::lyrics_panel::LyricsPanel {} },
+                // Keyed apart: the same component in the same place would otherwise
+        // be kept and handed the other view's props.
         PhoneView::Arrangement => {
-            rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone() } }
+            rsx! { crate::mixer_panel::WebDawPanels { key: "{view():?}", engine: engine.clone() } }
         }
         PhoneView::Mixer => {
-            rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone(), mixer_only: true } }
+            rsx! { crate::mixer_panel::WebDawPanels { key: "{view():?}", engine: engine.clone(), mixer_only: true } }
         }
     }
 }

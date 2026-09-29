@@ -262,9 +262,11 @@ pub fn DawPanels(
         // The inspector, down the arrangement's right — the left is the
     // navigator's, when it is open: the arrangement view's own, not a
     // docked pair's, and only while it is switched on.
-    let inspecting = !mixer_only
-        && !docked
-        && try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.inspector)());
+        // Read before the condition, never inside it: `try_use_context` is a
+    // hook, and a hook skipped on one render (the mixer alone) and called
+    // on the next panicked — "unable to retrieve the hook".
+    let pins = try_use_context::<crate::shell::Pins>();
+    let inspecting = !mixer_only && !docked && pins.is_some_and(|pins| (pins.inspector)());
     let strips = use_context_provider(|| InspectorStrips(Signal::new(1)));
     let inspector_w = if inspecting {
         inspector_width((strips.0)())

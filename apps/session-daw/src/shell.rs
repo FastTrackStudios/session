@@ -706,8 +706,11 @@ pub fn TopBar(
 /// and closed from the top bar's corner, and it stays as it is left.
 #[component]
 pub fn NavigatorColumn(on_pick: EventHandler<usize>) -> Element {
+        // Both read every time: `try_use_context` is a hook, and one skipped
+    // on some renders (short-circuited behind `||`) panics on the next.
     let open = try_use_context::<Pins>().is_some_and(|pins| (pins.navigator)());
-    if !open || try_use_context::<Signal<Setlist>>().is_none() {
+    let setlist = try_use_context::<Signal<Setlist>>();
+    if !open || setlist.is_none() {
         return rsx! {};
     }
     rsx! {
