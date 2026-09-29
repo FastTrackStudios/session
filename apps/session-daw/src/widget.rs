@@ -655,6 +655,14 @@ impl ArrangementWidget {
         self
     }
 
+    /// Whether the first paint fits the song (the whole of it, every row):
+    /// not when the view is taken up from where it was left.
+    #[must_use]
+    pub fn with_fit_on_open(mut self, fit: bool) -> Self {
+        self.fit_on_open = fit;
+        self
+    }
+
     /// Share the panel's touch zoom ([`crate::panel::ArrangementPanel::ui`]):
     /// laid out in CSS pixels over it, drawn at it.
     #[must_use]

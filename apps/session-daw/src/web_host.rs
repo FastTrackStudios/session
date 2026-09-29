@@ -651,34 +651,37 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                     flex-direction:column; background:#0f1012; color:#e5e7eb; \
                     font-family:system-ui, sans-serif;",
             TopBar {
-                view,
-                mode,
-                // The transport reads the song it drives, so it is mounted
-                // per song too — the tabs beside it are not.
-                transport: rsx! {
-                    if let Some(song) = current.clone() {
-                        WithSong {
-                            key: "{song.project}",
-                            session: song.session.clone(),
-                            crate::transport_bar::WebTransportBar {}
-                        }
-                    }
-                    // Once, not per song: the live set this page is in —
-                    // who is here, together.
+                // Once, not per song: the live set this page is in — who is
+                // here, together.
+                badges: rsx! {
                     crate::collab_bar::CollabBar {}
                     ListeningBadge { listening: listening(), asking }
                 },
                 on_pick: pick,
             }
 
-            if let Some(song) = current {
+            if let Some(song) = current.clone() {
                 // Keyed by the song: picking another remounts every panel
                 // on that song's session rather than patching the last one's.
                 SongViews { key: "{song.project}", session: song.session.clone(), engine: engine.clone(), view }
             }
-            // The views, across the foot of the page as the transport is
-            // across its head.
-            crate::shell::BottomBar { view }
+            // The views, across the foot of the page, and each view's own
+            // controls beside them — the arrangement's the transport, which
+            // reads the song it drives, so it is mounted per song.
+            crate::shell::BottomBar {
+                view,
+                mode,
+                width: Some(viewport().0).filter(|w| *w > 0.0),
+                transport: rsx! {
+                    if let Some(song) = current {
+                        WithSong {
+                            key: "{song.project}",
+                            session: song.session.clone(),
+                            crate::transport_bar::WebTransportBar { big: true }
+                        }
+                    }
+                },
+            }
             // Whatever is zoomed into, over all of it.
             crate::closeup::CloseupLayer { landscape: landscape() }
             if asking() {

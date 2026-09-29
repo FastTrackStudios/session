@@ -184,6 +184,61 @@ pub struct ArrangementPanel {
     measured: Rc<Cell<Option<web_time::Instant>>>,
     /// The generated Click track, for the toolbar's metronome.
     click: (Option<String>, bool),
+    /// The song this panel shows and whether it is docked beside more:
+    /// where its view is kept between mounts ([`Kept`]).
+    song: std::sync::Weak<daw_ui::studio::project::Project>,
+    docked: bool,
+    /// The view has been put where it is meant to be — fitted to the song,
+    /// or taken up from where it was — and so is worth keeping.
+    settled: Rc<Cell<bool>>,
+    /// Ask the window for a frame: the rectangle measured, the fit it was
+    /// waiting for is due now, not at the next touch.
+    redraw: Option<Rc<dyn Fn()>>,
+}
+
+/// Where an arrangement was looked at from when it was last on screen,
+/// kept per song and per shape (docked beside more, or a view of its
+/// own): switching back to it opens there on its first frame, rather
+/// than at zoom one and fitted a moment later.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Kept {
+    scroll: f64,
+    down: f64,
+    zoom: (f64, f64),
+    rect: (f64, f64, f64, f64),
+}
+
+type Song = std::sync::Weak<daw_ui::studio::project::Project>;
+
+thread_local! {
+    /// By the song's project (held weakly: a song closed is forgotten,
+    /// and its allocation is never another song's while it is here).
+    static KEPT: RefCell<Vec<(Song, bool, Kept)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Where `song`'s arrangement was left, if it has been shown.
+fn kept(song: &Song, docked: bool) -> Option<Kept> {
+    KEPT.with(|all| {
+        let mut all = all.borrow_mut();
+        all.retain(|(each, ..)| each.strong_count() > 0);
+        all.iter()
+            .find(|(each, d, _)| *d == docked && each.ptr_eq(song))
+            .map(|(.., view)| *view)
+    })
+}
+
+/// Keep where `song`'s arrangement is now.
+fn keep(song: &Song, docked: bool, view: Kept) {
+    KEPT.with(|all| {
+        let mut all = all.borrow_mut();
+        match all
+            .iter_mut()
+            .find(|(each, d, _)| *d == docked && each.ptr_eq(song))
+        {
+            Some(slot) => slot.2 = view,
+            None => all.push((song.clone(), docked, view)),
+        }
+    });
 }
 
 impl PartialEq for ArrangementPanel {
@@ -260,11 +315,23 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         )
     });
 
+    // Where this song's arrangement was left, if it has been on screen:
+    // it opens there, and is not fitted again.
+    let song = use_hook(|| std::sync::Arc::downgrade(&session.planner.raw));
+    let was = use_hook(|| kept(&song, docked));
+
     // The widget, built once. Its view — scroll, zoom, where the play
     // cursor is — is a plain cell it reads every paint, because the paint
     // runs outside the Dioxus runtime.
     let (hosted, view, edits) = use_hook(|| {
-        let view: crate::widget::Shared = Rc::new(RefCell::new(crate::widget::View::OPENING));
+        let opening = was.map_or(crate::widget::View::OPENING, |at| crate::widget::View {
+            scroll_x: at.scroll,
+            scroll_y: at.down,
+            zoom_x: at.zoom.0,
+            zoom_y: at.zoom.1,
+            play_at: 0.0,
+        });
+        let view: crate::widget::Shared = Rc::new(RefCell::new(opening));
         let built = crate::widget::ArrangementWidget::for_session(
             &session.project,
             &session.rows,
@@ -279,7 +346,8 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         .with_compact(Rc::clone(&compact))
         .with_touch(touch)
         .with_ui(Rc::clone(&ui))
-        .with_redraw(crate::touch::redraw_hook());
+        .with_redraw(crate::touch::redraw_hook())
+        .with_fit_on_open(was.is_none());
         let built = match &mixer {
             Some(links) => built.with_mixer(crate::widget::MixerLinks {
                 toggle: Rc::clone(&links.toggle),
@@ -293,10 +361,12 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         (host(built), view, edits)
     });
 
-    let scroll = use_signal(|| 0.0_f64);
-    let down = use_signal(|| 0.0_f64);
-    let zoom = use_signal(|| (1.0_f64, 1.0_f64));
-    let rect = use_signal(|| (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64));
+    let scroll = use_signal(|| was.map_or(0.0, |at| at.scroll));
+    let down = use_signal(|| was.map_or(0.0, |at| at.down));
+    let zoom = use_signal(|| was.map_or((1.0, 1.0), |at| at.zoom));
+    let rect = use_signal(|| was.map_or((0.0, 0.0, 0.0, 0.0), |at| at.rect));
+    let settled = use_hook(|| Rc::new(Cell::new(was.is_some())));
+    let redraw = use_hook(crate::touch::redraw_hook);
     let span_y = use_signal(|| content_h.get());
     let input = use_hook(|| Rc::new(RefCell::new(Input::default())));
     let mounted = use_hook(|| Rc::new(RefCell::new(None::<Rc<MountedData>>)));
@@ -335,6 +405,10 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         focus_node,
         measured,
         click,
+        song,
+        docked,
+        settled,
+        redraw,
     };
     let slot: Option<Slot> = try_use_context();
     if let Some(slot) = slot
@@ -703,6 +777,7 @@ impl ArrangementPanel {
                 }
                 _ => now,
             };
+            self.settled.set(true);
             let Some(to) = self.history.borrow_mut().go(now, request, framed) else {
                 continue;
             };
@@ -710,6 +785,23 @@ impl ArrangementPanel {
             zoom.set((to.zoom_x, to.zoom_y));
             scroll.set(to.scroll_x.clamp(0.0, ex));
             down.set(to.scroll_y.clamp(0.0, ey));
+            // The view cell was written before this; the frame showing
+            // the new one is the next.
+            if let Some(redraw) = &self.redraw {
+                redraw();
+            }
+        }
+        if self.settled.get() && r.2 > 0.0 && r.3 > 0.0 {
+            keep(
+                &self.song,
+                self.docked,
+                Kept {
+                    scroll: *scroll.peek(),
+                    down: *down.peek(),
+                    zoom: *zoom.peek(),
+                    rect: *self.rect.peek(),
+                },
+            );
         }
         // Rows shown or hidden: the scroll range follows.
         let mut span_y = self.span_y;
@@ -765,11 +857,17 @@ impl ArrangementPanel {
         if stale && let Some(node) = self.mounted.borrow().clone() {
             self.measured.set(Some(web_time::Instant::now()));
             let mut rect = self.rect;
+            let redraw = self.redraw.clone();
             spawn(async move {
                 if let Ok(got) = node.get_client_rect().await {
                     let next = (got.origin.x, got.origin.y, got.size.width, got.size.height);
                     if next != *rect.peek() {
                         rect.set(next);
+                        // What waited on it (the fit a song opens with)
+                        // is due now, not at the next touch.
+                        if let Some(redraw) = redraw {
+                            redraw();
+                        }
                     }
                 }
             });

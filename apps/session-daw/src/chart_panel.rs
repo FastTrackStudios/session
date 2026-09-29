@@ -82,6 +82,9 @@ struct Live {
     /// When two fingers last pinched: their lift arrives as two clicks,
     /// which is a double-click — the fit's way back — and is not one.
     pinched_at: Option<web_time::Instant>,
+    /// A page turned to by hand ([`turn`]): the panel stays on it, fitted,
+    /// until the song is followed again.
+    held: bool,
 }
 
 type Shared = Rc<RefCell<Live>>;
@@ -125,6 +128,8 @@ struct ChartWidget {
     fingers: crate::touch::Fingers,
     /// Moved by a finger since the last paint: paint again.
     moved: std::cell::Cell<bool>,
+    /// The last page turn taken ([`turn`]).
+    turn_seen: u64,
 }
 
 /// A collaborator's pointer over the chart, anchored to the music: the
@@ -199,6 +204,23 @@ impl ChartWidget {
             }
             self.live_seen = number;
         }
+        if let Some((turned, number)) = turn_since(self.turn_seen) {
+            self.turn_seen = number;
+            let last = u32::try_from(self.view.pages()).unwrap_or(u32::MAX).max(1);
+            let mut live = self.live.borrow_mut();
+            live.manual = false;
+            match turned {
+                Turn::Back => {
+                    self.page = self.page.saturating_sub(1).max(1);
+                    live.held = true;
+                }
+                Turn::On => {
+                    self.page = (self.page + 1).min(last);
+                    live.held = true;
+                }
+                Turn::Follow => live.held = false,
+            }
+        }
         let (w, h) = (f64::from(width), f64::from(height));
         let chart_secs = self
             .songstart
@@ -248,9 +270,15 @@ impl ChartWidget {
     /// first page; past the chart's end, the page it ended on stays up.
     fn fit_page(&mut self, w: f64, h: f64, scale: f64, chart_secs: Option<f64>) {
         // Moved by hand: the view is where it was put.
-        if self.live.borrow().manual {
-            return;
-        }
+        let held = {
+            let live = self.live.borrow();
+            if live.manual {
+                return;
+            }
+            live.held
+        };
+        // Turned to by hand: that page, from its top, whatever is playing.
+        let chart_secs = chart_secs.filter(|_| !held);
         match chart_secs {
             Some(secs) if secs < 0.0 => self.page = 1,
             Some(secs) => {
@@ -368,7 +396,7 @@ impl Widget for ChartWidget {
     }
 
     fn needs_redraw(&self) -> bool {
-        self.moved.get()
+        self.moved.get() || turn_since(self.turn_seen).is_some()
     }
 
     fn paint(
@@ -405,6 +433,7 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         px_per_pt: 1.0,
         manual: false,
         pinched_at: None,
+        held: false,
         scale: 1.0,
         boxes: Vec::new(),
     }));
@@ -430,6 +459,8 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         boxes_key: 0,
         fingers: crate::touch::Fingers::default(),
         moved: std::cell::Cell::new(false),
+        // Turns asked for before this chart was up are not for it.
+        turn_seen: turn_since(0).map_or(0, |(_, number)| number),
     };
     Some((widget, live))
 }
@@ -534,6 +565,7 @@ pub fn WebChart(
                 let mut live = refit.borrow_mut();
                 if live.pinched_at.is_none_or(|at| at.elapsed().as_millis() > 600) {
                     live.manual = false;
+                    live.held = false;
                 }
             },
             crate::web_host::WidgetCanvas { widget, panel: on_input }
@@ -679,6 +711,7 @@ pub fn Chart(
                     let mut live = live.borrow_mut();
                     if live.pinched_at.is_none_or(|at| at.elapsed().as_millis() > 600) {
                         live.manual = false;
+                        live.held = false;
                     }
                 }
             },
@@ -688,6 +721,34 @@ pub fn Chart(
             }
         }
     }
+}
+
+/// A turn of the chart's page, asked for from outside it (the bottom
+/// bar's paging controls).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Turn {
+    /// The page before, held there.
+    Back,
+    /// The page after, held there.
+    On,
+    /// Back to the page being played, following the song.
+    Follow,
+}
+
+/// The last turn asked for, numbered, so each chart takes each once.
+static TURN: std::sync::Mutex<(u64, Turn)> = std::sync::Mutex::new((0, Turn::Follow));
+
+/// Turn the chart's page: every chart on screen takes it on its next frame.
+pub fn turn(turned: Turn) {
+    if let Ok(mut slot) = TURN.lock() {
+        *slot = (slot.0 + 1, turned);
+    }
+}
+
+/// The turn asked for since `seen`, and its number.
+fn turn_since(seen: u64) -> Option<(Turn, u64)> {
+    let slot = *TURN.lock().ok()?;
+    (slot.0 > seen).then_some((slot.1, slot.0))
 }
 
 /// A chart laid over the song since it opened — by Organize mode's editor

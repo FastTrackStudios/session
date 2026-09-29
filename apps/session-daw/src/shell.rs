@@ -233,100 +233,150 @@ pub const SAFE_AREA: &str = "position:absolute; top:0; left:0; width:100vw; heig
     padding:env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) \
     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);";
 
-/// How tall the bottom bar is.
-pub const BOTTOM_H: f64 = 34.0;
+/// How tall the bottom bar is: an icon with its word under it, for a
+/// finger.
+pub const BOTTOM_H: f64 = 54.0;
+
+/// How wide the bottom bar's left end is — the menu, the inspector, Setup
+/// and the view's own controls there — kept the same whatever the view,
+/// so the views beside it stay put as they are switched between. Narrow,
+/// the view's controls there go (they are in the menu too).
+const LEFT_W: f64 = 244.0;
+const LEFT_W_NARROW: f64 = 150.0;
+
+/// How wide a view's button is, with its word under the icon.
+const VIEW_W: f64 = 56.0;
+
+/// How wide the mode picker is.
+const MODE_W: f64 = 96.0;
+
+/// Below this the bar is narrow (a tablet held upright).
+const BOTTOM_WIDE: f64 = 1000.0;
 
 /// The bottom bar: the views as icons across the foot of the window, the
 /// way the top bar runs across its head — Logic's iPad layout, where what
-/// you look at is picked at the bottom and what you play at the top.
-/// Each view an icon and its word, in the middle; at the left the menu
-/// (the window's switches: lock, progress, transport) and Setup; at the
-/// right the action picker. The left is kept for the panels a
-/// view can show beside itself (the inspector).
+/// you look at is picked at the bottom. Each view an icon with its word
+/// under it, in the middle; at the left the menu (the window's switches:
+/// lock, progress, transport), the inspector and Setup; at the right the
+/// mode. Either side of the views is the view's own: the arrangement's
+/// transport, where it is and its tempo and key; the chart's pages; the
+/// mixer's folders ([`LeftContext`], [`RightContext`]).
 ///
 /// On a touchscreen there is no Overview: it is every view at once, which
 /// a tablet or a phone has no room for, and each of its parts is a view
 /// of its own here.
 #[component]
-pub fn BottomBar(view: Signal<View>) -> Element {
+pub fn BottomBar(
+    view: Signal<View>,
+    mode: Signal<Mode>,
+    /// The host's transport, for the arrangement's context — sized for a
+    /// finger (`big`).
+    #[props(default)]
+    transport: Option<Element>,
+    /// How wide the bar is, in logical pixels, when the host knows.
+    #[props(default)]
+    width: Option<f64>,
+) -> Element {
     let touch = crate::touch::use_touch();
     let pins = try_use_context::<Pins>();
     let mut menu = use_signal(|| false);
-    let mut actions = use_signal(|| false);
-    let button = move |each: View, label: bool| {
+    let mut picking = use_signal(|| false);
+    let views: Vec<View> = View::ALL
+        .into_iter()
+        .filter(|v| *v != View::Setup && !(touch && *v == View::Overview))
+        .collect();
+    let wide = width.is_none_or(|w| w >= BOTTOM_WIDE);
+    let left_w = if wide { LEFT_W } else { LEFT_W_NARROW };
+    // What the right side's controls have, and so how much of the
+    // transport is spelled out there.
+    #[allow(clippy::cast_precision_loss)]
+    let room = width.map_or(f64::INFINITY, |w| {
+        w - 24.0 - left_w - views.len() as f64 * (VIEW_W + 4.0) - MODE_W - 20.0
+    });
+    let density = if room >= 510.0 {
+        Density::Full
+    } else if room >= 400.0 {
+        Density::Compact
+    } else {
+        Density::Narrow
+    };
+    let mut shared = use_context_provider(|| Signal::new(density));
+    use_effect(use_reactive!(|density| {
+        if *shared.peek() != density {
+            shared.set(density);
+        }
+    }));
+    let button = move |each: View| {
         rsx! {
             button {
                 key: "{each.name()}",
                 title: each.name(),
-                style: bottom_button(view() == each, label),
+                style: bottom_button(view() == each, true),
                 onclick: move |_| view.set(each),
                 ViewIcon { view: each }
-                if label {
-                    span { style: "font-size:12px; font-weight:600;", "{each.label()}" }
-                }
+                span { style: LABEL, "{each.label()}" }
             }
         }
     };
+    let showing = view();
     rsx! {
         div {
             style: "position:relative; height:{BOTTOM_H}px; flex:none; display:flex; align-items:center; \
-                    padding:0 12px; background:{BAR_BG}; border-top:1px solid {RULE};",
-            // The menu (the window's switches), and Setup: the set and the
-            // song's details, set up before the views are used.
+                    gap:4px; padding:0 12px; background:{BAR_BG}; border-top:1px solid {RULE};",
+            // The menu (the window's switches), the inspector, Setup (the
+            // set and the song's details, set up before the views are
+            // used), and the view's own controls.
             div {
-                style: "flex:1; display:flex; align-items:center; gap:6px;",
+                style: "flex:none; width:{left_w}px; display:flex; align-items:center; gap:4px; overflow:hidden;",
                 button {
                     title: "Settings",
-                    style: bottom_button(menu(), false),
+                    style: bottom_button(menu(), true),
                     onclick: move |_| {
                         menu.toggle();
-                        actions.set(false);
+                        picking.set(false);
                     },
                     lucide_dioxus::Menu { size: 19, color: "currentColor" }
+                    span { style: LABEL, "Menu" }
                 }
                 if let Some(pins) = pins {
                     button {
                         title: "The inspector: the selected track's strip, down the arrangement's left",
-                        style: bottom_button((pins.inspector)(), false),
+                        style: bottom_button((pins.inspector)(), true),
                         onclick: move |_| {
                             let mut on = pins.inspector;
                             on.toggle();
                         },
                         lucide_dioxus::PanelLeft { size: 19, color: "currentColor" }
+                        span { style: LABEL, "Inspect" }
                     }
                 }
-                {button(View::Setup, true)}
-            }
-            div {
-                style: "flex:none; display:flex; align-items:center; gap:6px;",
-                for each in View::ALL
-                    .into_iter()
-                    .filter(|v| *v != View::Setup && !(touch && *v == View::Overview))
-                {
-                    {button(each, true)}
+                {button(View::Setup)}
+                if wide {
+                    Divider {}
+                    LeftContext { view: showing }
                 }
             }
-            // A quick way to run anything: the action picker.
             div {
-                style: "flex:1; display:flex; justify-content:flex-end; align-items:center;",
-                button {
-                    title: "Run an action",
-                    style: bottom_button(actions(), true),
-                    onclick: move |_| {
-                        actions.toggle();
-                        menu.set(false);
-                    },
-                    lucide_dioxus::Zap { size: 19, color: "currentColor" }
-                    span { style: "font-size:12px; font-weight:600;", "Action" }
+                style: "flex:none; display:flex; align-items:center; gap:4px;",
+                for each in views {
+                    {button(each)}
                 }
             }
-            if menu() || actions() {
+            // The view's own controls, then the mode.
+            div {
+                style: "flex:1; min-width:0; display:flex; justify-content:flex-end; align-items:center; \
+                        gap:6px; overflow:hidden;",
+                RightContext { view: showing, transport }
+            }
+            Divider {}
+            ModePicker { mode, picking, menu }
+            if menu() || picking() {
                 // A press outside closes it.
                 div {
                     style: "position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:40;",
                     onclick: move |_| {
                         menu.set(false);
-                        actions.set(false);
+                        picking.set(false);
                     },
                 }
             }
@@ -355,9 +405,184 @@ pub fn BottomBar(view: Signal<View>) -> Element {
                     }
                 }
             }
-            if actions() {
-                ActionPicker {}
+        }
+    }
+}
+
+/// A word under a bottom-bar icon.
+const LABEL: &str = "font-size:10px; line-height:12px; font-weight:600; white-space:nowrap;";
+
+/// A thin rule between the bottom bar's parts.
+#[component]
+fn Divider() -> Element {
+    rsx! {
+        div { style: "flex:none; width:1px; height:30px; margin:0 4px; background:{RULE};" }
+    }
+}
+
+/// The mode, at the bottom bar's right end: what it is, and every mode
+/// to pick from over it.
+#[component]
+fn ModePicker(mode: Signal<Mode>, picking: Signal<bool>, menu: Signal<bool>) -> Element {
+    let mut mode = mode;
+    let mut picking = picking;
+    let mut menu = menu;
+    rsx! {
+        div {
+            style: "position:relative; flex:none; width:{MODE_W}px; display:flex; justify-content:flex-end;",
+            button {
+                title: "The mode: what the window is set up for",
+                style: "height:44px; min-width:88px; box-sizing:border-box; display:flex; flex-direction:column; \
+                        align-items:center; justify-content:center; gap:2px; padding:0 10px; border-radius:9px; \
+                        border:1px solid {RULE}; background:#0f1012; color:{TEXT}; cursor:pointer; \
+                        font-family:inherit;",
+                onclick: move |_| {
+                    picking.toggle();
+                    menu.set(false);
+                },
+                span { style: "font-size:13px; line-height:15px; font-weight:700;", "{mode().display_name()}" }
+                span { style: "{LABEL} color:{DIM};", "Mode" }
             }
+            if picking() {
+                div {
+                    style: "position:absolute; right:0; bottom:{BOTTOM_H - 2.0}px; z-index:41; \
+                            min-width:180px; padding:6px; background:{BAR_BG}; \
+                            border:1px solid {RULE}; border-radius:12px; display:flex; \
+                            flex-direction:column; gap:2px; box-shadow:0 10px 30px rgba(0,0,0,0.5);",
+                    for each in Mode::ALL {
+                        button {
+                            style: mode_option(mode() == each),
+                            onclick: move |_| {
+                                mode.set(each);
+                                picking.set(false);
+                            },
+                            "{each.display_name()}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A mode in the picker: a row a finger can hit.
+fn mode_option(on: bool) -> String {
+    let (bg, fg) = if on {
+        ("#2a2d33", TEXT)
+    } else {
+        ("transparent", DIM)
+    };
+    format!(
+        "min-height:44px; padding:0 14px; border:none; border-radius:8px; text-align:left; \
+         background:{bg}; color:{fg}; font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;"
+    )
+}
+
+/// The view's own controls at the bottom bar's left, beside Setup: the
+/// lock where things can be dragged (the arrangement, the mixer).
+#[component]
+fn LeftContext(view: View) -> Element {
+    let Some(pins) = try_use_context::<Pins>() else {
+        return rsx! {};
+    };
+    match view {
+        View::Daw | View::Mixer => rsx! { LockButton { lock: pins.lock } },
+        _ => rsx! {},
+    }
+}
+
+/// The lock, as a button: locked, a drag scrolls and moves nothing.
+#[component]
+fn LockButton(lock: Signal<bool>) -> Element {
+    let mut lock = lock;
+    let on = lock();
+    rsx! {
+        button {
+            title: "Locked: a drag scrolls and moves nothing",
+            style: bottom_button(on, true),
+            onclick: move |_| {
+                lock.toggle();
+                crate::options::LOCKING.set(lock());
+            },
+            if on {
+                lucide_dioxus::Lock { size: 19, color: "currentColor" }
+            } else {
+                lucide_dioxus::LockOpen { size: 19, color: "currentColor" }
+            }
+            span { style: LABEL, "Lock" }
+        }
+    }
+}
+
+/// The view's own controls at the bottom bar's right, beside the mode:
+/// the arrangement's transport, where it is and its tempo and key; the
+/// chart's pages; the mixer's folders.
+#[component]
+fn RightContext(view: View, transport: Option<Element>) -> Element {
+    match view {
+        View::Daw => rsx! {
+            if let Some(transport) = transport {
+                div {
+                    style: "flex:none; display:flex; align-items:center; height:44px;",
+                    {transport}
+                }
+            }
+        },
+        View::Chart => rsx! { ChartPages {} },
+        View::Mixer => rsx! { FolderSwitch {} },
+        _ => rsx! {},
+    }
+}
+
+/// The chart's pages: the one before, back to the one being played, the
+/// one after.
+#[component]
+fn ChartPages() -> Element {
+    use crate::chart_panel::{Turn, turn};
+    rsx! {
+        button {
+            title: "The page before",
+            style: bottom_button(false, true),
+            onclick: move |_| turn(Turn::Back),
+            lucide_dioxus::ChevronLeft { size: 22, color: "currentColor" }
+            span { style: LABEL, "Page" }
+        }
+        button {
+            title: "Back to the page being played, following the song",
+            style: bottom_button(false, true),
+            onclick: move |_| turn(Turn::Follow),
+            lucide_dioxus::Crosshair { size: 19, color: "currentColor" }
+            span { style: LABEL, "Follow" }
+        }
+        button {
+            title: "The page after",
+            style: bottom_button(false, true),
+            onclick: move |_| turn(Turn::On),
+            lucide_dioxus::ChevronRight { size: 22, color: "currentColor" }
+            span { style: LABEL, "Page" }
+        }
+    }
+}
+
+/// Every top-level folder folded, or all of them open (`crate::folds`).
+#[component]
+fn FolderSwitch() -> Element {
+    let mut folded = use_signal(crate::folds::tops);
+    rsx! {
+        button {
+            title: if folded() { "Open every folder" } else { "Fold every top-level folder" },
+            style: bottom_button(folded(), true),
+            onclick: move |_| {
+                let on = !folded();
+                crate::folds::set_tops(on);
+                folded.set(on);
+            },
+            if folded() {
+                lucide_dioxus::FolderClosed { size: 19, color: "currentColor" }
+            } else {
+                lucide_dioxus::FolderOpen { size: 19, color: "currentColor" }
+            }
+            span { style: LABEL, if folded() { "Folded" } else { "Open" } }
         }
     }
 }
@@ -410,39 +635,8 @@ fn MenuSwitch(
     }
 }
 
-/// The action picker: every action by name, to run one. Held open for
-/// the action list, which is not wired in yet.
-#[component]
-fn ActionPicker() -> Element {
-    let mut query = use_signal(String::new);
-    rsx! {
-        div {
-            style: "position:absolute; right:10px; bottom:{BOTTOM_H + 6.0}px; z-index:41; width:360px; \
-                    padding:8px; border-radius:12px; background:{BAR_BG}; border:1px solid {RULE}; \
-                    box-shadow:0 10px 30px rgba(0,0,0,0.5); display:flex; flex-direction:column; gap:8px;",
-            div {
-                style: "display:flex; align-items:center; gap:8px; height:38px; padding:0 10px; border-radius:9px; \
-                        background:#0f1012; border:1px solid {RULE}; color:{DIM};",
-                lucide_dioxus::Search { size: 16, color: "currentColor" }
-                input {
-                    style: "flex:1; min-width:0; height:36px; border:none; background:transparent; color:{TEXT}; \
-                            font-family:inherit; font-size:14px;",
-                    r#type: "text",
-                    placeholder: "Run an action…",
-                    value: "{query}",
-                    oninput: move |e| query.set(e.value()),
-                }
-            }
-            span {
-                style: "font-size:12px; color:{DIM}; line-height:1.5; padding:4px 6px 6px;",
-                "The action list lands here: every action by name, searched as you type, run with a tap."
-            }
-        }
-    }
-}
-
-/// A bottom-bar button: a grey icon and its word, or the view showing's,
-/// white on a light pill.
+/// A bottom-bar button: a grey icon with its word under it, or, for what
+/// is showing, white on a light pill; `label` false, the icon alone.
 fn bottom_button(on: bool, label: bool) -> String {
     let (fg, bg) = if on {
         (TEXT, "#3a3d44")
@@ -450,14 +644,14 @@ fn bottom_button(on: bool, label: bool) -> String {
         (DIM, "transparent")
     };
     let shape = if label {
-        "padding:0 12px 0 10px; gap:6px;"
+        "min-width:52px; padding:0 6px; flex-direction:column; gap:3px;"
     } else {
-        "width:40px;"
+        "width:44px;"
     };
     format!(
-        "{shape} height:28px; display:flex; align-items:center; justify-content:center; \
-         border:none; border-radius:8px; background:{bg}; color:{fg}; cursor:pointer; \
-         font-family:inherit;"
+        "{shape} height:46px; flex:none; box-sizing:border-box; display:flex; align-items:center; \
+         justify-content:center; border:none; border-radius:9px; background:{bg}; color:{fg}; \
+         cursor:pointer; font-family:inherit;"
     )
 }
 
@@ -481,7 +675,9 @@ fn ViewIcon(view: View) -> Element {
     }
 }
 
-/// The top bar: the views, the setlist, the transport, the mode.
+/// The top bar: back to the sets, the host's badges (who is here, where
+/// the sound comes from), and the setlist's tabs. The transport and the
+/// mode are in the bottom bar ([`BottomBar`]).
 ///
 /// `lights` is how much of the left end belongs to the window's own
 /// controls (the traffic lights on macOS, nothing in a page), and
@@ -489,10 +685,8 @@ fn ViewIcon(view: View) -> Element {
 /// and a double click — a page passes neither.
 #[component]
 pub fn TopBar(
-    view: Signal<View>,
-    mode: Signal<Mode>,
-    /// The host's transport bar.
-    transport: Element,
+    /// The host's badges (the collaboration bar).
+    badges: Element,
     #[props(default = 12.0)] lights: f64,
     on_drag: Option<EventHandler<()>>,
     on_zoom: Option<EventHandler<()>>,
@@ -505,7 +699,6 @@ pub fn TopBar(
     #[props(default)]
     width: Option<f64>,
 ) -> Element {
-    let mut picking = use_signal(|| false);
     let density = width.map_or(Density::Full, Density::for_width);
     let mut shared = use_context_provider(|| Signal::new(density));
     use_effect(use_reactive!(|density| {
@@ -513,55 +706,16 @@ pub fn TopBar(
             shared.set(density);
         }
     }));
-    let mode_label = if density == Density::Narrow {
-        ""
-    } else {
-        "Mode"
-    };
     let back = try_use_context::<Back>();
     let controls = rsx! {
-        // A row: the transport, and anything the host puts beside it
-        // (the collaboration bar).
+        // A row: whatever the host puts here (the collaboration bar).
         div {
             style: "flex:none; display:flex; align-items:center;",
             onmousedown: move |event| event.stop_propagation(),
-            {transport}
+            {badges}
         }
         // Where the sound comes from: Engine / Cue / Remote.
         AudioBadge { density }
-        // The mode, visible in every view.
-        div {
-            style: "position:relative; flex:none;",
-            onmousedown: move |event| event.stop_propagation(),
-            button {
-                style: "display:flex; align-items:center; gap:6px; height:26px; \
-                        padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
-                        background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer;",
-                onclick: move |_| picking.toggle(),
-                if !mode_label.is_empty() {
-                    span { style: "color:{DIM};", "{mode_label}" }
-                }
-                span { style: "font-weight:600;", "{mode().display_name()}" }
-            }
-            if picking() {
-                div {
-                    style: "position:absolute; right:0; top:30px; z-index:40; \
-                            min-width:160px; padding:4px; background:{BAR_BG}; \
-                            border:1px solid {RULE}; border-radius:8px; \
-                            box-shadow:0 8px 24px rgba(0,0,0,0.5);",
-                    for each in Mode::ALL {
-                        div {
-                            style: option(mode() == each),
-                            onclick: move |_| {
-                                mode.set(each);
-                                picking.set(false);
-                            },
-                            "{each.display_name()}"
-                        }
-                    }
-                }
-            }
-        }
     };
     rsx! {
         div {

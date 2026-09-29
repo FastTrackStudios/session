@@ -217,23 +217,10 @@ pub fn Shell() -> Element {
             // Everyone else's mouse, over everything (collab_pointers).
             session_daw::collab_pointers::CollabPointers {}
             TopBar {
-                view,
-                mode,
                 lights: LIGHTS_W,
-                // The transport reads the song it drives, so it is mounted
-                // per song too — the tabs beside it are not.
-                transport: rsx! {
-                    if let Some(song) = current.clone() {
-                        WithSong {
-                            key: "{song.project}",
-                            session: song.session.clone(),
-                            session_daw::transport_bar::TransportBar {}
-                        }
-                    }
-                    // Once, not per song: it is the whole set's session,
-                    // and mounting it starts one from the environment.
-                    session_daw::collab_bar::CollabBar {}
-                },
+                // Once, not per song: it is the whole set's session, and
+                // mounting it starts one from the environment.
+                badges: rsx! { session_daw::collab_bar::CollabBar {} },
                 width: width(),
                 // Anywhere on the bar that is not a control drags the
                 // window; a double click zooms it.
@@ -251,14 +238,28 @@ pub fn Shell() -> Element {
                 },
             }
 
-            if let Some(song) = current {
+            if let Some(song) = current.clone() {
                 // Keyed by the song: picking another remounts every panel
                 // on that song's session rather than patching the last one's.
                 SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
             }
-            // The views, across the foot of the window as the transport is
-            // across its head.
-            session_daw::shell::BottomBar { view }
+            // The views, across the foot of the window, and each view's
+            // own controls beside them — the arrangement's the transport,
+            // which reads the song it drives, so it is mounted per song.
+            session_daw::shell::BottomBar {
+                view,
+                mode,
+                width: width(),
+                transport: rsx! {
+                    if let Some(song) = current {
+                        WithSong {
+                            key: "{song.project}",
+                            session: song.session.clone(),
+                            session_daw::transport_bar::TransportBar { big: true }
+                        }
+                    }
+                },
+            }
             // Whatever is zoomed into, over all of it.
             session_daw::closeup::CloseupLayer { landscape: size().0 > size().1 }
         }
