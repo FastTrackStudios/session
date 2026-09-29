@@ -132,6 +132,8 @@ pub mod open {
         None
     }
 }
+#[cfg(test)]
+mod hook_rules;
 pub mod overlay;
 pub mod panel;
 #[cfg(feature = "native")]
@@ -153,8 +155,6 @@ pub mod session_file;
 pub mod setlist;
 pub mod settings;
 pub mod setup;
-#[cfg(test)]
-mod hook_rules;
 pub mod shell;
 pub mod simulate;
 pub mod strip;

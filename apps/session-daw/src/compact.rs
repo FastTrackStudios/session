@@ -142,7 +142,7 @@ const LINE_H: f64 = 44.0;
 pub fn CompactShell(
     form: Form,
     view: Signal<PhoneView>,
-        on_pick: EventHandler<usize>,
+    on_pick: EventHandler<usize>,
     /// What the host adds to More: who is here, where the sound comes from.
     more: Element,
     body: Element,
@@ -151,7 +151,7 @@ pub fn CompactShell(
     // The record view's song menu (in Control, in record mode) picks as the
     // navigator does.
     use_context_provider(|| crate::record_view::PickSong(on_pick));
-        let current = setlist.read().current().cloned();
+    let current = setlist.read().current().cloned();
     // Record mode: Control is the record view (`crate::record_view`),
     // with its own bars and transport.
     let mode = try_use_context::<Signal<session::modes::Mode>>();
@@ -232,7 +232,7 @@ pub fn CompactShell(
         },
         _ => rsx! {},
     };
-        let controls = use_signal(|| false);
+    let controls = use_signal(|| false);
     // On its side a phone has height for little but the view: the song,
     // the transport and the view's own controls share one line across the
     // top, the sections a thin bar under it, and the views are the rail.
@@ -320,9 +320,13 @@ fn SongLine(
     let place = format!("{}/{}", list.at + 1, list.songs.len() + list.pending.len());
     let at = list.at;
     let (before, after) = (at > 0, at + 1 < list.songs.len());
-        let arrow = "flex:none; width:48px; display:flex; align-items:center; justify-content:center; \
+    let arrow = "flex:none; width:48px; display:flex; align-items:center; justify-content:center; \
                  border:none; background:transparent; padding:0; cursor:pointer;";
-        let rule = if bare { "none".to_owned() } else { format!("1px solid {RULE}") };
+    let rule = if bare {
+        "none".to_owned()
+    } else {
+        format!("1px solid {RULE}")
+    };
     // The navigator's switch, in the corner as the wide top bar has it:
     // the set (Perform, the navigator), and pressed again, back to the
     // view it was pressed from.
@@ -543,7 +547,7 @@ fn Tabs(view: Signal<PhoneView>, rail: bool, controls: Signal<bool>) -> Element 
     // bar slid from one to the other by the switch at its end.
     let has = has_controls(view());
     let showing = controls() && has;
-        rsx! {
+    rsx! {
         div {
             style: "position:relative; z-index:5; flex:none; height:56px; display:flex; align-items:stretch; \
                     background:{BAR_BG}; border-top:1px solid {RULE}; overflow:hidden;",
@@ -575,13 +579,20 @@ fn Tabs(view: Signal<PhoneView>, rail: bool, controls: Signal<bool>) -> Element 
 
 /// Whether a view has controls of its own for the bar's other side.
 const fn has_controls(view: PhoneView) -> bool {
-    matches!(view, PhoneView::Chart | PhoneView::Mixer | PhoneView::Arrangement)
+    matches!(
+        view,
+        PhoneView::Chart | PhoneView::Mixer | PhoneView::Arrangement
+    )
 }
 
 /// A tab: flat, as the wide bars are — the one showing raised.
 fn tab(on: bool, rail: bool) -> String {
     let fg = crate::shell::ink(on);
-    let bg = if on { crate::shell::RAISED } else { "transparent" };
+    let bg = if on {
+        crate::shell::RAISED
+    } else {
+        "transparent"
+    };
     let shape = if rail {
         "height:52px;"
     } else {

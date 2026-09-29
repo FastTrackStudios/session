@@ -408,7 +408,10 @@ fn use_size() -> (Signal<(f64, f64)>, Signal<Option<Rc<MountedData>>>) {
         }
         try_consume_context::<crate::shell::WindowSize>().map_or((0.0, 0.0), |window| {
             let (w, h) = *window.0.peek();
-            (w, (h - crate::shell::BAR_H - crate::shell::BOTTOM_H).max(0.0))
+            (
+                w,
+                (h - crate::shell::BAR_H - crate::shell::BOTTOM_H).max(0.0),
+            )
         })
     });
     let node = use_signal(|| None::<Rc<MountedData>>);

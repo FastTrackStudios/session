@@ -292,7 +292,7 @@ pub fn BottomBar(
     width: Option<f64>,
 ) -> Element {
     let touch = crate::touch::use_touch();
-        let views: Vec<View> = View::ALL
+    let views: Vec<View> = View::ALL
         .into_iter()
         .filter(|v| *v != View::Setup && !(touch && *v == View::Overview))
         .collect();
@@ -301,7 +301,7 @@ pub fn BottomBar(
     // views, the arrangement's two switches and the modes.
     #[allow(clippy::cast_precision_loss)]
     let room = width.map_or(f64::INFINITY, |w| {
-                w - (3.0 + views.len() as f64) * VIEW_W - 2.0 * VIEW_W - MODES_W - 4.0
+        w - (3.0 + views.len() as f64) * VIEW_W - 2.0 * VIEW_W - MODES_W - 4.0
     });
     let density = if room >= 480.0 {
         Density::Full
@@ -580,7 +580,7 @@ pub(crate) const fn ink(on: bool) -> &'static str {
 /// A bottom-bar button: a grey icon with its word under it, or, for what
 /// is showing, white and raised; `label` false, the icon alone.
 fn bottom_button(on: bool, label: bool) -> String {
-        let (fg, bg) = if on {
+    let (fg, bg) = if on {
         (TEXT, RAISED)
     } else {
         (DIM, "transparent")
@@ -706,7 +706,7 @@ pub fn TopBar(
 /// and closed from the top bar's corner, and it stays as it is left.
 #[component]
 pub fn NavigatorColumn(on_pick: EventHandler<usize>) -> Element {
-        // Both read every time: `try_use_context` is a hook, and one skipped
+    // Both read every time: `try_use_context` is a hook, and one skipped
     // on some renders (short-circuited behind `||`) panics on the next.
     let open = try_use_context::<Pins>().is_some_and(|pins| (pins.navigator)());
     let setlist = try_use_context::<Signal<Setlist>>();
@@ -811,10 +811,10 @@ pub fn AudioBadge(density: Density, #[props(default)] boxed: bool) -> Element {
         Some(target) => format!("Audio: {} — driving {target}", state.label(2)),
         None => format!("Audio: {}", state.label(2)),
     };
-        let (outer, face, menu_at) = if boxed {
+    let (outer, face, menu_at) = if boxed {
         (
             "position:relative; flex:none; display:flex;",
-                        bottom_button(open(), false),
+            bottom_button(open(), false),
             "right:0; bottom:52px;",
         )
     } else {

@@ -69,7 +69,11 @@ fn record_crash(what: &str) {
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > KEEP) {
         let _ = std::fs::remove_file(&path);
     }
-    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else {
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
         return;
     };
     let when = std::time::SystemTime::now()

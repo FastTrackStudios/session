@@ -9,7 +9,9 @@
 
 /// Every `.rs` file under `dir`, recursively.
 fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -57,9 +59,15 @@ fn offences(text: &str) -> Vec<(usize, String)> {
 
 #[test]
 fn the_rule_is_what_it_says() {
-    assert_eq!(offences("let x = a && try_use_context::<P>().is_some();").len(), 1);
+    assert_eq!(
+        offences("let x = a && try_use_context::<P>().is_some();").len(),
+        1
+    );
     assert_eq!(offences("    || crate::touch::use_touch()").len(), 1);
-    assert_eq!(offences("let p = try_use_context::<P>(); let x = a && p.is_some();").len(), 0);
+    assert_eq!(
+        offences("let p = try_use_context::<P>(); let x = a && p.is_some();").len(),
+        0
+    );
     assert_eq!(offences("a && reuse_thing()").len(), 0);
     assert_eq!(offences("// a && use_signal(|| 0)").len(), 0);
 }
@@ -70,14 +78,20 @@ fn no_hook_is_called_behind_a_short_circuit() {
     let mut files = Vec::new();
     sources(&here.join("src"), &mut files);
     sources(&here.join("../desktop/src"), &mut files);
-    assert!(!files.is_empty(), "no sources found under {}", here.display());
+    assert!(
+        !files.is_empty(),
+        "no sources found under {}",
+        here.display()
+    );
     let mut all = Vec::new();
     for file in files {
         // This file's own examples are offences on purpose.
         if file.ends_with("hook_rules.rs") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
         for (line, code) in offences(&text) {
             all.push(format!("{}:{line}: {code}", file.display()));
         }

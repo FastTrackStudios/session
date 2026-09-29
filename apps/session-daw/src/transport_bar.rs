@@ -107,7 +107,7 @@ fn TransportBarView(reading: crate::engine::Reading, big: bool) -> Element {
     } else {
         (26, 30, 15, 12, 12)
     };
-        // Big, it is part of the bottom bar: flat, the bar's full height, its
+    // Big, it is part of the bottom bar: flat, the bar's full height, its
     // parts between hairlines rather than cards. Small, each is a card.
     let (row, card_look) = if big {
         (
@@ -120,8 +120,16 @@ fn TransportBarView(reading: crate::engine::Reading, big: bool) -> Element {
             format!("border-radius:6px; background:#0b0c0e; border:1px solid {RULE};"),
         )
     };
-    let high = if big { "100%".to_owned() } else { format!("{tall}px") };
-    let card_high = if big { "100%".to_owned() } else { format!("{card}px") };
+    let high = if big {
+        "100%".to_owned()
+    } else {
+        format!("{tall}px")
+    };
+    let card_high = if big {
+        "100%".to_owned()
+    } else {
+        format!("{card}px")
+    };
     rsx! {
         div {
             style: row,
@@ -304,19 +312,25 @@ fn Button(
     onpress: EventHandler<()>,
     #[props(default)] big: bool,
 ) -> Element {
-        let fg = if on { color } else { DIM };
+    let fg = if on { color } else { DIM };
     let border = if on { color } else { RULE };
     // A finger's button — flat, the bar's full height, lit by a wash of
     // its colour — or a mouse's small card.
     let (look, icon) = if big {
-        let wash = if on { format!("{color}24") } else { "transparent".to_owned() };
+        let wash = if on {
+            format!("{color}24")
+        } else {
+            "transparent".to_owned()
+        };
         (
             format!("width:54px; height:100%; border:none; border-radius:0; background:{wash};"),
             22,
         )
     } else {
         (
-            format!("width:30px; height:24px; border-radius:5px; border:1px solid {border}; background:#0b0c0e;"),
+            format!(
+                "width:30px; height:24px; border-radius:5px; border:1px solid {border}; background:#0b0c0e;"
+            ),
             16,
         )
     };

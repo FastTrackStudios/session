@@ -51,7 +51,11 @@ pub fn SetupView(
     let tab_pad = if narrow { 12 } else { 20 };
     let summary = setlist.map(|setlist| {
         let list = setlist();
-        let secs: f64 = list.songs.iter().map(|s| (s.span.1 - s.span.0).max(0.0)).sum();
+        let secs: f64 = list
+            .songs
+            .iter()
+            .map(|s| (s.span.1 - s.span.0).max(0.0))
+            .sum();
         let songs = list.songs.len() + list.pending.len();
         format!("{songs} songs · {}", length(secs))
     });
@@ -212,12 +216,18 @@ fn Switch(on: Signal<bool>, label: &'static str, detail: &'static str) -> Elemen
 fn room() -> f64 {
     let window = try_use_context::<crate::shell::WindowSize>();
     let navigator = try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.navigator)());
-    window.map_or(f64::INFINITY, |window| window.0().0 - if navigator { 300.0 } else { 0.0 })
+    window.map_or(f64::INFINITY, |window| {
+        window.0().0 - if navigator { 300.0 } else { 0.0 }
+    })
 }
 
 /// A length as a person reads it: `4:05`, `1:02:30`.
 fn length(secs: f64) -> String {
-    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "whole seconds")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "whole seconds"
+    )]
     let whole = secs.max(0.0).round() as u64;
     let (h, m, s) = (whole / 3600, whole / 60 % 60, whole % 60);
     if h > 0 {
@@ -268,8 +278,8 @@ fn SongTable(setlist: Signal<Setlist>, on_pick: Option<EventHandler<usize>>) -> 
             div { style: "padding:18px; color:{DIM};", "No songs loaded yet." }
         };
     }
-        let count = list.songs.len();
-        // Narrow (a tablet held upright, the navigator open beside it): the
+    let count = list.songs.len();
+    // Narrow (a tablet held upright, the navigator open beside it): the
     // length and the mode give way, so the songs keep their names; on a
     // phone the tempo too.
     let room = room();
@@ -377,7 +387,12 @@ enum RowIcon {
 /// colour outright, not `currentColor`: Blitz resolved an icon's
 /// `currentColor` once, so a button made unusable (a row made as the set's
 /// last, while it was still arriving) stayed grey once it could be used.
-fn row_button(title: &'static str, enabled: bool, icon: RowIcon, on_press: EventHandler<()>) -> Element {
+fn row_button(
+    title: &'static str,
+    enabled: bool,
+    icon: RowIcon,
+    on_press: EventHandler<()>,
+) -> Element {
     let color = if enabled { DIM } else { "#34373d" };
     rsx! {
         button {

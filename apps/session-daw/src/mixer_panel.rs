@@ -259,10 +259,10 @@ pub fn DawPanels(
     let touch = crate::touch::use_touch();
     let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, touch);
     let mixer_display = if open { "block" } else { "none" };
-        // The inspector, down the arrangement's right — the left is the
+    // The inspector, down the arrangement's right — the left is the
     // navigator's, when it is open: the arrangement view's own, not a
     // docked pair's, and only while it is switched on.
-        // Read before the condition, never inside it: `try_use_context` is a
+    // Read before the condition, never inside it: `try_use_context` is a
     // hook, and a hook skipped on one render (the mixer alone) and called
     // on the next panicked — "unable to retrieve the hook".
     let pins = try_use_context::<crate::shell::Pins>();

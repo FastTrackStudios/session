@@ -250,7 +250,7 @@ impl Tcp {
     #[must_use]
     pub fn shows(self, control: crate::row::Control) -> bool {
         use crate::row::Control;
-                // The compact panel is the track's name and nothing else, however
+        // The compact panel is the track's name and nothing else, however
         // tall the row: mute, solo and the arm are the inspector's (down
         // the window's left) and the expanded panel's, a swipe away.
         !self.compact || matches!(control, Control::Folder | Control::Name)

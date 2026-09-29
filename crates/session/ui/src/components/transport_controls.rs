@@ -132,14 +132,11 @@ pub fn TransportControlBar(
                 }
             }
 
-            // Back Button
+                        // Back Button — while playing too: a press mid-song is exactly
+            // when back a section is wanted.
             div {
                 style: cls(Look::Idle),
-                onclick: move |_| {
-                    if !playing {
-                        on_back.call(());
-                    }
-                },
+                onclick: move |_| on_back.call(()),
                 BackIcon { size: icon, color: "currentColor" }
                 if !icons_only { "Back" }
             }
@@ -192,14 +189,10 @@ pub fn TransportControlBar(
             }
             }
 
-            // Advance Button
+                        // Advance Button — while playing too.
             div {
                 style: cls(Look::Idle),
-                onclick: move |_| {
-                    if !playing {
-                        on_forward.call(());
-                    }
-                },
+                onclick: move |_| on_forward.call(()),
                 ForwardIcon { size: icon, color: "currentColor" }
                 if !icons_only { "Advance" }
             }
