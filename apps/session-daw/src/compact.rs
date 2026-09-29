@@ -24,7 +24,7 @@
 use dioxus::prelude::*;
 
 use crate::setlist::Setlist;
-use crate::shell::{ACCENT, BAR_BG, DIM, RULE, TEXT};
+use crate::shell::{BAR_BG, DIM, RULE, TEXT};
 
 /// The window's shape, and so which layout the app takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,7 +68,9 @@ pub fn use_form() -> Form {
     try_use_context::<Signal<Form>>().map_or(Form::Wide, |form| form())
 }
 
-/// The views of the small-screen layout, in the tab bar's order.
+/// The views of the small-screen layout: the five in the tab bar, and
+/// More — everything else, a page of its own: Setup, the Editor, the
+/// modes, the lock.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PhoneView {
     Control,
@@ -76,31 +78,58 @@ pub enum PhoneView {
     Lyrics,
     Arrangement,
     Mixer,
+    More,
+    /// The setlist, the routing and the settings (`crate::setup`),
+    /// reached from More.
+    Setup,
+    /// The audio and MIDI editor's place, reached from More.
+    Editor,
 }
 
 impl PhoneView {
-    pub const ALL: [Self; 5] = [
+    /// The tab bar, in its order.
+    pub const ALL: [Self; 6] = [
         Self::Control,
         Self::Chart,
         Self::Lyrics,
         Self::Arrangement,
         Self::Mixer,
+        Self::More,
     ];
 
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Control => "Control",
+            Self::Control => "Perform",
             Self::Chart => "Chart",
             Self::Lyrics => "Lyrics",
-            Self::Arrangement => "Arrangement",
+            Self::Arrangement => "Arrange",
             Self::Mixer => "Mixer",
+            Self::More => "More",
+            Self::Setup => "Setup",
+            Self::Editor => "Editor",
         }
+    }
+
+    /// The tab that is lit for this view: a page reached from More lights
+    /// More.
+    #[must_use]
+    pub const fn tab(self) -> Self {
+        match self {
+            Self::Setup | Self::Editor => Self::More,
+            other => other,
+        }
+    }
+
+    /// The shell's own pages, drawn by it rather than by the host.
+    #[must_use]
+    pub const fn own(self) -> bool {
+        matches!(self, Self::More | Self::Setup | Self::Editor)
     }
 }
 
-/// The height of the song line at the top.
-const LINE_H: f64 = 36.0;
+/// The height of the song line at the top: a finger's.
+const LINE_H: f64 = 44.0;
 
 /// The small-screen frame, over the songs in the setlist (a
 /// `Signal<Setlist>` in context, as both hosts keep it).
@@ -114,14 +143,14 @@ pub fn CompactShell(
     form: Form,
     view: Signal<PhoneView>,
     on_pick: EventHandler<usize>,
-    drawer: Element,
+    /// What the host adds to More: who is here, where the sound comes from.
+    more: Element,
     body: Element,
 ) -> Element {
     let setlist: Signal<Setlist> = use_context();
     // The record view's song menu (in Control, in record mode) picks as the
     // navigator does.
     use_context_provider(|| crate::record_view::PickSong(on_pick));
-    let open = use_signal(|| false);
     let current = setlist.read().current().cloned();
     // Record mode: Control is the record view (`crate::record_view`),
     // with its own bars and transport.
@@ -131,7 +160,11 @@ pub fn CompactShell(
     let direction = if landscape { "row" } else { "column" };
     let panel = rsx! {
         div {
-            style: "position:relative; flex:1; min-height:0; min-width:0; overflow:hidden;",
+                        // Under the bars (`z-index`): Blitz clips what overflows a
+            // panel when it paints but not when it hit-tests, and the
+            // navigator's rows scrolled past its edges took the presses
+            // meant for the tabs and the transport.
+            style: "position:relative; z-index:1; flex:1; min-height:0; min-width:0; overflow:hidden;",
             if view() == PhoneView::Control && record {
                 if let Some(song) = &current {
                     crate::shell::WithSong {
@@ -140,33 +173,35 @@ pub fn CompactShell(
                         crate::record_view::RecordView {}
                     }
                 }
-            } else if view() == PhoneView::Control {
+                        } else if view() == PhoneView::Control {
                 crate::navigator::Navigator { on_pick }
+            } else if view() == PhoneView::More {
+                                More { view, session: more }
+            } else if view() == PhoneView::Setup {
+                crate::setup::SetupView { on_pick }
+            } else if view() == PhoneView::Editor {
+                crate::shell::EditorComing {}
             } else {
                 {body}
             }
         }
     };
-    // The section bar and the performance buttons, over the song playing.
-    // In Control the navigator is the progress, and the buttons are the
-    // view's own, full size.
+    // The performance buttons along the foot, over the song playing
+    // (upright; on its side they are in the top line). In Control the
+    // navigator is the progress, and the buttons are the view's own, full
+    // size.
     let control = view() == PhoneView::Control;
     let strip = match &current {
         Some(_) if control && record => rsx! {},
+        // More and its pages are not about the song playing.
+        _ if view().own() => rsx! {},
         Some(song) => rsx! {
             crate::shell::WithSong {
                 key: "{song.project}",
                 session: song.session.clone(),
-                div {
-                    style: "flex:none; display:flex; flex-direction:column; gap:4px; padding:6px 8px; \
-                            background:{BAR_BG}; border-top:1px solid {RULE};",
-                    if !control {
-                        // Upright, the sections are too narrow to name.
-                        crate::progress::ProgressBar {
-                            height: "1.75rem".to_owned(),
-                            labels: landscape,
-                        }
-                    }
+                                div {
+                    style: "position:relative; z-index:5; flex:none; display:flex; flex-direction:column; \
+                            gap:4px; padding:6px 8px; background:{BAR_BG}; border-top:1px solid {RULE};",
                     crate::progress::TransportButtons {
                         compact: true,
                         height: if control { 60 } else { 44 },
@@ -176,120 +211,305 @@ pub fn CompactShell(
         },
         None => rsx! {},
     };
+    // The song's sections across the top, under the song: where it is
+    // and what comes next, as the wide layout pins them. Not in Perform,
+    // where the navigator is the progress, nor on More's pages.
+    let progress = match &current {
+        Some(song) if !control && !view().own() => rsx! {
+            crate::shell::WithSong {
+                key: "{song.project}",
+                session: song.session.clone(),
+                div {
+                                        style: "position:relative; z-index:5; flex:none; padding:4px 6px; background:{BAR_BG}; \
+                            border-bottom:1px solid {RULE};",
+                    // Upright, the sections are too narrow to name.
+                    crate::progress::ProgressBar {
+                        height: "1.75rem".to_owned(),
+                        labels: landscape,
+                    }
+                }
+            }
+        },
+        _ => rsx! {},
+    };
+    let controls = use_signal(|| false);
+    // On its side a phone has height for little but the view: the song,
+    // the transport and the view's own controls share one line across the
+    // top, the sections a thin bar under it, and the views are the rail.
+    let top_transport = match &current {
+        Some(song) if landscape && !view().own() && !(control && record) => rsx! {
+            crate::shell::WithSong {
+                key: "{song.project}",
+                session: song.session.clone(),
+                div {
+                    style: "flex:none; width:232px; display:flex; flex-direction:column; justify-content:center; \
+                            padding:0 4px; border-left:1px solid {RULE};",
+                    crate::progress::TransportButtons { compact: true, height: (LINE_H as u32) - 6 }
+                }
+            }
+        },
+        _ => rsx! {},
+    };
     rsx! {
         // An explicit size, not insets: Blitz gives an absolutely placed box
         // stretched by `top`/`bottom` no height, and the column collapses to
-        // its content (the wide shell does the same). On a phone the viewport
-        // is already the safe area: Blitz's shell keeps the notch and the
-        // home indicator out of it.
+        // its content (the wide shell does the same). In the app the
+        // viewport is already the safe area (Blitz's shell keeps the notch
+        // and the home indicator out of it); in a page the outer box insets
+        // itself from them (`shell::SAFE_AREA`).
         div {
-            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; box-sizing:border-box; \
-                    display:flex; \
+            style: "{crate::shell::SAFE_AREA}",
+        div {
+            style: "flex:1; min-width:0; min-height:0; display:flex; \
                     flex-direction:{direction}; \
                     background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
             if landscape {
-                Tabs { view, rail: true }
-                div {
+                                Tabs { view, rail: true, controls }
+                                div {
                     style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
-                    SongLine { open }
-                    {panel}
-                    {strip}
-                    if open() {
-                        Drawer { open, ModeSwitch {} {drawer} }
+                    div {
+                                                style: "position:relative; z-index:5; flex:none; height:{LINE_H}px; display:flex; \
+                                align-items:stretch; background:{BAR_BG}; border-bottom:1px solid {RULE};",
+                        div {
+                            style: "flex:1; min-width:0; display:flex; flex-direction:column;",
+                            SongLine { view, on_pick, bare: true }
+                        }
+                        {top_transport}
+                        if has_controls(view()) {
+                            div {
+                                style: "flex:none; display:flex; align-items:stretch; border-left:1px solid {RULE};",
+                                ViewControls { view: view(), bare: true }
+                            }
+                        }
                     }
+                    {progress}
+                    {panel}
                 }
             } else {
-                SongLine { open }
+                                                                SongLine { view, on_pick }
+                {progress}
                 div {
                     style: "position:relative; flex:1; min-height:0; display:flex; flex-direction:column;",
                     {panel}
                     {strip}
-                    if open() {
-                        Drawer { open, ModeSwitch {} {drawer} }
-                    }
                 }
-                Tabs { view, rail: false }
+                Tabs { view, rail: false, controls }
             }
+        }
         }
     }
 }
 
-/// The one thin line at the top: the song, where it is in the set, and the
-/// caret that pulls the rest down.
+/// The one thin line at the top: the song before, the song — in the
+/// middle, and a press on it the set (Perform, the navigator) — and the
+/// song after; flat, the line's full height, as the wide bars are.
 #[component]
-fn SongLine(open: Signal<bool>) -> Element {
+fn SongLine(
+    view: Signal<PhoneView>,
+    on_pick: EventHandler<usize>,
+    /// Inside a line of its own (on its side), without its own rule.
+    #[props(default)]
+    bare: bool,
+) -> Element {
+    let mut view = view;
     let setlist: Signal<Setlist> = use_context();
     let list = setlist.read();
     let (name, color) = list.current().map_or((String::new(), DIM.to_owned()), |s| {
         (s.name.clone(), s.color.clone())
     });
     let place = format!("{}/{}", list.at + 1, list.songs.len() + list.pending.len());
-    rsx! {
-        button {
-            style: "flex:none; height:{LINE_H}px; display:flex; align-items:center; gap:8px; \
-                    padding:0 12px; border:none; border-bottom:1px solid {RULE}; \
-                    background:{BAR_BG}; color:{TEXT}; font-family:inherit; cursor:pointer; \
-                    width:100%; text-align:left;",
-            onclick: move |_| open.toggle(),
-            span { style: "flex:none; width:8px; height:8px; border-radius:4px; background:{color};" }
-            span {
-                style: "font-size:14px; font-weight:650; white-space:nowrap; overflow:hidden; \
-                        text-overflow:ellipsis; min-width:0;",
-                "{name}"
-            }
-            span { style: "flex:none; font-size:11px; color:{DIM};", "{place}" }
-            span { style: "flex:1;" }
-            Caret { up: open() }
-        }
-    }
-}
-
-/// The top pulled down: what the wide layout's bar shows beside the
-/// transport, and the host's own.
-#[component]
-fn Drawer(open: Signal<bool>, children: Element) -> Element {
-    rsx! {
-        // A press outside puts it back.
-        div {
-            style: "position:absolute; top:{LINE_H}px; left:0; width:100%; height:calc(100% - {LINE_H}px); \
-                    z-index:40; background:rgba(0,0,0,0.5);",
-            onclick: move |_| open.set(false),
-        }
-        div {
-            style: "position:absolute; top:{LINE_H}px; left:0; right:0; z-index:41; \
-                    display:flex; flex-direction:column; gap:10px; padding:12px; \
-                    background:{BAR_BG}; border-bottom:1px solid {RULE}; \
-                    border-radius:0 0 14px 14px; box-shadow:0 16px 30px rgba(0,0,0,0.55);",
-            {children}
-        }
-    }
-}
-
-/// Live or Record, for a phone — the wide layout's mode menu, cut to the
-/// two modes a small screen is used in. Absent where the host keeps no
-/// mode.
-#[component]
-fn ModeSwitch() -> Element {
-    use session::modes::Mode;
-    let Some(mut mode) = try_use_context::<Signal<Mode>>() else {
-        return rsx! {};
+    let at = list.at;
+    let (before, after) = (at > 0, at + 1 < list.songs.len());
+    let arrow = "flex:none; width:48px; display:flex; align-items:center; justify-content:center; \
+                 border:none; background:transparent; padding:0; cursor:pointer;";
+    let rule = if bare {
+        "none".to_owned()
+    } else {
+        format!("1px solid {RULE}")
+    };
+    // The navigator's switch, in the corner as the wide top bar has it:
+    // the set (Perform, the navigator), and pressed again, back to the
+    // view it was pressed from.
+    let mut came_from = use_signal(|| PhoneView::Chart);
+    let navigating = view() == PhoneView::Control;
+    let (lit, ink) = if navigating {
+        (crate::shell::RAISED, TEXT)
+    } else {
+        ("transparent", DIM)
     };
     rsx! {
         div {
-            style: "display:flex; gap:6px;",
-            for (each, label) in [(Mode::Live, "Live"), (Mode::Record, "Record")] {
-                button {
-                    key: "{label}",
-                    style: {
-                        let on = mode() == each;
-                        let (fg, bg) = if on { (ACCENT, "#1f2a3a") } else { (DIM, "transparent") };
-                        format!(
-                            "flex:1; height:40px; border-radius:10px; border:1px solid {RULE}; background:{bg}; \
-                             color:{fg}; font-family:inherit; font-size:14px; font-weight:650; cursor:pointer;"
-                        )
-                    },
-                    onclick: move |_| mode.set(each),
-                    "{label}"
+                        style: "position:relative; z-index:5; flex:none; height:{LINE_H}px; display:flex; \
+                    align-items:stretch; border-bottom:{rule}; background:{BAR_BG};",
+                        button {
+                title: "The navigator: every song in the set",
+                style: "flex:none; width:48px; display:flex; align-items:center; justify-content:center; \
+                        border:none; border-right:1px solid {RULE}; background:{lit}; padding:0; cursor:pointer;",
+                onclick: move |_| {
+                    if navigating {
+                        view.set(came_from());
+                    } else {
+                        came_from.set(view());
+                        view.set(PhoneView::Control);
+                    }
+                },
+                lucide_dioxus::Menu { size: 20, color: ink }
+            }
+            button {
+                title: "The song before",
+                style: arrow,
+                onclick: move |_| {
+                    if before {
+                        on_pick.call(at - 1);
+                    }
+                },
+                lucide_dioxus::ChevronLeft { size: 20, color: if before { TEXT } else { "#3a3d44" } }
+            }
+            button {
+                title: "The set",
+                style: "flex:1; min-width:0; display:flex; align-items:center; justify-content:center; \
+                        gap:8px; padding:0 8px; border:none; border-left:1px solid {RULE}; \
+                        border-right:1px solid {RULE}; background:transparent; color:{TEXT}; \
+                        font-family:inherit; cursor:pointer;",
+                onclick: move |_| view.set(PhoneView::Control),
+                span { style: "flex:none; width:8px; height:8px; border-radius:4px; background:{color};" }
+                span {
+                    style: "font-size:14px; font-weight:650; white-space:nowrap; overflow:hidden; \
+                            text-overflow:ellipsis; min-width:0;",
+                    "{name}"
+                }
+                span { style: "flex:none; font-size:11px; color:{DIM};", "{place}" }
+            }
+            button {
+                title: "The song after",
+                style: arrow,
+                onclick: move |_| {
+                    if after {
+                        on_pick.call(at + 1);
+                    }
+                },
+                lucide_dioxus::ChevronRight { size: 20, color: if after { TEXT } else { "#3a3d44" } }
+            }
+        }
+    }
+}
+
+/// The view's own controls, over the transport: the wide bottom bar's for
+/// the same view ([`crate::shell::BottomBar`]'s context), a row of them.
+#[component]
+fn ViewControls(
+    view: PhoneView,
+    /// Filling the tab bar's other side, rather than a row of its own.
+    #[props(default)]
+    bare: bool,
+) -> Element {
+    let pins = try_use_context::<crate::shell::Pins>();
+    let row = if bare {
+        "flex:1; height:100%; display:flex; align-items:stretch; justify-content:center;"
+    } else {
+        "flex:none; height:48px; display:flex; align-items:stretch; justify-content:center;"
+    };
+    match view {
+        PhoneView::Chart => rsx! {
+            div { style: row, crate::shell::ChartPages {} }
+        },
+        PhoneView::Mixer => rsx! {
+            div {
+                style: row,
+                if let Some(pins) = pins {
+                    crate::shell::LockButton { lock: pins.lock }
+                }
+                crate::shell::FolderSwitch {}
+            }
+        },
+        PhoneView::Arrangement => rsx! {
+            div {
+                style: row,
+                if let Some(pins) = pins {
+                    crate::shell::LockButton { lock: pins.lock }
+                }
+            }
+        },
+        _ => rsx! {},
+    }
+}
+
+/// More: what the tab bar has no room for — Setup (the set, the routing,
+/// the settings, and back to the sets), the Editor — who is here and where
+/// the sound comes from (the host's `session`), and the window's mode and
+/// lock, as rows a thumb can hit.
+#[component]
+fn More(view: Signal<PhoneView>, session: Element) -> Element {
+    let mut view = view;
+    let mode = try_use_context::<Signal<session::modes::Mode>>();
+    let pins = try_use_context::<crate::shell::Pins>();
+    let heading = format!(
+        "padding:18px 16px 6px; font-size:11px; font-weight:700; letter-spacing:0.08em; \
+         color:{DIM}; border-bottom:1px solid {RULE};"
+    );
+    let row = format!(
+        "width:100%; min-height:52px; display:flex; align-items:center; gap:14px; padding:0 16px; \
+         border:none; border-bottom:1px solid {RULE}; background:transparent; color:{TEXT}; \
+         font-family:inherit; font-size:15px; font-weight:600; text-align:left; cursor:pointer;"
+    );
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; width:100%; height:100%; overflow-y:auto;",
+            button {
+                style: "{row}",
+                onclick: move |_| view.set(PhoneView::Setup),
+                lucide_dioxus::Settings { size: 20, color: TEXT }
+                span { style: "flex:1;", "Setup" }
+                span { style: "font-size:12px; color:{DIM};", "Setlist, routing, settings" }
+                lucide_dioxus::ChevronRight { size: 18, color: DIM }
+            }
+            button {
+                style: "{row}",
+                onclick: move |_| view.set(PhoneView::Editor),
+                lucide_dioxus::AudioWaveform { size: 20, color: TEXT }
+                span { style: "flex:1;", "Editor" }
+                lucide_dioxus::ChevronRight { size: 18, color: DIM }
+            }
+            div { style: "{heading}", "SESSION" }
+            div {
+                style: "display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-height:52px; \
+                        padding:8px 16px; border-bottom:1px solid {RULE};",
+                {session}
+            }
+            if let Some(mut mode) = mode {
+                div { style: "{heading}", "MODE" }
+                for each in session::modes::Mode::ALL {
+                    button {
+                        key: "{each.display_name()}",
+                        style: {
+                            let (bg, ink) = if mode() == each { (crate::shell::RAISED, TEXT) } else { ("transparent", DIM) };
+                            format!("{row} min-height:48px; background:{bg}; color:{ink};")
+                        },
+                        onclick: move |_| mode.set(each),
+                        span { style: "flex:1;", "{each.display_name()}" }
+                        if mode() == each {
+                            lucide_dioxus::Check { size: 18, color: TEXT }
+                        }
+                    }
+                }
+            }
+            if let Some(pins) = pins {
+                div { style: "{heading}", "WINDOW" }
+                {
+                    let mut lock = pins.lock;
+                    let on = lock();
+                    let (track, knob) = if on { ("#2563eb", "22px") } else { ("#3a3d44", "2px") };
+                    rsx! {
+                        button {
+                            style: "{row}",
+                            onclick: move |_| lock.toggle(),
+                            span { style: "flex:1;", "Lock" }
+                            div {
+                                style: "position:relative; flex:none; width:44px; height:24px; border-radius:12px; background:{track};",
+                                div { style: "position:absolute; top:2px; left:{knob}; width:20px; height:20px; border-radius:10px; background:#f3f4f6;" }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -298,42 +518,85 @@ fn ModeSwitch() -> Element {
 
 /// The views, picked: a tab bar along the bottom, or a rail down the left.
 #[component]
-fn Tabs(view: Signal<PhoneView>, rail: bool) -> Element {
-    let bar = if rail {
-        format!(
-            "flex:none; width:60px; display:flex; flex-direction:column; justify-content:center; \
-             gap:4px; padding:4px; background:{BAR_BG}; border-right:1px solid {RULE};"
-        )
-    } else {
-        format!(
-            "flex:none; display:flex; padding:2px 4px 6px; background:{BAR_BG}; \
-             border-top:1px solid {RULE};"
-        )
+fn Tabs(view: Signal<PhoneView>, rail: bool, controls: Signal<bool>) -> Element {
+    let mut controls = controls;
+    let buttons = rsx! {
+        for each in PhoneView::ALL {
+            button {
+                key: "{each.name()}",
+                style: tab(view().tab() == each, rail),
+                onclick: move |_| view.set(each),
+                ViewIcon { view: each, color: crate::shell::ink(view().tab() == each) }
+                if !rail {
+                    span { style: "font-size:10px;", "{each.name()}" }
+                }
+            }
+        }
     };
+    if rail {
+        return rsx! {
+            div {
+                style: "flex:none; width:60px; display:flex; flex-direction:column; justify-content:center; \
+                        background:{BAR_BG}; border-right:1px solid {RULE};",
+                {buttons}
+            }
+        };
+    }
+    // Upright: the views on one side, the view's own controls on the other
+    // (the chart's pages, the mixer's folders, the arrangement's lock), the
+    // bar slid from one to the other by the switch at its end.
+    let has = has_controls(view());
+    let showing = controls() && has;
     rsx! {
         div {
-            style: "{bar}",
-            for each in PhoneView::ALL {
+            style: "position:relative; z-index:5; flex:none; height:56px; display:flex; align-items:stretch; \
+                    background:{BAR_BG}; border-top:1px solid {RULE}; overflow:hidden;",
+            if has {
                 button {
-                    style: tab(view() == each, rail),
-                    onclick: move |_| view.set(each),
-                    ViewIcon { view: each }
-                    if !rail {
-                        span { style: "font-size:10px;", "{each.name()}" }
+                    title: if showing { "The views" } else { "This view's controls" },
+                    style: "flex:none; width:48px; display:flex; align-items:center; justify-content:center; \
+                            border:none; border-right:1px solid {RULE}; background:transparent; padding:0; cursor:pointer;",
+                    onclick: move |_| controls.toggle(),
+                    if showing {
+                        lucide_dioxus::LayoutGrid { size: 20, color: TEXT }
+                    } else {
+                        lucide_dioxus::SlidersHorizontal { size: 20, color: TEXT }
                     }
                 }
+            }
+            // One side at a time, the other not there at all: Blitz
+            // hit-tests where a box was laid out before it was moved, so
+            // with both sides in a sliding track a press on "Page ›" landed
+            // on the tab laid out under it.
+            if showing {
+                ViewControls { view: view(), bare: true }
+            } else {
+                div { style: "flex:1; min-width:0; display:flex; align-items:stretch;", {buttons} }
             }
         }
     }
 }
 
+/// Whether a view has controls of its own for the bar's other side.
+const fn has_controls(view: PhoneView) -> bool {
+    matches!(
+        view,
+        PhoneView::Chart | PhoneView::Mixer | PhoneView::Arrangement
+    )
+}
+
+/// A tab: flat, as the wide bars are — the one showing raised.
 fn tab(on: bool, rail: bool) -> String {
-    let fg = if on { ACCENT } else { DIM };
-    let bg = if on && rail { "#1f2a3a" } else { "transparent" };
-    let shape = if rail {
-        "height:46px; border-radius:10px;"
+    let fg = crate::shell::ink(on);
+    let bg = if on {
+        crate::shell::RAISED
     } else {
-        "flex:1; min-width:0; height:50px;"
+        "transparent"
+    };
+    let shape = if rail {
+        "height:52px;"
+    } else {
+        "flex:1; min-width:0; height:100%;"
     };
     format!(
         "{shape} display:flex; flex-direction:column; align-items:center; justify-content:center; \
@@ -344,33 +607,23 @@ fn tab(on: bool, rail: bool) -> String {
 }
 
 #[component]
-fn ViewIcon(view: PhoneView) -> Element {
-    use lucide_dioxus::{ChartNoAxesGantt, FileMusic, ListMusic, MicVocal, SlidersVertical};
+/// A tab's icon, in its colour outright (Blitz resolves an SVG's
+/// `currentColor` once; see `shell::ink`).
+fn ViewIcon(view: PhoneView, color: &'static str) -> Element {
+    use lucide_dioxus::{
+        AudioWaveform, ChartNoAxesGantt, Ellipsis, FileMusic, ListMusic, MicVocal, Settings,
+        SlidersVertical,
+    };
     let size = 22;
     match view {
-        PhoneView::Control => rsx! { ListMusic { size, color: "currentColor" } },
-        PhoneView::Chart => rsx! { FileMusic { size, color: "currentColor" } },
-        PhoneView::Lyrics => rsx! { MicVocal { size, color: "currentColor" } },
-        PhoneView::Arrangement => rsx! { ChartNoAxesGantt { size, color: "currentColor" } },
-        PhoneView::Mixer => rsx! { SlidersVertical { size, color: "currentColor" } },
-    }
-}
-
-#[component]
-fn Caret(up: bool) -> Element {
-    let d = if up {
-        "M5 12 L10 7 L15 12"
-    } else {
-        "M5 8 L10 13 L15 8"
-    };
-    rsx! {
-        svg {
-            width: "20",
-            height: "20",
-            view_box: "0 0 20 20",
-            fill: "none",
-            path { d, stroke: TEXT, stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round" }
-        }
+        PhoneView::Control => rsx! { ListMusic { size, color } },
+        PhoneView::Chart => rsx! { FileMusic { size, color } },
+        PhoneView::Lyrics => rsx! { MicVocal { size, color } },
+        PhoneView::Arrangement => rsx! { ChartNoAxesGantt { size, color } },
+        PhoneView::Mixer => rsx! { SlidersVertical { size, color } },
+        PhoneView::More => rsx! { Ellipsis { size, color } },
+        PhoneView::Setup => rsx! { Settings { size, color } },
+        PhoneView::Editor => rsx! { AudioWaveform { size, color } },
     }
 }
 

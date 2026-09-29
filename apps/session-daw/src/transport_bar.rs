@@ -1,11 +1,11 @@
 //! The transport: go to start, play/stop, record, loop, go to end, and
 //! where the song is — bar.beat, clock time, tempo, key.
 //!
-//! It lives in the app's top bar, so there is no bottom rail and the
-//! transport is in the same place whatever the view. The Performance view
-//! also has its own, bigger buttons along its foot (`session-ui`'s
-//! `TransportControlBar`); this one is for editing, where the numbers
-//! matter more than the size of the buttons.
+//! It lives in the bottom bar, beside the views, when the arrangement is
+//! showing ([`crate::shell::BottomBar`]'s context) — big, for a finger
+//! (`big`). The Performance view has its own buttons along its foot
+//! (`session-ui`'s `TransportControlBar`); this one is for editing, where
+//! the numbers matter as much as the buttons.
 
 use dioxus::prelude::*;
 
@@ -22,7 +22,11 @@ const LOOP: &str = "#3aa0ff";
 /// The bar.
 #[cfg(feature = "native")]
 #[component]
-pub fn TransportBar() -> Element {
+pub fn TransportBar(
+    /// Sized for a finger: the bottom bar's.
+    #[props(default)]
+    big: bool,
+) -> Element {
     let mut reading = use_signal(crate::engine::Reading::default);
     // A read a frame, published only when something a person can see
     // changed: the clock to the hundredth, the flags, the tempo.
@@ -35,7 +39,7 @@ pub fn TransportBar() -> Element {
         };
         publish(&mut reading, now);
     });
-    rsx! { TransportBarView { reading: reading() } }
+    rsx! { TransportBarView { reading: reading(), big } }
 }
 
 /// A new reading, published only when something a person can see changed:
@@ -56,7 +60,11 @@ fn publish(reading: &mut Signal<crate::engine::Reading>, now: crate::engine::Rea
 /// redraw event to hang it on).
 #[cfg(feature = "web")]
 #[component]
-pub fn WebTransportBar() -> Element {
+pub fn WebTransportBar(
+    /// Sized for a finger: the bottom bar's.
+    #[props(default)]
+    big: bool,
+) -> Element {
     let mut reading = use_signal(crate::engine::Reading::default);
     use_future(move || async move {
         loop {
@@ -66,13 +74,13 @@ pub fn WebTransportBar() -> Element {
             gloo_timers::future::TimeoutFuture::new(33).await;
         }
     });
-    rsx! { TransportBarView { reading: reading() } }
+    rsx! { TransportBarView { reading: reading(), big } }
 }
 
 /// What the bar shows, for a reading — as much as the bar has room for
 /// (see [`crate::shell::Density`]).
 #[component]
-fn TransportBarView(reading: crate::engine::Reading) -> Element {
+fn TransportBarView(reading: crate::engine::Reading, big: bool) -> Element {
     use crate::shell::Density;
     let session: StudioSession = use_context();
     let density = crate::shell::use_density();
@@ -88,73 +96,128 @@ fn TransportBarView(reading: crate::engine::Reading) -> Element {
     let seconds = r.at - minutes * 60.0;
     let clock = format!("{minutes:.0}:{seconds:05.2}");
     let bpm = tempo_text(r.bpm);
-    let ends = density != Density::Narrow;
+    let ends = if big {
+        density == Density::Full
+    } else {
+        density != Density::Narrow
+    };
+    // A finger's sizes, or a mouse's.
+    let (tall, card, beat_px, clock_px, pill_px) = if big {
+        (40, 40, 20, 13, 15)
+    } else {
+        (26, 30, 15, 12, 12)
+    };
+    // Big, it is part of the bottom bar: flat, the bar's full height, its
+    // parts between hairlines rather than cards. Small, each is a card.
+    let (row, card_look) = if big {
+        (
+            "height:100%; flex:none; display:flex; align-items:stretch;",
+            String::new(),
+        )
+    } else {
+        (
+            "height:100%; flex:none; display:flex; align-items:center; gap:4px;",
+            format!("border-radius:6px; background:#0b0c0e; border:1px solid {RULE};"),
+        )
+    };
+    let high = if big {
+        "100%".to_owned()
+    } else {
+        format!("{tall}px")
+    };
+    let card_high = if big {
+        "100%".to_owned()
+    } else {
+        format!("{card}px")
+    };
     rsx! {
         div {
-            style: "height:100%; flex:none; display:flex; align-items:center; gap:4px;",
+            style: row,
             // A press here is a button, not a drag of the window the bar
             // it sits in is the title bar of.
             onmousedown: move |event| event.stop_propagation(),
             if ends {
-                Button { title: "Go to start", on: false, color: TEXT, glyph: Glyph::Home,
+                Button { title: "Go to start", on: false, color: TEXT, glyph: Glyph::Home, big,
                     onpress: move |()| transport(Move::Home, 0.0) }
             }
-            Button { title: "Play / stop", on: r.playing, color: PLAY,
+            Button { title: "Play / stop", on: r.playing, color: PLAY, big,
                 glyph: if r.playing { Glyph::Stop } else { Glyph::Play },
                 onpress: move |()| transport(Move::PlayStop, 0.0) }
-            Button { title: "Record", on: r.recording, color: REC, glyph: Glyph::Record,
+            Button { title: "Record", on: r.recording, color: REC, glyph: Glyph::Record, big,
                 onpress: move |()| transport(Move::ToggleRecord, 0.0) }
-            Button { title: "Loop", on: r.looping, color: LOOP, glyph: Glyph::Loop,
+            Button { title: "Loop", on: r.looping, color: LOOP, glyph: Glyph::Loop, big,
                 onpress: move |()| transport(Move::ToggleLoop, 0.0) }
             if ends {
-                Button { title: "Go to end", on: false, color: TEXT, glyph: Glyph::End,
+                Button { title: "Go to end", on: false, color: TEXT, glyph: Glyph::End, big,
                     onpress: move |()| transport(Move::End, 0.0) }
             }
-            div { style: "width:4px;" }
+                        if big {
+                Hairline {}
+            } else {
+                div { style: "width:4px;" }
+            }
             // Where the song is: the bar and beat first, the clock under it
             // in weight — the bar is what an editor counts in. Narrow, the
             // clock is the tooltip.
             div {
                 title: "{clock}",
-                style: "height:26px; box-sizing:border-box; display:flex; align-items:center; \
-                        gap:10px; padding:0 10px; border-radius:6px; background:#0b0c0e; \
-                        border:1px solid {RULE}; font-family:ui-monospace, monospace;",
-                span { style: "font-size:15px; font-weight:600; color:{TEXT};", "{bar}.{beat}" }
+                                style: "height:{high}; box-sizing:border-box; display:flex; align-items:center; \
+                        gap:10px; padding:0 12px; {card_look} font-family:ui-monospace, monospace;",
+                span { style: "font-size:{beat_px}px; font-weight:600; color:{TEXT};", "{bar}.{beat}" }
                 if density != Density::Narrow {
-                    span { style: "font-size:12px; color:{DIM};", "{clock}" }
+                    span { style: "font-size:{clock_px}px; color:{DIM};", "{clock}" }
                 }
             }
             if density == Density::Full {
                 // Tempo and key as one card, each a small label over its
                 // value — what the song is doing where the playhead is.
+                                if big {
+                    Hairline {}
+                }
                 div {
-                    style: "height:30px; box-sizing:border-box; display:flex; align-items:stretch; \
-                            border-radius:6px; background:#0b0c0e; border:1px solid {RULE};",
-                    Reading { label: "BPM", value: bpm, mono: true }
+                    style: "height:{card_high}; box-sizing:border-box; display:flex; align-items:center; \
+                            {card_look}",
+                    Reading { label: "BPM", value: bpm, mono: true, big }
                     div { style: "width:1px; margin:5px 0; background:{RULE};" }
-                    Reading { label: "KEY", value: key }
+                    Reading { label: "KEY", value: key, big }
                 }
             } else {
                 // One small pill: `68 · F`, a note glyph for what the
                 // first number is.
+                                if big {
+                    Hairline {}
+                }
                 div {
                     title: "Tempo {bpm} BPM, key {key}",
-                    style: "height:26px; box-sizing:border-box; display:flex; align-items:center; \
-                            gap:6px; padding:0 9px; border-radius:6px; background:#0b0c0e; \
-                            border:1px solid {RULE}; white-space:nowrap;",
+                    style: "height:{high}; box-sizing:border-box; display:flex; align-items:center; \
+                            gap:6px; padding:0 12px; {card_look} white-space:nowrap;",
                     NoteGlyph {}
-                    span { style: "font-size:12px; color:{TEXT}; font-family:ui-monospace, monospace;", "{bpm}" }
-                    span { style: "font-size:12px; color:{DIM};", "·" }
-                    span { style: "font-size:12px; font-weight:700; color:{TEXT};", "{key}" }
+                    span { style: "font-size:{pill_px}px; color:{TEXT}; font-family:ui-monospace, monospace;", "{bpm}" }
+                    span { style: "font-size:{pill_px}px; color:{DIM};", "·" }
+                    span { style: "font-size:{pill_px}px; font-weight:700; color:{TEXT};", "{key}" }
                 }
             }
         }
     }
 }
 
+/// A hairline between the big transport's parts.
+#[component]
+fn Hairline() -> Element {
+    rsx! {
+        div { style: "flex:none; width:1px; margin:12px 0; background:{RULE};" }
+    }
+}
+
 /// One labelled number in the tempo/key card.
 #[component]
-fn Reading(label: &'static str, value: String, #[props(default)] mono: bool) -> Element {
+fn Reading(
+    label: &'static str,
+    value: String,
+    #[props(default)] mono: bool,
+    #[props(default)] big: bool,
+) -> Element {
+    let (label_px, value_px) = if big { (9, 17) } else { (8, 13) };
     let family = if mono {
         "ui-monospace, monospace"
     } else {
@@ -165,11 +228,11 @@ fn Reading(label: &'static str, value: String, #[props(default)] mono: bool) -> 
             style: "display:flex; flex-direction:column; justify-content:center; align-items:flex-start; \
                     padding:0 10px; min-width:34px;",
             span {
-                style: "font-size:8px; line-height:9px; letter-spacing:0.8px; font-weight:700; color:{DIM};",
+                style: "font-size:{label_px}px; line-height:{label_px + 1}px; letter-spacing:0.8px; font-weight:700; color:{DIM};",
                 "{label}"
             }
             span {
-                style: "font-size:13px; line-height:15px; font-weight:700; color:{TEXT}; font-family:{family};",
+                style: "font-size:{value_px}px; line-height:{value_px + 2}px; font-weight:700; color:{TEXT}; font-family:{family};",
                 "{value}"
             }
         }
@@ -177,7 +240,7 @@ fn Reading(label: &'static str, value: String, #[props(default)] mono: bool) -> 
 }
 
 /// A tempo as a person reads it: `68`, `72.5` — no `.0`.
-fn tempo_text(bpm: f64) -> String {
+pub(crate) fn tempo_text(bpm: f64) -> String {
     if bpm <= 0.0 {
         "—".to_owned()
     } else if (bpm - bpm.round()).abs() < 0.05 {
@@ -214,7 +277,7 @@ fn NoteGlyph() -> Element {
 /// a trailing `m` for minor ("Fm"), and the mode's first three letters for
 /// anything else ("F dor") — spelling out "major" every time the song
 /// hasn't changed key is wasted width the pill doesn't have.
-fn short_key(name: &str) -> String {
+pub(crate) fn short_key(name: &str) -> String {
     let Some(key) = session::key::parse_key(name) else {
         return name.to_owned();
     };
@@ -247,19 +310,38 @@ fn Button(
     color: &'static str,
     glyph: Glyph,
     onpress: EventHandler<()>,
+    #[props(default)] big: bool,
 ) -> Element {
     let fg = if on { color } else { DIM };
     let border = if on { color } else { RULE };
+    // A finger's button — flat, the bar's full height, lit by a wash of
+    // its colour — or a mouse's small card.
+    let (look, icon) = if big {
+        let wash = if on {
+            format!("{color}24")
+        } else {
+            "transparent".to_owned()
+        };
+        (
+            format!("width:54px; height:100%; border:none; border-radius:0; background:{wash};"),
+            22,
+        )
+    } else {
+        (
+            format!(
+                "width:30px; height:24px; border-radius:5px; border:1px solid {border}; background:#0b0c0e;"
+            ),
+            16,
+        )
+    };
     rsx! {
         button {
             title,
-            style: "width:30px; height:24px; padding:0; display:flex; align-items:center; \
-                    justify-content:center; border-radius:5px; border:1px solid {border}; \
-                    background:#0b0c0e;",
+            style: "{look} padding:0; display:flex; align-items:center; justify-content:center; cursor:pointer;",
             onclick: move |_| onpress.call(()),
             svg {
-                width: "16",
-                height: "16",
+                width: "{icon}",
+                height: "{icon}",
                 view_box: "0 0 24 24",
                 match glyph {
                     Glyph::Home => rsx! {

@@ -71,15 +71,28 @@ pub fn TransportControlBar(
     } else {
         28
     };
-    // Shared cell layout — the only difference between modes is icon size,
-    // stacking direction, and type scale. State-specific fills are appended
-    // per button below.
+    // Each cell's look, inline and whole: its layout (icon over a small
+    // word when compact, beside it otherwise) and its state's colours.
+    // No hover colour: a touchscreen leaves a tapped button hovered, and
+    // the tint it kept read as the button being greyed out for good.
     let base = if compact {
-        "flex flex-col items-center justify-center gap-1 px-1 text-center leading-none cursor-pointer transition-colors text-[11px] font-medium"
+        "display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; \
+         padding:0 4px; text-align:center; line-height:1; font-size:11px;"
     } else {
-        "flex items-center justify-center gap-3 cursor-pointer transition-colors text-lg font-medium"
+        "display:flex; align-items:center; justify-content:center; gap:12px; font-size:18px;"
     };
-    let cls = |extra: &str| format!("{base} {extra}");
+    let cls = |state: Look| {
+        let (fg, bg) = match state {
+            Look::Idle => ("#e5e7eb", "#0b0c0e"),
+            Look::On => ("#0b0c0e", "#e5e7eb"),
+            Look::Red => ("#ffffff", "#dc2626"),
+            Look::RedWord => ("#ef4444", "#0b0c0e"),
+        };
+        format!(
+            "{base} font-weight:500; cursor:pointer; color:{fg}; background:{bg}; \
+             border-left:1px solid #2a2c31; user-select:none;"
+        )
+    };
 
     rsx! {
         div {
@@ -88,19 +101,15 @@ pub fn TransportControlBar(
             // utilities survived the consumer's CSS purge. Without this the
             // children collapse to block rows and overlap inside the caller's
             // fixed-height (`h-16 overflow-hidden`) frame.
-            style: "display:grid; grid-template-columns:repeat({cols},minmax(0,1fr)); align-items:stretch;",
-            class: "h-full w-full bg-card grid divide-x divide-border",
+            style: "display:grid; grid-template-columns:repeat({cols},minmax(0,1fr)); align-items:stretch; \
+                    width:100%; height:100%; background:#0b0c0e; overflow:hidden;",
 
             // Arm + Record — recording environments only (playback surfaces
             // pass `show_recording: false`).
             if show_recording {
                 // Arm Button — arms/disarms the selected tracks in the active song
                 div {
-                    class: if armed {
-                        cls("bg-red-600/80 text-white hover:bg-red-600")
-                    } else {
-                        cls("border border-border hover:bg-accent")
-                    },
+                    style: if armed { cls(Look::Red) } else { cls(Look::Idle) },
                     onclick: move |_| {
                         on_arm_toggle.call(());
                     },
@@ -110,11 +119,7 @@ pub fn TransportControlBar(
 
                 // Record Button — toggles recording into the active song's project
                 div {
-                    class: if recording {
-                        cls("bg-red-600 text-white hover:bg-red-700")
-                    } else {
-                        cls("border border-border hover:bg-accent text-red-500")
-                    },
+                    style: if recording { cls(Look::Red) } else { cls(Look::RedWord) },
                     onclick: move |_| {
                         on_record_toggle.call(());
                     },
@@ -127,25 +132,18 @@ pub fn TransportControlBar(
                 }
             }
 
-            // Back Button
+                        // Back Button — while playing too: a press mid-song is exactly
+            // when back a section is wanted.
             div {
-                class: cls("hover:bg-accent"),
-                onclick: move |_| {
-                    if !playing {
-                        on_back.call(());
-                    }
-                },
+                style: cls(Look::Idle),
+                onclick: move |_| on_back.call(()),
                 BackIcon { size: icon, color: "currentColor" }
                 if !icons_only { "Back" }
             }
 
             // Play/Pause Button
             div {
-                class: if playing {
-                    cls("bg-primary text-primary-foreground hover:bg-primary/90")
-                } else {
-                    cls("border border-border hover:bg-accent")
-                },
+                style: if playing { cls(Look::On) } else { cls(Look::Idle) },
                 onclick: move |_| {
                     on_play_pause.call(());
                 },
@@ -162,11 +160,7 @@ pub fn TransportControlBar(
             // Record, in Loop's place (see `record_in_loop`).
             if record_in_loop {
                 div {
-                    class: if recording {
-                        cls("bg-red-600 text-white hover:bg-red-700")
-                    } else {
-                        cls("border border-border hover:bg-accent text-red-500")
-                    },
+                    style: if recording { cls(Look::Red) } else { cls(Look::RedWord) },
                     onclick: move |_| {
                         on_record_toggle.call(());
                     },
@@ -186,11 +180,7 @@ pub fn TransportControlBar(
             } else {
             // Loop Button
             div {
-                class: if looping {
-                    cls("bg-primary text-primary-foreground hover:bg-primary/90")
-                } else {
-                    cls("border border-border hover:bg-accent")
-                },
+                style: if looping { cls(Look::On) } else { cls(Look::Idle) },
                 onclick: move |_| {
                     on_loop_toggle.call(());
                 },
@@ -199,17 +189,26 @@ pub fn TransportControlBar(
             }
             }
 
-            // Advance Button
+                        // Advance Button — while playing too.
             div {
-                class: cls("hover:bg-accent"),
-                onclick: move |_| {
-                    if !playing {
-                        on_forward.call(());
-                    }
-                },
+                style: cls(Look::Idle),
+                onclick: move |_| on_forward.call(()),
                 ForwardIcon { size: icon, color: "currentColor" }
                 if !icons_only { "Advance" }
             }
         }
     }
+}
+
+/// What a transport cell shows it is.
+#[derive(Clone, Copy)]
+enum Look {
+    /// At rest.
+    Idle,
+    /// Switched on (playing, looping): light, with dark words.
+    On,
+    /// Recording, or armed: red.
+    Red,
+    /// Record, not recording: red words on the dark.
+    RedWord,
 }

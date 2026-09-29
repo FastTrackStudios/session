@@ -299,6 +299,10 @@ pub fn take_arrivals() -> Option<tokio::sync::mpsc::UnboundedReceiver<Arrival>> 
     ARRIVALS.with(|a| a.borrow_mut().take())
 }
 
+/// How long the song on screen streams alone before the set's other songs
+/// start coming in behind it.
+const NEXT_SONGS_AFTER_MS: u32 = 1_500;
+
 /// Open the page the one way songs open (`open_core::open_song_in`, from
 /// a memory folder), first song first: a live set is joined (and joined
 /// again until Task answers — it may be restarting), its first song
@@ -379,7 +383,9 @@ pub async fn open(
         title: first_title.clone(),
         retry: None,
     });
-    let fetched = crate::task_set::until_ok(
+    // The first song and the guide's samples at once: neither needs the
+    // other, and the guide's were fetched only once the song was in.
+    let song = crate::task_set::until_ok(
         Some(8),
         || fetch_song(&first),
         |why| {
@@ -388,18 +394,21 @@ pub async fn open(
                 retry: Some(why),
             });
         },
-    )
-    .await?;
+    );
+    let samples = async {
+        match guide {
+            Some(base) => guide_library(base).await,
+            None => HashMap::new(),
+        }
+    };
+    let (fetched, library) = futures_util::future::join(song, samples).await;
+    let fetched = fetched?;
     progress(Progress::Opening {
         title: first_title.clone(),
     });
     MULTITRACKS.with(|m| m.set(chose_multitracks()));
     let standalone = daw_standalone::sync::Standalone::new();
     // The guide instrument, before the guide tracks it plays on are made.
-    let library = match guide {
-        Some(base) => guide_library(base).await,
-        None => HashMap::new(),
-    };
     crate::guide_instrument::install(
         &standalone,
         crate::guide_instrument::Library::Files {
@@ -445,6 +454,14 @@ pub async fn open(
     let (arrive, arrivals) = tokio::sync::mpsc::unbounded_channel();
     ARRIVALS.with(|a| *a.borrow_mut() = Some(arrivals));
     wasm_bindgen_futures::spawn_local(async move {
+        // The song on screen first: its opening seconds of audio start
+        // streaming as `open` returns, and the next song's hundred-odd
+        // requests landing on the same connection at that moment delayed
+        // the first sound. A head start, not a wait for it: a set whose
+        // first song never plays still fills in behind it.
+        if !rest.is_empty() {
+            gloo_timers::future::TimeoutFuture::new(NEXT_SONGS_AFTER_MS).await;
+        }
         for want in rest {
             let title = want.title.clone().unwrap_or_default();
             let opened = async {

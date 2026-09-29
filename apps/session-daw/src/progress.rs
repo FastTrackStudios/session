@@ -170,6 +170,10 @@ pub fn TransportButtons(
     let r = reading();
     let back = song.clone();
     let on = song;
+    // Read up front, never behind a condition (`try_use_context` is a
+    // hook): picking the song before or after, as the tabs do.
+    let pick = try_use_context::<crate::record_view::PickSong>();
+    let setlist = try_use_context::<Signal<crate::setlist::Setlist>>();
     let height = height.unwrap_or(if compact { 44 } else { 64 });
     rsx! {
         div {
@@ -186,29 +190,82 @@ pub fn TransportButtons(
                 on_loop_toggle: move |()| transport(Move::ToggleLoop, 0.0),
                 on_record_toggle: move |()| transport(Move::ToggleRecord, 0.0),
                 on_arm_toggle: move |()| {},
-                // Back: to the start of this section, or — within a second
+                                // Back: to the start of this section, or — within a second
                 // of it — to the one before, which is what a second press
-                // of a back button means.
+                // of a back button means; at the song's very start, the
+                // song before.
                 on_back: move |()| {
                     let Some(song) = back.as_ref() else { return };
                     let at = Transport::shared().map_or(0.0, |t| t.read().0);
-                    let to = match song.current(at) {
-                        Some(i) if at - song.sections[i].0 < 1.0 && i > 0 => song.sections[i - 1].0,
-                        Some(i) => song.sections[i].0,
-                        None => song.start,
-                    };
-                    transport(Move::Seek, to);
+                    match back_to(song, at) {
+                        Step::Seek(to) => transport(Move::Seek, to),
+                        Step::Song => step_song(pick, setlist, -1),
+                    }
                 },
+                // Advance: to the next section, and after the last, the
+                // next song.
                 on_forward: move |()| {
                     let Some(song) = on.as_ref() else { return };
                     let at = Transport::shared().map_or(0.0, |t| t.read().0);
-                    let next = song.sections.iter().map(|(from, _)| *from).find(|from| *from > at + 1e-3);
-                    if let Some(to) = next {
-                        transport(Move::Seek, to);
+                    match forward_to(song, at) {
+                        Step::Seek(to) => transport(Move::Seek, to),
+                        Step::Song => step_song(pick, setlist, 1),
                     }
                 },
             }
         }
+    }
+}
+
+/// Where a transport button goes: a place in this song, or the song
+/// before or after it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Step {
+    Seek(f64),
+    Song,
+}
+
+/// Back from `at`: the start of this section, the section before if this
+/// one was only just started, and past the song's first section, the song
+/// before.
+fn back_to(song: &Song, at: f64) -> Step {
+    match song.current(at) {
+        Some(i) if at - song.sections[i].0 < 1.0 && i > 0 => Step::Seek(song.sections[i - 1].0),
+        Some(0) if at - song.sections[0].0 < 1.0 => Step::Song,
+        Some(i) => Step::Seek(song.sections[i].0),
+        // Before the first section (the count-in): the song's start, and
+        // pressed there again, the song before.
+        None if at - song.start > 1.0 => Step::Seek(song.start),
+        None => Step::Song,
+    }
+}
+
+/// Forward from `at`: the next section, and after the last, the next song.
+fn forward_to(song: &Song, at: f64) -> Step {
+    song.sections
+        .iter()
+        .map(|(from, _)| *from)
+        .find(|from| *from > at + 1e-3)
+        .map_or(Step::Song, Step::Seek)
+}
+
+/// Pick the song `by` places along the set, if there is one there.
+fn step_song(
+    pick: Option<crate::record_view::PickSong>,
+    setlist: Option<Signal<crate::setlist::Setlist>>,
+    by: isize,
+) {
+    let (Some(crate::record_view::PickSong(pick)), Some(setlist)) = (pick, setlist) else {
+        return;
+    };
+    let list = setlist.peek();
+    let to = list
+        .at
+        .checked_add_signed(by)
+        .filter(|to| *to < list.songs.len());
+    drop(list);
+    if let Some(to) = to {
+        pick.call(to);
     }
 }
 
@@ -230,5 +287,72 @@ impl crate::ghosts::Anchor for SongAnchor {
     fn place(&self, key: &str, u: f64, v: f64, (w, h): (f64, f64)) -> Option<(f64, f64)> {
         let (start, end) = self.span;
         (key == "song").then(|| ((u - start) / (end - start).max(f64::EPSILON) * w, v * h))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Song, Step, back_to, forward_to};
+
+    /// A song from 0 to 60: a count-in, then three sections.
+    fn song() -> Song {
+        Song {
+            start: 0.0,
+            end: 60.0,
+            sections: vec![(4.0, 20.0), (20.0, 40.0), (40.0, 60.0)],
+            bar: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn advance_goes_a_section_on_and_after_the_last_to_the_next_song() {
+        let song = song();
+        assert_eq!(
+            forward_to(&song, 0.0),
+            Step::Seek(4.0),
+            "the count-in to the first section"
+        );
+        assert_eq!(forward_to(&song, 10.0), Step::Seek(20.0));
+        assert_eq!(
+            forward_to(&song, 20.0),
+            Step::Seek(40.0),
+            "from a section's start, the next"
+        );
+        assert_eq!(
+            forward_to(&song, 45.0),
+            Step::Song,
+            "in the last, the next song"
+        );
+    }
+
+    #[test]
+    fn back_goes_to_this_sections_start_then_the_one_before_then_the_song_before() {
+        let song = song();
+        assert_eq!(
+            back_to(&song, 30.0),
+            Step::Seek(20.0),
+            "into a section: its start"
+        );
+        assert_eq!(
+            back_to(&song, 20.5),
+            Step::Seek(4.0),
+            "just after its start: the one before"
+        );
+        assert_eq!(back_to(&song, 10.0), Step::Seek(4.0));
+        assert_eq!(
+            back_to(&song, 4.5),
+            Step::Song,
+            "at the first section's start: the song before"
+        );
+        assert_eq!(
+            back_to(&song, 3.0),
+            Step::Seek(0.0),
+            "in the count-in: the song's start"
+        );
+        assert_eq!(
+            back_to(&song, 0.2),
+            Step::Song,
+            "at the song's start: the song before"
+        );
     }
 }

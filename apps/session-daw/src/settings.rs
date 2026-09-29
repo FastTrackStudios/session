@@ -43,10 +43,17 @@ pub struct Settings {
     /// says something true but useless, and you want to see the tree
     /// instead.
     pub folded_takes: bool,
-    /// Live-mode mixer strips: no input section, the coloured band only as
+    /// Compact mixer strips: no input section, the coloured band only as
     /// tall as the pan knob and the record arm, and the height they gave
     /// up handed to the fader. The FX row stays. See `strip::shape`.
+    ///
+    /// Live mode's strips first, and now every mode's: the input section
+    /// was a tall empty band over every fader for a record-input picker
+    /// set once per session. Off is REAPER's full collapse layout.
     pub live_strips: bool,
+    /// Touchscreen strips: mute and solo grown to fill their column
+    /// (`strip::Strip::touched`).
+    pub touch_strips: bool,
 }
 
 impl Default for Settings {
@@ -57,7 +64,8 @@ impl Default for Settings {
             focus_fraction: dynamic_template::scenes::TABLES.focus.fraction,
             fold_phases_together: true,
             folded_takes: true,
-            live_strips: false,
+            live_strips: true,
+            touch_strips: false,
         }
     }
 }

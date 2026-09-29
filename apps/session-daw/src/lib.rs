@@ -16,6 +16,7 @@ pub mod balance;
 #[cfg(feature = "native")]
 pub mod chart_editor;
 pub mod chart_panel;
+pub mod closeup;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod collab;
 #[cfg(any(feature = "native", feature = "web"))]
@@ -28,6 +29,7 @@ pub mod engine;
 pub mod expression;
 pub mod folder;
 pub mod folder_item;
+pub mod folds;
 pub mod fps;
 pub mod gesture;
 pub mod ghosts;
@@ -55,6 +57,7 @@ pub mod options;
 #[cfg(feature = "native")]
 pub mod organize;
 #[cfg(any(feature = "native", feature = "web"))]
+pub mod song_modes;
 pub mod song_stream;
 #[cfg(feature = "native")]
 pub mod stream_in;
@@ -129,6 +132,8 @@ pub mod open {
         None
     }
 }
+#[cfg(test)]
+mod hook_rules;
 pub mod overlay;
 pub mod panel;
 #[cfg(feature = "native")]
@@ -161,6 +166,8 @@ pub mod text;
 pub mod tone;
 pub mod tool;
 pub mod toolbar;
+pub mod touch;
+pub mod track_icon;
 pub mod transport_bar;
 #[cfg(feature = "web")]
 pub mod web_audio;

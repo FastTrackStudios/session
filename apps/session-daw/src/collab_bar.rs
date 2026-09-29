@@ -184,13 +184,14 @@ pub fn CollabBar() -> Element {
     };
     rsx! {
         div {
-            style: "position:relative; flex:none; margin-left:8px;",
+            style: "position:relative; flex:none; height:100%; display:flex;",
             onmousedown: move |event| event.stop_propagation(),
+            // Flat, the bar's full height: a part of the bar between its
+            // rules, not a card on it.
             button {
                 title: "{title}",
-                style: "height:28px; box-sizing:border-box; display:flex; align-items:center; gap:7px; \
-                        padding:0 8px; border-radius:14px; border:1px solid {RULE}; \
-                        background:#0f1012; cursor:pointer;",
+                style: "height:100%; box-sizing:border-box; display:flex; align-items:center; gap:7px; \
+                        padding:0 12px; border:none; background:transparent; cursor:pointer;",
                 onclick: move |_| open.toggle(),
                 {face}
                 // A playground starts over on a timer: how long this run

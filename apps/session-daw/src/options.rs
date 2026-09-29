@@ -7,7 +7,8 @@
 //! whether snapping is on would be one editor with two minds.
 //!
 //! Snapping and grid lines are honoured (`mousemap::resolve`, the widget's
-//! grid pass). Ripple, auto crossfade, grouping and locking are held for the
+//! grid pass), and locking (`arrange_edit::Editor::press`, the mixer's
+//! holds). Ripple, auto crossfade and grouping are held for the
 //! editor passes that do not exist yet — the toolbar shows their state
 //! honestly as a setting, not as a behaviour.
 
@@ -50,5 +51,13 @@ pub static RIPPLE: Option = Option::new(false);
 pub static AUTO_CROSSFADE: Option = Option::new(true);
 /// Grouped items move together.
 pub static GROUPING: Option = Option::new(true);
-/// Locked items cannot be moved.
-pub static LOCKING: Option = Option::new(false);
+/// Locked, nothing is moved by a drag: an arrangement's items stay put
+/// and the drag scrolls the view; a mixer's faders, pans and rack
+/// controls stay put and the drag scrolls the mixer. Presses still
+/// press — mute, solo, arm, select. On by default: on a touchscreen a
+/// finger meant to scroll or zoom is the common case, and moving a take
+/// by accident mid-service is the costly one.
+///
+/// Off under test: every editing test would otherwise be a test of the
+/// lock. The lock's own tests turn it on.
+pub static LOCKING: Option = Option::new(!cfg!(test));

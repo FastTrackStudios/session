@@ -79,6 +79,12 @@ struct Live {
     /// fitting the page and following the song until a double-click hands
     /// it back.
     manual: bool,
+    /// When two fingers last pinched: their lift arrives as two clicks,
+    /// which is a double-click — the fit's way back — and is not one.
+    pinched_at: Option<web_time::Instant>,
+    /// A page turned to by hand ([`turn`]): the panel stays on it, fitted,
+    /// until the song is followed again.
+    held: bool,
 }
 
 type Shared = Rc<RefCell<Live>>;
@@ -118,6 +124,12 @@ struct ChartWidget {
     live_seen: u64,
     /// The chart the measure boxes in [`Live`] were taken from.
     boxes_key: u64,
+    /// Fingers on the page: one drags it, two pinch it (`touch::Fingers`).
+    fingers: crate::touch::Fingers,
+    /// Moved by a finger since the last paint: paint again.
+    moved: std::cell::Cell<bool>,
+    /// The last page turn taken ([`turn`]).
+    turn_seen: u64,
 }
 
 /// A collaborator's pointer over the chart, anchored to the music: the
@@ -192,6 +204,23 @@ impl ChartWidget {
             }
             self.live_seen = number;
         }
+        if let Some((turned, number)) = turn_since(self.turn_seen) {
+            self.turn_seen = number;
+            let last = u32::try_from(self.view.pages()).unwrap_or(u32::MAX).max(1);
+            let mut live = self.live.borrow_mut();
+            live.manual = false;
+            match turned {
+                Turn::Back => {
+                    self.page = self.page.saturating_sub(1).max(1);
+                    live.held = true;
+                }
+                Turn::On => {
+                    self.page = (self.page + 1).min(last);
+                    live.held = true;
+                }
+                Turn::Follow => live.held = false,
+            }
+        }
         let (w, h) = (f64::from(width), f64::from(height));
         let chart_secs = self
             .songstart
@@ -241,9 +270,15 @@ impl ChartWidget {
     /// first page; past the chart's end, the page it ended on stays up.
     fn fit_page(&mut self, w: f64, h: f64, scale: f64, chart_secs: Option<f64>) {
         // Moved by hand: the view is where it was put.
-        if self.live.borrow().manual {
-            return;
-        }
+        let held = {
+            let live = self.live.borrow();
+            if live.manual {
+                return;
+            }
+            live.held
+        };
+        // Turned to by hand: that page, from its top, whatever is playing.
+        let chart_secs = chart_secs.filter(|_| !held);
         match chart_secs {
             Some(secs) if secs < 0.0 => self.page = 1,
             Some(secs) => {
@@ -261,10 +296,14 @@ impl ChartWidget {
             return;
         }
         // A panel taller than wide (a phone held upright), or too short for
-        // a page to be read at its full height (one on its side), shows the
-        // page across its width — and, when that is taller than the panel,
-        // follows the song down it.
-        let fit_width = w < h || page_w / page_h * h < w * 0.5;
+        // a page to be read at its full height (one on its side, a tablet's
+        // Performance pane), shows the page across its width — and, when
+        // that is taller than the panel, follows the song down it. A whole
+        // page in under seven tenths of the width is a page too small to
+        // read from a music stand. (The Overview's pane is shaped for the
+        // page and its peek — `FITTED_WIDTH_OVER_HEIGHT`, the page about
+        // 0.73 of it — and stays across.)
+        let fit_width = w < h || page_w / page_h * h < w * 0.7;
         if fit_width {
             let zoom = w / (page_w * per_pt);
             let visible = h / (zoom * per_pt);
@@ -297,7 +336,69 @@ impl ChartWidget {
     }
 }
 
+impl ChartWidget {
+    /// A finger on the page: dragged, the page goes with it; two, and it
+    /// zooms about the point between them — the arrangement's gesture
+    /// (`touch::pinch_step`), both axes alike, since a page has one zoom.
+    /// Either takes the view off the fitted page, as a wheel does.
+    fn touched(&mut self, event: &blitz_traits::events::UiEvent) -> bool {
+        use blitz_traits::events::UiEvent;
+        let at = |e: &blitz_traits::events::BlitzPointerEvent| {
+            (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
+        };
+        match event {
+            UiEvent::PointerDown(e) if e.is_finger() => {
+                self.fingers.down(e.id, at(e));
+                false
+            }
+            UiEvent::PointerMove(e) if e.is_finger() => {
+                let Some(step) = self.fingers.moved(e.id, at(e)) else {
+                    return false;
+                };
+                let scale = self.live.borrow().scale.max(f64::EPSILON);
+                let by = match (step.sx == 1.0, step.sy == 1.0) {
+                    (true, true) => 1.0,
+                    (false, true) => step.sx,
+                    (true, false) => step.sy,
+                    (false, false) => (step.sx * step.sy).sqrt(),
+                };
+                if (by - 1.0).abs() > f64::EPSILON {
+                    let mut live = self.live.borrow_mut();
+                    live.manual = true;
+                    live.pinched_at = Some(web_time::Instant::now());
+                    let was = live.px_per_pt.max(f64::EPSILON);
+                    let zoom = (live.zoom * by).clamp(ZOOM_MIN, ZOOM_MAX);
+                    let now = was * zoom / live.zoom.max(f64::EPSILON);
+                    // The point under the fingers stays under them.
+                    let (mx, my) = (step.mid.0 * scale, step.mid.1 * scale);
+                    live.scroll_pt.0 += mx / was - mx / now;
+                    live.scroll_pt.1 += my / was - my / now;
+                    live.zoom = zoom;
+                    live.px_per_pt = now;
+                }
+                pan_by(&self.live, step.dx * scale, step.dy * scale);
+                true
+            }
+            UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) if e.is_finger() => {
+                self.fingers.up(e.id);
+                false
+            }
+            _ => false,
+        }
+    }
+}
+
 impl Widget for ChartWidget {
+    fn handle_event(&mut self, event: &blitz_traits::events::UiEvent) {
+        if self.touched(event) {
+            self.moved.set(true);
+        }
+    }
+
+    fn needs_redraw(&self) -> bool {
+        self.moved.get() || turn_since(self.turn_seen).is_some()
+    }
+
     fn paint(
         &mut self,
         _render_ctx: &mut dyn RenderContext,
@@ -306,6 +407,7 @@ impl Widget for ChartWidget {
         height: u32,
         scale: f64,
     ) -> Scene {
+        self.moved.set(false);
         self.paint_scene(width, height, scale)
     }
 }
@@ -330,6 +432,8 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         content_pt: (1.0, 1.0),
         px_per_pt: 1.0,
         manual: false,
+        pinched_at: None,
+        held: false,
         scale: 1.0,
         boxes: Vec::new(),
     }));
@@ -353,6 +457,10 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         page: 1,
         live_seen: 0,
         boxes_key: 0,
+        fingers: crate::touch::Fingers::default(),
+        moved: std::cell::Cell::new(false),
+        // Turns asked for before this chart was up are not for it.
+        turn_seen: turn_since(0).map_or(0, |(_, number)| number),
     };
     Some((widget, live))
 }
@@ -453,7 +561,13 @@ pub fn WebChart(
             style: "position:absolute; top:0; left:0; width:100%; height:100%; \
                     overflow:hidden; background:#1a1b1e;",
             // Back to the whole page, following the song.
-            ondoubleclick: move |_| refit.borrow_mut().manual = false,
+            ondoubleclick: move |_| {
+                let mut live = refit.borrow_mut();
+                if live.pinched_at.is_none_or(|at| at.elapsed().as_millis() > 600) {
+                    live.manual = false;
+                    live.held = false;
+                }
+            },
             crate::web_host::WidgetCanvas { widget, panel: on_input }
         }
     }
@@ -464,7 +578,9 @@ impl crate::web_host::Hosted for ChartWidget {
     fn paint(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         self.paint_scene(width, height, scale)
     }
-    fn event(&mut self, _event: &blitz_traits::events::UiEvent) {}
+    fn event(&mut self, event: &blitz_traits::events::UiEvent) {
+        self.touched(event);
+    }
 }
 
 #[cfg(feature = "native")]
@@ -591,7 +707,13 @@ pub fn Chart(
             // Back to the whole page, following the song.
             ondoubleclick: {
                 let live = Rc::clone(&live);
-                move |_| live.borrow_mut().manual = false
+                move |_| {
+                    let mut live = live.borrow_mut();
+                    if live.pinched_at.is_none_or(|at| at.elapsed().as_millis() > 600) {
+                        live.manual = false;
+                        live.held = false;
+                    }
+                }
             },
             object {
                 style: "position:absolute; top:0; left:0; width:100%; height:100%;",
@@ -599,6 +721,34 @@ pub fn Chart(
             }
         }
     }
+}
+
+/// A turn of the chart's page, asked for from outside it (the bottom
+/// bar's paging controls).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Turn {
+    /// The page before, held there.
+    Back,
+    /// The page after, held there.
+    On,
+    /// Back to the page being played, following the song.
+    Follow,
+}
+
+/// The last turn asked for, numbered, so each chart takes each once.
+static TURN: std::sync::Mutex<(u64, Turn)> = std::sync::Mutex::new((0, Turn::Follow));
+
+/// Turn the chart's page: every chart on screen takes it on its next frame.
+pub fn turn(turned: Turn) {
+    if let Ok(mut slot) = TURN.lock() {
+        *slot = (slot.0 + 1, turned);
+    }
+}
+
+/// The turn asked for since `seen`, and its number.
+fn turn_since(seen: u64) -> Option<(Turn, u64)> {
+    let slot = *TURN.lock().ok()?;
+    (slot.0 > seen).then_some((slot.1, slot.0))
 }
 
 /// A chart laid over the song since it opened — by Organize mode's editor

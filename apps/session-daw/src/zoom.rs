@@ -87,12 +87,46 @@ pub enum Request {
         /// Pressed again while showing what it framed, it goes back.
         toggle: bool,
     },
+    /// The view a session opens on: `time` across and `rows` down, as
+    /// [`Request::Frame`] does, but zoomed in no further out than `floor`
+    /// (the least zoom on each axis) — rows a finger can hit or an eye can
+    /// read, items wider than slivers — even where that leaves some of
+    /// the song off screen. Only the opening view: zooming out by hand
+    /// still goes as far as it ever did.
+    Open {
+        time: Option<(f64, f64)>,
+        rows: Option<(f64, f64)>,
+        floor: (f64, f64),
+    },
     Back,
     Forward,
+    /// The track panel compact (names) or expanded: a finger swiping it.
+    /// Not a zoom, but the widget's one way to ask the panel for
+    /// anything, so it travels this way.
+    Shape {
+        compact: bool,
+    },
+    /// Scroll by `dx` across and `dy` down, in screen pixels: a finger
+    /// dragging the lanes.
+    ScrollBy {
+        dx: f64,
+        dy: f64,
+    },
     /// Multiply one axis's zoom by `by`, about the middle of the lanes.
     Scale {
         vertical: bool,
         by: f64,
+    },
+    /// Two fingers: each axis's zoom multiplied by how far they spread on
+    /// it (`sx` across, `sy` down), about `at` (where they are, in screen
+    /// pixels from the lanes' corner), and the view carried `dx`, `dy`
+    /// with them.
+    Pinch {
+        sx: f64,
+        sy: f64,
+        at: (f64, f64),
+        dx: f64,
+        dy: f64,
     },
 }
 
@@ -197,6 +231,13 @@ impl History {
                 self.toggled = toggle.then_some(to);
                 self.visit(now);
                 Some(to)
+            }
+            Request::ScrollBy { .. } | Request::Shape { .. } | Request::Pinch { .. } => {
+                Some(framed())
+            }
+            Request::Open { .. } => {
+                self.toggled = None;
+                Some(framed())
             }
             Request::Scale { .. } => {
                 self.toggled = None;

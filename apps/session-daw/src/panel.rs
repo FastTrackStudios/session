@@ -21,8 +21,10 @@ use dioxus::prelude::*;
 
 use crate::studio::{PPS, StudioSession};
 
-/// The scrollbar's thickness.
-pub const BAR: f64 = 12.0;
+/// The scrollbar's thickness: a hairline that says where the view is,
+/// not a control to aim at — a finger or a wheel scrolls the lanes
+/// themselves, and a thumb still takes a drag.
+pub const BAR: f64 = 5.0;
 /// One wheel notch, for a wheel that counts in lines.
 pub const WHEEL_LINE: f64 = 40.0;
 /// How far in each zoom may go.
@@ -59,6 +61,11 @@ pub enum PanelEvent {
     Wheel {
         dx: f64,
         dy: f64,
+    },
+    /// Two fingers pinching: the zoom across grows by `by` (0.1 is ten
+    /// percent wider), about where they are.
+    Pinch {
+        by: f64,
     },
     /// Once a frame, with where the play cursor is.
     Frame {
@@ -139,8 +146,14 @@ pub struct ArrangementPanel {
     pub scroll: Signal<f64>,
     pub down: Signal<f64>,
     pub zoom: Signal<(f64, f64)>,
-    /// The panel's rectangle in the window, read back from the layout.
+    /// The panel's rectangle in the window, read back from the layout, in
+    /// CSS pixels. What the panel works in is this over [`Self::ui`]
+    /// ([`ArrangementPanel::units`]).
     pub rect: Signal<(f64, f64, f64, f64)>,
+    /// How much bigger the arrangement is drawn than it is laid out:
+    /// touch mode's [`crate::touch::ARRANGE_ZOOM`], or 1. Shared with the
+    /// widget, which draws at it.
+    pub ui: Rc<Cell<f64>>,
     span_x: f64,
     span_y: Signal<f64>,
     pub which_shown: Signal<Option<crate::which_key::WhichKey>>,
@@ -171,6 +184,61 @@ pub struct ArrangementPanel {
     measured: Rc<Cell<Option<web_time::Instant>>>,
     /// The generated Click track, for the toolbar's metronome.
     click: (Option<String>, bool),
+    /// The song this panel shows and whether it is docked beside more:
+    /// where its view is kept between mounts ([`Kept`]).
+    song: std::sync::Weak<daw_ui::studio::project::Project>,
+    docked: bool,
+    /// The view has been put where it is meant to be — fitted to the song,
+    /// or taken up from where it was — and so is worth keeping.
+    settled: Rc<Cell<bool>>,
+    /// Ask the window for a frame: the rectangle measured, the fit it was
+    /// waiting for is due now, not at the next touch.
+    redraw: Option<Rc<dyn Fn()>>,
+}
+
+/// Where an arrangement was looked at from when it was last on screen,
+/// kept per song and per shape (docked beside more, or a view of its
+/// own): switching back to it opens there on its first frame, rather
+/// than at zoom one and fitted a moment later.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Kept {
+    scroll: f64,
+    down: f64,
+    zoom: (f64, f64),
+    rect: (f64, f64, f64, f64),
+}
+
+type Song = std::sync::Weak<daw_ui::studio::project::Project>;
+
+thread_local! {
+    /// By the song's project (held weakly: a song closed is forgotten,
+    /// and its allocation is never another song's while it is here).
+    static KEPT: RefCell<Vec<(Song, bool, Kept)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Where `song`'s arrangement was left, if it has been shown.
+fn kept(song: &Song, docked: bool) -> Option<Kept> {
+    KEPT.with(|all| {
+        let mut all = all.borrow_mut();
+        all.retain(|(each, ..)| each.strong_count() > 0);
+        all.iter()
+            .find(|(each, d, _)| *d == docked && each.ptr_eq(song))
+            .map(|(.., view)| *view)
+    })
+}
+
+/// Keep where `song`'s arrangement is now.
+fn keep(song: &Song, docked: bool, view: Kept) {
+    KEPT.with(|all| {
+        let mut all = all.borrow_mut();
+        match all
+            .iter_mut()
+            .find(|(each, d, _)| *d == docked && each.ptr_eq(song))
+        {
+            Some(slot) => slot.2 = view,
+            None => all.push((song.clone(), docked, view)),
+        }
+    });
 }
 
 impl PartialEq for ArrangementPanel {
@@ -224,11 +292,19 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     // full in the DAW view.
     let docked = mixer.as_ref().is_some_and(|links| links.docked);
     let small = crate::compact::use_form().compact();
-    let compact = use_hook(|| Rc::new(Cell::new(docked || small)));
+    let touch = crate::touch::use_touch();
+    // A finger's screen starts compact too: at touch size the full panel
+    // would take half an iPad's width from the lanes.
+    let compact = use_hook(|| Rc::new(Cell::new(docked || small || touch)));
+    let ui = use_hook(|| Rc::new(Cell::new(crate::touch::arrange_zoom(touch, 0.0))));
+    crate::ruler::set_slim(touch);
     let shape = use_signal(|| compact.get());
     // On by default: in a service the view should always show where the
     // song is.
-    let follow = use_hook(|| Rc::new(Cell::new(true)));
+    // Off until asked for: a view that pages itself away from where
+    // someone is looking (or scrolling, on a touchscreen) is a view they
+    // cannot work in while the song plays.
+    let follow = use_hook(|| Rc::new(Cell::new(false)));
     let followed_at = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let history = use_hook(|| Rc::new(RefCell::new(crate::zoom::History::default())));
     let which_shown = use_signal(|| None::<crate::which_key::WhichKey>);
@@ -239,11 +315,23 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         )
     });
 
+    // Where this song's arrangement was left, if it has been on screen:
+    // it opens there, and is not fitted again.
+    let song = use_hook(|| std::sync::Arc::downgrade(&session.planner.raw));
+    let was = use_hook(|| kept(&song, docked));
+
     // The widget, built once. Its view — scroll, zoom, where the play
     // cursor is — is a plain cell it reads every paint, because the paint
     // runs outside the Dioxus runtime.
     let (hosted, view, edits) = use_hook(|| {
-        let view: crate::widget::Shared = Rc::new(RefCell::new(crate::widget::View::OPENING));
+        let opening = was.map_or(crate::widget::View::OPENING, |at| crate::widget::View {
+            scroll_x: at.scroll,
+            scroll_y: at.down,
+            zoom_x: at.zoom.0,
+            zoom_y: at.zoom.1,
+            play_at: 0.0,
+        });
+        let view: crate::widget::Shared = Rc::new(RefCell::new(opening));
         let built = crate::widget::ArrangementWidget::for_session(
             &session.project,
             &session.rows,
@@ -255,7 +343,11 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         .with_pointing(Rc::clone(&pointing))
         .with_view_links(Rc::clone(&which), Rc::clone(&zooms))
         .with_planner(session.planner.clone(), Rc::clone(&content_h))
-        .with_compact(Rc::clone(&compact));
+        .with_compact(Rc::clone(&compact))
+        .with_touch(touch)
+        .with_ui(Rc::clone(&ui))
+        .with_redraw(crate::touch::redraw_hook())
+        .with_fit_on_open(was.is_none());
         let built = match &mixer {
             Some(links) => built.with_mixer(crate::widget::MixerLinks {
                 toggle: Rc::clone(&links.toggle),
@@ -269,10 +361,12 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         (host(built), view, edits)
     });
 
-    let scroll = use_signal(|| 0.0_f64);
-    let down = use_signal(|| 0.0_f64);
-    let zoom = use_signal(|| (1.0_f64, 1.0_f64));
-    let rect = use_signal(|| (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64));
+    let scroll = use_signal(|| was.map_or(0.0, |at| at.scroll));
+    let down = use_signal(|| was.map_or(0.0, |at| at.down));
+    let zoom = use_signal(|| was.map_or((1.0, 1.0), |at| at.zoom));
+    let rect = use_signal(|| was.map_or((0.0, 0.0, 0.0, 0.0), |at| at.rect));
+    let settled = use_hook(|| Rc::new(Cell::new(was.is_some())));
+    let redraw = use_hook(crate::touch::redraw_hook);
     let span_y = use_signal(|| content_h.get());
     let input = use_hook(|| Rc::new(RefCell::new(Input::default())));
     let mounted = use_hook(|| Rc::new(RefCell::new(None::<Rc<MountedData>>)));
@@ -289,6 +383,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         down,
         zoom,
         rect,
+        ui,
         span_x: (session.project.length_secs * PPS).max(1.0),
         span_y,
         which_shown,
@@ -310,6 +405,10 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         focus_node,
         measured,
         click,
+        song,
+        docked,
+        settled,
+        redraw,
     };
     let slot: Option<Slot> = try_use_context();
     if let Some(slot) = slot
@@ -370,6 +469,16 @@ pub fn NativeTree(panel: ArrangementPanel, widget: dioxus_native_dom::CustomWidg
 }
 
 impl ArrangementPanel {
+    /// The panel's rectangle in the units it lays out in: CSS pixels over
+    /// the touch zoom. Everything the panel works out — the frame, the
+    /// zoom limits, where the pointer is — is in these, as the widget is.
+    #[must_use]
+    pub fn units(&self) -> (f64, f64, f64, f64) {
+        let r = *self.rect.peek();
+        let ui = self.ui.get().max(f64::EPSILON);
+        (r.0 / ui, r.1 / ui, r.2 / ui, r.3 / ui)
+    }
+
     /// The lanes' frame: the panel less the track column and the ruler on
     /// one side, and the scrollbars on the other.
     #[must_use]
@@ -410,7 +519,7 @@ impl ArrangementPanel {
 
     /// Whether a window point is inside the panel.
     fn inside(&self, p: (f64, f64)) -> bool {
-        let r = *self.rect.peek();
+        let r = self.units();
         p.0 >= r.0 && p.0 < r.0 + r.2 && p.1 >= r.1 && p.1 < r.1 + r.3
     }
 
@@ -427,7 +536,7 @@ impl ArrangementPanel {
     /// Set the zoom, keeping the session point under `about` (a window
     /// position) where it is on screen.
     fn rezoom(&self, to: (f64, f64), about: (f64, f64)) {
-        let r = *self.rect.peek();
+        let r = self.units();
         let (mut zoom, mut scroll, mut down) = (self.zoom, self.scroll, self.down);
         let (was_x, was_y) = *zoom.peek();
         let (fw, fh) = self.frame(r);
@@ -443,7 +552,20 @@ impl ArrangementPanel {
 
     /// One event from the host.
     pub fn handle(&self, event: PanelEvent) {
-        let r = *self.rect.peek();
+        let r = self.units();
+        // The host's CSS pixels, in the panel's units.
+        let ui = self.ui.get().max(f64::EPSILON);
+        let event = match event {
+            PanelEvent::Pointer { x, y } => PanelEvent::Pointer {
+                x: x / ui,
+                y: y / ui,
+            },
+            PanelEvent::Wheel { dx, dy } => PanelEvent::Wheel {
+                dx: dx / ui,
+                dy: dy / ui,
+            },
+            other => other,
+        };
         let (mut scroll, mut down) = (self.scroll, self.down);
         match event {
             PanelEvent::ZKey { pressed, repeat } => {
@@ -514,6 +636,18 @@ impl ArrangementPanel {
                 };
                 self.reshape(&input);
             }
+            PanelEvent::Pinch { by } => {
+                // Time, as a pinch zooms a timeline everywhere else; the
+                // rows keep the height the view opened at.
+                let input = self.input.borrow();
+                if !self.inside(input.pointer) {
+                    return;
+                }
+                let (zx, zy) = *self.zoom.peek();
+                let ((x0, x1), _) = self.limits(r);
+                let to = ((zx * (1.0 + by).max(0.1)).clamp(x0, x1), zy);
+                self.rezoom(to, input.pointer);
+            }
             PanelEvent::Wheel { dx, dy } => {
                 let input = self.input.borrow();
                 if !self.inside(input.pointer) {
@@ -553,7 +687,7 @@ impl ArrangementPanel {
     /// Once a frame: the widget's view, the zooms the keys asked for, the
     /// popup, the edits each way, and the panel's rectangle.
     fn frame_tick(&self, play_at: f64) {
-        let r = *self.rect.peek();
+        let r = self.units();
         let (mut scroll, mut down, mut zoom) = (self.scroll, self.down, self.zoom);
         self.follow_cursor(r, play_at);
         // Four numbers, written every time because a missed write is a
@@ -575,6 +709,16 @@ impl ArrangementPanel {
             Vec::new()
         };
         for request in asked {
+            // A swipe on the track panel: its shape, as the toolbar's
+            // switch sets it.
+            if let crate::zoom::Request::Shape { compact } = request {
+                self.compact.set(compact);
+                let mut shape = self.shape;
+                if *shape.peek() != compact {
+                    shape.set(compact);
+                }
+                continue;
+            }
             let (zx, zy) = *zoom.peek();
             let now = crate::zoom::Target {
                 zoom_x: zx,
@@ -595,6 +739,30 @@ impl ArrangementPanel {
                 crate::zoom::Request::Frame { time, rows, .. } => {
                     crate::zoom::frame(now, at, time, rows)
                 }
+                crate::zoom::Request::ScrollBy { dx, dy } => crate::zoom::Target {
+                    scroll_x: now.scroll_x + dx,
+                    scroll_y: now.scroll_y + dy,
+                    ..now
+                },
+                crate::zoom::Request::Open { time, rows, floor } => {
+                    let raised = |(lo, hi): (f64, f64), least: f64| (lo.max(least).min(hi), hi);
+                    let at = crate::zoom::Frame {
+                        limits_x: raised(at.limits_x, floor.0),
+                        limits_y: raised(at.limits_y, floor.1),
+                        ..at
+                    };
+                    crate::zoom::frame(now, at, time, rows)
+                }
+                crate::zoom::Request::Pinch { sx, sy, at, dx, dy } => {
+                    let zoom_x = (zx * sx).clamp(x0, x1);
+                    let zoom_y = (zy * sy).clamp(y0, y1);
+                    crate::zoom::Target {
+                        zoom_x,
+                        zoom_y,
+                        scroll_x: zoom_about(at.0, now.scroll_x, zx, zoom_x) + dx,
+                        scroll_y: zoom_about(at.1, now.scroll_y, zy, zoom_y) + dy,
+                    }
+                }
                 crate::zoom::Request::Scale { vertical, by } => {
                     // About the middle of the lanes.
                     let mut to = now;
@@ -609,6 +777,7 @@ impl ArrangementPanel {
                 }
                 _ => now,
             };
+            self.settled.set(true);
             let Some(to) = self.history.borrow_mut().go(now, request, framed) else {
                 continue;
             };
@@ -616,6 +785,23 @@ impl ArrangementPanel {
             zoom.set((to.zoom_x, to.zoom_y));
             scroll.set(to.scroll_x.clamp(0.0, ex));
             down.set(to.scroll_y.clamp(0.0, ey));
+            // The view cell was written before this; the frame showing
+            // the new one is the next.
+            if let Some(redraw) = &self.redraw {
+                redraw();
+            }
+        }
+        if self.settled.get() && r.2 > 0.0 && r.3 > 0.0 {
+            keep(
+                &self.song,
+                self.docked,
+                Kept {
+                    scroll: *scroll.peek(),
+                    down: *down.peek(),
+                    zoom: *zoom.peek(),
+                    rect: *self.rect.peek(),
+                },
+            );
         }
         // Rows shown or hidden: the scroll range follows.
         let mut span_y = self.span_y;
@@ -671,11 +857,17 @@ impl ArrangementPanel {
         if stale && let Some(node) = self.mounted.borrow().clone() {
             self.measured.set(Some(web_time::Instant::now()));
             let mut rect = self.rect;
+            let redraw = self.redraw.clone();
             spawn(async move {
                 if let Ok(got) = node.get_client_rect().await {
                     let next = (got.origin.x, got.origin.y, got.size.width, got.size.height);
                     if next != *rect.peek() {
                         rect.set(next);
+                        // What waited on it (the fit a song opens with)
+                        // is due now, not at the next touch.
+                        if let Some(redraw) = redraw {
+                            redraw();
+                        }
                     }
                 }
             });
@@ -727,7 +919,14 @@ impl ArrangementPanel {
 /// and the two scrollbars. Ordinary DOM, the same under either host.
 #[component]
 pub fn PanelChrome(panel: ArrangementPanel) -> Element {
-    let r = (panel.rect)();
+    // Read as a signal, so a resize re-renders the chrome; in the panel's
+    // units, and placed in CSS pixels by `ui`.
+    let css = (panel.rect)();
+    let touch = crate::touch::use_touch();
+    let ui = crate::touch::arrange_zoom(touch, css.2);
+    panel.ui.set(ui);
+    crate::ruler::set_slim(touch);
+    let r = (css.0 / ui, css.1 / ui, css.2 / ui, css.3 / ui);
     let (fw, fh) = panel.frame(r);
     let (zx, zy) = (panel.zoom)();
     let travel = panel.extent(r, zx, zy);
@@ -748,10 +947,12 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             edits: panel.edits(),
             // The toolbar sits over the panel, so it is as wide as
             // whichever shape the panel is in.
-            width: tcp_w - crate::ruler::LABEL_W,
+            width: (tcp_w - crate::ruler::LABEL_W) * ui,
             compact: Rc::clone(&panel.compact),
             shape: panel.shape,
             follow: Rc::clone(&panel.follow),
+            touch,
+            mixer: panel.mixer.as_ref().map(|links| links.open),
         }
         crate::which_key::Panel { showing: (panel.which_shown)(), colors: colors.clone() }
         crate::studio::ScrollBar {
@@ -759,9 +960,10 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             at: scroll(),
             travel: travel.0,
             window: fw,
-            left: tcp_w,
-            top: (r.3 - BAR).max(0.0),
-            length: fw,
+            left: tcp_w * ui,
+            top: (r.3 - BAR).max(0.0) * ui,
+            length: fw * ui,
+            thick: BAR * ui,
             colors: colors.clone(),
             on_move: move |to: f64| scroll.set(to.clamp(0.0, travel.0)),
         }
@@ -770,9 +972,10 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             at: down(),
             travel: travel.1,
             window: fh,
-            left: (r.2 - BAR).max(0.0),
-            top: ruler,
-            length: fh,
+            left: (r.2 - BAR).max(0.0) * ui,
+            top: ruler * ui,
+            length: fh * ui,
+            thick: BAR * ui,
             colors,
             on_move: move |to: f64| down.set(to.clamp(0.0, travel.1)),
         }

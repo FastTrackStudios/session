@@ -1,146 +1,414 @@
-//! The Setup view: the setlist, and the routing — what is done before a
-//! service rather than during one.
+//! The Setup view: the set, the routing and the settings — what
+//! is done before a service rather than during one — and the way back to
+//! the sets.
 //!
 //! Plain DOM, no widget: both hosts show the same page, and what it edits
-//! is the [`Setlist`](crate::setlist::Setlist) the window holds. Picking a
-//! song here is picking the song everywhere — the host follows the
-//! setlist's `at` and tells the engine which project is current.
+//! is the [`Setlist`](crate::setlist::Setlist) the window holds. Flat, as
+//! the bars are: a header strip with a tab each for the set (a table of
+//! hairline rows), the routing and the settings — pages, not cards. The
+//! window's switches are the bottom bar's (transport, progress) and the
+//! views' own (the lock).
 
 use dioxus::prelude::*;
 
 use crate::setlist::Setlist;
-use crate::shell::{DIM, RULE, TEXT};
+use crate::shell::{DIM, RAISED, RULE, TEXT};
 
-/// The Setup page.
+/// Which page of Setup is showing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tab {
+    Setlist,
+    Routing,
+    Settings,
+}
+
+impl Tab {
+    const ALL: [Self; 3] = [Self::Setlist, Self::Routing, Self::Settings];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Setlist => "Setlist",
+            Self::Routing => "Routing",
+            Self::Settings => "Settings",
+        }
+    }
+}
+
+/// The Setup page: a header strip — back to the sets, and a tab each for
+/// the setlist, the routing and the settings — over the page picked, each
+/// the whole of the view.
 #[component]
 pub fn SetupView(
     /// Picking a song, when the host can switch to one.
     on_pick: Option<EventHandler<usize>>,
 ) -> Element {
     let setlist = try_use_context::<Signal<Setlist>>();
+    let back = try_use_context::<crate::shell::Back>();
+    let mut tab = use_signal(|| Tab::Setlist);
+    // A phone: the tabs closer together, the set's summary left to the
+    // table.
+    let narrow = room() < 520.0;
+    let tab_pad = if narrow { 12 } else { 20 };
+    let summary = setlist.map(|setlist| {
+        let list = setlist();
+        let secs: f64 = list
+            .songs
+            .iter()
+            .map(|s| (s.span.1 - s.span.0).max(0.0))
+            .sum();
+        let songs = list.songs.len() + list.pending.len();
+        format!("{songs} songs · {}", length(secs))
+    });
     rsx! {
         div {
-            style: "position:absolute; top:0; left:0; right:0; bottom:0; overflow:auto; \
-                    padding:20px; display:flex; gap:20px; align-items:flex-start; \
-                    color:{TEXT}; font-size:13px;",
-            Panel { title: "Setlist".to_owned(), width: "minmax(420px, 1fr)".to_owned(),
-                match setlist {
-                    Some(setlist) => rsx! { SongList { setlist, on_pick } },
-                    None => rsx! {
-                        div { style: "color:{DIM};", "No setlist — this window opened one session." }
-                    },
-                }
-            }
-            Panel { title: "Routing".to_owned(), width: "minmax(280px, 0.6fr)".to_owned(),
-                div {
-                    style: "color:{DIM}; line-height:1.6;",
-                    "The engine's outputs, and what goes to them, belong here: the mains, \
-                     the in-ear mixes, and which of the session's buses feed each."
-                    div {
-                        style: "margin-top:10px; padding:8px 10px; border:1px dashed {RULE}; \
-                                border-radius:6px;",
-                        "Not wired yet — the browser plays one stereo output, and the \
-                         desktop engine's device routing is next."
+            style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; \
+                    flex-direction:column; color:{TEXT}; font-size:13px; background:#0f1012;",
+            div {
+                style: "flex:none; height:52px; display:flex; align-items:stretch; \
+                        border-bottom:1px solid {RULE}; background:#131417;",
+                if let Some(crate::shell::Back(back)) = back {
+                    button {
+                        title: "Back to your sets",
+                        style: "flex:none; display:flex; align-items:center; gap:6px; padding:0 16px 0 10px; \
+                                border:none; border-right:1px solid {RULE}; background:transparent; \
+                                color:{TEXT}; font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;",
+                        onclick: move |_| back.call(()),
+                        lucide_dioxus::ChevronLeft { size: 20, color: TEXT }
+                        "Sets"
                     }
                 }
+                for each in Tab::ALL {
+                    button {
+                        key: "{each.name()}",
+                        style: {
+                            let (bg, ink) = if tab() == each { (RAISED, TEXT) } else { ("transparent", DIM) };
+                            format!("flex:none; padding:0 {tab_pad}px; border:none; border-right:1px solid {RULE}; \
+                                     background:{bg}; color:{ink}; font-family:inherit; font-size:14px; \
+                                     font-weight:650; cursor:pointer;")
+                        },
+                        onclick: move |_| tab.set(each),
+                        "{each.name()}"
+                    }
+                }
+                div { style: "flex:1;" }
+                if tab() == Tab::Setlist && !narrow && let Some(summary) = summary {
+                    span { style: "align-self:center; padding:0 18px; font-size:13px; color:{DIM}; white-space:nowrap;", "{summary}" }
+                }
+            }
+            div {
+                style: "flex:1; min-height:0; overflow-y:auto;",
+                match tab() {
+                    Tab::Setlist => match setlist {
+                        Some(setlist) => rsx! { SongTable { setlist, on_pick } },
+                        None => rsx! {
+                            div { style: "padding:18px; color:{DIM};", "No setlist — this window opened one session." }
+                        },
+                    },
+                    Tab::Routing => rsx! { Routing {} },
+                    Tab::Settings => rsx! { Settings {} },
+                }
             }
         }
     }
 }
 
-/// A titled panel on the Setup page.
+/// The routing: the engine's outputs and what feeds them.
 #[component]
-fn Panel(title: String, width: String, children: Element) -> Element {
+fn Routing() -> Element {
     rsx! {
-        section {
-            style: "flex:1 1 {width}; min-width:0; background:#131417; border:1px solid {RULE}; \
-                    border-radius:10px; padding:14px 16px;",
-            h2 {
-                style: "margin:0 0 12px; font-size:13px; font-weight:600; color:{TEXT}; \
-                        letter-spacing:0.02em;",
-                "{title}"
-            }
-            {children}
-        }
-    }
-}
-
-/// The songs, in order: which is up, and what each one is.
-#[component]
-fn SongList(setlist: Signal<Setlist>, on_pick: Option<EventHandler<usize>>) -> Element {
-    let list = setlist();
-    if list.songs.is_empty() {
-        return rsx! {
-            div { style: "color:{DIM};", "No songs loaded yet." }
-        };
-    }
-    let count = list.songs.len();
-    rsx! {
+        Heading { title: "Outputs" }
         div {
-            style: "display:flex; flex-direction:column; gap:6px;",
-            for (index, song) in list.songs.iter().cloned().enumerate() {
-                {
-                    let current = index == list.at;
-                    let (background, border) = if current {
-                        ("#1b1e24", song.color.clone())
-                    } else {
-                        ("#0f1012", RULE.to_owned())
-                    };
-                    let minutes = (song.span.1 - song.span.0).max(0.0);
-                    let length = format!("{}:{:02}", (minutes / 60.0) as u32, (minutes % 60.0) as u32);
-                    rsx! {
+            style: "padding:14px 18px; max-width:720px; color:{DIM}; line-height:1.6; font-size:14px;",
+            "The engine's outputs, and what goes to them: the mains, the in-ear mixes, and which \
+             of the session's buses feed each. Not wired yet — the browser plays one stereo \
+             output, and the desktop engine's device routing is next."
+        }
+    }
+}
+
+/// The settings: where the sound comes from, and how the screen is
+/// touched.
+#[component]
+fn Settings() -> Element {
+    // Re-read after a pick: the mode changes off this page's signals.
+    let mut picked = use_signal(|| 0_u32);
+    let mut note = use_signal(|| None::<String>);
+    let _ = picked();
+    let state = crate::audio_mode::state();
+    let touch = try_use_context::<crate::touch::Touch>();
+    rsx! {
+        Heading { title: "Audio" }
+        for each in crate::audio_mode::AudioMode::ALL {
+            {
+                let on = state.requested == each;
+                let (bg, ink) = if on { (RAISED, TEXT) } else { ("transparent", DIM) };
+                rsx! {
+                    button {
+                        key: "{each.name()}",
+                        style: "width:100%; display:flex; align-items:center; gap:14px; padding:12px 18px; \
+                                border:none; border-bottom:1px solid {RULE}; background:{bg}; color:{ink}; \
+                                text-align:left; font-family:inherit; cursor:pointer;",
+                        onclick: move |_| {
+                            let applied = crate::shell::pick_audio_mode(each);
+                            note.set((!applied).then(|| format!("{} applies on the next launch", each.name())));
+                            picked += 1;
+                        },
+                        span { style: "flex:none; width:10px; height:10px; border-radius:5px; background:{each.color()};" }
                         div {
-                            style: "display:flex; align-items:center; gap:10px; padding:8px 10px; \
-                                    background:{background}; border:1px solid {border}; \
-                                    border-radius:8px;",
-                            div {
-                                style: "width:8px; height:28px; border-radius:3px; \
-                                        background:{song.color}; flex:none;",
-                            }
-                            div {
-                                style: "flex:1; min-width:0; cursor:pointer;",
-                                onclick: move |_| {
-                                    if let Some(pick) = on_pick {
-                                        pick.call(index);
-                                    }
-                                },
-                                div {
-                                    style: "font-weight:600; overflow:hidden; \
-                                            text-overflow:ellipsis; white-space:nowrap;",
-                                    "{song.name}"
-                                }
-                                div { style: "color:{DIM}; font-size:11px;", "{length}" }
-                            }
-                            Step { label: "↑".to_owned(), enabled: index > 0,
-                                on_press: move |()| setlist.write().reorder(index, index - 1) }
-                            Step { label: "↓".to_owned(), enabled: index + 1 < count,
-                                on_press: move |()| setlist.write().reorder(index, index + 1) }
-                            Step { label: "✕".to_owned(), enabled: true,
-                                on_press: move |()| setlist.write().remove(index) }
+                            style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
+                            span { style: "font-size:14px; font-weight:650; color:{TEXT};", "{each.name()}" }
+                            span { style: "font-size:12px; color:{DIM};", "{each.blurb()}" }
+                        }
+                        if on {
+                            lucide_dioxus::Check { size: 18, color: TEXT }
                         }
                     }
                 }
             }
         }
+        if let Some(text) = note() {
+            div { style: "padding:10px 18px; color:#e3b341; font-size:12px;", "{text}" }
+        }
+        if let Some(crate::touch::Touch(on)) = touch {
+            Heading { title: "Touch" }
+            Switch {
+                on,
+                label: "Touch mode",
+                detail: "Sized for a finger: bigger rows, strips and grips; a drag scrolls.",
+            }
+        }
     }
 }
 
-/// One of a row's small buttons.
+/// A setting that is on or off: its words, and a switch a finger can hit —
+/// a row between hairlines.
 #[component]
-fn Step(label: String, enabled: bool, on_press: EventHandler<()>) -> Element {
-    let color = if enabled { DIM } else { "#3a3d44" };
+fn Switch(on: Signal<bool>, label: &'static str, detail: &'static str) -> Element {
+    let mut signal = on;
+    let (track, knob) = if signal() {
+        ("#2563eb", "22px")
+    } else {
+        ("#3a3d44", "2px")
+    };
     rsx! {
         button {
-            style: "width:26px; height:26px; flex:none; border-radius:6px; \
-                    border:1px solid {RULE}; background:#0f1012; color:{color}; \
-                    font-size:12px; cursor:pointer;",
-            disabled: !enabled,
+            style: "width:100%; display:flex; align-items:center; gap:14px; padding:12px 18px; \
+                    border:none; border-bottom:1px solid {RULE}; background:transparent; color:{TEXT}; \
+                    text-align:left; font-family:inherit; cursor:pointer;",
+            onclick: move |_| signal.toggle(),
+            div {
+                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;",
+                span { style: "font-size:14px; font-weight:650;", "{label}" }
+                span { style: "font-size:12px; color:{DIM}; line-height:1.5;", "{detail}" }
+            }
+            div {
+                style: "position:relative; flex:none; width:44px; height:24px; border-radius:12px; background:{track};",
+                div { style: "position:absolute; top:2px; left:{knob}; width:20px; height:20px; border-radius:10px; background:#f3f4f6;" }
+            }
+        }
+    }
+}
+
+/// How wide the page is: the window, less the navigator beside it when it
+/// is open.
+/// Both contexts read every time: `try_use_context` is a hook, never to
+/// be called on some renders and not others.
+fn room() -> f64 {
+    let window = try_use_context::<crate::shell::WindowSize>();
+    let navigator = try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.navigator)());
+    window.map_or(f64::INFINITY, |window| {
+        window.0().0 - if navigator { 300.0 } else { 0.0 }
+    })
+}
+
+/// A length as a person reads it: `4:05`, `1:02:30`.
+fn length(secs: f64) -> String {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "whole seconds"
+    )]
+    let whole = secs.max(0.0).round() as u64;
+    let (h, m, s) = (whole / 3600, whole / 60 % 60, whole % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// A section's title in the side column: small capitals over a hairline.
+#[component]
+fn Heading(title: &'static str) -> Element {
+    rsx! {
+        div {
+            style: "padding:16px 18px 6px; font-size:11px; font-weight:700; letter-spacing:0.08em; \
+                    color:{DIM}; border-bottom:1px solid {RULE};",
+            "{title.to_uppercase()}"
+        }
+    }
+}
+
+/// The table's columns, as widths: number, song (the rest), key, tempo,
+/// length, mode, and the row's own buttons.
+const COLUMNS: [&str; 7] = ["44px", "1fr", "72px", "64px", "72px", "96px", "144px"];
+
+/// A cell's style for column `i`.
+fn cell(i: usize, align: &str) -> String {
+    let width = COLUMNS[i];
+    let size = if width == "1fr" {
+        "flex:1; min-width:120px;".to_owned()
+    } else {
+        format!("flex:none; width:{width};")
+    };
+    format!(
+        "{size} display:flex; align-items:center; justify-content:{align}; overflow:hidden; \
+         white-space:nowrap;"
+    )
+}
+
+/// The set, in order, as a table: which is up, what each song is — its
+/// key, tempo, length and the mode it is worked in — and moving or taking
+/// one out.
+#[component]
+fn SongTable(setlist: Signal<Setlist>, on_pick: Option<EventHandler<usize>>) -> Element {
+    let list = setlist();
+    if list.songs.is_empty() && list.pending.is_empty() {
+        return rsx! {
+            div { style: "padding:18px; color:{DIM};", "No songs loaded yet." }
+        };
+    }
+    let count = list.songs.len();
+    // Narrow (a tablet held upright, the navigator open beside it): the
+    // length and the mode give way, so the songs keep their names; on a
+    // phone the tempo too.
+    let room = room();
+    let wide = room >= 760.0;
+    let roomy = room >= 520.0;
+    // A row's buttons: a thumb's width each, a little less on a phone.
+    let row_w: u32 = if roomy { 48 } else { 40 };
+    let head = "font-size:11px; font-weight:700; letter-spacing:0.08em; color:#6b7280;";
+    rsx! {
+        div {
+            style: "display:flex; flex-direction:column;",
+            div {
+                style: "display:flex; height:34px; padding:0 8px 0 0; border-bottom:1px solid {RULE}; {head}",
+                div { style: cell(0, "center"), "#" }
+                div { style: cell(1, "flex-start"), "SONG" }
+                div { style: cell(2, "flex-start"), "KEY" }
+                                if roomy {
+                    div { style: cell(3, "flex-start"), "BPM" }
+                }
+                                if wide {
+                    div { style: cell(4, "flex-start"), "LENGTH" }
+                    div { style: cell(5, "flex-start"), "MODE" }
+                }
+                                div { style: "{cell(6, \"flex-end\")} width:{3 * row_w}px;", "" }
+            }
+            for (index, song) in list.songs.iter().cloned().enumerate() {
+                {
+                    let current = index == list.at;
+                    let ground = if current { RAISED } else { "transparent" };
+                    let ink = if current { TEXT } else { "#c9ccd2" };
+                    let project = &song.session.project;
+                    let key = crate::arrangement::key_at(project, song.span.0)
+                        .map_or_else(|| "—".to_owned(), |k| crate::transport_bar::short_key(&k));
+                    let bpm = crate::transport_bar::tempo_text(project.bpm);
+                    let long = length(song.span.1 - song.span.0);
+                                        let mode = crate::song_modes::of(&song.name)
+                        .map_or("—", session::modes::Mode::display_name);
+                    let (earlier, later) = (index > 0, index + 1 < count);
+                    rsx! {
+                        div {
+                            key: "{song.project}",
+                            style: "position:relative; display:flex; height:56px; padding:0 8px 0 0; \
+                                    border-bottom:1px solid {RULE}; background:{ground}; color:{ink};",
+                            // The song's colour, down the row's edge.
+                            div { style: "position:absolute; left:0; top:0; bottom:0; width:3px; background:{song.color};" }
+                            div { style: "{cell(0, \"center\")} color:#6b7280; font-size:13px;", "{index + 1}" }
+                            div {
+                                style: "{cell(1, \"flex-start\")} gap:10px; cursor:pointer;",
+                                onclick: move |_| {
+                                    if let Some(pick) = on_pick {
+                                        pick.call(index);
+                                    }
+                                },
+                                span {
+                                    style: "font-size:15px; font-weight:650; overflow:hidden; text-overflow:ellipsis;",
+                                    "{song.name}"
+                                }
+                                if current {
+                                    span { style: "flex:none; font-size:11px; font-weight:700; color:{song.color};", "NOW" }
+                                }
+                            }
+                            div { style: "{cell(2, \"flex-start\")} font-weight:600;", "{key}" }
+                                                        if roomy {
+                                div { style: "{cell(3, \"flex-start\")} font-family:ui-monospace, monospace;", "{bpm}" }
+                            }
+                                                        if wide {
+                                div { style: "{cell(4, \"flex-start\")} font-family:ui-monospace, monospace; color:{DIM};", "{long}" }
+                                div { style: "{cell(5, \"flex-start\")} color:{DIM};", "{mode}" }
+                            }
+                            div {
+                                                                style: "{cell(6, \"flex-end\")} align-items:stretch; width:{3 * row_w}px;",
+                                {row_button("Earlier in the set", earlier, RowIcon::Up,
+                                    EventHandler::new(move |()| setlist.write().reorder(index, index - 1)))}
+                                {row_button("Later in the set", later, RowIcon::Down,
+                                    EventHandler::new(move |()| setlist.write().reorder(index, index + 1)))}
+                                {row_button("Take it out of the set", true, RowIcon::Remove,
+                                    EventHandler::new(move |()| setlist.write().remove(index)))}
+                            }
+                        }
+                    }
+                }
+            }
+            // Songs still opening: their place in the set, greyed.
+            for (i, title) in list.pending.iter().cloned().enumerate() {
+                div {
+                    key: "pending-{title}",
+                    style: "display:flex; height:56px; border-bottom:1px solid {RULE}; color:#6b7280; opacity:0.7;",
+                    div { style: cell(0, "center"), "{count + i + 1}" }
+                    div { style: cell(1, "flex-start"), "{title} — opening" }
+                }
+            }
+        }
+    }
+}
+
+/// What a row's button shows.
+#[derive(Clone, Copy)]
+enum RowIcon {
+    Up,
+    Down,
+    Remove,
+}
+
+/// One of a row's buttons: flat, the row's full height, an icon — in its
+/// colour outright, not `currentColor`: Blitz resolved an icon's
+/// `currentColor` once, so a button made unusable (a row made as the set's
+/// last, while it was still arriving) stayed grey once it could be used.
+fn row_button(
+    title: &'static str,
+    enabled: bool,
+    icon: RowIcon,
+    on_press: EventHandler<()>,
+) -> Element {
+    let color = if enabled { DIM } else { "#34373d" };
+    rsx! {
+        button {
+            title,
+            style: "flex:1; display:flex; align-items:center; justify-content:center; \
+                    border:none; background:transparent; cursor:pointer; padding:0;",
             onclick: move |_| {
                 if enabled {
                     on_press.call(());
                 }
             },
-            "{label}"
+            match icon {
+                RowIcon::Up => rsx! { lucide_dioxus::ChevronUp { size: 18, color } },
+                RowIcon::Down => rsx! { lucide_dioxus::ChevronDown { size: 18, color } },
+                RowIcon::Remove => rsx! { lucide_dioxus::X { size: 16, color } },
+            }
         }
     }
 }

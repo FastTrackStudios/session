@@ -40,6 +40,21 @@
           source = "/assets/**"
           [advanced.headers.headers]
           Cache-Control = "public, max-age=31536000, immutable"
+
+          # The app's module and wasm: the page asks for them at URLs
+          # carrying the wasm's hash (see web-bundles.nix), so a URL's
+          # bytes never change — kept, not revalidated (7 MB on every
+          # visit, before). The snippets are not versioned, so they stay
+          # on the revalidating default above.
+          [[advanced.headers]]
+          source = "/app/session-daw-web_bg.wasm"
+          [advanced.headers.headers]
+          Cache-Control = "public, max-age=31536000, immutable"
+
+          [[advanced.headers]]
+          source = "/app/session-daw-web.js"
+          [advanced.headers.headers]
+          Cache-Control = "public, max-age=31536000, immutable"
         '';
       in
       pkgs.dockerTools.streamLayeredImage {

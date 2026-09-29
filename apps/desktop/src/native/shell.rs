@@ -19,10 +19,16 @@ use session::modes::Mode;
 /// `document::Style` goes through a window head (see `docs/app-on-blitz.md`).
 const TAILWIND: &str = include_str!("../../assets/tailwind-signal.css");
 
-/// How much of the bar's left end the traffic lights take on macOS.
+/// How much of the bar's left end belongs to the system: the traffic
+/// lights on macOS, and on an iPad the window controls iPadOS keeps in
+/// every app's top-left corner. A control there is a trap — the first
+/// press shows the controls, the next lands on them, and the red one
+/// closes the app, which looks like a crash.
 #[cfg(target_os = "macos")]
 const LIGHTS_W: f64 = 78.0;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "ios")]
+const LIGHTS_W: f64 = 76.0;
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 const LIGHTS_W: f64 = 12.0;
 
 const RULE: &str = "#2a2c31";
@@ -38,6 +44,9 @@ pub fn Shell() -> Element {
         Ok("performance") => View::Performance,
         Ok("overview") => View::Overview,
         Ok("setup") => View::Setup,
+        Ok("chart") => View::Chart,
+        Ok("lyrics") => View::Lyrics,
+        Ok("mixer") => View::Mixer,
         _ => View::Daw,
     });
     // Live unless `FTS_SESSION_MODE` names another (`organize`, …): the
@@ -64,12 +73,21 @@ pub fn Shell() -> Element {
     // Whether the mixer is open, per mode (Organize starts closed) — above
     // the songs, so it holds across them.
     use_context_provider(session_daw::mixer_panel::MixerMemory::new);
+    // Touch mode: on where the screen is the pointer, switched in the
+    // record view's menu.
+    use_context_provider(session_daw::touch::Touch::detect);
+    // What is shown full screen, if anything, and the racks' settings
+    // every view of them shares (`session_daw::closeup`).
+    use_context_provider(session_daw::closeup::Closeups::new);
+    session_daw::shell::use_pins();
     // The lyrics' Audience / Performer and layer, held across songs.
     use_context_provider(session_daw::lyrics_panel::LyricsChoice::new);
     // The songs, as the launch opened them — a signal from here on, which
     // the tabs read and a pick or a recolour writes.
     let opened: session_daw::setlist::Setlist = use_context();
     let mut setlist = use_context_provider(|| Signal::new(opened));
+    // Each song in the mode it was last worked in.
+    session_daw::song_modes::use_song_modes(setlist, mode);
     // A streamed set's songs after the first, as each opens behind it.
     use_future(move || async move {
         let Some(mut arrivals) = session_daw::stream_set::take_arrivals() else {
@@ -128,6 +146,7 @@ pub fn Shell() -> Element {
             }
         }
     });
+    use_context_provider(|| session_daw::shell::WindowSize(size));
     let width = move || size().0;
     let form = use_memo(move || {
         let (w, h) = size();
@@ -140,7 +159,17 @@ pub fn Shell() -> Element {
             form_signal.set(now);
         }
     });
-    let phone_view = use_signal(|| session_daw::compact::PhoneView::Chart);
+    // On a phone, `FTS_SESSION_VIEW` names the tab it opens on, as it
+    // names the view on a wider screen; the chart otherwise.
+    let phone_view = use_signal(|| {
+        use session_daw::compact::PhoneView;
+        match std::env::var("FTS_SESSION_VIEW").as_deref() {
+            Ok("daw") => PhoneView::Arrangement,
+            Ok("performance") => PhoneView::Control,
+            Ok("mixer") => PhoneView::Mixer,
+            _ => PhoneView::Chart,
+        }
+    });
     // A song picked, from the tabs or the navigator: that song is current,
     // and the audio moves to it. Where the one it replaces had got to is
     // kept on its tab.
@@ -158,10 +187,6 @@ pub fn Shell() -> Element {
     };
     // The record view's song menu picks the same way.
     use_context_provider(|| session_daw::record_view::PickSong(Callback::new(pick)));
-    // Record mode's performance view stands in for the top bar.
-    let record_screen = move || {
-        mode() == session::modes::Mode::Record && view() == session_daw::shell::View::Performance
-    };
     let (dragging, zooming) = (window.clone(), window);
     let current = setlist.read().current().cloned();
     if form().compact() {
@@ -172,7 +197,8 @@ pub fn Shell() -> Element {
                 form: form(),
                 view: phone_view,
                 on_pick: pick,
-                drawer: rsx! {
+                // Who is here and where the sound comes from: More's.
+                more: rsx! {
                     div {
                         style: "display:flex; align-items:center; gap:8px; flex-wrap:wrap;",
                         session_daw::collab_bar::CollabBar {}
@@ -185,59 +211,75 @@ pub fn Shell() -> Element {
                     }
                 },
             }
+            session_daw::closeup::CloseupLayer { landscape: size().0 > size().1 }
         };
     }
     rsx! {
         style { {TAILWIND} }
         div {
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; flex-direction:column; \
-                    background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
+                    overflow:hidden; background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
             // A press anywhere but the chart editor (which stops it) gives
             // the keyboard back to the transport.
             onmousedown: move |_| session_daw::keys::set_editing(false),
             // Everyone else's mouse, over everything (collab_pointers).
             session_daw::collab_pointers::CollabPointers {}
-            if !record_screen() {
-                TopBar {
-                    view,
-                    mode,
-                    lights: LIGHTS_W,
-                    // The transport reads the song it drives, so it is mounted
-                    // per song too — the tabs beside it are not.
-                    transport: rsx! {
-                        if let Some(song) = current.clone() {
-                            WithSong {
-                                key: "{song.project}",
-                                session: song.session.clone(),
-                                session_daw::transport_bar::TransportBar {}
-                            }
-                        }
-                        // Once, not per song: it is the whole set's session,
-                        // and mounting it starts one from the environment.
-                        session_daw::collab_bar::CollabBar {}
-                    },
-                    width: width(),
-                    // Anywhere on the bar that is not a control drags the
-                    // window; a double click zooms it.
-                    on_drag: move |()| {
-                        if let Err(e) = dragging.drag_window() {
-                            tracing::debug!(error = %e, "window drag refused");
-                        }
-                    },
-                    on_zoom: move |()| zooming.set_maximized(!zooming.is_maximized()),
-                    // A tab picked: that song is current, and the audio moves to
-                    // it. Where the one it replaces had got to is kept on its tab.
-                    on_pick: pick,
-                    on_color: move |(index, color): (usize, Option<String>)| {
-                        setlist.write().recolor(index, color);
-                    },
+            TopBar {
+                lights: LIGHTS_W,
+                // Once, not per song: it is the whole set's session, and
+                // mounting it starts one from the environment.
+                badges: rsx! { session_daw::collab_bar::CollabBar {} },
+                width: width(),
+                // Anywhere on the bar that is not a control drags the
+                // window; a double click zooms it.
+                on_drag: move |()| {
+                    if let Err(e) = dragging.drag_window() {
+                        tracing::debug!(error = %e, "window drag refused");
+                    }
+                },
+                on_zoom: move |()| zooming.set_maximized(!zooming.is_maximized()),
+                // A tab picked: that song is current, and the audio moves to
+                // it. Where the one it replaces had got to is kept on its tab.
+                on_pick: pick,
+                on_color: move |(index, color): (usize, Option<String>)| {
+                    setlist.write().recolor(index, color);
+                },
+            }
+
+            // The navigator down the left when it is open, and the views
+            // beside it.
+            div {
+                style: "flex:1; min-height:0; display:flex;",
+                session_daw::shell::NavigatorColumn { on_pick: pick }
+                div {
+                    style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
+                    if let Some(song) = current.clone() {
+                        // Keyed by the song: picking another remounts every
+                        // panel on that song's session rather than patching
+                        // the last one's.
+                        SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
+                    }
                 }
             }
-            if let Some(song) = current {
-                // Keyed by the song: picking another remounts every panel
-                // on that song's session rather than patching the last one's.
-                SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
+            // The views, across the foot of the window, and each view's
+            // own controls beside them — the arrangement's the transport,
+            // which reads the song it drives, so it is mounted per song.
+            session_daw::shell::BottomBar {
+                view,
+                mode,
+                width: width(),
+                transport: rsx! {
+                    if let Some(song) = current {
+                        WithSong {
+                            key: "{song.project}",
+                            session: song.session.clone(),
+                            session_daw::transport_bar::TransportBar { big: true }
+                        }
+                    }
+                },
             }
+            // Whatever is zoomed into, over all of it.
+            session_daw::closeup::CloseupLayer { landscape: size().0 > size().1 }
         }
     }
 }
@@ -253,14 +295,17 @@ fn PhoneViews(
     use_context_provider(|| session);
     let mode: Signal<Mode> = use_context();
     match view() {
-        PhoneView::Control => rsx! {},
+        // The shell's own pages (`compact::CompactShell`).
+        PhoneView::Control | PhoneView::More | PhoneView::Setup | PhoneView::Editor => rsx! {},
         PhoneView::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
         PhoneView::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
+        // Keyed apart: the same component in the same place would otherwise
+        // be kept and handed the other view's props.
         PhoneView::Arrangement => rsx! {
-            session_daw::mixer_panel::DawPanels { mode: Some(mode()) }
+            session_daw::mixer_panel::DawPanels { key: "{view():?}", mode: Some(mode()) }
         },
         PhoneView::Mixer => rsx! {
-            session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
+            session_daw::mixer_panel::DawPanels { key: "{view():?}", mode: Some(mode()), mixer_only: true }
         },
     }
 }
@@ -285,6 +330,7 @@ fn SongViews(
     let mode: Signal<session::modes::Mode> = use_context();
     let record_mode = move || mode() == session::modes::Mode::Record;
     rsx! {
+        session_daw::shell::PinnedProgress { view: view() }
         div {
             style: "position:relative; flex:1; min-height:0;",
             match view() {
@@ -296,6 +342,12 @@ fn SongViews(
                     } else {
                         PerformanceView {}
                     }
+                },
+                View::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
+                View::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
+                View::Editor => rsx! { session_daw::shell::EditorComing {} },
+                View::Mixer => rsx! {
+                    session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
                 },
                 View::Overview => rsx! {
                     OverviewLayout {
@@ -309,6 +361,7 @@ fn SongViews(
                 },
             }
         }
+        session_daw::shell::PinnedTransport { view: view() }
     }
 }
 
@@ -387,7 +440,7 @@ fn PerformanceView() -> Element {
                 div {
                     style: "position:relative; flex:1; min-width:0; height:100%; border-radius:8px; \
                             overflow:hidden; border:1px solid {RULE};",
-                    session_daw::chart_panel::Chart {}
+                    session_daw::chart_panel::Chart { paged: true }
                 }
                 div {
                     style: "position:relative; width:38%; min-width:320px; height:100%; border-radius:8px; \

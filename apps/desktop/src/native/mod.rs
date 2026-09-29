@@ -18,6 +18,7 @@
 
 #[cfg(target_os = "ios")]
 mod ios_scene;
+mod library;
 mod shell;
 mod start;
 
@@ -263,9 +264,18 @@ fn run(setlist: Option<session_daw::setlist::Setlist>, open: Option<PathBuf>) {
 /// A phone's window is its screen: no size of our own to start from (a
 /// desktop size taken literally leaves the first surface a different shape
 /// from the screen, and the picture stays squeezed after the resize).
+///
+/// And no status bar: its row is the app's, for the top bar's controls,
+/// the way a full-screen instrument app takes it (Logic on iPad). A phone
+/// with a notch keeps the notch's inset whatever the bar does.
 #[cfg(target_os = "ios")]
 fn window_attributes() -> winit::window::WindowAttributes {
-    winit::window::WindowAttributes::default().with_title("Session")
+    winit::window::WindowAttributes::default()
+        .with_title("Session")
+        .with_platform_attributes(Box::new(
+            winit::platform::ios::WindowAttributesIos::default()
+                .with_prefers_status_bar_hidden(true),
+        ))
 }
 
 #[cfg(not(target_os = "ios"))]
