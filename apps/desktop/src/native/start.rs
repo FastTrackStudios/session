@@ -22,7 +22,7 @@ use dioxus::prelude::*;
 use lucide_dioxus::{
     Check, ChevronRight, CircleAlert, CircleCheck, CloudDownload, FileMusic, HardDriveDownload,
     House, Library, LibraryBig, Link, ListMusic, LogOut, Music, Pencil, Play, Plus, Radio, Search,
-    Trash2, Users, X,
+    Trash2, X,
 };
 use session_daw::loading::{Loading, Progress, mark_src};
 use session_daw::setlist::Setlist;
@@ -403,6 +403,8 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
         );
     };
     let bridge = use_hook(remembered_bridge);
+    // The set opened last, while it is still here.
+    let last = use_hook(|| super::remembered().filter(|p| p.exists()));
     let join = {
         let who = who.clone();
         move |text: String| {
@@ -577,33 +579,24 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     }
 
     let wide = width() >= 760.0;
-    let brand = if wide { "none" } else { "flex" };
     let here = section();
     // Signing in, as a card: where the library would be.
     let sign_in_card = rsx! {
         match sign_in() {
             SignIn::Out | SignIn::Failed(_) => rsx! {
-                Card {
+                div {
+                    style: "display:flex; flex-wrap:wrap; align-items:center; gap:16px; padding:20px; border-radius:20px; \
+                            background:linear-gradient(120deg, #1d3357 0%, {BAR} 70%);",
+                    Art { seed: "library".to_owned(), size: 60, radius: 16, LibraryBig { size: 28, color: ART_INK } }
                     div {
-                        style: "display:flex; gap:14px; align-items:flex-start;",
-                        div {
-                            style: "flex:none; width:44px; height:44px; border-radius:12px; display:flex; \
-                                    align-items:center; justify-content:center; background:#1f2a3a;",
-                            LibraryBig { size: 22, color: ACCENT }
-                        }
-                        div {
-                            style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;",
-                            span { style: "font-size:16px; font-weight:650;", "Your library, from Task" }
-                            span { style: "font-size:13px; color:{DIM}; line-height:1.45;", "Sign in with your FastTrackStudio account to open your org's setlists, make lists, and download them to this device." }
-                            if let SignIn::Failed(why) = sign_in() {
-                                span { style: "font-size:12px; color:{WARN}; line-height:1.4;", "Not signed in — {why}" }
-                            }
+                        style: "flex:1 1 220px; min-width:0; display:flex; flex-direction:column; gap:4px;",
+                        span { style: "font-size:18px; font-weight:750; letter-spacing:-0.01em;", "Bring your library" }
+                        span { style: "font-size:13px; color:#a3aab4; line-height:1.45;", "Sign in with FastTrackStudio to play your org's setlists, make lists, and keep them on this device." }
+                        if let SignIn::Failed(why) = sign_in() {
+                            span { style: "font-size:12px; color:{WARN}; line-height:1.4;", "Not signed in — {why}" }
                         }
                     }
-                    div {
-                        style: "display:flex; justify-content:flex-end; margin-top:14px;",
-                        Pill { label: "Sign in", primary: true, on_press: start_sign_in }
-                    }
+                    Pill { label: "Sign in", primary: true, on_press: start_sign_in }
                 }
             },
             SignIn::Starting => rsx! {
@@ -641,155 +634,152 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     // What the section shows.
     let content = match here {
         Section::Home => rsx! {
-                        // The mark and the name — on a phone, which has no sidebar
-            // to carry them.
-            div {
-                style: "display:{brand}; align-items:center; gap:14px;",
-                img { src: mark_src(), width: "48", height: "48", style: "border-radius:12px; flex:none;" }
-                div {
-                    style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;",
-                    span { style: "font-size:26px; font-weight:750; letter-spacing:-0.02em;", "Session" }
-                    span { style: "font-size:14px; color:{DIM};", "Your setlist, live." }
-                }
-            }
             if let Opening::Failed(why) = opening() {
                 Banner { good: false, text: format!("Could not open it — {why}") }
             }
-            // Live: the demo first, the way most people arrive, and a link.
-            Titled { title: "Live now",
-                button {
-                    style: "display:flex; align-items:center; gap:16px; width:100%; box-sizing:border-box; padding:20px; \
-                            border-radius:18px; border:1px solid #2c4a6b; cursor:pointer; text-align:left; \
-                            background:linear-gradient(135deg, #1a3150 0%, #131c28 55%, #111316 100%); \
-                            color:{TEXT}; font-family:inherit;",
-                    onclick: move |_| join_demo(DEMO_LINK.to_owned()),
-                    div {
-                        style: "flex:none; width:52px; height:52px; border-radius:26px; display:flex; \
-                                align-items:center; justify-content:center; background:{ACCENT};",
-                        Radio { size: 24, color: "#0b0c0e" }
+            // The way in: back to the last set, or into the live demo.
+            div {
+                style: "display:flex; flex-wrap:wrap; gap:14px;",
+                if let Some(path) = last.clone() {
+                    Hero {
+                        kicker: "Jump back in",
+                        title: title_of(&path),
+                        detail: kind_of(&path),
+                        seed: title_of(&path),
+                        live: false,
+                        on_press: move |()| open_path(path.clone()),
+                        FileMusic { size: 28, color: ART_INK }
                     }
-                    div {
-                        style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;",
-                        div {
-                            style: "display:flex; align-items:center; gap:8px;",
-                            span { style: "font-size:18px; font-weight:700;", "The Session demo" }
-                            span {
-                                style: "font-size:10px; font-weight:750; letter-spacing:0.08em; padding:2px 7px; \
-                                        border-radius:5px; background:#3aa0ff26; color:{ACCENT};",
-                                "LIVE"
-                            }
-                        }
-                        span { style: "font-size:13px; color:#aab4c0; line-height:1.45;", "Play along with everyone in the demo set — chart, lyrics and click." }
-                    }
-                    ChevronRight { size: 20, color: "#6b7a8c" }
                 }
+                Hero {
+                    kicker: "Live now",
+                    title: "The Session demo".to_owned(),
+                    detail: "Play along with the set — chart, lyrics, click.".to_owned(),
+                    seed: "demo".to_owned(),
+                    live: true,
+                    on_press: move |()| join_demo(DEMO_LINK.to_owned()),
+                    Radio { size: 30, color: ART_INK }
+                }
+            }
+            // Joining by link: a set someone shared, or a REAPER's bridge.
+            div {
+                style: "display:flex; gap:8px; align-items:center; height:50px; padding:0 6px 0 14px; \
+                        border-radius:14px; background:{BAR};",
+                Link { size: 18, color: DIM }
+                // The hint under the field while it is empty: Blitz
+                // draws no `placeholder`.
                 div {
-                    style: "display:flex; gap:8px; align-items:center; padding:8px; border-radius:14px; \
-                            background:{BAR}; border:1px solid {RULE};",
-                    div { style: "flex:none; padding-left:6px; display:flex;", Link { size: 18, color: DIM } }
-                    // The hint under the field while it is empty: Blitz
-                    // draws no `placeholder`.
-                    div {
-                        style: "position:relative; flex:1; min-width:0; height:38px;",
-                        if link().is_empty() {
-                            span {
-                                style: "position:absolute; top:0; left:6px; height:38px; display:flex; \
-                                        align-items:center; font-size:15px; color:#6b7280; pointer-events:none;",
-                                "Paste a live link or a REAPER bridge"
-                            }
-                        }
-                        input {
-                            style: "position:absolute; top:0; left:0; width:100%; height:38px; box-sizing:border-box; \
-                                    padding:0 6px; border:none; background:transparent; color:{TEXT}; \
-                                    font-family:inherit; font-size:15px;",
-                            r#type: "text",
-                            value: "{link}",
-                            oninput: move |e| link.set(e.value()),
+                    style: "position:relative; flex:1; min-width:0; height:40px;",
+                    if link().is_empty() {
+                        span {
+                            style: "position:absolute; top:0; left:4px; height:40px; display:flex; \
+                                    align-items:center; font-size:15px; color:#6b7280; pointer-events:none; \
+                                    white-space:nowrap; overflow:hidden;",
+                            "Join with a link"
                         }
                     }
-                    if cfg!(target_os = "ios") && link().trim().is_empty() {
-                        Pill {
-                            label: "Paste",
-                            primary: false,
-                            on_press: move |()| {
-                                if let Some(text) = super::pasted() {
-                                    link.set(text.clone());
-                                    join_pasted(text);
-                                }
-                            },
-                        }
-                    } else {
-                        Pill {
-                            label: "Join",
-                            primary: !link().trim().is_empty(),
-                            on_press: move |()| {
-                                if !link().trim().is_empty() {
-                                    join_link(link());
-                                }
-                            },
-                        }
+                    input {
+                        style: "position:absolute; top:0; left:0; width:100%; height:40px; box-sizing:border-box; \
+                                padding:0 4px; border:none; background:transparent; color:{TEXT}; \
+                                font-family:inherit; font-size:15px;",
+                        r#type: "text",
+                        value: "{link}",
+                        oninput: move |e| link.set(e.value()),
+                    }
+                }
+                if cfg!(target_os = "ios") && link().trim().is_empty() {
+                    Pill {
+                        label: "Paste",
+                        primary: false,
+                        on_press: move |()| {
+                            if let Some(text) = super::pasted() {
+                                link.set(text.clone());
+                                join_pasted(text);
+                            }
+                        },
+                    }
+                } else {
+                    Pill {
+                        label: "Join",
+                        primary: !link().trim().is_empty(),
+                        on_press: move |()| {
+                            if !link().trim().is_empty() {
+                                join_link(link());
+                            }
+                        },
                     }
                 }
             }
             // The REAPER this device drove last, through its bridge.
             if let Some(address) = bridge.clone() {
-                Titled { title: "Your REAPER",
-                    Tile {
-                        title: "Reconnect to REAPER".to_owned(),
-                        detail: address.clone(),
-                        on_press: move |()| connect_bridge(address.clone()),
-                        Radio { size: 20, color: ACCENT }
-                    }
+                Shortcut {
+                    title: "Reconnect to REAPER".to_owned(),
+                    detail: address.clone(),
+                    on_press: move |()| connect_bridge(address.clone()),
+                    Radio { size: 18, color: ACCENT }
                 }
             }
-            // On this device: what opens with no connection.
-            if !local().is_empty() {
-                Titled { title: "On this device",
-                    Grid {
-                        for path in local().into_iter().take(4) {
-                            Tile {
-                                key: "{path.display()}",
-                                title: title_of(&path),
-                                detail: kind_of(&path),
-                                on_press: move |()| open_path(path.clone()),
-                                HardDriveDownload { size: 20, color: "#4ac26b" }
-                            }
-                        }
-                    }
-                }
-            }
-            // The library's setlists, the first few.
-            Titled { title: "Setlists",
-                if signed_in {
+            // The library's setlists.
+            if signed_in {
+                Shelf { title: "Your setlists", on_more: move |()| section.set(Section::Setlists),
                     OrgChips { orgs: orgs(), org }
                     match setlists() {
                         Load::Waiting => rsx! { Quiet { text: "Finding your setlists…" } },
                         Load::Failed(why) => rsx! { Banner { good: false, text: format!("Could not read the library — {why}") } },
                         Load::Ready(_) => rsx! {
-                            Grid {
-                                for list in lists_now.iter().filter(|l| l.kind == ListKind::Set).take(6).cloned() {
-                                    Tile {
+                            Covers {
+                                for list in lists_now.iter().filter(|l| l.kind == ListKind::Set).take(8).cloned() {
+                                    Cover {
                                         key: "{list.id}",
                                         title: list.title.clone(),
                                         detail: format!("{} songs", list.songs.len()),
+                                        seed: list.title.clone(),
+                                        saved: downloaded(&list.title),
                                         on_press: {
                                             let account = account.clone();
                                             move |()| if let Some(account) = account.clone() { play.call((account, list.clone())) }
                                         },
-                                        ListMusic { size: 20, color: ACCENT }
+                                        ListMusic { size: 34, color: ART_INK }
                                     }
                                 }
-                                Tile {
+                                Cover {
                                     title: "New setlist".to_owned(),
-                                    detail: "Pick songs from your lists".to_owned(),
+                                    detail: "From your song lists".to_owned(),
+                                    seed: String::new(),
+                                    saved: false,
                                     on_press: move |()| editing.set(Some(Editing { open: None, create: Some(ListKind::Set) })),
-                                    Plus { size: 20, color: DIM }
+                                    Plus { size: 34, color: DIM }
                                 }
                             }
                         },
                     }
-                } else {
-                    {sign_in_card.clone()}
+                }
+            } else {
+                {sign_in_card.clone()}
+            }
+            // What opens with no connection.
+            if !local().is_empty() {
+                Shelf { title: "On this device", on_more: move |()| section.set(Section::Downloads),
+                    Covers {
+                        for path in local().into_iter().take(8) {
+                            Cover {
+                                key: "{path.display()}",
+                                title: title_of(&path),
+                                detail: kind_of(&path),
+                                seed: title_of(&path),
+                                saved: true,
+                                on_press: {
+                                    let path = path.clone();
+                                    move |()| open_path(path.clone())
+                                },
+                                if kind_of(&path) == "Setlist" {
+                                    ListMusic { size: 34, color: ART_INK }
+                                } else {
+                                    Music { size: 34, color: ART_INK }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -933,18 +923,32 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let main = rsx! {
         div {
             style: "position:relative; flex:1; min-width:0; min-height:0; display:flex; flex-direction:column;",
-            // The section's title, and its action.
+            // The section's title, its action — and, on a phone, who is
+            // signed in (the sidebar carries it on a wide window).
             div {
                 style: "position:relative; z-index:5; flex:none; display:flex; align-items:center; gap:12px; \
-                        padding:{head_top}px 24px 14px; border-bottom:1px solid {RULE}; background:{BG};",
-                span { style: "flex:1; min-width:0; font-size:24px; font-weight:750; letter-spacing:-0.01em;", "{here.label()}" }
+                        padding:{head_top}px 24px 12px; background:{BG};",
+                if !wide {
+                    img { src: mark_src(), width: "30", height: "30", style: "border-radius:8px; flex:none;" }
+                }
+                span { style: "flex:1; min-width:0; font-size:26px; font-weight:800; letter-spacing:-0.02em;", "{here.label()}" }
                 {action}
+                if !wide {
+                    AccountButton {
+                        email: account_line.clone(),
+                        on_sign_in: start_sign_in,
+                        on_sign_out: move |()| {
+                            task_account::sign_out();
+                            sign_in.set(SignIn::Out);
+                        },
+                    }
+                }
             }
             div {
                 style: "position:relative; z-index:1; flex:1; min-height:0; overflow-y:auto;",
                 div {
-                    style: "box-sizing:border-box; width:100%; max-width:980px; padding:20px 24px 40px; \
-                            display:flex; flex-direction:column; gap:24px;",
+                    style: "box-sizing:border-box; width:100%; max-width:1100px; padding:8px 24px 40px; \
+                            display:flex; flex-direction:column; gap:28px;",
                     {content}
                 }
             }
@@ -952,14 +956,14 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             DownloadBar { downloading: downloading(), note: note(), on_dismiss: move |()| note.set(None) }
             if !wide {
                 div {
-                    style: "position:relative; z-index:5; flex:none; height:58px; display:flex; align-items:stretch; \
+                    style: "position:relative; z-index:5; flex:none; height:56px; display:flex; align-items:stretch; \
                             background:{BAR}; border-top:1px solid {RULE};",
                     for each in Section::ALL {
                         button {
                             key: "{each.label()}",
-                                                            style: tab_style(here == each),
+                            style: tab_style(here == each),
                             onclick: move |_| section.set(each),
-                            SectionIcon { section: each, color: if here == each { TEXT } else { DIM } }
+                            SectionIcon { section: each, color: if here == each { ACCENT } else { DIM } }
                             span { style: "font-size:10px; font-weight:600;", "{each.short()}" }
                         }
                     }
@@ -984,7 +988,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                 // The sidebar: the mark, the sections, who is signed in.
                 div {
                     style: "position:relative; z-index:5; flex:none; width:236px; display:flex; flex-direction:column; \
-                            padding:{TOP}px 0 16px; box-sizing:border-box; background:{BAR}; border-right:1px solid {RULE};",
+                            padding:{TOP}px 0 16px; box-sizing:border-box; background:{BAR};",
                     div {
                         style: "display:flex; align-items:center; gap:10px; padding:4px 18px 18px;",
                         img { src: mark_src(), width: "30", height: "30", style: "border-radius:8px; flex:none;" }
@@ -1019,15 +1023,11 @@ const RAISED: &str = "#26292f";
 
 /// A phone's tab: flat, the one showing raised.
 fn tab_style(on: bool) -> String {
-    let (bg, ink) = if on {
-        (RAISED, TEXT)
-    } else {
-        ("transparent", DIM)
-    };
+    let ink = if on { ACCENT } else { DIM };
     format!(
         "flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; \
          justify-content:center; gap:3px; border:none; padding:0; cursor:pointer; \
-         font-family:inherit; background:{bg}; color:{ink};"
+         font-family:inherit; background:transparent; color:{ink};"
     )
 }
 
@@ -1070,7 +1070,7 @@ fn NavItem(section: Section, on: bool, on_press: EventHandler<()>) -> Element {
                     margin:1px 10px; padding:0 12px; border:none; border-radius:10px; background:{bg}; color:{ink}; font-family:inherit; \
                     font-size:15px; font-weight:600; text-align:left; cursor:pointer;",
             onclick: move |_| on_press.call(()),
-            SectionIcon { section, color: ink }
+            SectionIcon { section, color: if on { ACCENT } else { DIM } }
             "{section.label()}"
         }
     }
@@ -1090,11 +1090,7 @@ fn AccountLine(
                 Some(email) => rsx! {
                     div {
                         style: "display:flex; align-items:center; gap:10px;",
-                        div {
-                            style: "flex:none; width:30px; height:30px; border-radius:15px; display:flex; align-items:center; \
-                                    justify-content:center; background:#1f2a3a;",
-                            Users { size: 16, color: ACCENT }
-                        }
+                        Avatar { email: email.clone(), size: 30 }
                         span { style: "flex:1; min-width:0; font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{email}" }
                         button {
                             title: "Sign out",
@@ -1113,49 +1109,235 @@ fn AccountLine(
     }
 }
 
-/// A heading and what it heads.
+/// The ink over a cover's art.
+const ART_INK: &str = "#ffffffe6";
+
+/// A cover's two colours, picked by its name: the same list always the
+/// same, neighbours told apart. None (no name) is the plain tile a new
+/// list gets.
+fn palette(seed: &str) -> (&'static str, &'static str) {
+    const PAIRS: [(&str, &str); 8] = [
+        ("#3b82f6", "#1e2f6b"),
+        ("#8b5cf6", "#35155e"),
+        ("#ec4899", "#57142f"),
+        ("#f97316", "#5e2408"),
+        ("#10b981", "#073f31"),
+        ("#06b6d4", "#0b3b57"),
+        ("#eab308", "#533706"),
+        ("#ef4444", "#561010"),
+    ];
+    match seed {
+        "" => return ("#1f2227", "#1a1c20"),
+        // The ways in, told apart from each other whatever a set is called.
+        "demo" => return PAIRS[0],
+        "library" => return PAIRS[1],
+        _ => {}
+    }
+    // FNV-1a: stable across runs and builds, unlike std's hasher.
+    let hash = seed.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    PAIRS[hash as usize % PAIRS.len()]
+}
+
+/// A cover's art at a fixed size: its gradient, its icon over it.
 #[component]
-fn Titled(title: &'static str, children: Element) -> Element {
+fn Art(seed: String, size: u32, radius: u32, children: Element) -> Element {
+    let (from, to) = palette(&seed);
+    rsx! {
+        div {
+            style: "flex:none; width:{size}px; height:{size}px; border-radius:{radius}px; display:flex; \
+                    align-items:center; justify-content:center; \
+                    background:linear-gradient(135deg, {from} 0%, {to} 100%);",
+            {children}
+        }
+    }
+}
+
+/// The way in, large: its art, what it is, and a play button.
+#[component]
+fn Hero(
+    kicker: &'static str,
+    title: String,
+    detail: String,
+    seed: String,
+    live: bool,
+    on_press: EventHandler<()>,
+    children: Element,
+) -> Element {
+    let (from, _) = palette(&seed);
+    let kicker_ink = if live { ACCENT } else { DIM };
+    rsx! {
+        button {
+            style: "flex:1 1 300px; min-width:0; display:flex; align-items:center; gap:16px; box-sizing:border-box; \
+                    padding:14px; border:none; border-radius:20px; cursor:pointer; text-align:left; \
+                    background:linear-gradient(120deg, {from}40 0%, {BAR} 65%); color:{TEXT}; font-family:inherit;",
+            onclick: move |_| on_press.call(()),
+            Art { seed: seed.clone(), size: 72, radius: 14, {children} }
+            div {
+                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:5px;",
+                div {
+                    style: "display:flex; align-items:center; gap:7px;",
+                    if live {
+                        span { style: "flex:none; width:7px; height:7px; border-radius:4px; background:#ff4d4d;" }
+                    }
+                    span {
+                        style: "font-size:11px; font-weight:750; letter-spacing:0.09em; color:{kicker_ink};",
+                        "{kicker.to_uppercase()}"
+                    }
+                }
+                span { style: "font-size:19px; font-weight:750; letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
+                span { style: "font-size:13px; color:#a3aab4; line-height:1.4; overflow:hidden; max-height:37px;", "{detail}" }
+            }
+            div {
+                style: "flex:none; width:46px; height:46px; border-radius:23px; display:flex; align-items:center; \
+                        justify-content:center; background:{TEXT};",
+                Play { size: 20, color: "#0b0c0e" }
+            }
+        }
+    }
+}
+
+/// A shelf: its title, a way to all of it, and what is on it.
+#[component]
+fn Shelf(title: &'static str, on_more: EventHandler<()>, children: Element) -> Element {
     rsx! {
         div {
             style: "display:flex; flex-direction:column; gap:12px;",
-            Heading { label: title }
+            div {
+                style: "display:flex; align-items:center; gap:12px;",
+                span { style: "flex:1; min-width:0; font-size:20px; font-weight:750; letter-spacing:-0.01em;", "{title}" }
+                button {
+                    style: "flex:none; display:flex; align-items:center; gap:2px; height:32px; padding:0 4px 0 10px; \
+                            border:none; background:transparent; color:{ACCENT}; font-family:inherit; \
+                            font-size:14px; font-weight:600; cursor:pointer;",
+                    onclick: move |_| on_more.call(()),
+                    "See all"
+                    ChevronRight { size: 16, color: ACCENT }
+                }
+            }
             {children}
         }
     }
 }
 
-/// Tiles, as many across as fit.
+/// Covers, as many across as fit, each column the same width.
 #[component]
-fn Grid(children: Element) -> Element {
+fn Covers(children: Element) -> Element {
     rsx! {
         div {
-            style: "display:flex; flex-wrap:wrap; gap:12px;",
+            style: "display:grid; grid-template-columns:repeat(auto-fill, minmax(136px, 1fr)); gap:18px 14px;",
             {children}
         }
     }
 }
 
-/// A tile: an icon on its tint, a title and a line under it.
+/// A list or a song as a cover: square art, its name, a line under it —
+/// and a mark when it is on this device.
 #[component]
-fn Tile(title: String, detail: String, on_press: EventHandler<()>, children: Element) -> Element {
+fn Cover(
+    title: String,
+    detail: String,
+    seed: String,
+    saved: bool,
+    on_press: EventHandler<()>,
+    children: Element,
+) -> Element {
+    let (from, to) = palette(&seed);
     rsx! {
         button {
-            style: "flex:1 1 220px; min-width:200px; max-width:320px; display:flex; align-items:center; gap:12px; \
-                    box-sizing:border-box; padding:14px; border-radius:14px; border:1px solid {RULE}; \
-                    background:{BAR}; color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer;",
+            style: "min-width:0; display:flex; flex-direction:column; gap:8px; padding:0; border:none; \
+                    background:transparent; color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer;",
             onclick: move |_| on_press.call(()),
             div {
-                style: "flex:none; width:42px; height:42px; border-radius:11px; display:flex; align-items:center; \
-                        justify-content:center; background:#1c1f25;",
+                style: "position:relative; width:100%; aspect-ratio:1 / 1; border-radius:14px; display:flex; \
+                        align-items:center; justify-content:center; \
+                        background:linear-gradient(135deg, {from} 0%, {to} 100%);",
                 {children}
+                if saved {
+                    div {
+                        style: "position:absolute; right:8px; bottom:8px; width:22px; height:22px; border-radius:11px; \
+                                display:flex; align-items:center; justify-content:center; background:#0b0c0ecc;",
+                        Check { size: 13, color: "#4ac26b" }
+                    }
+                }
             }
             div {
-                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
-                span { style: "font-size:15px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
+                style: "display:flex; flex-direction:column; gap:2px; min-width:0; padding:0 2px;",
+                span { style: "font-size:14px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
                 span { style: "font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{detail}" }
             }
         }
+    }
+}
+
+/// A one-line way in: an icon, what it does, where to.
+#[component]
+fn Shortcut(
+    title: String,
+    detail: String,
+    on_press: EventHandler<()>,
+    children: Element,
+) -> Element {
+    rsx! {
+        button {
+            style: "display:flex; align-items:center; gap:12px; height:56px; padding:0 14px; border:none; \
+                    border-radius:14px; background:{BAR}; color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer;",
+            onclick: move |_| on_press.call(()),
+            {children}
+            span { style: "flex:none; font-size:15px; font-weight:650;", "{title}" }
+            span { style: "flex:1; min-width:0; font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{detail}" }
+            ChevronRight { size: 18, color: DIM }
+        }
+    }
+}
+
+/// Initials in a circle: who is signed in.
+#[component]
+fn Avatar(email: String, size: u32) -> Element {
+    let (from, to) = palette(&email);
+    let letter = email
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
+    let font = size * 2 / 5;
+    let radius = size / 2;
+    rsx! {
+        div {
+            style: "flex:none; width:{size}px; height:{size}px; border-radius:{radius}px; display:flex; \
+                    align-items:center; justify-content:center; font-size:{font}px; font-weight:750; color:#fff; \
+                    background:linear-gradient(135deg, {from} 0%, {to} 100%);",
+            "{letter}"
+        }
+    }
+}
+
+/// Signed in or not, at the head of a phone's page (which has no
+/// sidebar to carry it): the avatar, which asks before signing out.
+#[component]
+fn AccountButton(
+    email: Option<String>,
+    on_sign_in: EventHandler<()>,
+    on_sign_out: EventHandler<()>,
+) -> Element {
+    let mut asking = use_signal(|| false);
+    match email {
+        Some(_) if asking() => rsx! {
+            Pill { label: "Sign out", primary: false, on_press: move |()| { asking.set(false); on_sign_out.call(()); } }
+            Act { title: "Keep", on_press: move |()| asking.set(false), X { size: 16, color: DIM } }
+        },
+        Some(email) => rsx! {
+            button {
+                title: "{email}",
+                style: "flex:none; padding:0; border:none; background:transparent; cursor:pointer;",
+                onclick: move |_| asking.set(true),
+                Avatar { email: email.clone(), size: 34 }
+            }
+        },
+        None => rsx! {
+            Pill { label: "Sign in", primary: true, on_press: on_sign_in }
+        },
     }
 }
 
@@ -1264,11 +1446,7 @@ fn ListRow2(
                 style: "flex:1; min-width:0; display:flex; align-items:center; gap:14px; border:none; background:transparent; \
                         color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer; padding:0;",
                 onclick: move |_| on_play.call(()),
-                div {
-                    style: "flex:none; width:46px; height:46px; border-radius:12px; display:flex; align-items:center; \
-                            justify-content:center; background:#1f2a3a;",
-                    ListMusic { size: 22, color: ACCENT }
-                }
+                Art { seed: title.clone(), size: 48, radius: 10, ListMusic { size: 22, color: ART_INK } }
                 div {
                     style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
                     div {
@@ -1412,11 +1590,7 @@ fn LocalRow(
                 style: "flex:1; min-width:0; display:flex; align-items:center; gap:14px; border:none; background:transparent; \
                         color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer; padding:0;",
                 onclick: move |_| on_open.call(()),
-                div {
-                    style: "flex:none; width:44px; height:44px; border-radius:12px; display:flex; align-items:center; \
-                            justify-content:center; background:#16261c;",
-                    HardDriveDownload { size: 20, color: "#4ac26b" }
-                }
+                Art { seed: title.clone(), size: 48, radius: 10, HardDriveDownload { size: 20, color: ART_INK } }
                 div {
                     style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
                     span { style: "font-size:16px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
@@ -1674,12 +1848,12 @@ fn documents_dir() -> Option<PathBuf> {
     }
 }
 
-/// An entry's name, as a person reads it: a `.setlist` without its
-/// extension.
+/// An entry's name, as a person reads it: a `.setlist` or a project
+/// without its extension.
 fn title_of(path: &std::path::Path) -> String {
     let is_list = path
         .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("setlist"));
+        .is_some_and(|e| e.eq_ignore_ascii_case("setlist") || e.eq_ignore_ascii_case("rpp"));
     let name = if is_list {
         path.file_stem()
     } else {
@@ -1720,7 +1894,7 @@ pub(super) fn Heading(label: String) -> Element {
 fn Card(children: Element) -> Element {
     rsx! {
         div {
-            style: "padding:16px; border-radius:14px; background:{BAR}; border:1px solid {RULE};",
+            style: "padding:18px; border-radius:18px; background:{BAR};",
             {children}
         }
     }

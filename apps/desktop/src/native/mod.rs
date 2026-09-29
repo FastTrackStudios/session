@@ -37,8 +37,12 @@ const EXAMPLE: &str = "/Volumes/build-disk/development/sessions/Always On Time/A
 /// setlist); then `FTS_SESSION_PROJECT` (one song); what was open last
 /// time; and the example, if this machine has it. `None` when there is
 /// nothing: the window stays on the start screen ([`start`]), which is
-/// where a set is picked, joined, or streamed.
+/// where a set is picked, joined, or streamed. `FTS_SESSION_START=1` opens
+/// nothing, for the start screen itself.
 fn choose() -> Option<PathBuf> {
+    if std::env::var("FTS_SESSION_START").is_ok_and(|v| v != "0") {
+        return None;
+    }
     std::env::var_os("FTS_SESSION_SETLIST")
         .or_else(|| std::env::var_os("FTS_SESSION_PROJECT"))
         .map(PathBuf::from)
