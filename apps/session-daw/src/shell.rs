@@ -576,9 +576,33 @@ pub fn TopBar(
                 }
             }
             // The setlist, filling whatever the bar has left.
-            SongTabs { on_pick, on_color }
+            SongTabs { on_pick, on_color, max_shown: tabs_shown(width, crate::touch::use_touch()) }
             {controls}
         }
+    }
+}
+
+/// How many song tabs the top bar shows at once: on a touchscreen, five
+/// across a tablet on its side, three held upright, the current and next
+/// on a phone; with a mouse, as many as fit at a readable width.
+fn tabs_shown(width: Option<f64>, touch: bool) -> usize {
+    /// The narrowest a tab is and still names its song.
+    const TAB_MIN: f64 = 110.0;
+    /// What the bar's other controls take.
+    const CONTROLS: f64 = 560.0;
+    let Some(width) = width else { return 0 };
+    if width < 700.0 {
+        2
+    } else if touch {
+        if width >= 1000.0 { 5 } else { 3 }
+    } else {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a tab count"
+        )]
+        let fit = ((width - CONTROLS) / TAB_MIN).floor().max(3.0) as usize;
+        fit
     }
 }
 
@@ -748,6 +772,11 @@ fn peer_dots(_project: String) -> Element {
 #[component]
 pub fn SongTabs(
     on_pick: Option<EventHandler<usize>>,
+    /// The most tabs shown at once: a longer set shows the ones around the
+    /// current song, with the previous and next song a press away either
+    /// side and the whole set in a menu. 0 shows every song.
+    #[props(default)]
+    max_shown: usize,
     /// A colour picked for a song by hand: its index and the CSS colour,
     /// or `None` for "back to the title's colour".
     on_color: Option<EventHandler<(usize, Option<String>)>>,
@@ -759,6 +788,7 @@ pub fn SongTabs(
     };
     let reading = crate::progress::use_reading();
     let mut coloring = use_signal(|| None::<usize>);
+    let mut listing = use_signal(|| false);
     let list = setlist();
     if list.songs.is_empty() {
         return rsx! { div { style: "flex:1;" } };
@@ -767,8 +797,39 @@ pub fn SongTabs(
     // The songs still on their way have tabs too, so the row keeps its
     // shape as they arrive.
     let count = list.songs.len() + list.pending.len();
-    let min_w = count * 24 + 6;
-    rsx! {
+    // Which tabs are shown: every one, or — a set longer than the room —
+    // a window round the current song: the one before it, it, and those
+    // after, as many as fit.
+    let cap = if max_shown == 0 {
+        count
+    } else {
+        max_shown.min(count)
+    };
+    let windowed = cap < count;
+    let start = if windowed {
+        let before = if cap <= 2 { 0 } else { (cap - 1) / 2 };
+        list.at.saturating_sub(before).min(count - cap)
+    } else {
+        0
+    };
+    let shown = start..start + cap;
+    let min_w = cap * 24 + 6;
+    let pick = move |index: usize| {
+        if let Some(pick) = on_pick {
+            pick.call(index);
+        }
+    };
+    let songs_len = list.songs.len();
+    let current = list.at;
+    let arrow = |enabled: bool| {
+        let ink = if enabled { TEXT } else { "#3a3d44" };
+        format!(
+            "flex:none; width:28px; height:30px; display:flex; align-items:center; \
+             justify-content:center; border-radius:8px; border:1px solid {RULE}; \
+             background:#0f1012; color:{ink}; cursor:pointer; padding:0;"
+        )
+    };
+    let tabs = rsx! {
         div {
             // Never narrower than a dot (and who is there) per song: the
             // names give way first, then the bar's other controls.
@@ -776,7 +837,7 @@ pub fn SongTabs(
                     padding:2px; gap:0; align-items:stretch; background:#0f1012; \
                     border:1px solid {RULE}; border-radius:9px;",
             onmousedown: move |event| event.stop_propagation(),
-            for (index, song) in list.songs.iter().cloned().enumerate() {
+            for (index, song) in list.songs.iter().cloned().enumerate().filter(|(i, _)| shown.contains(i)) {
                 {
                     let current = index == list.at;
                     let percent = list.progress_of(index, at) * 100.0;
@@ -846,7 +907,7 @@ pub fn SongTabs(
             if !list.pending.is_empty() {
                 style { "@keyframes fts-tab-pulse {{ 0%, 100% {{ opacity: .3 }} 50% {{ opacity: 1 }} }}" }
             }
-            for title in list.pending.iter().cloned() {
+            for title in list.pending.iter().cloned().enumerate().filter(|(i, _)| shown.contains(&(songs_len + i))).map(|(_, t)| t) {
                 div {
                     key: "pending-{title}",
                     title: "{title} — loading",
@@ -867,13 +928,90 @@ pub fn SongTabs(
             if let Some(index) = coloring() {
                 ColorMenu {
                     // Under the tab it belongs to.
-                    left: format!("{:.3}%", (index as f64 + 0.5) / count as f64 * 100.0),
+                    left: format!(
+                        "{:.3}%",
+                        (index.saturating_sub(start) as f64 + 0.5) / cap as f64 * 100.0
+                    ),
                     on_pick: move |choice: Option<String>| {
                         coloring.set(None);
                         if let Some(color) = on_color {
                             color.call((index, choice));
                         }
                     },
+                }
+            }
+        }
+    };
+    if !windowed {
+        return tabs;
+    }
+    rsx! {
+        div {
+            style: "position:relative; flex:1; min-width:0; display:flex; align-items:center; gap:4px;",
+            onmousedown: move |event| event.stop_propagation(),
+            button {
+                title: "The song before",
+                style: arrow(current > 0),
+                onclick: move |_| {
+                    if current > 0 {
+                        pick(current - 1);
+                    }
+                },
+                lucide_dioxus::ChevronLeft { size: 16, color: "currentColor" }
+            }
+            {tabs}
+            button {
+                title: "The song after",
+                style: arrow(current + 1 < songs_len),
+                onclick: move |_| {
+                    if current + 1 < songs_len {
+                        pick(current + 1);
+                    }
+                },
+                lucide_dioxus::ChevronRight { size: 16, color: "currentColor" }
+            }
+            button {
+                title: "The whole set",
+                style: arrow(true),
+                onclick: move |_| listing.toggle(),
+                lucide_dioxus::ChevronDown { size: 16, color: "currentColor" }
+            }
+            if listing() {
+                div {
+                    style: "position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:44;",
+                    onclick: move |_| listing.set(false),
+                }
+                div {
+                    style: "position:absolute; right:0; top:36px; z-index:45; width:280px; max-height:60vh; \
+                            overflow-y:auto; padding:4px; background:{BAR_BG}; border:1px solid {RULE}; \
+                            border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.5); \
+                            display:flex; flex-direction:column; gap:2px;",
+                    for (index, song) in list.songs.iter().cloned().enumerate() {
+                        button {
+                            key: "{song.project}",
+                            style: {
+                                let (bg, ink) = if index == current { ("#2b2e35", TEXT) } else { ("transparent", DIM) };
+                                format!("display:flex; align-items:center; gap:10px; min-height:40px; padding:0 10px; \
+                                         border:none; border-radius:7px; background:{bg}; color:{ink}; \
+                                         font-family:inherit; font-size:13px; font-weight:600; text-align:left; cursor:pointer;")
+                            },
+                            onclick: move |_| {
+                                listing.set(false);
+                                pick(index);
+                            },
+                            span { style: "flex:none; width:18px; color:#6b7280; font-size:11px;", "{index + 1}" }
+                            div { style: "flex:none; width:9px; height:9px; border-radius:5px; background:{song.color};" }
+                            span { style: "flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;", "{song.name}" }
+                        }
+                    }
+                    for title in list.pending.iter().cloned() {
+                        div {
+                            key: "list-pending-{title}",
+                            style: "display:flex; align-items:center; gap:10px; min-height:36px; padding:0 10px 0 38px; \
+                                    color:#6b7280; font-size:13px; opacity:0.6;",
+                            "{title} — loading"
+                        }
+                    }
                 }
             }
         }
