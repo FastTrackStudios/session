@@ -333,6 +333,12 @@ impl Editor {
                     return false;
                 };
                 match action {
+                    // A fade is not taken hold of while locked.
+                    mousemap::Action::FadeIn | mousemap::Action::FadeShape
+                        if crate::options::LOCKING.get() =>
+                    {
+                        false
+                    }
                     mousemap::Action::FadeIn | mousemap::Action::FadeShape => {
                         self.fade_drag = Some(FadeDrag {
                             index,
@@ -628,6 +634,12 @@ impl Editor {
     pub fn moved(&mut self, at: Option<f64>, pps: f64, bpm: f64, keys: Mods) -> bool {
         let Some(at) = at else { return false };
         if let Some(press) = self.item_press.as_mut() {
+            // Locked: the press still selects when it lets go, but a drag
+            // moves nothing (on a touchscreen the finger layer has made it
+            // a scroll before it gets here — see `widget::fingered`).
+            if crate::options::LOCKING.get() {
+                return false;
+            }
             let dx = at - press.from;
             let moved = press.ghost.is_some() || (dx * pps).abs() > crate::gesture::SLOP;
             if !moved {

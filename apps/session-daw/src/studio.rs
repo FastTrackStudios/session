@@ -375,6 +375,8 @@ pub fn plan_rows_with(
             },
         );
     }
+    // And the folders the window shut (`crate::folds`), over the scene's.
+    planned = crate::folds::apply(planned);
     // A folder the scene shut keeps its row and gets its children's items,
     // folded: the mix happens on the folder, so its name, fader and colour
     // stay, and so does what is in it.

@@ -29,6 +29,7 @@ pub mod engine;
 pub mod expression;
 pub mod folder;
 pub mod folder_item;
+pub mod folds;
 pub mod fps;
 pub mod gesture;
 pub mod ghosts;

@@ -69,7 +69,15 @@ pub fn App() -> Element {
         });
     }
     let initial: Option<Setlist> = use_context();
-    let opened = use_signal(|| initial);
+    let mut opened = use_signal(|| initial);
+    // Back to the start screen: the set stops, and the page is the one
+    // that picks another (its library, a link, a file).
+    use_context_provider(|| {
+        session_daw::shell::Back(Callback::new(move |()| {
+            session_daw::engine::transport(session_daw::engine::Move::Stop, 0.0);
+            opened.set(None);
+        }))
+    });
     let page = match opened() {
         Some(setlist) => rsx! {
             WithSetlist { setlist, super::shell::Shell {} }

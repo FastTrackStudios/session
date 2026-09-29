@@ -178,10 +178,6 @@ pub fn Shell() -> Element {
     };
     // The record view's song menu picks the same way.
     use_context_provider(|| session_daw::record_view::PickSong(Callback::new(pick)));
-    // Record mode's performance view stands in for the top bar.
-    let record_screen = move || {
-        mode() == session::modes::Mode::Record && view() == session_daw::shell::View::Performance
-    };
     let (dragging, zooming) = (window.clone(), window);
     let current = setlist.read().current().cloned();
     if form().compact() {
@@ -218,42 +214,41 @@ pub fn Shell() -> Element {
             onmousedown: move |_| session_daw::keys::set_editing(false),
             // Everyone else's mouse, over everything (collab_pointers).
             session_daw::collab_pointers::CollabPointers {}
-            if !record_screen() {
-                TopBar {
-                    view,
-                    mode,
-                    lights: LIGHTS_W,
-                    // The transport reads the song it drives, so it is mounted
-                    // per song too — the tabs beside it are not.
-                    transport: rsx! {
-                        if let Some(song) = current.clone() {
-                            WithSong {
-                                key: "{song.project}",
-                                session: song.session.clone(),
-                                session_daw::transport_bar::TransportBar {}
-                            }
+            TopBar {
+                view,
+                mode,
+                lights: LIGHTS_W,
+                // The transport reads the song it drives, so it is mounted
+                // per song too — the tabs beside it are not.
+                transport: rsx! {
+                    if let Some(song) = current.clone() {
+                        WithSong {
+                            key: "{song.project}",
+                            session: song.session.clone(),
+                            session_daw::transport_bar::TransportBar {}
                         }
-                        // Once, not per song: it is the whole set's session,
-                        // and mounting it starts one from the environment.
-                        session_daw::collab_bar::CollabBar {}
-                    },
-                    width: width(),
-                    // Anywhere on the bar that is not a control drags the
-                    // window; a double click zooms it.
-                    on_drag: move |()| {
-                        if let Err(e) = dragging.drag_window() {
-                            tracing::debug!(error = %e, "window drag refused");
-                        }
-                    },
-                    on_zoom: move |()| zooming.set_maximized(!zooming.is_maximized()),
-                    // A tab picked: that song is current, and the audio moves to
-                    // it. Where the one it replaces had got to is kept on its tab.
-                    on_pick: pick,
-                    on_color: move |(index, color): (usize, Option<String>)| {
-                        setlist.write().recolor(index, color);
-                    },
-                }
+                    }
+                    // Once, not per song: it is the whole set's session,
+                    // and mounting it starts one from the environment.
+                    session_daw::collab_bar::CollabBar {}
+                },
+                width: width(),
+                // Anywhere on the bar that is not a control drags the
+                // window; a double click zooms it.
+                on_drag: move |()| {
+                    if let Err(e) = dragging.drag_window() {
+                        tracing::debug!(error = %e, "window drag refused");
+                    }
+                },
+                on_zoom: move |()| zooming.set_maximized(!zooming.is_maximized()),
+                // A tab picked: that song is current, and the audio moves to
+                // it. Where the one it replaces had got to is kept on its tab.
+                on_pick: pick,
+                on_color: move |(index, color): (usize, Option<String>)| {
+                    setlist.write().recolor(index, color);
+                },
             }
+
             if let Some(song) = current {
                 // Keyed by the song: picking another remounts every panel
                 // on that song's session rather than patching the last one's.
@@ -326,6 +321,7 @@ fn SongViews(
                 },
                 View::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
                 View::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
+                View::Editor => rsx! { session_daw::shell::EditorComing {} },
                 View::Mixer => rsx! {
                     session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
                 },

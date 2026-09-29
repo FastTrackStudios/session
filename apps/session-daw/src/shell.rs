@@ -81,16 +81,20 @@ pub enum View {
     Lyrics,
     /// The mixer alone, the whole window.
     Mixer,
+    /// The audio and MIDI editor (the expression editor, brought in
+    /// next): a place held for it.
+    Editor,
 }
 
 impl View {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Performance,
         Self::Overview,
         Self::Chart,
         Self::Lyrics,
         Self::Daw,
         Self::Mixer,
+        Self::Editor,
         Self::Setup,
     ];
 
@@ -104,6 +108,7 @@ impl View {
             Self::Chart => "Chart",
             Self::Lyrics => "Lyrics",
             Self::Mixer => "Mixer",
+            Self::Editor => "Editor",
         }
     }
 
@@ -119,6 +124,31 @@ impl View {
     }
 }
 
+/// Back out of the set to where sets are picked (the start screen, and
+/// its library), when the host has one: a context the host provides while
+/// a set is open. The top bar shows a Back button while it is there.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Back(pub Callback<()>);
+
+/// The Editor view, until the audio and MIDI editor (the expression
+/// editor) is brought in: a place held for it, saying so.
+#[component]
+pub fn EditorComing() -> Element {
+    rsx! {
+        div {
+            style: "position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; \
+                    justify-content:center; gap:10px; color:{DIM}; font-family:system-ui, sans-serif;",
+            lucide_dioxus::AudioWaveform { size: 40, color: "currentColor" }
+            span { style: "font-size:16px; font-weight:650; color:{TEXT};", "Editor" }
+            span {
+                style: "font-size:13px; max-width:420px; text-align:center; line-height:1.5;",
+                "The audio and MIDI editor comes here: notes, audio, automation, \
+                 edited up close for the selected item."
+            }
+        }
+    }
+}
+
 /// What stays on screen over every view — the song's progress along the
 /// top, the performance transport along the foot — each a setting a
 /// button in the bottom bar (and a switch on the Setup page) turns on;
@@ -127,6 +157,9 @@ impl View {
 pub struct Pins {
     pub progress: Signal<bool>,
     pub transport: Signal<bool>,
+    /// Locked: drags scroll, and move nothing (`crate::options::LOCKING`,
+    /// which this mirrors so the buttons that show it re-render).
+    pub lock: Signal<bool>,
 }
 
 impl Pins {
@@ -135,6 +168,7 @@ impl Pins {
         Self {
             progress: Signal::new(false),
             transport: Signal::new(false),
+            lock: Signal::new(crate::options::LOCKING.get()),
         }
     }
 }
@@ -201,8 +235,9 @@ pub const BOTTOM_H: f64 = 34.0;
 /// The bottom bar: the views as icons across the foot of the window, the
 /// way the top bar runs across its head — Logic's iPad layout, where what
 /// you look at is picked at the bottom and what you play at the top.
-/// Each view an icon and its word; the views in the middle, Setup to the
-/// right on its own, an icon alone. The left is kept for the panels a
+/// Each view an icon and its word, in the middle; at the left the menu
+/// (the window's switches: lock, progress, transport) and Setup; at the
+/// right the action picker. The left is kept for the panels a
 /// view can show beside itself (the inspector).
 ///
 /// On a touchscreen there is no Overview: it is every view at once, which
@@ -212,6 +247,8 @@ pub const BOTTOM_H: f64 = 34.0;
 pub fn BottomBar(view: Signal<View>) -> Element {
     let touch = crate::touch::use_touch();
     let pins = try_use_context::<Pins>();
+    let mut menu = use_signal(|| false);
+    let mut actions = use_signal(|| false);
     let button = move |each: View, label: bool| {
         rsx! {
             button {
@@ -228,9 +265,23 @@ pub fn BottomBar(view: Signal<View>) -> Element {
     };
     rsx! {
         div {
-            style: "height:{BOTTOM_H}px; flex:none; display:flex; align-items:center; \
+            style: "position:relative; height:{BOTTOM_H}px; flex:none; display:flex; align-items:center; \
                     padding:0 12px; background:{BAR_BG}; border-top:1px solid {RULE};",
-            div { style: "flex:1;" }
+            // The menu (the window's switches), and Setup: the set and the
+            // song's details, set up before the views are used.
+            div {
+                style: "flex:1; display:flex; align-items:center; gap:6px;",
+                button {
+                    title: "Settings",
+                    style: bottom_button(menu(), false),
+                    onclick: move |_| {
+                        menu.toggle();
+                        actions.set(false);
+                    },
+                    lucide_dioxus::Menu { size: 19, color: "currentColor" }
+                }
+                {button(View::Setup, true)}
+            }
             div {
                 style: "flex:none; display:flex; align-items:center; gap:6px;",
                 for each in View::ALL
@@ -240,46 +291,137 @@ pub fn BottomBar(view: Signal<View>) -> Element {
                     {button(each, true)}
                 }
             }
+            // A quick way to run anything: the action picker.
             div {
-                style: "flex:1; display:flex; justify-content:flex-end; align-items:center; gap:6px;",
-                if let Some(pins) = pins {
-                    PinButton { on: pins.progress, what: Pinned::Progress }
-                    PinButton { on: pins.transport, what: Pinned::Transport }
-                    div { style: "width:1px; height:18px; background:{RULE}; margin:0 4px;" }
+                style: "flex:1; display:flex; justify-content:flex-end; align-items:center;",
+                button {
+                    title: "Run an action",
+                    style: bottom_button(actions(), true),
+                    onclick: move |_| {
+                        actions.toggle();
+                        menu.set(false);
+                    },
+                    lucide_dioxus::Zap { size: 19, color: "currentColor" }
+                    span { style: "font-size:12px; font-weight:600;", "Action" }
                 }
-                {button(View::Setup, false)}
+            }
+            if menu() || actions() {
+                // A press outside closes it.
+                div {
+                    style: "position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:40;",
+                    onclick: move |_| {
+                        menu.set(false);
+                        actions.set(false);
+                    },
+                }
+            }
+            if menu() && let Some(pins) = pins {
+                div {
+                    style: "position:absolute; left:10px; bottom:{BOTTOM_H + 6.0}px; z-index:41; width:300px; \
+                            padding:6px; border-radius:12px; background:{BAR_BG}; border:1px solid {RULE}; \
+                            box-shadow:0 10px 30px rgba(0,0,0,0.5); display:flex; flex-direction:column; gap:2px;",
+                    MenuSwitch {
+                        on: pins.lock,
+                        label: "Lock",
+                        detail: "A drag scrolls and moves nothing — items, faders, knobs",
+                        what: Pinned::Lock,
+                    }
+                    MenuSwitch {
+                        on: pins.progress,
+                        label: "Song progress on every view",
+                        detail: "The sections across the top — press one to play from it",
+                        what: Pinned::Progress,
+                    }
+                    MenuSwitch {
+                        on: pins.transport,
+                        label: "Transport on every view",
+                        detail: "Back, Play, Loop and Advance along the foot",
+                        what: Pinned::Transport,
+                    }
+                }
+            }
+            if actions() {
+                ActionPicker {}
             }
         }
     }
 }
 
-/// What a pin button in the bottom bar pins.
+/// What a switch in the bottom bar's menu switches.
 #[derive(Clone, Copy, PartialEq)]
 enum Pinned {
     Progress,
     Transport,
+    Lock,
 }
 
-/// A bottom-bar toggle: the progress bar or the transport over every view.
+/// A switch in the bottom bar's menu: its words, and a switch a finger can
+/// hit.
 #[component]
-fn PinButton(on: Signal<bool>, what: Pinned) -> Element {
-    use lucide_dioxus::{PanelBottom, PanelTop};
+fn MenuSwitch(
+    on: Signal<bool>,
+    label: &'static str,
+    detail: &'static str,
+    what: Pinned,
+) -> Element {
     let mut on = on;
     let lit = on();
-    let (title, label) = match what {
-        Pinned::Progress => ("Song progress on every view", "Progress"),
-        Pinned::Transport => ("Transport on every view", "Transport"),
+    let (track, knob) = if lit {
+        ("#2563eb", "18px")
+    } else {
+        ("#3a3d44", "2px")
     };
     rsx! {
         button {
-            title,
-            style: bottom_button(lit, true),
-            onclick: move |_| on.toggle(),
-            match what {
-                Pinned::Progress => rsx! { PanelTop { size: 19, color: "currentColor" } },
-                Pinned::Transport => rsx! { PanelBottom { size: 19, color: "currentColor" } },
+            style: "display:flex; align-items:center; gap:12px; width:100%; min-height:48px; padding:6px 10px; \
+                    border:none; border-radius:8px; background:transparent; color:{TEXT}; text-align:left; \
+                    font-family:inherit; cursor:pointer;",
+            onclick: move |_| {
+                on.toggle();
+                if what == Pinned::Lock {
+                    crate::options::LOCKING.set(on());
+                }
+            },
+            div {
+                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;",
+                span { style: "font-size:13px; font-weight:600;", "{label}" }
+                span { style: "font-size:11px; color:{DIM}; line-height:1.4;", "{detail}" }
             }
-            span { style: "font-size:12px; font-weight:600;", "{label}" }
+            div {
+                style: "position:relative; flex:none; width:38px; height:22px; border-radius:11px; background:{track};",
+                div { style: "position:absolute; top:2px; left:{knob}; width:18px; height:18px; border-radius:9px; background:#f3f4f6;" }
+            }
+        }
+    }
+}
+
+/// The action picker: every action by name, to run one. Held open for
+/// the action list, which is not wired in yet.
+#[component]
+fn ActionPicker() -> Element {
+    let mut query = use_signal(String::new);
+    rsx! {
+        div {
+            style: "position:absolute; right:10px; bottom:{BOTTOM_H + 6.0}px; z-index:41; width:360px; \
+                    padding:8px; border-radius:12px; background:{BAR_BG}; border:1px solid {RULE}; \
+                    box-shadow:0 10px 30px rgba(0,0,0,0.5); display:flex; flex-direction:column; gap:8px;",
+            div {
+                style: "display:flex; align-items:center; gap:8px; height:38px; padding:0 10px; border-radius:9px; \
+                        background:#0f1012; border:1px solid {RULE}; color:{DIM};",
+                lucide_dioxus::Search { size: 16, color: "currentColor" }
+                input {
+                    style: "flex:1; min-width:0; height:36px; border:none; background:transparent; color:{TEXT}; \
+                            font-family:inherit; font-size:14px;",
+                    r#type: "text",
+                    placeholder: "Run an action…",
+                    value: "{query}",
+                    oninput: move |e| query.set(e.value()),
+                }
+            }
+            span {
+                style: "font-size:12px; color:{DIM}; line-height:1.5; padding:4px 6px 6px;",
+                "The action list lands here: every action by name, searched as you type, run with a tap."
+            }
         }
     }
 }
@@ -317,6 +459,7 @@ fn ViewIcon(view: View) -> Element {
         View::Overview => rsx! { LayoutDashboard { size, color: "currentColor" } },
         View::Chart => rsx! { FileMusic { size, color: "currentColor" } },
         View::Lyrics => rsx! { MicVocal { size, color: "currentColor" } },
+        View::Editor => rsx! { lucide_dioxus::AudioWaveform { size, color: "currentColor" } },
         View::Daw => rsx! { ChartNoAxesGantt { size, color: "currentColor" } },
         View::Mixer => rsx! { SlidersVertical { size, color: "currentColor" } },
         View::Setup => rsx! { Settings { size, color: "currentColor" } },
@@ -360,6 +503,7 @@ pub fn TopBar(
     } else {
         "Mode"
     };
+    let back = try_use_context::<Back>();
     let controls = rsx! {
         // A row: the transport, and anything the host puts beside it
         // (the collaboration bar).
@@ -420,6 +564,19 @@ pub fn TopBar(
                     zoom.call(());
                 }
             },
+            if let Some(Back(back)) = back {
+                button {
+                    title: "Back to your sets",
+                    style: "flex:none; height:28px; display:flex; align-items:center; gap:4px; \
+                            padding:0 10px 0 6px; border-radius:7px; border:1px solid {RULE}; \
+                            background:#0f1012; color:{TEXT}; font-family:inherit; font-size:12px; \
+                            font-weight:600; cursor:pointer;",
+                    onmousedown: move |event| event.stop_propagation(),
+                    onclick: move |_| back.call(()),
+                    lucide_dioxus::ChevronLeft { size: 16, color: "currentColor" }
+                    "Sets"
+                }
+            }
             // The setlist, filling whatever the bar has left.
             SongTabs { on_pick, on_color }
             {controls}

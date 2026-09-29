@@ -190,6 +190,7 @@ pub fn MainToolbar(
             .collect::<Vec<_>>()
     });
     let mut metronome = use_signal(|| !click_muted);
+    let pins = try_use_context::<crate::shell::Pins>();
     let mut following = use_signal(|| follow.get());
     let mut open = use_signal(|| false);
     let is_on = move |t: Toggle| match t {
@@ -197,6 +198,9 @@ pub fn MainToolbar(
         Toggle::Compact => shape(),
         Toggle::Follow => following(),
         Toggle::Mixer => mixer.is_some_and(|open| open()),
+        // The lock is shown in the bottom bar too: its signal, when the
+        // shell has one, is the one both re-render on.
+        Toggle::Lock if pins.is_some() => pins.is_some_and(|p| (p.lock)()),
         other => shown.read().iter().any(|(each, on)| *each == other && *on),
     };
     // What a toggle does, whether pressed in the row or in the menu.
@@ -229,6 +233,11 @@ pub fn MainToolbar(
         other => {
             if let Some(option) = other.option() {
                 let now = option.toggle();
+                if other == Toggle::Lock
+                    && let Some(mut lock) = pins.map(|p| p.lock)
+                {
+                    lock.set(now);
+                }
                 for (each, on) in shown.write().iter_mut() {
                     if *each == other {
                         *on = now;

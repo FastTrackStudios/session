@@ -607,9 +607,6 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     // every view of them shares (`crate::closeup`).
     use_context_provider(crate::closeup::Closeups::new);
     use_context_provider(crate::shell::Pins::new);
-    // Record mode's performance view stands in for the top bar.
-    let record_screen =
-        move || mode() == session::modes::Mode::Record && view() == crate::shell::View::Performance;
     let current = setlist.read().current().cloned();
     if form().compact() {
         return rsx! {
@@ -651,28 +648,27 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
             style: "flex:1; min-width:0; min-height:0; position:relative; display:flex; \
                     flex-direction:column; background:#0f1012; color:#e5e7eb; \
                     font-family:system-ui, sans-serif;",
-            if !record_screen() {
-                TopBar {
-                    view,
-                    mode,
-                    // The transport reads the song it drives, so it is mounted
-                    // per song too — the tabs beside it are not.
-                    transport: rsx! {
-                        if let Some(song) = current.clone() {
-                            WithSong {
-                                key: "{song.project}",
-                                session: song.session.clone(),
-                                crate::transport_bar::WebTransportBar {}
-                            }
+            TopBar {
+                view,
+                mode,
+                // The transport reads the song it drives, so it is mounted
+                // per song too — the tabs beside it are not.
+                transport: rsx! {
+                    if let Some(song) = current.clone() {
+                        WithSong {
+                            key: "{song.project}",
+                            session: song.session.clone(),
+                            crate::transport_bar::WebTransportBar {}
                         }
-                        // Once, not per song: the live set this page is in —
-                        // who is here, together.
-                        crate::collab_bar::CollabBar {}
-                        ListeningBadge { listening: listening(), asking }
-                    },
-                    on_pick: pick,
-                }
+                    }
+                    // Once, not per song: the live set this page is in —
+                    // who is here, together.
+                    crate::collab_bar::CollabBar {}
+                    ListeningBadge { listening: listening(), asking }
+                },
+                on_pick: pick,
             }
+
             if let Some(song) = current {
                 // Keyed by the song: picking another remounts every panel
                 // on that song's session rather than patching the last one's.
@@ -882,6 +878,7 @@ fn SongViews(
                 View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine: engine.clone() } },
                 View::Chart => rsx! { crate::chart_panel::WebChart { paged: true } },
                 View::Lyrics => rsx! { crate::lyrics_panel::LyricsPanel {} },
+                View::Editor => rsx! { crate::shell::EditorComing {} },
                 View::Mixer => rsx! {
                     crate::mixer_panel::WebDawPanels { engine: engine.clone(), mixer_only: true }
                 },

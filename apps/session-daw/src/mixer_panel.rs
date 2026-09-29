@@ -89,6 +89,9 @@ pub struct Links {
     /// The arrangement's rows, with a generation that goes up on every
     /// change, so the mixer knows to re-record.
     pub rows: Rc<RefCell<(u64, Rows)>>,
+    /// How the song's rows are planned, for a mixer with no arrangement to
+    /// plan them: a folder opened or shut plans them again here.
+    pub planner: Option<crate::studio::Planner>,
     /// Edits the mixer made, for the engine and the arrangement.
     pub from_mixer: Queue,
     /// Edits the arrangement made, for the mixer to apply too.
@@ -130,6 +133,7 @@ impl Links {
             docked: false,
             toggle: Rc::new(Cell::new(false)),
             rows: Rc::new(RefCell::new((0, rows))),
+            planner: None,
             from_mixer: Queue::default(),
             to_mixer: Queue::default(),
             to_arrange: Queue::default(),
@@ -220,6 +224,7 @@ pub fn DawPanels(
         links.open = Signal::new(MixerMemory::wanted(memory, docked, mode));
         links.docked = docked;
         links.alone = mixer_only;
+        links.planner = Some(session.planner.clone());
         links
     });
     // Into another mode: the mixer as that mode last had it.
@@ -419,6 +424,7 @@ pub fn WebDawPanels(
         links.open = Signal::new(docked || mixer_only);
         links.docked = docked;
         links.alone = mixer_only;
+        links.planner = Some(session.planner.clone());
         links
     });
     let open = (links.open)() || mixer_only;
@@ -627,6 +633,8 @@ struct MixerWidget {
     /// The selected track the mixer was built with: another selection
     /// opens another strip, which is a rebuild.
     built_open: Option<String>,
+    /// The folds the rows were planned at ([`crate::folds::generation`]).
+    folds_seen: u64,
     /// The strips still moving after a finger threw them.
     fling: Option<crate::touch::Fling>,
     /// Ask the host for another frame: Blitz paints a widget after an
@@ -730,6 +738,7 @@ impl MixerWidget {
             rack_hover: None,
             rack_pressed: None,
             built_open: None,
+            folds_seen: crate::folds::generation(),
             clips: crate::overlay::Clips::default(),
             meters: crate::engine::Meters::start(),
             strips: Rc::default(),
@@ -743,6 +752,34 @@ impl MixerWidget {
     /// Take the arrangement's rows when they have changed, and the edits
     /// it has made since the last frame.
     fn catch_up(&mut self) {
+        // A mixer on its own plans its own rows when a folder opens or
+        // shuts; beside an arrangement, the arrangement does and sends
+        // them. The strips keep what they show now (a level, a mute) —
+        // the plan is the song as it opened.
+        let folds = crate::folds::generation();
+        if folds != self.folds_seen {
+            self.folds_seen = folds;
+            if self.links.alone
+                && let Some(planner) = &self.links.planner
+            {
+                let (_, planned) = planner.plan(&planner.raw);
+                let now: std::collections::HashMap<&str, &daw_proto::Track> =
+                    self.tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+                let rows: Rows = planned
+                    .as_slice()
+                    .iter()
+                    .map(|(track, depth)| {
+                        let track = now
+                            .get(track.guid.as_str())
+                            .map_or_else(|| track.clone(), |current| (*current).clone());
+                        (track, *depth)
+                    })
+                    .collect();
+                let mut shared = self.links.rows.borrow_mut();
+                shared.0 = shared.0.wrapping_add(1);
+                shared.1 = rows;
+            }
+        }
         {
             let shared = self.links.rows.borrow();
             if self.generation != Some(shared.0) {
@@ -1025,6 +1062,26 @@ impl MixerWidget {
             ));
             return true;
         }
+        // Locked: a rack's controls stay where they are — the drag scrolls
+        // the chain, as a finger on the rack's background does. Its
+        // switches still switch (above), and a close-up edits whatever
+        // the lock says: going into one is the decision to.
+        if crate::options::LOCKING.get() {
+            let hold = if finger && self.in_rack(x, y) {
+                let (_, cy) = self.content(x, y);
+                Hold::RackScroll {
+                    from_y: cy,
+                    was: self.rack_scroll,
+                }
+            } else {
+                Hold::Press {
+                    spot: None,
+                    from: (x, y),
+                }
+            };
+            self.holds.push((id, hold));
+            return true;
+        }
         if again {
             if let Some(tone) = self.tone.store.borrow_mut().edit(&guid) {
                 crate::tone::reset(tone, grip);
@@ -1172,11 +1229,25 @@ impl MixerWidget {
             let Some(track) = self.track_at(row) else {
                 continue;
             };
-            // The track's colour, along the foot of its cell.
+            // The track's colour, the whole cell: the mixer's colours at a
+            // glance — the drums' red, the keys' green — and where each
+            // family starts and ends. Brighter along the foot.
+            // The track's own colour, whatever the strips' wash is set to;
+            // an uncoloured track the strips' own grey.
+            let ground = if track.color.is_some() {
+                crate::tcp::track_color(&self.palette, track)
+            } else {
+                self.palette.tcp_tint
+            };
             fill(
                 &mut out,
-                Rect::new(x + 1.0, band - 2.0, x + cell - 1.0, band),
-                crate::mcp::strip_ground(&self.palette, track),
+                Rect::new(x + 0.5, 1.0, x + cell - 0.5, band),
+                ground.multiply_alpha(0.55),
+            );
+            fill(
+                &mut out,
+                Rect::new(x + 0.5, band - 2.0, x + cell - 0.5, band),
+                ground,
             );
             // Its level, a sliver up the cell.
             let level = usize::try_from(track.index)
@@ -1191,7 +1262,7 @@ impl MixerWidget {
             fill(
                 &mut out,
                 Rect::new(mx, top, mx + meter_w, meter_bottom),
-                Color::from_rgb8(0x1c, 0x1e, 0x22),
+                Color::from_rgba8(0x0c, 0x0d, 0x0f, 0xb0),
             );
             if level > 0.0 {
                 let lit_top = meter_bottom - (meter_bottom - top) * level.clamp(0.0, 1.0);
@@ -1210,7 +1281,7 @@ impl MixerWidget {
                 crate::tcp::glyphs(
                     &mut out,
                     &self.font,
-                    self.palette.text_dim,
+                    self.palette.text,
                     &number,
                     x + (cell - text_w) / 2.0,
                     band - 4.0,
@@ -1330,6 +1401,10 @@ impl MixerWidget {
             return;
         }
         let spot = self.spot_at(x, y);
+        // Locked: faders and knobs stay where they are, and a drag from
+        // one scrolls the strips.
+        let locked = crate::options::LOCKING.get();
+        let spot = spot.filter(|s| !(locked && s.control.is_continuous()));
         let turn = spot
             .filter(|spot| spot.control.is_continuous())
             .filter(|spot| {
@@ -1452,7 +1527,18 @@ impl MixerWidget {
             Hold::Press {
                 spot: Some(spot), ..
             } if up == Some(spot) => {
-                if let Some(track) = self.track_at(spot.row).cloned() {
+                if spot.control == Control::Folder
+                    && let Some(track) = self.track_at(spot.row).filter(|t| t.is_folder)
+                {
+                    // Open or shut: the window's folds, planned again.
+                    let open = self
+                        .rows
+                        .get(spot.row + 1)
+                        .zip(self.rows.get(spot.row))
+                        .is_some_and(|((_, next), (_, this))| next > this);
+                    crate::folds::toggle(&track.guid, open);
+                    self.redraw();
+                } else if let Some(track) = self.track_at(spot.row).cloned() {
                     // The clip latch clears on a click while it is lit;
                     // otherwise the band is the fader under it.
                     let control = match spot.control {

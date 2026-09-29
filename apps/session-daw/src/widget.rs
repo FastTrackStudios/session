@@ -386,6 +386,8 @@ pub struct ArrangementWidget {
     /// The previews' generation the recording was cut at: when notes or
     /// waveforms arrive after it (a browser's), it is cut again.
     previews_seen: u64,
+    /// The folds the rows were planned at ([`crate::folds::generation`]).
+    folds_seen: u64,
     /// The ruler's own furniture, for hit testing.
     sections: Vec<daw_ui::studio::project::Section>,
     markers: Vec<daw_ui::studio::project::Marker>,
@@ -578,6 +580,7 @@ impl ArrangementWidget {
             markers: project.markers.clone(),
             project,
             previews_seen: previews.generation(),
+            folds_seen: crate::folds::generation(),
             previews,
             renaming: None,
             keys: crate::keys::Keys::load(),
@@ -1083,10 +1086,20 @@ impl ArrangementWidget {
             C::RecArm => Edit::ToggleArm(guid),
             C::Phase => Edit::SetPhase(guid, !track.phase_inverted),
             C::Name => Edit::Select(guid),
-            // A fold is an edit to the VIEW and not to a track, and the
-            // rack and the routing panel are surfaces this widget does
-            // not own yet. Left alone rather than guessed at.
-            C::Folder | C::Fx | C::Routing | C::Volume | C::Pan => return,
+            // A fold is an edit to the VIEW and not to a track: the
+            // window's folds (`crate::folds`), which plan the rows again.
+            C::Folder => {
+                let open = self
+                    .rows
+                    .get(spot.row + 1)
+                    .zip(self.rows.get(spot.row))
+                    .is_some_and(|((_, next), (_, this))| next > this);
+                crate::folds::toggle(&guid, open);
+                return;
+            }
+            // The rack and the routing panel are surfaces this widget
+            // does not own yet. Left alone rather than guessed at.
+            C::Fx | C::Routing | C::Volume | C::Pan => return,
         };
         // Shown before it is true.
         //
@@ -1577,6 +1590,16 @@ impl ArrangementWidget {
             self.previews_seen = generation;
             self.recut();
         }
+        // A folder opened or shut — here, in the mixer, all at once: the
+        // rows planned again, and the mixer given them.
+        let folds = crate::folds::generation();
+        if folds != self.folds_seen {
+            self.folds_seen = folds;
+            if let Some((planner, raw)) = self.replan.as_ref() {
+                let (project, rows) = planner.plan(raw);
+                self.restructure((*project.0).clone(), rows.as_slice().to_vec());
+            }
+        }
         // Blitz hands a widget its size in device pixels and the pointer in
         // CSS pixels; the page hands both in CSS pixels (and `scale` 1).
         // Laid out in CSS pixels, so a press lands on what is drawn under
@@ -1776,6 +1799,9 @@ impl ArrangementWidget {
                 {
                     return None;
                 }
+                // Locked, an item is background to a finger too: the drag
+                // scrolls, and a tap is still the click that selects it.
+                let locked = crate::options::LOCKING.get();
                 let scrolls = self.hit(x, y).is_some_and(|hit| {
                     matches!(
                         hit.target,
@@ -1783,7 +1809,7 @@ impl ArrangementWidget {
                             | crate::hit::Target::Ruler { .. }
                             | crate::hit::Target::Track { .. }
                             | crate::hit::Target::Empty
-                    )
+                    ) || (locked && matches!(hit.target, crate::hit::Target::Item { .. }))
                 });
                 if !scrolls {
                     return None;
