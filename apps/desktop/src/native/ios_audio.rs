@@ -18,7 +18,7 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_avf_audio::{
     AVAudioSession, AVAudioSessionCategoryOptions, AVAudioSessionCategoryPlayAndRecord,
-    AVAudioSessionModeDefault,
+    AVAudioSessionCategoryPlayback, AVAudioSessionModeDefault, AVAudioSessionPortOverride,
 };
 use objc2_foundation::{NSDictionary, NSNumber, NSString};
 use objc2_media_player::{
@@ -27,28 +27,115 @@ use objc2_media_player::{
     MPNowPlayingInfoPropertyPlaybackRate, MPRemoteCommand, MPRemoteCommandCenter,
     MPRemoteCommandEvent, MPRemoteCommandHandlerStatus,
 };
+use session_daw::device_audio::{Change, Report};
 
-/// Set the audio session up for playing a set: play-and-record, the
-/// loudspeaker, Bluetooth and AirPlay allowed, and active.
+/// Where the microphone choice is kept (Settings → This device): it applies
+/// as the session is set up, at launch.
+fn microphone_file() -> Option<std::path::PathBuf> {
+    Some(dirs::data_dir()?.join("Session").join("audio-microphone"))
+}
+
+/// Whether the session takes the microphone: yes unless turned off.
+fn microphone() -> bool {
+    microphone_file()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .is_none_or(|text| text.trim() != "0")
+}
+
+/// Set the audio session up for playing a set, and make it active: with the
+/// microphone, play-and-record — out of the loudspeaker rather than the
+/// earpiece, Bluetooth (A2DP) and AirPlay allowed; without it, playback
+/// only, which a Bluetooth device plays at its best.
 pub fn configure_session() {
     // SAFETY: AVAudioSession is thread-safe; the statics are Apple's
     // constants, read after the framework has loaded.
     unsafe {
         let session = AVAudioSession::sharedInstance();
-        let (Some(category), Some(mode)) = (
-            AVAudioSessionCategoryPlayAndRecord,
-            AVAudioSessionModeDefault,
-        ) else {
+        let mic = microphone();
+        let category = if mic {
+            AVAudioSessionCategoryPlayAndRecord
+        } else {
+            AVAudioSessionCategoryPlayback
+        };
+        let (Some(category), Some(mode)) = (category, AVAudioSessionModeDefault) else {
             return;
         };
-        let options = AVAudioSessionCategoryOptions::DefaultToSpeaker
-            | AVAudioSessionCategoryOptions::AllowBluetoothA2DP
-            | AVAudioSessionCategoryOptions::AllowAirPlay;
+        let options = if mic {
+            AVAudioSessionCategoryOptions::DefaultToSpeaker
+                | AVAudioSessionCategoryOptions::AllowBluetoothA2DP
+                | AVAudioSessionCategoryOptions::AllowAirPlay
+        } else {
+            AVAudioSessionCategoryOptions::empty()
+        };
         if let Err(e) = session.setCategory_mode_options_error(category, mode, options) {
             tracing::warn!(error = ?e, "ios audio: the session's category was refused");
         }
         if let Err(e) = session.setActive_error(true) {
             tracing::warn!(error = ?e, "ios audio: the session did not become active");
+        }
+    }
+}
+
+/// Whether the output is forced to the loudspeaker (Settings → This
+/// device); the session keeps no way to ask.
+static SPEAKER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The device's audio, now: its route, format and switches.
+pub fn report() -> Report {
+    // SAFETY: reads of the shared session.
+    unsafe {
+        let session = AVAudioSession::sharedInstance();
+        let route = session.currentRoute();
+        let names = |ports: Retained<
+            objc2_foundation::NSArray<objc2_avf_audio::AVAudioSessionPortDescription>,
+        >| {
+            ports
+                .iter()
+                .map(|port| port.portName().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        Report {
+            output: names(route.outputs()),
+            input: names(route.inputs()),
+            sample_rate: session.sampleRate(),
+            buffer_ms: session.IOBufferDuration() * 1000.0,
+            latency_ms: session.outputLatency() * 1000.0,
+            microphone: microphone(),
+            speaker: SPEAKER.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+/// A switch changed in Settings → This device.
+pub fn change(change: Change) {
+    match change {
+        Change::Microphone(on) => {
+            let Some(file) = microphone_file() else {
+                return;
+            };
+            let written = file
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::write(&file, if on { "1" } else { "0" }));
+            if let Err(e) = written {
+                tracing::warn!(error = %e, "ios audio: the microphone choice could not be kept");
+            }
+        }
+        Change::Speaker(on) => {
+            let port = if on {
+                AVAudioSessionPortOverride::Speaker
+            } else {
+                AVAudioSessionPortOverride::None
+            };
+            // SAFETY: the shared session; an override only a
+            // play-and-record session takes (refused, and said, otherwise).
+            match unsafe { AVAudioSession::sharedInstance().overrideOutputAudioPort_error(port) } {
+                Ok(()) => SPEAKER.store(on, std::sync::atomic::Ordering::Relaxed),
+                Err(e) => {
+                    tracing::warn!(error = ?e, "ios audio: the loudspeaker override was refused")
+                }
+            }
         }
     }
 }

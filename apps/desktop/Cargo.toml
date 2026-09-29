@@ -242,7 +242,7 @@ objc2-foundation = { version = "0.3", features = [
 ] }
 # Playing as an iOS audio app (`native::ios_audio`): the audio session
 # (loudspeaker, Bluetooth, AirPlay), Now Playing, and the remote commands.
-objc2-avf-audio = { version = "0.3", features = ["AVAudioSession", "AVAudioSessionTypes"] }
+objc2-avf-audio = { version = "0.3", features = ["AVAudioSession", "AVAudioSessionTypes", "AVAudioSessionRoute"] }
 objc2-media-player = { version = "0.3", features = [
     "MPNowPlayingInfoCenter", "MPRemoteCommandCenter", "MPRemoteCommand",
     "MPRemoteCommandEvent", "MPMediaItem", "block2",

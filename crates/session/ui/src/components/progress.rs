@@ -218,8 +218,12 @@ pub fn SegmentedProgressBar(
     /// narrow to read (a phone held upright): the colours say enough.
     #[props(default = true)]
     labels: bool,
+    /// Square-cornered, to run edge to edge in a bar (a phone's).
+    #[props(default)]
+    flat: bool,
 ) -> Element {
     let bar_height = height.unwrap_or_else(|| "5rem".to_owned());
+    let corners = if flat { "" } else { "rounded-lg" };
     // Text width estimation constants (in pixels):
     // We use generous estimates since text will truncate with ellipsis if needed.
     // Better to show text that gets truncated than hide it entirely.
@@ -575,7 +579,7 @@ pub fn SegmentedProgressBar(
             }
             // Main segmented progress bar
             div {
-                class: "relative w-full h-20 rounded-lg overflow-hidden bg-secondary",
+                                class: "relative w-full h-20 {corners} overflow-hidden bg-secondary",
                 style: "height: {bar_height};",
                 // Render sections as background layers
                 for (index, section_start, _section_end, section_width, section_color, _filled_percent, _section_name, _section_comment) in section_data.iter() {
@@ -748,6 +752,9 @@ pub fn SongProgressBar(
     /// Whether the sections are named (see [`SegmentedProgressBar`]).
     #[props(default = true)]
     labels: bool,
+    /// Square-cornered (see [`SegmentedProgressBar`]).
+    #[props(default)]
+    flat: bool,
 ) -> Element {
     rsx! {
         div {
@@ -755,6 +762,7 @@ pub fn SongProgressBar(
             SegmentedProgressBar {
                 height: height,
                 labels: labels,
+                flat: flat,
                 progress: progress,
                 sections: sections,
                 tempo_markers: tempo_markers,

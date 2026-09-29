@@ -68,11 +68,12 @@ pub fn use_form() -> Form {
     try_use_context::<Signal<Form>>().map_or(Form::Wide, |form| form())
 }
 
-/// How far a phone on its side keeps its controls from each side (`left`,
-/// `right` — nothing, as the app draws edge to edge, under the camera
-/// housing) and how far the top rows keep clear of the screen's rounded
-/// corners (`corner`). Nothing upright, or with no host saying. In logical
-/// pixels; the host provides it as a `Signal<Sides>`.
+/// How far a phone on its side keeps the controls at its edges clear of the
+/// camera housing: `left` or `right`, whichever side it is on — the views'
+/// rail on the left, the inspector's strip on the right (the view itself
+/// runs under it) — and how far the top rows keep clear of the screen's
+/// rounded corners (`corner`). Nothing upright, or with no host saying. In
+/// logical pixels; the host provides it as a `Signal<Sides>`.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Sides {
     pub left: f64,
@@ -231,20 +232,23 @@ pub fn CompactShell(
         None => rsx! {},
     };
     // The song's sections across the top, under the song: where it is
-    // and what comes next, as the wide layout pins them. Not in Perform,
-    // where the navigator is the progress, nor on More's pages.
+    // and what comes next, as the wide layout pins them — in Perform too,
+    // since it stays put whatever the view; not on More's pages.
     let progress = match &current {
-        Some(song) if !control && !view().own() => rsx! {
+        Some(song) if !view().own() => rsx! {
             crate::shell::WithSong {
                 key: "{song.project}",
                 session: song.session.clone(),
                 div {
-                                        style: "position:relative; z-index:5; flex:none; padding:4px 6px; background:{BAR_BG}; \
+                                                            // Edge to edge, square: a bar across the screen, not a
+                    // card in it.
+                    style: "position:relative; z-index:5; flex:none; background:{BAR_BG}; \
                             border-bottom:1px solid {RULE};",
                     // Upright, the sections are too narrow to name.
                     crate::progress::ProgressBar {
-                        height: "1.75rem".to_owned(),
+                                                height: "1.75rem".to_owned(),
                         labels: landscape,
+                        flat: true,
                     }
                 }
             }
@@ -305,10 +309,7 @@ pub fn CompactShell(
                             }
                         }
                     }
-                    div {
-                        style: "flex:none; box-sizing:border-box; padding:0 {sides.corner}px; background:{BAR_BG};",
-                        {progress}
-                    }
+                                        {progress}
                     // Under them, the views' rail and the view: the rail
                     // kept clear of the housing when it is on the left, the
                     // view when it is on the right, and nothing else given up.
@@ -319,8 +320,9 @@ pub fn CompactShell(
                             Tabs { view, rail: true, controls }
                         }
                         div {
-                            style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column; \
-                                    padding-right:{sides.right}px;",
+                                                        // The view to the right edge, under the housing:
+                            // the inspector's strip keeps clear of it itself.
+                            style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
                             {panel}
                         }
                     }

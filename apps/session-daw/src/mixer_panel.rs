@@ -268,23 +268,34 @@ pub fn DawPanels(
     let pins = try_use_context::<crate::shell::Pins>();
     let inspecting = !mixer_only && !docked && pins.is_some_and(|pins| (pins.inspector)());
     let strips = use_context_provider(|| InspectorStrips(Signal::new(1)));
+    // A phone on its side with the camera housing on the right: the strip
+    // moves left of it, its column still reaching the edge.
+    let housing = crate::compact::use_sides().right;
     let inspector_w = if inspecting {
         inspector_width((strips.0)())
+    } else {
+        0.0
+    };
+    let column_w = if inspecting {
+        inspector_w + housing
     } else {
         0.0
     };
     rsx! {
         if !mixer_only {
             div {
-                style: "position:absolute; top:0; left:0; right:{inspector_w}px; bottom:{arrange_bottom};",
+                                style: "position:absolute; top:0; left:0; right:{column_w}px; bottom:{arrange_bottom};",
                 crate::studio::Arrangement {}
             }
         }
         if inspecting {
-            div {
-                style: "position:absolute; top:0; right:0; width:{inspector_w}px; bottom:{arrange_bottom}; \
-                        border-left:1px solid #000; overflow:hidden;",
-                Inspector {}
+                        div {
+                style: "position:absolute; top:0; right:0; width:{column_w}px; bottom:{arrange_bottom}; \
+                        border-left:1px solid #000; overflow:hidden; background:#101113;",
+                div {
+                    style: "position:absolute; top:0; left:0; width:{inspector_w}px; bottom:0;",
+                    Inspector {}
+                }
             }
         }
         div {

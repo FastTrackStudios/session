@@ -148,21 +148,35 @@ pub fn Shell() -> Element {
     });
     use_context_provider(|| session_daw::shell::WindowSize(size));
     // A phone on its side is drawn to both edges (`BLITZ_SAFE_AREA_SIDES=0`
-    // in main): nothing given up to the camera housing — the view runs under
-    // it — only the top rows' clearance of the rounded corners.
+    // in main): the view runs under the camera housing, and only the
+    // controls on its side move clear of it — the views' rail when it is on
+    // the left, the inspector's strip when it is on the right — while the
+    // top rows keep clear of the rounded corners.
     #[cfg_attr(not(target_os = "ios"), allow(unused_variables, unused_mut))]
     let mut sides = use_context_provider(|| Signal::new(session_daw::compact::Sides::default()));
     #[cfg(target_os = "ios")]
     {
+        let reading = window.clone();
         dioxus_native::use_window_event(move |event, _| {
             use session_daw::compact::Sides;
+            /// The housing and the gap beside it: less than the inset the
+            /// system reports, which pads for the rounded corners too.
+            const HOUSING: f64 = 50.0;
             if !matches!(event, winit::event::WindowEvent::RedrawRequested) {
                 return;
             }
+            let insets = reading.safe_area();
+            let scale = reading.scale_factor().max(1.0);
+            let clear = |inset: u32| (f64::from(inset) / scale).min(HOUSING);
             let now = match super::ios_scene::island_on_left() {
-                Some(_) => Sides {
-                    left: 0.0,
+                Some(true) => Sides {
+                    left: clear(insets.left),
                     right: 0.0,
+                    corner: 16.0,
+                },
+                Some(false) => Sides {
+                    left: 0.0,
+                    right: clear(insets.right),
                     corner: 16.0,
                 },
                 None => Sides::default(),
@@ -212,6 +226,12 @@ pub fn Shell() -> Element {
     };
     // The record view's song menu picks the same way.
     use_context_provider(|| session_daw::record_view::PickSong(Callback::new(pick)));
+    // On iOS: the device's audio session, for Settings → This device.
+    #[cfg(target_os = "ios")]
+    use_context_provider(|| session_daw::device_audio::DeviceAudio {
+        read: Callback::new(|()| super::ios_audio::report()),
+        change: Callback::new(super::ios_audio::change),
+    });
     // On iOS: Now Playing kept to the song and the transport, and the
     // lock screen's, headphones' and car's commands carried out.
     #[cfg(target_os = "ios")]

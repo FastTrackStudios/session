@@ -54,6 +54,11 @@ const _: () = assert!(
 /// The gap between strips, so two adjacent ones read as two.
 pub const STRIP_GAP: f64 = 1.0;
 
+/// The widest a touchscreen's strip is (before its zoom): mute and solo
+/// side by side across it, the fader under them — thinner than REAPER's
+/// 86, so more of a phone's or a tablet's mixer is on screen at once.
+pub const TOUCH_STRIP_W: f64 = 62.0;
+
 /// A name with what its folders already say taken off the front.
 ///
 /// `T1 Trig` sits inside `Tom 1`. The `T1` is not information at that
@@ -389,9 +394,9 @@ impl Mixer {
         // cost of the indent rather than a second inconsistency.
         let live = settings.live_strips;
         let touch = settings.touch_strips;
-        let shared = crate::strip::shape(height - rack_h, live);
+        let shared = crate::strip::shape_for(height - rack_h, live, touch);
         let buttons_top = rack_h
-            + crate::strip::fx_section(live)
+            + crate::strip::fx_section(live, touch)
             + f64::from(shared.pan_band)
             + f64::from(shared.input_band)
             + 4.0;
@@ -404,7 +409,7 @@ impl Mixer {
         // A selected strip opens to the focus width — see `widths`.
         // Bounded by what the others can lend, so it reaches it on a
         // wide mixer and falls short gracefully on a crowded one.
-        let widths = widths(rows, layout, tone, settings.focus_width(height));
+        let widths = widths(rows, layout, tone, settings.focus_width(height), touch);
 
         // The tint of the folder open at each depth, so a strip can
         // draw the colours of everything it sits inside.
@@ -461,6 +466,7 @@ impl Mixer {
                     column,
                     collapsed,
                     live,
+                    touch,
                 },
                 rack,
                 // A track with no settings yet gets none drawn rather
@@ -633,6 +639,8 @@ struct Slot {
     collapsed: bool,
     /// A live-mode strip — see `strip::shape`.
     live: bool,
+    /// A touchscreen's strip: no FX row — see `strip::fx_section`.
+    touch: bool,
 }
 
 /// How much of the panel the REAPER strip keeps, with the rack on.
@@ -782,10 +790,19 @@ fn widths(
     // needs. Opening to the working width made a selected strip a
     // slightly larger glance.
     want: f64,
+    // A touchscreen's strips: no wider than [`TOUCH_STRIP_W`].
+    touch: bool,
 ) -> Vec<f64> {
     let mut widths: Vec<f64> = rows
         .iter()
-        .map(|(track, _)| layout.width_of(track.width))
+        .map(|(track, _)| {
+            let width = layout.width_of(track.width);
+            if touch {
+                width.min(TOUCH_STRIP_W)
+            } else {
+                width
+            }
+        })
         .collect();
     if !tone {
         return widths;
@@ -889,8 +906,8 @@ fn strip(
     // three levels deep several pixels above the arm beside it, and a
     // control that moves because of something about ITS track cannot be
     // scanned across tracks.
-    let shape = crate::strip::shape(slot.mixer_h - rack_h, slot.live);
-    let own = crate::strip::shape(h - rack_h, slot.live);
+    let shape = crate::strip::shape_for(slot.mixer_h - rack_h, slot.live, slot.touch);
+    let own = crate::strip::shape_for(h - rack_h, slot.live, slot.touch);
     let geometry = crate::strip::Strip::laid_out(
         w,
         h,
@@ -899,7 +916,8 @@ fn strip(
         buttons_top,
         slot.column,
         slot.live,
-    );
+    )
+    .touched(slot.touch);
     // The strip's own chrome — band, sections, plate — is the whole
     // strip when the rack is stacked over it, and the left column when
     // the rack stands beside it. See `strip::Layout`.
@@ -973,7 +991,7 @@ fn strip(
         );
     }
 
-    let fx_section = crate::strip::fx_section(slot.live) + rack_h;
+    let fx_section = crate::strip::fx_section(slot.live, slot.touch) + rack_h;
     let pan_band = f64::from(shape.pan_band);
     let input_band = f64::from(shape.input_band);
     let stretch_h = f64::from(own.stretch);
@@ -1046,6 +1064,7 @@ fn strip(
             column: slot.column,
             collapsed: slot.collapsed,
             live: slot.live,
+            touch: slot.touch,
         },
         (band_top, pan_band, input_band),
         &shape,
@@ -1421,8 +1440,8 @@ mod selection_tests {
     fn opening_a_strip_does_not_widen_the_mixer() {
         let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
         let layout = Layout::default();
-        let shut = widths(&rows(&stored, None), layout, true, WANT);
-        let open = widths(&rows(&stored, Some(2)), layout, true, WANT);
+        let shut = widths(&rows(&stored, None), layout, true, WANT, false);
+        let open = widths(&rows(&stored, Some(2)), layout, true, WANT, false);
 
         assert!(
             (total(&shut) - total(&open)).abs() < 1e-9,
@@ -1442,7 +1461,13 @@ mod selection_tests {
     #[test]
     fn the_opened_strip_reaches_the_width_it_asked_for() {
         let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
-        let open = widths(&rows(&stored, Some(2)), Layout::default(), true, WANT);
+        let open = widths(
+            &rows(&stored, Some(2)),
+            Layout::default(),
+            true,
+            WANT,
+            false,
+        );
         assert!(
             (open[2] - WANT).abs() < 1e-9,
             "wanted {WANT}, got {}",
@@ -1458,8 +1483,8 @@ mod selection_tests {
     fn the_opened_strip_takes_what_it_can_get() {
         let stored = [60, 60, 60, 60, 60, 60];
         let layout = Layout::default();
-        let shut = widths(&rows(&stored, None), layout, true, 900.0);
-        let open = widths(&rows(&stored, Some(2)), layout, true, 900.0);
+        let shut = widths(&rows(&stored, None), layout, true, 900.0, false);
+        let open = widths(&rows(&stored, Some(2)), layout, true, 900.0, false);
         assert!(
             (total(&shut) - total(&open)).abs() < 1e-9,
             "the total moved"
@@ -1480,7 +1505,7 @@ mod selection_tests {
     fn the_others_lend_from_their_headroom() {
         let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
         let layout = Layout::default();
-        let open = widths(&rows(&stored, Some(2)), layout, true, WANT);
+        let open = widths(&rows(&stored, Some(2)), layout, true, WANT, false);
 
         for (i, width) in open.iter().enumerate() {
             assert!(
@@ -1506,8 +1531,8 @@ mod selection_tests {
     fn selecting_an_already_open_strip_changes_nothing() {
         let stored = [60, 195, 86, 86, 30];
         let layout = Layout::default();
-        let shut = widths(&rows(&stored, None), layout, true, WANT);
-        let open = widths(&rows(&stored, Some(1)), layout, true, WANT);
+        let shut = widths(&rows(&stored, None), layout, true, WANT, false);
+        let open = widths(&rows(&stored, Some(1)), layout, true, WANT, false);
         assert_eq!(shut, open);
     }
 
@@ -1519,8 +1544,8 @@ mod selection_tests {
         // Three strips at the floor have nothing to lend.
         let stored = [30, 30, 30];
         let layout = Layout::default();
-        let shut = widths(&rows(&stored, None), layout, true, WANT);
-        let open = widths(&rows(&stored, Some(0)), layout, true, WANT);
+        let shut = widths(&rows(&stored, None), layout, true, WANT, false);
+        let open = widths(&rows(&stored, Some(0)), layout, true, WANT, false);
         assert!((total(&shut) - total(&open)).abs() < 1e-9);
         assert!(
             (open[0] - 30.0).abs() < 1e-9,
@@ -1535,7 +1560,7 @@ mod selection_tests {
     fn two_open_strips_share_what_is_raised() {
         let stored = [30, 30, 86, 86];
         let layout = Layout::default();
-        let open = widths(&rows(&stored, Some(0)), layout, true, WANT);
+        let open = widths(&rows(&stored, Some(0)), layout, true, WANT, false);
         let both = {
             let rows = RowsRef(std::sync::Arc::new(
                 stored
@@ -1554,7 +1579,7 @@ mod selection_tests {
                     })
                     .collect(),
             ));
-            widths(&rows, layout, true, WANT)
+            widths(&rows, layout, true, WANT, false)
         };
         assert!((total(&open) - total(&both)).abs() < 1e-9);
         assert!(
@@ -1589,8 +1614,8 @@ mod selection_tests {
         let stored = [piece, piece, piece, piece, piece, piece, 86, 86, 30, 30];
         let layout = Layout::default();
 
-        let shut = widths(&rows(&stored, None), layout, true, WANT);
-        let open = widths(&rows(&stored, Some(6)), layout, true, WANT);
+        let shut = widths(&rows(&stored, None), layout, true, WANT, false);
+        let open = widths(&rows(&stored, Some(6)), layout, true, WANT, false);
 
         for (i, (before, after)) in shut.iter().zip(&open).enumerate() {
             if i == 6 {
@@ -1609,7 +1634,7 @@ mod selection_tests {
     fn selection_only_opens_in_tone() {
         let stored = [60, 86, 86];
         let layout = Layout::default();
-        let plain = widths(&rows(&stored, Some(1)), layout, false, WANT);
+        let plain = widths(&rows(&stored, Some(1)), layout, false, WANT, false);
         assert_eq!(plain, vec![60.0, 86.0, 86.0]);
     }
 

@@ -927,15 +927,60 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let account_line = account
         .as_ref()
         .map(|a| a.session.email.clone().unwrap_or_else(|| a.name()));
-    let direction = if wide { "row" } else { "column" };
     let head_top = if wide { TOP } else { TOP.max(12) };
 
-    rsx! {
+    // The main column, beside the sidebar or over the tab bar.
+    let main = rsx! {
         div {
-            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
-                    flex-direction:{direction}; overflow:hidden; background:{BG}; \
-                    color:{TEXT}; font-family:system-ui, -apple-system, sans-serif;",
-            if wide {
+            style: "position:relative; flex:1; min-width:0; min-height:0; display:flex; flex-direction:column;",
+            // The section's title, and its action.
+            div {
+                style: "position:relative; z-index:5; flex:none; display:flex; align-items:center; gap:12px; \
+                        padding:{head_top}px 24px 14px; border-bottom:1px solid {RULE}; background:{BG};",
+                span { style: "flex:1; min-width:0; font-size:24px; font-weight:750; letter-spacing:-0.01em;", "{here.label()}" }
+                {action}
+            }
+            div {
+                style: "position:relative; z-index:1; flex:1; min-height:0; overflow-y:auto;",
+                div {
+                    style: "box-sizing:border-box; width:100%; max-width:980px; padding:20px 24px 40px; \
+                            display:flex; flex-direction:column; gap:24px;",
+                    {content}
+                }
+            }
+            // A download under way, or how the last one went.
+            DownloadBar { downloading: downloading(), note: note(), on_dismiss: move |()| note.set(None) }
+            if !wide {
+                div {
+                    style: "position:relative; z-index:5; flex:none; height:58px; display:flex; align-items:stretch; \
+                            background:{BAR}; border-top:1px solid {RULE};",
+                    for each in Section::ALL {
+                        button {
+                            key: "{each.label()}",
+                                                            style: tab_style(here == each),
+                            onclick: move |_| section.set(each),
+                            SectionIcon { section: each, color: if here == each { TEXT } else { DIM } }
+                            span { style: "font-size:10px; font-weight:600;", "{each.short()}" }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    // A wide window and a narrow one are separate frames, not one patched:
+    // turning a phone from portrait to landscape added the sidebar before
+    // the column, and Blitz left the column where it was — under it.
+    let frame = |direction: &str| {
+        format!(
+            "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
+             flex-direction:{direction}; overflow:hidden; background:{BG}; \
+             color:{TEXT}; font-family:system-ui, -apple-system, sans-serif;"
+        )
+    };
+    if wide {
+        rsx! {
+            div {
+                style: frame("row"),
                 // The sidebar: the mark, the sections, who is signed in.
                 div {
                     style: "position:relative; z-index:5; flex:none; width:236px; display:flex; flex-direction:column; \
@@ -959,42 +1004,12 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                         sign_in.set(SignIn::Out);
                     } }
                 }
+                {main}
             }
-            div {
-                style: "position:relative; flex:1; min-width:0; min-height:0; display:flex; flex-direction:column;",
-                // The section's title, and its action.
-                div {
-                    style: "position:relative; z-index:5; flex:none; display:flex; align-items:center; gap:12px; \
-                            padding:{head_top}px 24px 14px; border-bottom:1px solid {RULE}; background:{BG};",
-                    span { style: "flex:1; min-width:0; font-size:24px; font-weight:750; letter-spacing:-0.01em;", "{here.label()}" }
-                    {action}
-                }
-                div {
-                    style: "position:relative; z-index:1; flex:1; min-height:0; overflow-y:auto;",
-                    div {
-                        style: "box-sizing:border-box; width:100%; max-width:980px; padding:20px 24px 40px; \
-                                display:flex; flex-direction:column; gap:24px;",
-                        {content}
-                    }
-                }
-                // A download under way, or how the last one went.
-                DownloadBar { downloading: downloading(), note: note(), on_dismiss: move |()| note.set(None) }
-                if !wide {
-                    div {
-                        style: "position:relative; z-index:5; flex:none; height:58px; display:flex; align-items:stretch; \
-                                background:{BAR}; border-top:1px solid {RULE};",
-                        for each in Section::ALL {
-                            button {
-                                key: "{each.label()}",
-                                                                style: tab_style(here == each),
-                                onclick: move |_| section.set(each),
-                                SectionIcon { section: each, color: if here == each { TEXT } else { DIM } }
-                                span { style: "font-size:10px; font-weight:600;", "{each.short()}" }
-                            }
-                        }
-                    }
-                }
-            }
+        }
+    } else {
+        rsx! {
+            div { style: frame("column"), {main} }
         }
     }
 }
