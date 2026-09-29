@@ -20,11 +20,15 @@ use std::path::PathBuf;
 
 use dioxus::prelude::*;
 use lucide_dioxus::{
-    ChevronRight, CircleAlert, FileMusic, FolderOpen, LibraryBig, Link, ListMusic, Radio,
+    Check, ChevronRight, CircleAlert, CircleCheck, CloudDownload, FileMusic, HardDriveDownload,
+    House, Library, LibraryBig, Link, ListMusic, LogOut, Music, Pencil, Play, Plus, Radio, Search,
+    Trash2, X,
 };
 use session_daw::loading::{Loading, Progress, mark_src};
 use session_daw::setlist::Setlist;
-use session_daw::stream_set::{LibrarySetlist, Remote};
+use session_daw::stream_set::{
+    Downloading, LibrarySetlist, LibrarySong, ListKind, Remote, with_library,
+};
 use session_daw::task_account::{self, Account, Started};
 
 pub(super) const BG: &str = "#0f1012";
@@ -62,6 +66,11 @@ pub fn App() -> Element {
             {
                 super::ios_scene::window_created(uikit.ui_view);
             }
+            // An audio app, as iOS knows one: its session (the loudspeaker,
+            // Bluetooth, AirPlay) set before the engine opens the device,
+            // and the lock screen's commands listened for.
+            super::ios_audio::configure_session();
+            super::ios_audio::install_commands();
             // No UIKit pinch recognizer: the arrangement reads both
             // fingers itself (a pinch zooms time across and the rows
             // down, and carries the view), and a recognizer that took the
@@ -75,6 +84,8 @@ pub fn App() -> Element {
     use_context_provider(|| {
         session_daw::shell::Back(Callback::new(move |()| {
             session_daw::engine::transport(session_daw::engine::Move::Stop, 0.0);
+            #[cfg(target_os = "ios")]
+            super::ios_audio::clear();
             opened.set(None);
         }))
     });
@@ -167,10 +178,80 @@ pub(super) fn brief(e: &eyre::Report) -> String {
     session_daw::task_set::brief(&format!("{e:#}"))
 }
 
+/// Where the start screen is: its sections, down a sidebar (a tab bar
+/// along the foot on a phone).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Section {
+    Home,
+    Setlists,
+    Lists,
+    Songs,
+    Downloads,
+}
+
+impl Section {
+    const ALL: [Self; 5] = [
+        Self::Home,
+        Self::Setlists,
+        Self::Lists,
+        Self::Songs,
+        Self::Downloads,
+    ];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Home => "Home",
+            Self::Setlists => "Setlists",
+            Self::Lists => "Song lists",
+            Self::Songs => "Songs",
+            Self::Downloads => "Downloads",
+        }
+    }
+
+    /// The word under its icon in a phone's tab bar.
+    const fn short(self) -> &'static str {
+        match self {
+            Self::Lists => "Lists",
+            other => other.label(),
+        }
+    }
+}
+
+/// The list editor, open: on one list, or making one.
+#[derive(Clone, PartialEq)]
+struct Editing {
+    open: Option<String>,
+    create: Option<ListKind>,
+}
+
+/// The window's width in logical pixels, as it is resized.
+fn use_width() -> Signal<f64> {
+    let window = dioxus_native::use_window();
+    let logical = |w: &std::sync::Arc<dyn winit::window::Window>| {
+        f64::from(w.surface_size().width) / w.scale_factor().max(1.0)
+    };
+    let mut width = use_signal(|| logical(&window));
+    dioxus_native::use_window_event(move |event, _| {
+        if matches!(
+            event,
+            winit::event::WindowEvent::SurfaceResized(_)
+                | winit::event::WindowEvent::ScaleFactorChanged { .. }
+        ) {
+            let now = logical(&window);
+            if (now - *width.peek()).abs() > 0.5 {
+                width.set(now);
+            }
+        }
+    });
+    width
+}
+
 #[component]
 fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let mut opening = use_signal(|| Opening::Idle);
-    let local = use_hook(documents);
+    let mut local = use_signal(documents);
+    let mut section = use_signal(|| Section::Home);
+    let width = use_width();
 
     // Open a set on a thread of its own; it becomes the window's when it
     // is ready. Meanwhile the loading screen says where it has got to.
@@ -226,11 +307,10 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let mut orgs = use_signal(|| Load::<Vec<String>>::Waiting);
     let mut org = use_signal(|| None::<String>);
     let mut setlists = use_signal(|| Load::<Vec<LibrarySetlist>>::Waiting);
+    let mut songs = use_signal(|| Load::<Vec<(LibrarySong, bool)>>::Waiting);
     // The list editor, over the page; leaving it reads the lists again.
-    let mut managing = use_signal(|| false);
+    let mut editing = use_signal(|| None::<Editing>);
     let mut reread = use_signal(|| 0_u32);
-    // The signed-in person's orgs, and the chosen org's setlists, as they
-    // change.
     let account = match sign_in() {
         SignIn::In(account) => Some(account),
         _ => None,
@@ -252,17 +332,29 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             }
         });
     }));
-    let for_setlists = account.clone().zip(org()).map(|(a, o)| (a, o, reread()));
-    use_effect(use_reactive!(|for_setlists| {
-        let Some((account, org, _)) = for_setlists else {
+    // The chosen org's lists and songs, as they change.
+    let for_library = account.clone().zip(org()).map(|(a, o)| (a, o, reread()));
+    use_effect(use_reactive!(|for_library| {
+        let Some((account, org, _)) = for_library else {
             return;
         };
         setlists.set(Load::Waiting);
+        songs.set(Load::Waiting);
+        let library = account.library(&org);
+        let for_songs = library.clone();
         spawn(async move {
-            let library = account.library(&org);
             match off_thread(move || session_daw::stream_set::setlists(&library)).await {
                 Some(Ok(list)) => setlists.set(Load::Ready(list)),
                 Some(Err(e)) => setlists.set(Load::Failed(brief(&e))),
+                None => {}
+            }
+        });
+        spawn(async move {
+            match off_thread(move || with_library(&for_songs, |l| async move { l.songs().await }))
+                .await
+            {
+                Some(Ok(list)) => songs.set(Load::Ready(list)),
+                Some(Err(e)) => songs.set(Load::Failed(brief(&e))),
                 None => {}
             }
         });
@@ -311,6 +403,8 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
         );
     };
     let bridge = use_hook(remembered_bridge);
+    // The set opened last, while it is still here.
+    let last = use_hook(|| super::remembered().filter(|p| p.exists()));
     let join = {
         let who = who.clone();
         move |text: String| {
@@ -355,12 +449,8 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let mut join_link = join.clone();
     let mut join_pasted = join;
 
-    // Opening: the loading screen, whole.
-    if let Opening::Busy(progress) = opening() {
-        return rsx! { Loading { progress } };
-    }
     // Streaming one of the library's lists in, as the member signed in.
-    let mut play_list = move |account: Account, setlist: LibrarySetlist| {
+    let play = use_callback(move |(account, setlist): (Account, LibrarySetlist)| {
         let Some(org) = org() else { return };
         let library = account.library(&org);
         let name = account.name();
@@ -385,9 +475,85 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                 )
             }),
         );
-    };
+    });
+
+    // Downloading a list (or a song) onto this device, to open with no
+    // connection: one at a time, its progress along the foot.
+    let mut downloading = use_signal(|| None::<Downloading>);
+    let mut note = use_signal(|| None::<(bool, String)>);
+    let download = use_callback(
+        move |(account, title, list): (Account, String, Vec<LibrarySong>)| {
+            let (Some(org), Some(into)) = (org(), documents_dir()) else {
+                return;
+            };
+            if downloading.peek().is_some() {
+                note.set(Some((
+                    false,
+                    "One download at a time — this one starts when the other is done.".to_owned(),
+                )));
+                return;
+            }
+            let library = account.library(&org);
+            downloading.set(Some(Downloading {
+                title: title.clone(),
+                song: list.first().map(|s| s.title.clone()).unwrap_or_default(),
+                index: 0,
+                count: list.len(),
+                done: 0,
+                total: 0,
+            }));
+            note.set(None);
+            let (tell, mut heard) = tokio::sync::mpsc::unbounded_channel::<Downloading>();
+            spawn(async move {
+                while let Some(step) = heard.recv().await {
+                    if downloading.peek().is_some() {
+                        downloading.set(Some(step));
+                    }
+                }
+            });
+            spawn(async move {
+                let named = title.clone();
+                let outcome = off_thread(move || {
+                    session_daw::stream_set::download(&library, &named, &list, &into, &|step| {
+                        drop(tell.send(step));
+                    })
+                })
+                .await;
+                downloading.set(None);
+                match outcome {
+                    Some(Ok(_)) => {
+                        note.set(Some((
+                            true,
+                            format!("{title} is on this device — it opens with no connection."),
+                        )));
+                        local.set(documents());
+                    }
+                    Some(Err(e)) => note.set(Some((
+                        false,
+                        format!("{title} did not download — {}", brief(&e)),
+                    ))),
+                    None => {}
+                }
+            });
+        },
+    );
+    let remove = use_callback(move |path: PathBuf| {
+        let Some(into) = documents_dir() else { return };
+        match session_daw::stream_set::remove_download(&into, &path) {
+            Ok(()) => local.set(documents()),
+            Err(e) => note.set(Some((
+                false,
+                format!("Could not remove it — {}", brief(&e)),
+            ))),
+        }
+    });
+
+    // Opening: the loading screen, whole.
+    if let Opening::Busy(progress) = opening() {
+        return rsx! { Loading { progress } };
+    }
     // The list editor, whole.
-    if managing()
+    if let Some(Editing { open, create }) = editing()
         && let (Some(account), Some(slug)) = (account.clone(), org())
     {
         let lists = match setlists() {
@@ -398,356 +564,1114 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             super::library::LibraryEditor {
                 library: account.library(&slug),
                 lists,
+                open,
+                create_first: create,
                 on_back: move |()| {
-                    managing.set(false);
+                    editing.set(None);
                     reread += 1;
                 },
                 on_play: move |setlist: LibrarySetlist| {
-                    managing.set(false);
-                    play_list(account.clone(), setlist);
+                    editing.set(None);
+                    play.call((account.clone(), setlist));
                 },
             }
         };
     }
 
-    rsx! {
-        div {
-            style: "position:absolute; top:0; left:0; width:100vw; height:100vh; box-sizing:border-box; \
-                    overflow-y:auto; background:{BG}; color:{TEXT}; font-family:system-ui, sans-serif; \
-                    display:flex; flex-direction:column; align-items:center;",
+    let wide = width() >= 760.0;
+    let here = section();
+    // Signing in, as a card: where the library would be.
+    let sign_in_card = rsx! {
+        match sign_in() {
+            SignIn::Out | SignIn::Failed(_) => rsx! {
+                div {
+                    style: "display:flex; flex-wrap:wrap; align-items:center; gap:16px; padding:20px; border-radius:20px; \
+                            background:linear-gradient(120deg, #1d3357 0%, {BAR} 70%);",
+                    Art { seed: "library".to_owned(), size: 60, radius: 16, LibraryBig { size: 28, color: ART_INK } }
+                    div {
+                        style: "flex:1 1 220px; min-width:0; display:flex; flex-direction:column; gap:4px;",
+                        span { style: "font-size:18px; font-weight:750; letter-spacing:-0.01em;", "Bring your library" }
+                        span { style: "font-size:13px; color:#a3aab4; line-height:1.45;", "Sign in with FastTrackStudio to play your org's setlists, make lists, and keep them on this device." }
+                        if let SignIn::Failed(why) = sign_in() {
+                            span { style: "font-size:12px; color:{WARN}; line-height:1.4;", "Not signed in — {why}" }
+                        }
+                    }
+                    Pill { label: "Sign in", primary: true, on_press: start_sign_in }
+                }
+            },
+            SignIn::Starting => rsx! {
+                Card { span { style: "font-size:14px; color:{DIM};", "Asking Task for a code…" } }
+            },
+            SignIn::Code(started) => rsx! {
+                Card {
+                    div {
+                        style: "display:flex; flex-direction:column; align-items:center; gap:12px; padding:6px 0;",
+                        span { style: "font-size:14px; color:{DIM};", "Approve this code in your browser" }
+                        CodeBoxes { code: started.code.user_code.clone() }
+                        span { style: "font-size:12px; color:#6b7280;", "Waiting for approval…" }
+                        Pill {
+                            label: "Open the page again",
+                            primary: false,
+                            on_press: move |()| super::open_url(&started.link()),
+                        }
+                    }
+                }
+            },
+            SignIn::In(_) => rsx! {},
+        }
+    };
+    let signed_in = account.is_some();
+    let lists_now = match setlists() {
+        Load::Ready(list) => list,
+        _ => Vec::new(),
+    };
+    let into = documents_dir();
+    let downloaded = move |title: &str| {
+        into.as_ref()
+            .is_some_and(|dir| session_daw::stream_set::download_file(dir, title).exists())
+    };
+
+    // What the section shows.
+    let content = match here {
+        Section::Home => rsx! {
+            if let Opening::Failed(why) = opening() {
+                Banner { good: false, text: format!("Could not open it — {why}") }
+            }
+            // The way in: back to the last set, or into the live demo.
             div {
-                style: "width:100%; max-width:560px; box-sizing:border-box; padding:{TOP}px 16px 48px; \
-                        display:flex; flex-direction:column; gap:26px;",
-                // The mark and the name.
-                div {
-                    style: "display:flex; align-items:center; gap:14px; padding:4px 2px 0;",
-                    img { src: mark_src(), width: "52", height: "52", style: "border-radius:12px; flex:none;" }
-                    div {
-                        style: "display:flex; flex-direction:column; gap:2px; min-width:0;",
-                        span { style: "font-size:28px; font-weight:750; letter-spacing:-0.02em;", "Session" }
-                        span { style: "font-size:14px; color:{DIM};", "Your setlist, live." }
+                style: "display:flex; flex-wrap:wrap; gap:14px;",
+                if let Some(path) = last.clone() {
+                    Hero {
+                        kicker: "Jump back in",
+                        title: title_of(&path),
+                        detail: kind_of(&path),
+                        seed: title_of(&path),
+                        live: false,
+                        on_press: move |()| open_path(path.clone()),
+                        FileMusic { size: 28, color: ART_INK }
                     }
                 }
-                if let Opening::Failed(why) = opening() {
-                    div {
-                        style: "display:flex; gap:10px; align-items:flex-start; padding:12px 14px; border-radius:12px; \
-                                background:#2a1f12; border:1px solid #5b4219; color:{WARN}; font-size:13px; line-height:1.45;",
-                        CircleAlert { size: 18, color: "currentColor" }
-                        span { style: "flex:1; min-width:0;", "Could not open it — {why}" }
-                    }
-                }
-                // The REAPER this device drove last, through its bridge.
-                if let Some(address) = bridge.clone() {
-                    div {
-                        style: "display:flex; flex-direction:column; gap:10px;",
-                        Heading { label: "Your REAPER" }
-                        ListRow {
-                            first: true,
-                            title: "Reconnect to REAPER",
-                            detail: address.clone(),
-                            on_press: move |()| connect_bridge(address.clone()),
-                        }
-                    }
-                }
-                // Live: the demo first, the way most people arrive.
-                div {
-                    style: "display:flex; flex-direction:column; gap:10px;",
-                    Heading { label: "Live now" }
-                    button {
-                        style: "display:flex; align-items:center; gap:14px; width:100%; box-sizing:border-box; padding:18px 16px; \
-                                border-radius:16px; border:1px solid #2c4a6b; cursor:pointer; text-align:left; \
-                                background:linear-gradient(135deg, #16283d 0%, #121a24 60%, #111316 100%); \
-                                color:{TEXT}; font-family:inherit;",
-                        onclick: move |_| join_demo(DEMO_LINK.to_owned()),
-                        div {
-                            style: "flex:none; width:44px; height:44px; border-radius:22px; display:flex; \
-                                    align-items:center; justify-content:center; background:{ACCENT}; color:#0b0c0e;",
-                            Radio { size: 22, color: "currentColor" }
-                        }
-                        div {
-                            style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
-                            div {
-                                style: "display:flex; align-items:center; gap:8px;",
-                                span { style: "font-size:17px; font-weight:650;", "The Session demo" }
-                                span {
-                                    style: "font-size:10px; font-weight:750; letter-spacing:0.08em; padding:2px 6px; \
-                                            border-radius:5px; background:#3aa0ff26; color:{ACCENT};",
-                                    "LIVE"
-                                }
-                            }
-                            span { style: "font-size:13px; color:#aab4c0; line-height:1.4;", "Play along with everyone in the demo set — chart, lyrics and click." }
-                        }
-                        ChevronRight { size: 20, color: "#6b7a8c" }
-                    }
-                    // A link someone shared.
-                    div {
-                        style: "display:flex; gap:8px; align-items:center; padding:8px; border-radius:14px; \
-                                background:{BAR}; border:1px solid {RULE};",
-                        div {
-                            style: "flex:none; padding-left:6px; color:{DIM}; display:flex;",
-                            Link { size: 18, color: "currentColor" }
-                        }
-                        // The hint under the field while it is empty: Blitz
-                        // draws no `placeholder`.
-                        div {
-                            style: "position:relative; flex:1; min-width:0; height:38px;",
-                            if link().is_empty() {
-                                span {
-                                    style: "position:absolute; top:0; left:6px; height:38px; display:flex; \
-                                            align-items:center; font-size:15px; color:#6b7280; pointer-events:none;",
-                                    "Paste a live link or a REAPER bridge"
-                                }
-                            }
-                            input {
-                                style: "position:absolute; top:0; left:0; width:100%; height:38px; box-sizing:border-box; \
-                                        padding:0 6px; border:none; background:transparent; color:{TEXT}; \
-                                        font-family:inherit; font-size:15px;",
-                                r#type: "text",
-                                value: "{link}",
-                                oninput: move |e| link.set(e.value()),
-                            }
-                        }
-                        if cfg!(target_os = "ios") && link().trim().is_empty() {
-                            Pill {
-                                label: "Paste",
-                                primary: false,
-                                on_press: move |()| {
-                                    if let Some(text) = super::pasted() {
-                                        link.set(text.clone());
-                                        join_pasted(text);
-                                    }
-                                },
-                            }
-                        } else {
-                            Pill {
-                                label: "Join",
-                                primary: !link().trim().is_empty(),
-                                on_press: move |()| {
-                                    if !link().trim().is_empty() {
-                                        join_link(link());
-                                    }
-                                },
-                            }
-                        }
-                    }
-                }
-                // Task: the library.
-                div {
-                    style: "display:flex; flex-direction:column; gap:10px;",
-                    Heading { label: "Your library" }
-                    match sign_in() {
-                        SignIn::Out | SignIn::Failed(_) => rsx! {
-                            Card {
-                                div {
-                                    style: "display:flex; gap:14px; align-items:flex-start;",
-                                    div {
-                                        style: "flex:none; width:40px; height:40px; border-radius:10px; display:flex; \
-                                                align-items:center; justify-content:center; background:#1f232a; color:{ACCENT};",
-                                        LibraryBig { size: 20, color: "currentColor" }
-                                    }
-                                    div {
-                                        style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;",
-                                        span { style: "font-size:16px; font-weight:650;", "Your setlists, from Task" }
-                                        span { style: "font-size:13px; color:{DIM}; line-height:1.45;", "Sign in with your FastTrackStudio account to open your org's sets and stream them here." }
-                                        if let SignIn::Failed(why) = sign_in() {
-                                            span { style: "font-size:12px; color:{WARN}; line-height:1.4;", "Not signed in — {why}" }
-                                        }
-                                    }
-                                }
-                                div {
-                                    style: "display:flex; justify-content:flex-end; margin-top:14px;",
-                                    Pill { label: "Sign in", primary: true, on_press: start_sign_in }
-                                }
-                            }
-                        },
-                        SignIn::Starting => rsx! {
-                            Card { span { style: "font-size:14px; color:{DIM};", "Asking Task for a code…" } }
-                        },
-                        SignIn::Code(started) => rsx! {
-                            Card {
-                                div {
-                                    style: "display:flex; flex-direction:column; align-items:center; gap:12px; padding:6px 0;",
-                                    span { style: "font-size:14px; color:{DIM};", "Approve this code in your browser" }
-                                    CodeBoxes { code: started.code.user_code.clone() }
-                                    span { style: "font-size:12px; color:#6b7280;", "Waiting for approval…" }
-                                    Pill {
-                                        label: "Open the page again",
-                                        primary: false,
-                                        on_press: move |()| super::open_url(&started.link()),
-                                    }
-                                }
-                            }
-                        },
-                        SignIn::In(account) => rsx! {
-                            TaskLibrary {
-                                account: account.clone(),
-                                orgs: orgs(),
-                                org,
-                                setlists: setlists(),
-                                on_open: {
-                                    let account = account.clone();
-                                    move |setlist: LibrarySetlist| play_list(account.clone(), setlist)
-                                },
-                                on_manage: move |()| managing.set(true),
-                                on_sign_out: move |()| {
-                                    task_account::sign_out();
-                                    sign_in.set(SignIn::Out);
-                                },
-                            }
-                        },
-                    }
-                }
-                // Songs and sets on this device.
-                div {
-                    style: "display:flex; flex-direction:column; gap:10px;",
-                    Heading { label: LOCAL_TITLE }
-                    div {
-                        style: "display:flex; flex-direction:column; border-radius:14px; overflow:hidden; \
-                                background:{BAR}; border:1px solid {RULE};",
-                        if local.is_empty() {
-                            div {
-                                style: "display:flex; gap:12px; align-items:center; padding:16px; font-size:13px; \
-                                        line-height:1.45; color:{DIM};",
-                                FolderOpen { size: 20, color: "currentColor" }
-                                span { style: "flex:1; min-width:0;", "{LOCAL_EMPTY}" }
-                            }
-                        }
-                        for (i, path) in local.clone().into_iter().enumerate() {
-                            ListRow {
-                                key: "{path.display()}",
-                                first: i == 0,
-                                title: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                                detail: kind_of(&path),
-                                on_press: move |()| open_path(path.clone()),
-                            }
-                        }
-                        if cfg!(not(target_os = "ios")) {
-                            ListRow {
-                                first: local.is_empty(),
-                                title: "Open a song or setlist…",
-                                detail: "A REAPER project, a .session, or a .setlist",
-                                on_press: move |()| {
-                                    if let Some(path) = super::pick() {
-                                        open_path(path);
-                                    }
-                                },
-                            }
-                        }
-                    }
+                Hero {
+                    kicker: "Live now",
+                    title: "The Session demo".to_owned(),
+                    detail: "Play along with the set — chart, lyrics, click.".to_owned(),
+                    seed: "demo".to_owned(),
+                    live: true,
+                    on_press: move |()| join_demo(DEMO_LINK.to_owned()),
+                    Radio { size: 30, color: ART_INK }
                 }
             }
-        }
-    }
-}
-
-/// The signed-in person's library: which org, its setlists, signing out.
-#[component]
-fn TaskLibrary(
-    account: Account,
-    orgs: Load<Vec<String>>,
-    org: Signal<Option<String>>,
-    setlists: Load<Vec<LibrarySetlist>>,
-    on_open: EventHandler<LibrarySetlist>,
-    /// Open the list editor.
-    on_manage: EventHandler<()>,
-    on_sign_out: EventHandler<()>,
-) -> Element {
-    use session_daw::stream_set::ListKind;
-    let who = account
-        .session
-        .email
-        .clone()
-        .unwrap_or_else(|| account.name());
-    rsx! {
-        if let Load::Ready(list) = &orgs {
-            if list.len() > 1 {
+            // Joining by link: a set someone shared, or a REAPER's bridge.
+            div {
+                style: "display:flex; gap:8px; align-items:center; height:50px; padding:0 6px 0 14px; \
+                        border-radius:14px; background:{BAR};",
+                Link { size: 18, color: DIM }
+                // The hint under the field while it is empty: Blitz
+                // draws no `placeholder`.
                 div {
-                    style: "display:flex; flex-wrap:wrap; gap:6px;",
-                    for slug in list.clone() {
-                        Chip {
-                            key: "{slug}",
-                            label: slug.clone(),
-                            on: org().as_deref() == Some(slug.as_str()),
-                            on_press: move |()| org.set(Some(slug.clone())),
-                        }
-                    }
-                }
-            }
-        }
-        match (&orgs, &setlists) {
-            (Load::Failed(why), _) | (_, Load::Failed(why)) => rsx! {
-                Card { span { style: "font-size:13px; color:{WARN}; line-height:1.45;", "Could not read the library — {why}" } }
-            },
-            (Load::Waiting, _) | (_, Load::Waiting) => rsx! {
-                Card { span { style: "font-size:14px; color:{DIM};", "Finding your setlists…" } }
-            },
-            (_, Load::Ready(list)) if list.is_empty() => rsx! {
-                Card { span { style: "font-size:14px; color:{DIM};", "No lists in this library yet — make a song list, then a setlist from it." } }
-            },
-            (_, Load::Ready(list)) => rsx! {
-                // Sets first: what is played. Then the song lists they are
-                // picked from — each can be played whole too.
-                for (kind, label) in [(ListKind::Set, "Setlists"), (ListKind::Songs, "Song lists")] {
-                    if list.iter().any(|l| l.kind == kind) {
+                    style: "position:relative; flex:1; min-width:0; height:40px;",
+                    if link().is_empty() {
                         span {
-                            key: "{label}",
-                            style: "font-size:11px; font-weight:700; letter-spacing:0.06em; color:#6b7280; padding:4px 4px 0;",
-                            "{label.to_uppercase()}"
+                            style: "position:absolute; top:0; left:4px; height:40px; display:flex; \
+                                    align-items:center; font-size:15px; color:#6b7280; pointer-events:none; \
+                                    white-space:nowrap; overflow:hidden;",
+                            "Join with a link"
                         }
-                        for setlist in list.iter().filter(|l| l.kind == kind).cloned() {
-                            SetlistCard {
-                                key: "{setlist.id}",
-                                setlist: setlist.clone(),
-                                on_press: move |()| on_open.call(setlist.clone()),
+                    }
+                    input {
+                        style: "position:absolute; top:0; left:0; width:100%; height:40px; box-sizing:border-box; \
+                                padding:0 4px; border:none; background:transparent; color:{TEXT}; \
+                                font-family:inherit; font-size:15px;",
+                        r#type: "text",
+                        value: "{link}",
+                        oninput: move |e| link.set(e.value()),
+                    }
+                }
+                if cfg!(target_os = "ios") && link().trim().is_empty() {
+                    Pill {
+                        label: "Paste",
+                        primary: false,
+                        on_press: move |()| {
+                            if let Some(text) = super::pasted() {
+                                link.set(text.clone());
+                                join_pasted(text);
+                            }
+                        },
+                    }
+                } else {
+                    Pill {
+                        label: "Join",
+                        primary: !link().trim().is_empty(),
+                        on_press: move |()| {
+                            if !link().trim().is_empty() {
+                                join_link(link());
+                            }
+                        },
+                    }
+                }
+            }
+            // The REAPER this device drove last, through its bridge.
+            if let Some(address) = bridge.clone() {
+                Shortcut {
+                    title: "Reconnect to REAPER".to_owned(),
+                    detail: address.clone(),
+                    on_press: move |()| connect_bridge(address.clone()),
+                    Radio { size: 18, color: ACCENT }
+                }
+            }
+            // The library's setlists.
+            if signed_in {
+                Shelf { title: "Your setlists", on_more: move |()| section.set(Section::Setlists),
+                    OrgChips { orgs: orgs(), org }
+                    match setlists() {
+                        Load::Waiting => rsx! { Quiet { text: "Finding your setlists…" } },
+                        Load::Failed(why) => rsx! { Banner { good: false, text: format!("Could not read the library — {why}") } },
+                        Load::Ready(_) => rsx! {
+                            Covers {
+                                for list in lists_now.iter().filter(|l| l.kind == ListKind::Set).take(8).cloned() {
+                                    Cover {
+                                        key: "{list.id}",
+                                        title: list.title.clone(),
+                                        detail: format!("{} songs", list.songs.len()),
+                                        seed: list.title.clone(),
+                                        saved: downloaded(&list.title),
+                                        on_press: {
+                                            let account = account.clone();
+                                            move |()| if let Some(account) = account.clone() { play.call((account, list.clone())) }
+                                        },
+                                        ListMusic { size: 34, color: ART_INK }
+                                    }
+                                }
+                                Cover {
+                                    title: "New setlist".to_owned(),
+                                    detail: "From your song lists".to_owned(),
+                                    seed: String::new(),
+                                    saved: false,
+                                    on_press: move |()| editing.set(Some(Editing { open: None, create: Some(ListKind::Set) })),
+                                    Plus { size: 34, color: DIM }
+                                }
+                            }
+                        },
+                    }
+                }
+            } else {
+                {sign_in_card.clone()}
+            }
+            // What opens with no connection.
+            if !local().is_empty() {
+                Shelf { title: "On this device", on_more: move |()| section.set(Section::Downloads),
+                    Covers {
+                        for path in local().into_iter().take(8) {
+                            Cover {
+                                key: "{path.display()}",
+                                title: title_of(&path),
+                                detail: kind_of(&path),
+                                seed: title_of(&path),
+                                saved: true,
+                                on_press: {
+                                    let path = path.clone();
+                                    move |()| open_path(path.clone())
+                                },
+                                if kind_of(&path) == "Setlist" {
+                                    ListMusic { size: 34, color: ART_INK }
+                                } else {
+                                    Music { size: 34, color: ART_INK }
+                                }
                             }
                         }
                     }
                 }
-            },
-        }
-        div {
-            style: "display:flex; justify-content:flex-end;",
-            Pill { label: "Make and edit lists", primary: false, on_press: move |()| on_manage.call(()) }
-        }
-        div {
-            style: "display:flex; align-items:center; gap:8px; padding:0 4px; font-size:12px; color:#6b7280;",
-            span { style: "flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;", "Signed in as {who}" }
-            button {
-                style: "border:none; background:transparent; color:{DIM}; font-family:inherit; font-size:12px; \
-                        text-decoration:underline; cursor:pointer; padding:4px;",
-                onclick: move |_| on_sign_out.call(()),
-                "Sign out"
             }
+        },
+        Section::Setlists | Section::Lists => {
+            let kind = if here == Section::Setlists {
+                ListKind::Set
+            } else {
+                ListKind::Songs
+            };
+            rsx! {
+                if signed_in {
+                    OrgChips { orgs: orgs(), org }
+                    match setlists() {
+                        Load::Waiting => rsx! { Quiet { text: "Finding your lists…" } },
+                        Load::Failed(why) => rsx! { Banner { good: false, text: format!("Could not read the library — {why}") } },
+                        Load::Ready(_) => rsx! {
+                            Rows {
+                                if !lists_now.iter().any(|l| l.kind == kind) {
+                                                                        Quiet { text: none_yet(kind) }
+                                }
+                                for list in lists_now.iter().filter(|l| l.kind == kind).cloned() {
+                                    ListRow2 {
+                                        key: "{list.id}",
+                                        title: list.title.clone(),
+                                        detail: songs_line(&list),
+                                        count: list.songs.len(),
+                                        downloaded: downloaded(&list.title),
+                                        busy: downloading().is_some_and(|d| d.title == list.title),
+                                        on_play: {
+                                            let (account, list) = (account.clone(), list.clone());
+                                            move |()| if let Some(account) = account.clone() { play.call((account, list.clone())) }
+                                        },
+                                        on_download: {
+                                            let (account, list) = (account.clone(), list.clone());
+                                            move |()| if let Some(account) = account.clone() { download.call((account, list.title.clone(), list.songs.clone())) }
+                                        },
+                                        on_edit: {
+                                            let id = list.id.clone();
+                                            move |()| editing.set(Some(Editing { open: Some(id.clone()), create: None }))
+                                        },
+                                    }
+                                }
+                            }
+                        },
+                    }
+                } else {
+                    {sign_in_card.clone()}
+                }
+            }
+        }
+        Section::Songs => rsx! {
+            if signed_in {
+                OrgChips { orgs: orgs(), org }
+                SongsList {
+                    songs: songs(),
+                    downloaded: move |title: String| downloaded(&title),
+                    on_play: {
+                        let account = account.clone();
+                        move |song: LibrarySong| if let Some(account) = account.clone() {
+                            play.call((account, LibrarySetlist {
+                                id: format!("song-{}", song.slug),
+                                title: song.title.clone(),
+                                kind: ListKind::Songs,
+                                songs: vec![song],
+                            }));
+                        }
+                    },
+                    on_download: {
+                        let account = account.clone();
+                        move |song: LibrarySong| if let Some(account) = account.clone() {
+                            download.call((account, song.title.clone(), vec![song]));
+                        }
+                    },
+                }
+            } else {
+                {sign_in_card.clone()}
+            }
+        },
+        Section::Downloads => rsx! {
+            Quiet { text: LOCAL_HINT }
+            Rows {
+                if local().is_empty() {
+                    Quiet { text: LOCAL_EMPTY }
+                }
+                for path in local() {
+                    LocalRow {
+                        key: "{path.display()}",
+                        title: title_of(&path),
+                        detail: kind_of(&path),
+                        removable: path.extension().is_some_and(|e| e.eq_ignore_ascii_case("setlist")),
+                        on_open: {
+                            let path = path.clone();
+                            move |()| open_path(path.clone())
+                        },
+                        on_remove: {
+                            let path = path.clone();
+                            move |()| remove.call(path.clone())
+                        },
+                    }
+                }
+                if cfg!(not(target_os = "ios")) {
+                    LocalRow {
+                        title: "Open a song or setlist…".to_owned(),
+                        detail: "A REAPER project, a .session, or a .setlist".to_owned(),
+                        removable: false,
+                        on_open: move |()| {
+                            if let Some(path) = super::pick() {
+                                open_path(path);
+                            }
+                        },
+                        on_remove: move |()| {},
+                    }
+                }
+            }
+        },
+    };
+    // The section's own action, beside its title.
+    let action = match here {
+        Section::Setlists | Section::Lists if signed_in => {
+            let kind = if here == Section::Setlists {
+                ListKind::Set
+            } else {
+                ListKind::Songs
+            };
+            rsx! {
+                Pill {
+                    label: if kind == ListKind::Set { "New setlist" } else { "New song list" },
+                    primary: true,
+                    on_press: move |()| editing.set(Some(Editing { open: None, create: Some(kind) })),
+                }
+            }
+        }
+        _ => rsx! {},
+    };
+    let account_line = account
+        .as_ref()
+        .map(|a| a.session.email.clone().unwrap_or_else(|| a.name()));
+    let head_top = if wide { TOP } else { TOP.max(12) };
+
+    // The main column, beside the sidebar or over the tab bar.
+    let main = rsx! {
+        div {
+            style: "position:relative; flex:1; min-width:0; min-height:0; display:flex; flex-direction:column;",
+            // The section's title, its action — and, on a phone, who is
+            // signed in (the sidebar carries it on a wide window).
+            div {
+                style: "position:relative; z-index:5; flex:none; display:flex; align-items:center; gap:12px; \
+                        padding:{head_top}px 24px 12px; background:{BG};",
+                if !wide {
+                    img { src: mark_src(), width: "30", height: "30", style: "border-radius:8px; flex:none;" }
+                }
+                span { style: "flex:1; min-width:0; font-size:26px; font-weight:800; letter-spacing:-0.02em;", "{here.label()}" }
+                {action}
+                if !wide {
+                    AccountButton {
+                        email: account_line.clone(),
+                        on_sign_in: start_sign_in,
+                        on_sign_out: move |()| {
+                            task_account::sign_out();
+                            sign_in.set(SignIn::Out);
+                        },
+                    }
+                }
+            }
+            div {
+                style: "position:relative; z-index:1; flex:1; min-height:0; overflow-y:auto;",
+                div {
+                    style: "box-sizing:border-box; width:100%; max-width:1100px; padding:8px 24px 40px; \
+                            display:flex; flex-direction:column; gap:28px;",
+                    {content}
+                }
+            }
+            // A download under way, or how the last one went.
+            DownloadBar { downloading: downloading(), note: note(), on_dismiss: move |()| note.set(None) }
+            if !wide {
+                div {
+                    style: "position:relative; z-index:5; flex:none; height:56px; display:flex; align-items:stretch; \
+                            background:{BAR}; border-top:1px solid {RULE};",
+                    for each in Section::ALL {
+                        button {
+                            key: "{each.label()}",
+                            style: tab_style(here == each),
+                            onclick: move |_| section.set(each),
+                            SectionIcon { section: each, color: if here == each { ACCENT } else { DIM } }
+                            span { style: "font-size:10px; font-weight:600;", "{each.short()}" }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    // A wide window and a narrow one are separate frames, not one patched:
+    // turning a phone from portrait to landscape added the sidebar before
+    // the column, and Blitz left the column where it was — under it.
+    let frame = |direction: &str| {
+        format!(
+            "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
+             flex-direction:{direction}; overflow:hidden; background:{BG}; \
+             color:{TEXT}; font-family:system-ui, -apple-system, sans-serif;"
+        )
+    };
+    if wide {
+        rsx! {
+            div {
+                style: frame("row"),
+                // The sidebar: the mark, the sections, who is signed in.
+                div {
+                    style: "position:relative; z-index:5; flex:none; width:236px; display:flex; flex-direction:column; \
+                            padding:{TOP}px 0 16px; box-sizing:border-box; background:{BAR};",
+                    div {
+                        style: "display:flex; align-items:center; gap:10px; padding:4px 18px 18px;",
+                        img { src: mark_src(), width: "30", height: "30", style: "border-radius:8px; flex:none;" }
+                        span { style: "font-size:18px; font-weight:750; letter-spacing:-0.01em;", "Session" }
+                    }
+                    for each in Section::ALL {
+                        NavItem {
+                            key: "{each.label()}",
+                            section: each,
+                            on: here == each,
+                            on_press: move |()| section.set(each),
+                        }
+                    }
+                    div { style: "flex:1;" }
+                    AccountLine { email: account_line.clone(), on_sign_in: start_sign_in, on_sign_out: move |()| {
+                        task_account::sign_out();
+                        sign_in.set(SignIn::Out);
+                    } }
+                }
+                {main}
+            }
+        }
+    } else {
+        rsx! {
+            div { style: frame("column"), {main} }
         }
     }
 }
 
-/// A setlist as a card: its name, how many songs, and the first few.
+/// What a raised part of a bar is: the section showing.
+const RAISED: &str = "#26292f";
+
+/// A phone's tab: flat, the one showing raised.
+fn tab_style(on: bool) -> String {
+    let ink = if on { ACCENT } else { DIM };
+    format!(
+        "flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; \
+         justify-content:center; gap:3px; border:none; padding:0; cursor:pointer; \
+         font-family:inherit; background:transparent; color:{ink};"
+    )
+}
+
+/// What a kind of list says when there is none of it.
+const fn none_yet(kind: ListKind) -> &'static str {
+    match kind {
+        ListKind::Set => "No setlists yet — make one, and fill it from your song lists.",
+        ListKind::Songs => {
+            "No song lists yet — gather songs to pick setlists from: \"Worship Tracks\", \"Hymns\"."
+        }
+    }
+}
+
+/// A section's icon, in its colour outright (Blitz resolves an SVG's
+/// `currentColor` once).
 #[component]
-fn SetlistCard(setlist: LibrarySetlist, on_press: EventHandler<()>) -> Element {
-    let count = setlist.songs.len();
-    let preview = songs_line(&setlist);
+fn SectionIcon(section: Section, color: &'static str) -> Element {
+    let size = 20;
+    match section {
+        Section::Home => rsx! { House { size, color } },
+        Section::Setlists => rsx! { ListMusic { size, color } },
+        Section::Lists => rsx! { Library { size, color } },
+        Section::Songs => rsx! { Music { size, color } },
+        Section::Downloads => rsx! { HardDriveDownload { size, color } },
+    }
+}
+
+/// A section in the sidebar: its icon and its name, the one showing
+/// raised.
+#[component]
+fn NavItem(section: Section, on: bool, on_press: EventHandler<()>) -> Element {
+    let (bg, ink) = if on {
+        (RAISED, TEXT)
+    } else {
+        ("transparent", DIM)
+    };
     rsx! {
         button {
-            style: "display:flex; align-items:center; gap:14px; width:100%; box-sizing:border-box; padding:14px 16px; border-radius:14px; \
-                    background:{BAR}; border:1px solid {RULE}; color:{TEXT}; font-family:inherit; \
-                    text-align:left; cursor:pointer;",
+                        style: "display:flex; align-items:center; justify-content:flex-start; gap:12px; height:44px; \
+                    margin:1px 10px; padding:0 12px; border:none; border-radius:10px; background:{bg}; color:{ink}; font-family:inherit; \
+                    font-size:15px; font-weight:600; text-align:left; cursor:pointer;",
+            onclick: move |_| on_press.call(()),
+            SectionIcon { section, color: if on { ACCENT } else { DIM } }
+            "{section.label()}"
+        }
+    }
+}
+
+/// Who is signed in, at the sidebar's foot — or signing in.
+#[component]
+fn AccountLine(
+    email: Option<String>,
+    on_sign_in: EventHandler<()>,
+    on_sign_out: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div {
+            style: "display:flex; flex-direction:column; gap:8px; padding:12px 18px 0; border-top:1px solid {RULE};",
+            match email {
+                Some(email) => rsx! {
+                    div {
+                        style: "display:flex; align-items:center; gap:10px;",
+                        Avatar { email: email.clone(), size: 30 }
+                        span { style: "flex:1; min-width:0; font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{email}" }
+                        button {
+                            title: "Sign out",
+                            style: "flex:none; width:32px; height:32px; display:flex; align-items:center; justify-content:center; \
+                                    border:none; border-radius:8px; background:transparent; cursor:pointer;",
+                            onclick: move |_| on_sign_out.call(()),
+                            LogOut { size: 16, color: DIM }
+                        }
+                    }
+                },
+                None => rsx! {
+                    Pill { label: "Sign in", primary: true, on_press: on_sign_in }
+                },
+            }
+        }
+    }
+}
+
+/// The ink over a cover's art.
+const ART_INK: &str = "#ffffffe6";
+
+/// A cover's two colours, picked by its name: the same list always the
+/// same, neighbours told apart. None (no name) is the plain tile a new
+/// list gets.
+fn palette(seed: &str) -> (&'static str, &'static str) {
+    const PAIRS: [(&str, &str); 8] = [
+        ("#3b82f6", "#1e2f6b"),
+        ("#8b5cf6", "#35155e"),
+        ("#ec4899", "#57142f"),
+        ("#f97316", "#5e2408"),
+        ("#10b981", "#073f31"),
+        ("#06b6d4", "#0b3b57"),
+        ("#eab308", "#533706"),
+        ("#ef4444", "#561010"),
+    ];
+    match seed {
+        "" => return ("#1f2227", "#1a1c20"),
+        // The ways in, told apart from each other whatever a set is called.
+        "demo" => return PAIRS[0],
+        "library" => return PAIRS[1],
+        _ => {}
+    }
+    // FNV-1a: stable across runs and builds, unlike std's hasher.
+    let hash = seed.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    PAIRS[hash as usize % PAIRS.len()]
+}
+
+/// A cover's art at a fixed size: its gradient, its icon over it.
+#[component]
+fn Art(seed: String, size: u32, radius: u32, children: Element) -> Element {
+    let (from, to) = palette(&seed);
+    rsx! {
+        div {
+            style: "flex:none; width:{size}px; height:{size}px; border-radius:{radius}px; display:flex; \
+                    align-items:center; justify-content:center; \
+                    background:linear-gradient(135deg, {from} 0%, {to} 100%);",
+            {children}
+        }
+    }
+}
+
+/// The way in, large: its art, what it is, and a play button.
+#[component]
+fn Hero(
+    kicker: &'static str,
+    title: String,
+    detail: String,
+    seed: String,
+    live: bool,
+    on_press: EventHandler<()>,
+    children: Element,
+) -> Element {
+    let (from, _) = palette(&seed);
+    let kicker_ink = if live { ACCENT } else { DIM };
+    rsx! {
+        button {
+            style: "flex:1 1 300px; min-width:0; display:flex; align-items:center; gap:16px; box-sizing:border-box; \
+                    padding:14px; border:none; border-radius:20px; cursor:pointer; text-align:left; \
+                    background:linear-gradient(120deg, {from}40 0%, {BAR} 65%); color:{TEXT}; font-family:inherit;",
+            onclick: move |_| on_press.call(()),
+            Art { seed: seed.clone(), size: 72, radius: 14, {children} }
+            div {
+                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:5px;",
+                div {
+                    style: "display:flex; align-items:center; gap:7px;",
+                    if live {
+                        span { style: "flex:none; width:7px; height:7px; border-radius:4px; background:#ff4d4d;" }
+                    }
+                    span {
+                        style: "font-size:11px; font-weight:750; letter-spacing:0.09em; color:{kicker_ink};",
+                        "{kicker.to_uppercase()}"
+                    }
+                }
+                span { style: "font-size:19px; font-weight:750; letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
+                span { style: "font-size:13px; color:#a3aab4; line-height:1.4; overflow:hidden; max-height:37px;", "{detail}" }
+            }
+            div {
+                style: "flex:none; width:46px; height:46px; border-radius:23px; display:flex; align-items:center; \
+                        justify-content:center; background:{TEXT};",
+                Play { size: 20, color: "#0b0c0e" }
+            }
+        }
+    }
+}
+
+/// A shelf: its title, a way to all of it, and what is on it.
+#[component]
+fn Shelf(title: &'static str, on_more: EventHandler<()>, children: Element) -> Element {
+    rsx! {
+        div {
+            style: "display:flex; flex-direction:column; gap:12px;",
+            div {
+                style: "display:flex; align-items:center; gap:12px;",
+                span { style: "flex:1; min-width:0; font-size:20px; font-weight:750; letter-spacing:-0.01em;", "{title}" }
+                button {
+                    style: "flex:none; display:flex; align-items:center; gap:2px; height:32px; padding:0 4px 0 10px; \
+                            border:none; background:transparent; color:{ACCENT}; font-family:inherit; \
+                            font-size:14px; font-weight:600; cursor:pointer;",
+                    onclick: move |_| on_more.call(()),
+                    "See all"
+                    ChevronRight { size: 16, color: ACCENT }
+                }
+            }
+            {children}
+        }
+    }
+}
+
+/// Covers, as many across as fit, each column the same width.
+#[component]
+fn Covers(children: Element) -> Element {
+    rsx! {
+        div {
+            style: "display:grid; grid-template-columns:repeat(auto-fill, minmax(136px, 1fr)); gap:18px 14px;",
+            {children}
+        }
+    }
+}
+
+/// A list or a song as a cover: square art, its name, a line under it —
+/// and a mark when it is on this device.
+#[component]
+fn Cover(
+    title: String,
+    detail: String,
+    seed: String,
+    saved: bool,
+    on_press: EventHandler<()>,
+    children: Element,
+) -> Element {
+    let (from, to) = palette(&seed);
+    rsx! {
+        button {
+            style: "min-width:0; display:flex; flex-direction:column; gap:8px; padding:0; border:none; \
+                    background:transparent; color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer;",
             onclick: move |_| on_press.call(()),
             div {
-                style: "flex:none; width:40px; height:40px; border-radius:10px; display:flex; align-items:center; \
-                        justify-content:center; background:#1f232a; color:{ACCENT};",
-                ListMusic { size: 20, color: "currentColor" }
+                style: "position:relative; width:100%; aspect-ratio:1 / 1; border-radius:14px; display:flex; \
+                        align-items:center; justify-content:center; \
+                        background:linear-gradient(135deg, {from} 0%, {to} 100%);",
+                {children}
+                if saved {
+                    div {
+                        style: "position:absolute; right:8px; bottom:8px; width:22px; height:22px; border-radius:11px; \
+                                display:flex; align-items:center; justify-content:center; background:#0b0c0ecc;",
+                        Check { size: 13, color: "#4ac26b" }
+                    }
+                }
             }
             div {
-                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
-                div {
-                    style: "display:flex; align-items:center; gap:8px;",
-                    span { style: "font-size:16px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{setlist.title}" }
-                    span { style: "flex:none; font-size:11px; color:{DIM};", "{count} songs" }
-                }
-                span { style: "font-size:12px; color:#6b7280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{preview}" }
+                style: "display:flex; flex-direction:column; gap:2px; min-width:0; padding:0 2px;",
+                span { style: "font-size:14px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
+                span { style: "font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{detail}" }
             }
-            ChevronRight { size: 18, color: "#6b7280" }
+        }
+    }
+}
+
+/// A one-line way in: an icon, what it does, where to.
+#[component]
+fn Shortcut(
+    title: String,
+    detail: String,
+    on_press: EventHandler<()>,
+    children: Element,
+) -> Element {
+    rsx! {
+        button {
+            style: "display:flex; align-items:center; gap:12px; height:56px; padding:0 14px; border:none; \
+                    border-radius:14px; background:{BAR}; color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer;",
+            onclick: move |_| on_press.call(()),
+            {children}
+            span { style: "flex:none; font-size:15px; font-weight:650;", "{title}" }
+            span { style: "flex:1; min-width:0; font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{detail}" }
+            ChevronRight { size: 18, color: DIM }
+        }
+    }
+}
+
+/// Initials in a circle: who is signed in.
+#[component]
+fn Avatar(email: String, size: u32) -> Element {
+    let (from, to) = palette(&email);
+    let letter = email
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
+    let font = size * 2 / 5;
+    let radius = size / 2;
+    rsx! {
+        div {
+            style: "flex:none; width:{size}px; height:{size}px; border-radius:{radius}px; display:flex; \
+                    align-items:center; justify-content:center; font-size:{font}px; font-weight:750; color:#fff; \
+                    background:linear-gradient(135deg, {from} 0%, {to} 100%);",
+            "{letter}"
+        }
+    }
+}
+
+/// Signed in or not, at the head of a phone's page (which has no
+/// sidebar to carry it): the avatar, which asks before signing out.
+#[component]
+fn AccountButton(
+    email: Option<String>,
+    on_sign_in: EventHandler<()>,
+    on_sign_out: EventHandler<()>,
+) -> Element {
+    let mut asking = use_signal(|| false);
+    match email {
+        Some(_) if asking() => rsx! {
+            Pill { label: "Sign out", primary: false, on_press: move |()| { asking.set(false); on_sign_out.call(()); } }
+            Act { title: "Keep", on_press: move |()| asking.set(false), X { size: 16, color: DIM } }
+        },
+        Some(email) => rsx! {
+            button {
+                title: "{email}",
+                style: "flex:none; padding:0; border:none; background:transparent; cursor:pointer;",
+                onclick: move |_| asking.set(true),
+                Avatar { email: email.clone(), size: 34 }
+            }
+        },
+        None => rsx! {
+            Pill { label: "Sign in", primary: true, on_press: on_sign_in }
+        },
+    }
+}
+
+/// Rows between hairlines.
+#[component]
+fn Rows(children: Element) -> Element {
+    rsx! {
+        div {
+            style: "display:flex; flex-direction:column; border-top:1px solid {RULE};",
+            {children}
+        }
+    }
+}
+
+/// A quiet line of text.
+#[component]
+fn Quiet(text: &'static str) -> Element {
+    rsx! {
+        span { style: "font-size:13px; color:{DIM}; line-height:1.5; padding:6px 2px;", "{text}" }
+    }
+}
+
+/// A message: something went well, or did not.
+#[component]
+fn Banner(good: bool, text: String) -> Element {
+    let (bg, border, ink) = if good {
+        ("#12261a", "#1f4a2e", "#4ac26b")
+    } else {
+        ("#2a1f12", "#5b4219", WARN)
+    };
+    rsx! {
+        div {
+            style: "display:flex; gap:10px; align-items:flex-start; padding:12px 14px; border-radius:12px; \
+                    background:{bg}; border:1px solid {border}; color:{ink}; font-size:13px; line-height:1.45;",
+            if good {
+                CircleCheck { size: 18, color: ink }
+            } else {
+                CircleAlert { size: 18, color: ink }
+            }
+            span { style: "flex:1; min-width:0;", "{text}" }
+        }
+    }
+}
+
+/// The orgs to pick between, when there is more than one.
+#[component]
+fn OrgChips(orgs: Load<Vec<String>>, org: Signal<Option<String>>) -> Element {
+    let mut org = org;
+    let Load::Ready(list) = orgs else {
+        return rsx! {};
+    };
+    if list.len() < 2 {
+        return rsx! {};
+    }
+    rsx! {
+        div {
+            style: "display:flex; flex-wrap:wrap; gap:6px;",
+            for slug in list {
+                Chip {
+                    key: "{slug}",
+                    label: slug.clone(),
+                    on: org().as_deref() == Some(slug.as_str()),
+                    on_press: move |()| org.set(Some(slug.clone())),
+                }
+            }
+        }
+    }
+}
+
+/// A flat icon button a finger can hit, its icon in the given colour.
+#[component]
+fn Act(title: &'static str, on_press: EventHandler<()>, children: Element) -> Element {
+    rsx! {
+        button {
+            title,
+            style: "flex:none; width:44px; height:44px; display:flex; align-items:center; justify-content:center; \
+                    border:none; border-radius:10px; background:transparent; cursor:pointer; padding:0;",
+            onclick: move |_| on_press.call(()),
+            {children}
+        }
+    }
+}
+
+/// A list of the library as a row: what it is, and playing it,
+/// downloading it, editing it.
+#[component]
+fn ListRow2(
+    title: String,
+    detail: String,
+    count: usize,
+    downloaded: bool,
+    busy: bool,
+    on_play: EventHandler<()>,
+    on_download: EventHandler<()>,
+    on_edit: EventHandler<()>,
+) -> Element {
+    let save_title = if downloaded {
+        "Download again (to update it)"
+    } else {
+        "Download to this device"
+    };
+    rsx! {
+        div {
+            style: "display:flex; align-items:center; gap:14px; min-height:68px; padding:8px 4px; border-bottom:1px solid {RULE};",
+            button {
+                style: "flex:1; min-width:0; display:flex; align-items:center; gap:14px; border:none; background:transparent; \
+                        color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer; padding:0;",
+                onclick: move |_| on_play.call(()),
+                Art { seed: title.clone(), size: 48, radius: 10, ListMusic { size: 22, color: ART_INK } }
+                div {
+                    style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
+                    div {
+                        style: "display:flex; align-items:center; gap:8px; min-width:0;",
+                        span { style: "font-size:16px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
+                        span { style: "flex:none; font-size:12px; color:{DIM};", "{count} songs" }
+                        if downloaded {
+                            span {
+                                style: "flex:none; display:flex; align-items:center; gap:3px; font-size:11px; font-weight:650; color:#4ac26b;",
+                                Check { size: 12, color: "#4ac26b" }
+                                "On this device"
+                            }
+                        }
+                    }
+                    span { style: "font-size:12px; color:#6b7280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{detail}" }
+                }
+            }
+            Act { title: "Play", on_press: on_play, Play { size: 18, color: TEXT } }
+                        Act {
+                title: save_title,
+                on_press: on_download,
+                if busy {
+                    HardDriveDownload { size: 18, color: ACCENT }
+                } else if downloaded {
+                    CircleCheck { size: 18, color: "#4ac26b" }
+                } else {
+                    CloudDownload { size: 18, color: TEXT }
+                }
+            }
+            Act { title: "Edit", on_press: on_edit, Pencil { size: 17, color: TEXT } }
+        }
+    }
+}
+
+/// Every song in the library, searched: each to play, or to download.
+#[component]
+fn SongsList(
+    songs: Load<Vec<(LibrarySong, bool)>>,
+    downloaded: Callback<String, bool>,
+    on_play: EventHandler<LibrarySong>,
+    on_download: EventHandler<LibrarySong>,
+) -> Element {
+    let mut query = use_signal(String::new);
+    let wanted = query().trim().to_lowercase();
+    rsx! {
+        div {
+            style: "display:flex; align-items:center; gap:8px; height:44px; padding:0 12px; border-radius:12px; \
+                    background:{BAR}; border:1px solid {RULE};",
+            Search { size: 17, color: DIM }
+            div {
+                style: "position:relative; flex:1; min-width:0; height:42px;",
+                if query().is_empty() {
+                    span {
+                        style: "position:absolute; top:0; left:2px; height:42px; display:flex; align-items:center; \
+                                font-size:15px; color:#6b7280; pointer-events:none;",
+                        "Search songs, keys, writers"
+                    }
+                }
+                input {
+                    style: "position:absolute; top:0; left:0; width:100%; height:42px; box-sizing:border-box; padding:0 2px; \
+                            border:none; background:transparent; color:{TEXT}; font-family:inherit; font-size:15px;",
+                    r#type: "text",
+                    value: "{query}",
+                    oninput: move |e| query.set(e.value()),
+                }
+            }
+        }
+        match songs {
+            Load::Waiting => rsx! { Quiet { text: "Reading the library…" } },
+            Load::Failed(why) => rsx! { Banner { good: false, text: format!("Could not read the songs — {why}") } },
+            Load::Ready(list) => rsx! {
+                Rows {
+                    for (song, playable) in list.into_iter().filter(|(s, _)| {
+                        wanted.is_empty()
+                            || s.title.to_lowercase().contains(&wanted)
+                            || s.key.to_lowercase() == wanted
+                            || s.writers.iter().any(|w| w.to_lowercase().contains(&wanted))
+                    }) {
+                        div {
+                            key: "{song.slug}",
+                            style: "display:flex; align-items:center; gap:12px; min-height:60px; padding:6px 4px; border-bottom:1px solid {RULE};",
+                            div {
+                                style: "flex:none; width:40px; height:40px; border-radius:10px; display:flex; align-items:center; \
+                                        justify-content:center; background:#1c1f25; font-size:13px; font-weight:700; color:{TEXT};",
+                                if song.key.is_empty() { Music { size: 18, color: DIM } } else { "{song.key}" }
+                            }
+                            div {
+                                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;",
+                                span { style: "font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{song.title}" }
+                                div {
+                                    style: "display:flex; gap:8px; font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden;",
+                                    if !playable {
+                                        span { style: "flex:none; color:{WARN};", "No session yet" }
+                                    }
+                                    if downloaded.call(song.title.clone()) {
+                                        span { style: "flex:none; color:#4ac26b;", "On this device" }
+                                    }
+                                    span { style: "overflow:hidden; text-overflow:ellipsis;", "{song.writers.join(\", \")}" }
+                                }
+                            }
+                            if playable {
+                                Act {
+                                    title: "Play",
+                                    on_press: {
+                                        let song = song.clone();
+                                        move |()| on_play.call(song.clone())
+                                    },
+                                    Play { size: 18, color: TEXT }
+                                }
+                                Act {
+                                    title: "Download to this device",
+                                    on_press: {
+                                        let song = song.clone();
+                                        move |()| on_download.call(song.clone())
+                                    },
+                                    CloudDownload { size: 18, color: TEXT }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+}
+
+/// Something on this device: opening it, and taking a download off.
+#[component]
+fn LocalRow(
+    title: String,
+    detail: String,
+    removable: bool,
+    on_open: EventHandler<()>,
+    on_remove: EventHandler<()>,
+) -> Element {
+    let mut asking = use_signal(|| false);
+    rsx! {
+        div {
+            style: "display:flex; align-items:center; gap:14px; min-height:64px; padding:6px 4px; border-bottom:1px solid {RULE};",
+            button {
+                style: "flex:1; min-width:0; display:flex; align-items:center; gap:14px; border:none; background:transparent; \
+                        color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer; padding:0;",
+                onclick: move |_| on_open.call(()),
+                Art { seed: title.clone(), size: 48, radius: 10, HardDriveDownload { size: 20, color: ART_INK } }
+                div {
+                    style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
+                    span { style: "font-size:16px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{title}" }
+                    span { style: "font-size:12px; color:{DIM};", "{detail}" }
+                }
+            }
+            if removable {
+                if asking() {
+                    Pill { label: "Remove", primary: false, on_press: move |()| { asking.set(false); on_remove.call(()); } }
+                    Pill { label: "Keep", primary: false, on_press: move |()| asking.set(false) }
+                } else {
+                    Act { title: "Remove from this device", on_press: move |()| asking.set(true), Trash2 { size: 17, color: DIM } }
+                }
+            }
+            Act { title: "Open", on_press: on_open, ChevronRight { size: 18, color: DIM } }
+        }
+    }
+}
+
+/// A download under way — its set, which song of how many, how far — or
+/// how the last one went, along the foot.
+#[component]
+fn DownloadBar(
+    downloading: Option<Downloading>,
+    note: Option<(bool, String)>,
+    on_dismiss: EventHandler<()>,
+) -> Element {
+    if let Some(d) = downloading {
+        #[expect(clippy::cast_precision_loss, reason = "a fraction for a bar")]
+        let song = if d.total == 0 {
+            0.0
+        } else {
+            d.done as f64 / d.total as f64
+        };
+        #[expect(clippy::cast_precision_loss, reason = "a fraction for a bar")]
+        let whole = if d.count == 0 {
+            0.0
+        } else {
+            (d.index as f64 + song) / d.count as f64
+        };
+        let percent = (whole * 100.0).clamp(0.0, 100.0);
+        #[expect(clippy::cast_precision_loss, reason = "megabytes for a person")]
+        let size = if d.total > 0 {
+            format!(
+                " · {:.0} of {:.0} MB",
+                d.done as f64 / 1e6,
+                d.total as f64 / 1e6
+            )
+        } else {
+            String::new()
+        };
+        return rsx! {
+            div {
+                style: "position:relative; z-index:6; flex:none; display:flex; flex-direction:column; gap:8px; \
+                        padding:12px 20px; background:{BAR}; border-top:1px solid {RULE};",
+                div {
+                    style: "display:flex; align-items:center; gap:10px; font-size:13px;",
+                    HardDriveDownload { size: 16, color: ACCENT }
+                    span { style: "font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "Downloading {d.title}" }
+                    span { style: "flex:1; min-width:0; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;",
+                        "{d.song} — song {d.index + 1} of {d.count}{size}"
+                    }
+                }
+                div {
+                    style: "height:4px; border-radius:2px; background:#23262c; overflow:hidden;",
+                    div { style: "width:{percent}%; height:4px; background:{ACCENT};" }
+                }
+            }
+        };
+    }
+    let Some((good, text)) = note else {
+        return rsx! {};
+    };
+    let ink = if good { "#4ac26b" } else { WARN };
+    rsx! {
+        div {
+            style: "position:relative; z-index:6; flex:none; display:flex; align-items:center; gap:10px; \
+                    padding:10px 20px; background:{BAR}; border-top:1px solid {RULE}; font-size:13px; \
+                                        color:{ink};",
+            span { style: "flex:1; min-width:0;", "{text}" }
+            Act { title: "Dismiss", on_press: on_dismiss, X { size: 16, color: DIM } }
         }
     }
 }
@@ -863,10 +1787,11 @@ fn guest_name() -> String {
     format!("Guest {n:04x}")
 }
 
+/// What the Downloads section says it holds.
 #[cfg(target_os = "ios")]
-const LOCAL_TITLE: &str = "On this iPhone";
+const LOCAL_HINT: &str = "Sets and songs on this iPhone open with no connection: the ones you download from your library, and any you put in Files → On My iPhone → Session.";
 #[cfg(not(target_os = "ios"))]
-const LOCAL_TITLE: &str = "On this computer";
+const LOCAL_HINT: &str = "Sets and songs on this computer open with no connection: the ones you download from your library, and any in Documents/Session.";
 
 #[cfg(target_os = "ios")]
 const LOCAL_EMPTY: &str = "Nothing here yet. Put a song folder or a setlist in Files → On My iPhone → Session, and it shows here.";
@@ -893,8 +1818,12 @@ fn documents() -> Vec<PathBuf> {
             p.is_dir() || matches!(ext.as_str(), "setlist" | "rpp")
         })
         .filter(|p| {
-            !p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+            // Hidden files, and the downloaded songs' own store — each set
+            // downloaded is listed by its `.setlist` instead.
+            !p.file_name().is_some_and(|n| {
+                n.to_string_lossy().starts_with('.')
+                    || n == session_daw::stream_set::DOWNLOADED_SONGS
+            })
         })
         .map(|p| {
             let at = std::fs::metadata(&p)
@@ -917,6 +1846,21 @@ fn documents_dir() -> Option<PathBuf> {
     } else {
         Some(docs.join("Session"))
     }
+}
+
+/// An entry's name, as a person reads it: a `.setlist` or a project
+/// without its extension.
+fn title_of(path: &std::path::Path) -> String {
+    let is_list = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("setlist") || e.eq_ignore_ascii_case("rpp"));
+    let name = if is_list {
+        path.file_stem()
+    } else {
+        path.file_name()
+    };
+    name.map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// What an entry is, in a word or two.
@@ -950,7 +1894,7 @@ pub(super) fn Heading(label: String) -> Element {
 fn Card(children: Element) -> Element {
     rsx! {
         div {
-            style: "padding:16px; border-radius:14px; background:{BAR}; border:1px solid {RULE};",
+            style: "padding:18px; border-radius:18px; background:{BAR};",
             {children}
         }
     }

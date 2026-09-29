@@ -540,6 +540,71 @@ fn is_media(lower: &str) -> bool {
         && !lower.ends_with(".ogg.idx")
 }
 
+/// Bring a song onto this device whole, to open with no connection: its
+/// small files mirrored into `root` (as [`mirror`] does, the source's
+/// chart written in), and each proxy fetched whole beside them. The
+/// originals are not fetched: a song opened from disk plays
+/// `Media/Proxies/<name>.ogg` where its original is missing (the engine's
+/// `ProjectRelativeResolver`). A file already here at its size is kept.
+/// `progress` hears the proxies' bytes: fetched so far, and in all.
+/// Returns the song's folder.
+///
+/// # Errors
+///
+/// The source lists nothing, or a file could not be fetched or written.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn download(
+    source: Arc<dyn SongSource>,
+    root: &Path,
+    progress: &(dyn Fn(u64, u64) + Sync),
+) -> eyre::Result<PathBuf> {
+    use std::io::Write as _;
+    /// Read at a time: a proxy is tens of megabytes, and a person wants to
+    /// see it move.
+    const CHUNK: u64 = 4 * 1024 * 1024;
+    let keep = Keep::Disk(root.to_path_buf());
+    let song = mirror(Arc::clone(&source), keep.clone()).await?;
+    let mut proxies: Vec<(String, u64)> = song.proxies.values().cloned().collect();
+    proxies.sort();
+    let total: u64 = proxies.iter().map(|(_, size)| size).sum();
+    let mut done = 0;
+    progress(done, total);
+    for (path, size) in proxies {
+        let local = song.base.join(&path);
+        if keep.has(&local, size) {
+            done += size;
+            progress(done, total);
+            continue;
+        }
+        if let Some(parent) = local.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Written aside and moved in whole: a download cut short never
+        // leaves a proxy that looks complete.
+        let part = PathBuf::from(format!("{}.download", local.display()));
+        let mut file = std::fs::File::create(&part)?;
+        let mut at = 0;
+        while at < size {
+            let end = (at + CHUNK).min(size);
+            let bytes = source
+                .read(path.clone(), at..end)
+                .await
+                .map_err(|e| eyre::eyre!("{path}: {e}"))?;
+            if bytes.is_empty() {
+                eyre::bail!("{path}: the source sent nothing at {at} of {size}");
+            }
+            file.write_all(&bytes)?;
+            at += bytes.len() as u64;
+            done += bytes.len() as u64;
+            progress(done, total);
+        }
+        file.flush()?;
+        drop(file);
+        std::fs::rename(&part, &local)?;
+    }
+    Ok(song.base)
+}
+
 /// Mirror a song from `source` into `keep`: every small file fetched whole
 /// (skipped when already there at its size), the media left to stream; the
 /// source's own chart, if it keeps one, written in.

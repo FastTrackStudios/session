@@ -78,6 +78,15 @@ mod session_chart_pane;
 mod updates;
 
 fn main() {
+    // iPhone: the page is drawn to the left and right edges, and minds the
+    // camera housing itself (`native::ios_scene::island_on_left`) — a phone
+    // on its side reports the housing's inset on both sides.
+    #[cfg(target_os = "ios")]
+    // SAFETY: the first thing main does, before any thread is started.
+    unsafe {
+        std::env::set_var("BLITZ_SAFE_AREA_SIDES", "0");
+    }
+
     // NVIDIA + Wayland: force the WebKitGTK webview through XWayland before
     // tao builds the event loop (`gtk::init` reads GDK_BACKEND there). Dioxus
     // sets these itself, but only inside `App::new`, AFTER the event loop is

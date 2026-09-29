@@ -26,7 +26,7 @@ pub fn tempo(
         return;
     }
     let (ox, oy) = origin;
-    let top = oy + ruler_h() - BARS_H - TEMPO_H;
+    let top = oy + ruler_h() - bars_h() - TEMPO_H;
     let left = ox + view.panel_w;
     let right = ox + view.width;
     fill(

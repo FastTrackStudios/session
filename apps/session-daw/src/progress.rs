@@ -120,6 +120,9 @@ pub fn ProgressBar(
     /// Whether the sections are named on it (not on an upright phone).
     #[props(default = true)]
     labels: bool,
+    /// Square-cornered, edge to edge in a bar (a phone's).
+    #[props(default)]
+    flat: bool,
 ) -> Element {
     let session: StudioSession = use_context();
     let song = use_hook(|| Song::of(&session));
@@ -138,9 +141,10 @@ pub fn ProgressBar(
         move || crate::ghosts::register_anchor("progress", std::rc::Rc::new(SongAnchor { span }))
     });
     rsx! {
-        SongProgressBar {
+                SongProgressBar {
             height,
             labels,
+            flat,
             progress: song.progress(reading().at),
             sections: song.bar.clone(),
             on_section_click: move |index: usize| {

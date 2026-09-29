@@ -163,18 +163,35 @@ pub fn row_top(row: usize) -> f64 {
 #[must_use]
 pub fn ruler_h() -> f64 {
     let lanes = (0..LANES).filter(|&r| lane_shown(r)).count();
-    BARS_H + tempo_h() + LANE_H * crate::num::coord(lanes) + chords_h()
+    bars_h() + tempo_h() + LANE_H * crate::num::coord(lanes) + chords_h()
 }
 
-/// The slim ruler, for a touchscreen: the sections, their chords and the
-/// bars, and not the song band, the marks or the tempo. A finger's ruler
+/// The bar numbers' row on a slim ruler: small numbers, a short tick.
+pub const SLIM_BARS_H: f64 = 13.0;
+
+/// The bar numbers' row as the ruler has it now.
+#[must_use]
+pub fn bars_h() -> f64 {
+    if slim() { SLIM_BARS_H } else { BARS_H }
+}
+
+/// The slim ruler, for a touchscreen: the sections and small bar numbers
+/// (the chords on request), and not the song band, the marks or the
+/// tempo. A finger's ruler
 /// is drawn a third bigger, and six lanes of it took a sixth of an iPad
 /// from the tracks; Logic's is one line.
 static SLIM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Make the ruler slim, or full.
+/// Make the ruler slim, or full. A slim ruler starts without its CHORDS
+/// lane — the sections and the bars are the whole of it — unless the
+/// chords were asked for (the toolbar's switch, `FTS_RULER_CHORDS=1`).
 pub fn set_slim(on: bool) {
-    SLIM.store(on, std::sync::atomic::Ordering::Relaxed);
+    use std::sync::atomic::Ordering;
+    SLIM.store(on, Ordering::Relaxed);
+    if on && CHORDS.load(Ordering::Relaxed) == 0 {
+        let asked = std::env::var("FTS_RULER_CHORDS").is_ok_and(|v| v == "1");
+        CHORDS.store(if asked { 2 } else { 1 }, Ordering::Relaxed);
+    }
 }
 
 /// Whether the ruler is slim ([`set_slim`]).

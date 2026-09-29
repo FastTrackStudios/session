@@ -157,10 +157,15 @@ fn paint_grip(out: &mut Scene, rect: vello::kurbo::Rect) {
 /// The play cursor's handle, standing on the cursor at `x` in the bars
 /// lane: a pin a finger can take hold of.
 fn handle_rect(x: f64) -> vello::kurbo::Rect {
-    const W: f64 = 14.0;
-    const H: f64 = 18.0;
+    // Smaller on a slim ruler, whose bars row is: a finger still takes
+    // hold of it (its hit test is a fingertip round it).
+    let (w, h) = if ruler::slim() {
+        (10.0, 11.0)
+    } else {
+        (14.0, 18.0)
+    };
     let bottom = ruler::ruler_h() - 3.0;
-    vello::kurbo::Rect::new(x - W / 2.0, bottom - H, x + W / 2.0, bottom)
+    vello::kurbo::Rect::new(x - w / 2.0, bottom - h, x + w / 2.0, bottom)
 }
 
 /// The handle itself: a light rounded tab, pointed at its foot where it
@@ -184,11 +189,9 @@ fn paint_handle(out: &mut Scene, rect: vello::kurbo::Rect) {
 /// before it is a swipe that expands or folds it.
 const SWIPE: f64 = 36.0;
 
-/// How many rows a touchscreen's view opens with down its lanes.
-const ROWS_DOWN: f64 = 12.0;
-
-/// How tall a row opens at least, on a finger's screen: a fingertip.
-const OPEN_ROW_TOUCH: f64 = 44.0;
+/// How short a row may open on a finger's screen, to fit every row shown
+/// (the folders folded) down the lanes: a name still read.
+const OPEN_ROW_TOUCH: f64 = 22.0;
 /// How tall a row opens at least on a compact panel: a name you can read.
 const OPEN_ROW_COMPACT: f64 = 28.0;
 /// How wide a second opens at least on either, in CSS pixels: a bar of a
@@ -947,19 +950,23 @@ impl ArrangementWidget {
     ///
     /// Fitting a forty-track session into an iPad's docked arrangement
     /// made every row a hairline and every item a sliver: the whole song
-    /// on screen, and none of it usable. So on a finger's screen a row
-    /// opens at least [`OPEN_ROW_TOUCH`] tall, on a compact panel at least
+    /// on screen, and none of it usable. So on a finger's screen the rows
+    /// open to share the lanes' height — every row shown (the folders
+    /// folded) on screen at once, the whole picture — but none under
+    /// [`OPEN_ROW_TOUCH`]; on a compact panel at least
     /// [`OPEN_ROW_COMPACT`], and either way a second at least
     /// [`OPEN_PPS`] wide; the rest is a scroll away. The full DAW view on
     /// a desktop fits as it always has.
     fn opening_floor(&self) -> (f64, f64) {
         let ui = self.ui.get().max(f64::EPSILON);
         let row = if self.touch {
-            // Twelve rows down the lanes, as Logic shows an iPad on its
-            // side: their frame is the widget less the ruler and the
-            // scrollbar, in on-screen pixels. Never under a fingertip.
+            // Every row down the lanes: their frame is the widget less the
+            // ruler and the scrollbar, in on-screen pixels, shared by the
+            // rows shown. Never under a name's height.
             let lanes = (self.size.1 - ruler::ruler_h() - crate::panel::BAR).max(0.0) * ui;
-            (lanes / ROWS_DOWN).max(OPEN_ROW_TOUCH)
+            #[expect(clippy::cast_precision_loss, reason = "a row count")]
+            let shown = self.rows.len().max(1) as f64;
+            (lanes / shown).max(OPEN_ROW_TOUCH)
         } else if self.compact.get() {
             OPEN_ROW_COMPACT
         } else {
@@ -1517,6 +1524,17 @@ impl Widget for ArrangementWidget {
             // Other people's pointers glide and their play cursors move
             // with nothing happening here.
             || crate::ghosts::active()
+            // The playhead, the meters and the follow scroll, while the
+            // transport moves.
+            || crate::engine::moving()
+            // A throw still carrying the view, and zooms queued for the
+            // next frame.
+            || self.fling.is_some()
+            || !self.zooms.borrow().is_empty()
+            // Previews and folds that changed off the UI thread: the next
+            // paint re-cuts the rows for them.
+            || self.previews.generation() != self.previews_seen
+            || crate::folds::generation() != self.folds_seen
     }
 
     fn handle_event(&mut self, event: &UiEvent) {

@@ -143,7 +143,13 @@ pub fn ruler(
     );
     // The bars are the bottom of the strip; the tempo sits just above
     // them and the lanes over that.
-    let oy = oy + ruler_h() - BARS_H;
+    let oy = oy + ruler_h() - bars_h();
+    // A slim ruler's numbers are small, close under its sections.
+    let (number_y, number_size, tick) = if slim() {
+        (10.0, 8.5, 5.0)
+    } else {
+        (14.0, 11.0, 9.0)
+    };
 
     let (from, to) = view.secs();
     // Every beat up to the right edge, counted through the tempo map
@@ -214,7 +220,7 @@ pub fn ruler(
             fill(
                 painter,
                 palette.grid,
-                Rect::new(ox + x, oy + BARS_H - 9.0, ox + x + 1.0, oy + BARS_H),
+                Rect::new(ox + x, oy + bars_h() - tick, ox + x + 1.0, oy + bars_h()),
             );
             crate::tcp::glyphs(
                 painter,
@@ -226,8 +232,8 @@ pub fn ruler(
                 // own at a beat-wide zoom, which is the one thing a
                 // ruler must never be ambiguous about.
                 ox + x + 2.0,
-                oy + 14.0,
-                11.0,
+                oy + number_y,
+                number_size,
             );
         }
     }

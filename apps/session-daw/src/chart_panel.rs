@@ -396,7 +396,12 @@ impl Widget for ChartWidget {
     }
 
     fn needs_redraw(&self) -> bool {
-        self.moved.get() || turn_since(self.turn_seen).is_some()
+        // The follow cursor while the transport moves; a chart that came in
+        // live.
+        self.moved.get()
+            || turn_since(self.turn_seen).is_some()
+            || live_since(self.live_seen).is_some()
+            || crate::engine::moving()
     }
 
     fn paint(

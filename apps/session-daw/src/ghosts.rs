@@ -24,6 +24,10 @@ use crate::text::Font;
 
 struct Published {
     roster: Roster,
+    /// The roster as last published, in words, and when it last changed:
+    /// the driver publishes every tick whether or not anyone moved.
+    said: String,
+    changed: web_time::Instant,
     /// Local clock → shared clock, milliseconds.
     clock_offset_ms: f64,
     /// Whose play cursors to draw (independent transports only).
@@ -36,13 +40,26 @@ static ROSTER: Mutex<Option<Published>> = Mutex::new(None);
 /// (the session was left).
 pub fn publish(roster: Option<Roster>, clock_offset_ms: f64, show_play: bool) {
     if let Ok(mut slot) = ROSTER.lock() {
-        *slot = roster.map(|roster| Published {
-            roster,
-            clock_offset_ms,
-            show_play,
+        *slot = roster.map(|roster| {
+            let said = format!("{roster:?}");
+            let changed = match slot.as_ref() {
+                Some(was) if was.said == said => was.changed,
+                _ => web_time::Instant::now(),
+            };
+            Published {
+                roster,
+                said,
+                changed,
+                clock_offset_ms,
+                show_play,
+            }
         });
     }
 }
+
+/// How long after the roster last changed its pointers may still be
+/// gliding: their interpolation delay, and some.
+const GLIDING: std::time::Duration = std::time::Duration::from_millis(600);
 
 /// Someone else in the session, and the song they are on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,14 +104,22 @@ pub fn on_song(project: &str) -> Vec<(String, u32)> {
         .unwrap_or_default()
 }
 
-/// Anyone to draw: the arrangement keeps repainting while there is, so
-/// pointers glide and play cursors move.
+/// Anyone moving: the arrangement keeps repainting while someone's
+/// pointer glides or their play cursor runs — and only then. Someone
+/// merely present, still, needs no frames.
 #[must_use]
 pub fn active() -> bool {
-    ROSTER
-        .lock()
-        .ok()
-        .is_some_and(|slot| slot.as_ref().is_some_and(|p| !p.roster.peers.is_empty()))
+    ROSTER.lock().ok().is_some_and(|slot| {
+        slot.as_ref().is_some_and(|p| {
+            !p.roster.peers.is_empty()
+                && (p.changed.elapsed() < GLIDING
+                    || (p.show_play
+                        && p.roster
+                            .peers
+                            .values()
+                            .any(|peer| peer.play.as_ref().is_some_and(|play| play.playing))))
+        })
+    })
 }
 
 /// What this peer is doing, as the arrangement last saw it — read by the

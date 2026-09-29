@@ -132,6 +132,7 @@ pub mod open {
         None
     }
 }
+pub mod device_audio;
 #[cfg(test)]
 mod hook_rules;
 pub mod overlay;

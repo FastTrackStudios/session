@@ -136,7 +136,44 @@ fn Settings() -> Element {
     let _ = picked();
     let state = crate::audio_mode::state();
     let touch = try_use_context::<crate::touch::Touch>();
+    // The device's own audio, where the host has it (an iPhone's, an
+    // iPad's): read as the page opens, and again on Refresh or a change.
+    let device = try_use_context::<crate::device_audio::DeviceAudio>();
+    let mut report = use_signal(move || device.map(|d| d.read.call(())));
     rsx! {
+        if let (Some(device), Some(now)) = (device, report()) {
+            Heading { title: "This device" }
+            Fact { label: "Output", value: if now.output.is_empty() { "None".to_owned() } else { now.output.clone() } }
+            Fact { label: "Input", value: if now.input.is_empty() { "None".to_owned() } else { now.input.clone() } }
+            Fact {
+                label: "Format",
+                value: format!("{:.1} kHz · {:.1} ms buffer · {:.1} ms latency", now.sample_rate / 1000.0, now.buffer_ms, now.latency_ms),
+            }
+            Toggle {
+                on: now.speaker,
+                label: "Loudspeaker",
+                detail: "Play out of this device's own speaker, whatever else is connected.",
+                on_change: move |on: bool| {
+                    device.change.call(crate::device_audio::Change::Speaker(on));
+                    report.set(Some(device.read.call(())));
+                },
+            }
+            Toggle {
+                on: now.microphone,
+                label: "Microphone",
+                detail: "Record as well as play. Off, the session only plays — the best for Bluetooth headphones and speakers. Applies the next time Session opens.",
+                on_change: move |on: bool| {
+                    device.change.call(crate::device_audio::Change::Microphone(on));
+                    report.set(Some(device.read.call(())));
+                },
+            }
+            button {
+                style: "align-self:flex-start; margin:10px 18px; height:36px; padding:0 14px; border-radius:18px; \
+                        border:1px solid {RULE}; background:transparent; color:{TEXT}; font-family:inherit; font-size:13px; cursor:pointer;",
+                onclick: move |_| report.set(Some(device.read.call(()))),
+                "Refresh"
+            }
+        }
         Heading { title: "Audio" }
         for each in crate::audio_mode::AudioMode::ALL {
             {
@@ -175,6 +212,52 @@ fn Settings() -> Element {
                 on,
                 label: "Touch mode",
                 detail: "Sized for a finger: bigger rows, strips and grips; a drag scrolls.",
+            }
+        }
+    }
+}
+
+/// A fact about the device, as a row: its name and its value.
+#[component]
+fn Fact(label: &'static str, value: String) -> Element {
+    rsx! {
+        div {
+            style: "display:flex; align-items:center; gap:14px; min-height:48px; padding:0 18px; \
+                    border-bottom:1px solid {RULE};",
+            span { style: "flex:none; width:90px; font-size:13px; color:{DIM};", "{label}" }
+            span { style: "flex:1; min-width:0; font-size:14px; font-weight:600; color:{TEXT};", "{value}" }
+        }
+    }
+}
+
+/// A switch whose state lives elsewhere: shown as `on`, and each press
+/// said to `on_change`.
+#[component]
+fn Toggle(
+    on: bool,
+    label: &'static str,
+    detail: &'static str,
+    on_change: EventHandler<bool>,
+) -> Element {
+    let (track, knob) = if on {
+        ("#2563eb", "22px")
+    } else {
+        ("#3a3d44", "2px")
+    };
+    rsx! {
+        button {
+            style: "width:100%; display:flex; align-items:center; gap:14px; padding:12px 18px; \
+                    border:none; border-bottom:1px solid {RULE}; background:transparent; color:{TEXT}; \
+                    text-align:left; font-family:inherit; cursor:pointer;",
+            onclick: move |_| on_change.call(!on),
+            div {
+                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;",
+                span { style: "font-size:14px; font-weight:650;", "{label}" }
+                span { style: "font-size:12px; color:{DIM}; line-height:1.5;", "{detail}" }
+            }
+            div {
+                style: "position:relative; flex:none; width:44px; height:24px; border-radius:12px; background:{track};",
+                div { style: "position:absolute; top:2px; left:{knob}; width:20px; height:20px; border-radius:10px; background:#f3f4f6;" }
             }
         }
     }

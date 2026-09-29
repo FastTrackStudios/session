@@ -93,11 +93,28 @@ pub const COLUMN_W: f64 = 86.0;
 const _: () = assert!(g::STRIP_W == 86.0);
 
 /// The FX section's height: REAPER's `fx_sec`, on every strip, live
-/// ones included. A strip without its FX row reads as cut off at the top.
+/// ones included — but not on a touchscreen, where the row is height the
+/// fader wants more (a phone's or a tablet's strip is short) and the chain
+/// is opened from the rack and the close-ups instead.
 #[must_use]
-pub fn fx_section(live: bool) -> f64 {
+pub fn fx_section(live: bool, touch: bool) -> f64 {
     let _ = live;
-    f64::from(daw_theme_art::collapse::FX_SECTION)
+    if touch {
+        0.0
+    } else {
+        f64::from(daw_theme_art::collapse::FX_SECTION)
+    }
+}
+
+/// [`shape`], on a touchscreen too: without the FX row, its height given
+/// to the fader.
+#[must_use]
+pub fn shape_for(height: f64, live: bool, touch: bool) -> Collapse {
+    let mut c = shape(height, live);
+    if touch {
+        c.stretch += daw_theme_art::collapse::FX_SECTION;
+    }
+    c
 }
 
 /// A strip's sections at `height` (less its rack): REAPER's collapse
@@ -215,6 +232,11 @@ impl Strip {
     #[must_use]
     pub fn touched(mut self, touch: bool) -> Self {
         self.touch = touch;
+        if touch {
+            // No FX row (`fx_section`): its height to the fader.
+            self.shared.stretch += daw_theme_art::collapse::FX_SECTION;
+            self.own.stretch += daw_theme_art::collapse::FX_SECTION;
+        }
         if self.big_buttons() {
             // The scale and the fader, as one instrument, in the middle.
             let shift = self.columns.scale_w / 2.0;
@@ -225,16 +247,22 @@ impl Strip {
     }
 
     /// Whether this strip has the touchscreen's button row: touch mode, on
-    /// a strip wide enough for the measured column (a rail's centred
-    /// buttons stay as they are, with no room either side to grow into).
+    /// a strip wide enough for mute and solo side by side — a touchscreen's
+    /// thinner strip ([`crate::mcp::TOUCH_STRIP_W`]) included (a rail's
+    /// centred buttons stay as they are, with no room either side).
     #[must_use]
     pub fn big_buttons(&self) -> bool {
-        self.touch && self.squeeze.columns()
+        self.touch && self.squeeze.head()
     }
 
     /// The touchscreen row's top: under the coloured band, and under the
     /// record arm's housing where it hangs below the band.
     fn touch_row_top(&self) -> f64 {
+        if !self.squeeze.columns() {
+            // A thinner touch strip's ring is in the band (see
+            // `Control::RecArm`): nothing hangs below it.
+            return self.band_bottom() + TOUCH_GAP;
+        }
         self.band_bottom() + f64::from(g::ARM_OVERHANG) + TOUCH_GAP
     }
 
@@ -306,7 +334,7 @@ impl Strip {
     /// The top of the coloured band.
     #[must_use]
     pub fn band_top(&self) -> f64 {
-        fx_section(self.live) + self.rack_h
+        fx_section(self.live, self.touch) + self.rack_h
     }
 
     /// Its bottom — what the record arm hangs from.
@@ -513,6 +541,10 @@ impl Strip {
     #[must_use]
     pub fn rect(&self, control: Control) -> Option<Rect> {
         let top = |y: f64, h: f64| Rect::new(0.0, y, self.chrome_width(), y + h);
+        // A touchscreen's strip has no FX row (`fx_section`).
+        if self.touch && control == Control::Fx {
+            return None;
+        }
         // A touchscreen's strip: its row, and no routing or lamp.
         if self.big_buttons() {
             match control {
@@ -558,6 +590,16 @@ impl Strip {
                         x + f64::from(g::ARM_CELL_W),
                         y + f64::from(g::ARM_CELL_H),
                     ));
+                }
+                // A touchscreen's thinner strip: the ring in the band, at
+                // its right, level with the pan knob at its left — out of
+                // the way of mute and solo, which run across under it.
+                if self.touch {
+                    let band_top = self.band_top();
+                    let band_h = self.band_bottom() - band_top;
+                    let x = self.chrome_width() - ARM_RING - 6.0;
+                    let y = band_top + ((band_h - ARM_RING) / 2.0).max(0.0);
+                    return Some(Rect::new(x, y, x + ARM_RING, y + ARM_RING));
                 }
                 // The bare ring, centred on the rail's button column —
                 // the one control a rail used to drop that it has room

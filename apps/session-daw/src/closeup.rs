@@ -529,7 +529,8 @@ impl blitz_dom::node::Widget for RackWidget {
     }
 
     fn needs_redraw(&self) -> bool {
-        self.dirty.get()
+        // Its meters and the playhead, while the transport moves.
+        self.dirty.get() || crate::engine::moving()
     }
 
     fn paint(

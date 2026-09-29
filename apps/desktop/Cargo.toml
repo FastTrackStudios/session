@@ -102,6 +102,9 @@ tts = ["session-guide/tts"]
 # Network probe for the engine's SetlistService (the browser remote's wire
 # path, natively): `cargo run -p session-desktop --example setlist_probe`.
 [dependencies]
+# A timer that needs no runtime: the native shell's loops (frames while
+# the transport moves; on iOS, Now Playing and the remote commands).
+futures-timer = "3"
 utils.workspace = true
 tracing.workspace = true
 fts-chrome.workspace = true
@@ -235,11 +238,19 @@ dioxus = { workspace = true, default-features = true, features = ["mobile", "lau
 objc2 = "0.6"
 objc2-ui-kit = { version = "0.3", features = [
     "UIApplication", "UIResponder", "UIScene", "UISceneOptions", "UISceneSession",
-    "UIWindowScene", "UIWindow", "UIView", "UIScreen", "UIPasteboard", "block2",
+    "UIWindowScene", "UIWindow", "UIView", "UIScreen", "UIPasteboard", "UIOrientation", "block2",
 ] }
 objc2-foundation = { version = "0.3", features = [
-    "NSArray", "NSSet", "NSDictionary", "NSString", "NSURL",
+    "NSArray", "NSSet", "NSDictionary", "NSString", "NSURL", "NSValue", "NSError",
 ] }
+# Playing as an iOS audio app (`native::ios_audio`): the audio session
+# (loudspeaker, Bluetooth, AirPlay), Now Playing, and the remote commands.
+objc2-avf-audio = { version = "0.3", features = ["AVAudioSession", "AVAudioSessionTypes", "AVAudioSessionRoute"] }
+objc2-media-player = { version = "0.3", features = [
+    "MPNowPlayingInfoCenter", "MPRemoteCommandCenter", "MPRemoteCommand",
+    "MPRemoteCommandEvent", "MPMediaItem", "block2",
+] }
+block2 = "0.6"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dioxus = { workspace = true, default-features = true, features = ["web", "launch"] }
