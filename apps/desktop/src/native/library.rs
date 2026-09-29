@@ -40,12 +40,21 @@ pub fn LibraryEditor(
     /// The lists as the start screen last read them: shown at once, and
     /// read again behind them.
     lists: Vec<LibrarySetlist>,
+    /// The list to open on (by id); the first when `None`.
+    #[props(default)]
+    open: Option<String>,
+    /// Make a new list of this kind as the editor opens.
+    #[props(default)]
+    create_first: Option<ListKind>,
     on_back: EventHandler<()>,
     on_play: EventHandler<LibrarySetlist>,
 ) -> Element {
     let mut lists = use_signal(|| lists);
     let mut songs = use_signal(|| Load::<Vec<(LibrarySong, bool)>>::Waiting);
-    let mut selected = use_signal(|| lists.peek().first().map(|l| l.id.clone()));
+    let mut selected = use_signal(|| {
+        open.clone()
+            .or_else(|| lists.peek().first().map(|l| l.id.clone()))
+    });
     let mut from = use_signal(|| From::Everything);
     let mut query = use_signal(String::new);
     let mut renaming = use_signal(|| None::<String>);
@@ -191,6 +200,15 @@ pub fn LibraryEditor(
             });
         }
     };
+    // Opened to make a list: made at once, named next.
+    {
+        let create = create.clone();
+        use_hook(move || {
+            if let Some(kind) = create_first {
+                create(kind);
+            }
+        });
+    }
     let rename = {
         let library = library.clone();
         move |title: String| {
@@ -596,9 +614,11 @@ fn OrderRow(
             style: "display:flex; align-items:center; gap:10px; min-height:52px; padding:4px 6px 4px 12px; border-top:{rule};",
             span { style: "flex:none; width:22px; font-size:13px; color:{DIM}; text-align:right;", "{number}" }
             SongWords { song, playable }
-            IconButton { title: "Earlier", enabled: !first, on_press: on_up, ArrowUp { size: 17, color: "currentColor" } }
-            IconButton { title: "Later", enabled: !last, on_press: on_down, ArrowDown { size: 17, color: "currentColor" } }
-            IconButton { title: "Take out of the list", enabled: true, on_press: on_remove, X { size: 17, color: "currentColor" } }
+                        // Colours given outright: Blitz resolves an icon's `currentColor`
+            // once, and a row moved to the end kept its arrow lit.
+            IconButton { title: "Earlier", enabled: !first, on_press: on_up, ArrowUp { size: 17, color: if first { "#3a3d44" } else { TEXT } } }
+            IconButton { title: "Later", enabled: !last, on_press: on_down, ArrowDown { size: 17, color: if last { "#3a3d44" } else { TEXT } } }
+            IconButton { title: "Take out of the list", enabled: true, on_press: on_remove, X { size: 17, color: TEXT } }
         }
     }
 }

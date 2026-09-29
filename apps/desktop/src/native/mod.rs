@@ -17,7 +17,10 @@
 //! set (`session_daw::setlist::Setlist::attach`).
 
 #[cfg(target_os = "ios")]
+mod ios_audio;
+#[cfg(target_os = "ios")]
 mod ios_scene;
+
 mod library;
 mod shell;
 mod start;

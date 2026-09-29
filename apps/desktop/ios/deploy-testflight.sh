@@ -204,6 +204,11 @@ fi
 # cpal's duplex audio session can request mic access even when only output
 # is used; Apple requires the usage string regardless.
 /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Used for the audio session during setlist playback.'" "$APP/Info.plist" 2>/dev/null || true
+# An audio app: the set keeps playing with the screen locked or another
+# app in front (the lock screen's Now Playing drives it).
+/usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$APP/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$APP/Info.plist"
 # Local network: the engine target (remote.rs) can dial a local WebSocket
 # or iroh p2p endpoint on the same Wi-Fi; without this key iOS silently
 # drops that traffic.

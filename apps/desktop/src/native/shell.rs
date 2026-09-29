@@ -187,6 +187,54 @@ pub fn Shell() -> Element {
     };
     // The record view's song menu picks the same way.
     use_context_provider(|| session_daw::record_view::PickSong(Callback::new(pick)));
+    // On iOS: Now Playing kept to the song and the transport, and the
+    // lock screen's, headphones' and car's commands carried out.
+    #[cfg(target_os = "ios")]
+    use_future(move || async move {
+        use super::ios_audio::{Command, NowPlaying};
+        use session_daw::engine::{Move, Transport, transport};
+        let mut pick = pick;
+        let mut shown: Option<NowPlaying> = None;
+        let mut since = 0_u32;
+        loop {
+            futures_timer::Delay::new(std::time::Duration::from_millis(400)).await;
+            let reading = Transport::shared().map(Transport::reading);
+            let playing = reading.is_some_and(|r| r.playing);
+            for command in super::ios_audio::take_commands() {
+                let at = setlist.peek().at;
+                match command {
+                    Command::Play if !playing => transport(Move::PlayStop, 0.0),
+                    Command::Pause if playing => transport(Move::PlayStop, 0.0),
+                    Command::Toggle => transport(Move::PlayStop, 0.0),
+                    Command::Next if at + 1 < setlist.peek().songs.len() => pick(at + 1),
+                    Command::Previous if at > 0 => pick(at - 1),
+                    _ => {}
+                }
+            }
+            let Some(song) = setlist.peek().current().cloned() else {
+                continue;
+            };
+            let at = reading.map_or(0.0, |r| r.at);
+            let now = NowPlaying {
+                title: song.name.clone(),
+                set: "Session".to_owned(),
+                elapsed: at - song.span.0,
+                duration: song.span.1 - song.span.0,
+                playing,
+            };
+            // On a change of song or of playing, and every few seconds to
+            // keep a seek honest; iOS moves the position on between.
+            since += 1;
+            let changed = shown
+                .as_ref()
+                .is_none_or(|was| was.title != now.title || was.playing != now.playing);
+            if changed || since >= 12 {
+                super::ios_audio::show(&now);
+                shown = Some(now);
+                since = 0;
+            }
+        }
+    });
     let (dragging, zooming) = (window.clone(), window);
     let current = setlist.read().current().cloned();
     if form().compact() {

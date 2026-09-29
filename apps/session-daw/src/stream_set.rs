@@ -295,3 +295,182 @@ pub fn stream(song: StreamedSong, local: &str) {
         });
     }
 }
+
+/// Where a download has got to: which song of how many, and that song's
+/// proxies — bytes fetched, and in all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Downloading {
+    pub title: String,
+    pub song: String,
+    pub index: usize,
+    pub count: usize,
+    pub done: u64,
+    pub total: u64,
+}
+
+/// The folder downloaded songs are kept in, under a device's documents:
+/// one folder per song, shared by every set that has it.
+pub const DOWNLOADED_SONGS: &str = "Songs";
+
+/// The file a list downloaded as `title` is kept as, in `into`.
+#[must_use]
+pub fn download_file(into: &std::path::Path, title: &str) -> PathBuf {
+    let name: String = title
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = if name.trim().is_empty() {
+        "Download".to_owned()
+    } else {
+        name
+    };
+    into.join(format!("{name}.setlist"))
+}
+
+/// Download `songs` from `library` onto this device, to open with no
+/// connection: each song's small files and its proxies (not the originals)
+/// under `into/Songs/`, and `title` as a `.setlist` in `into` listing them
+/// in order — what the start screen lists, and opens as any setlist on the
+/// device. Songs downloaded already are not fetched again; a song that
+/// cannot be brought is left out, as a set leaves out a song that will not
+/// open. Blocking: run it on a thread of its own.
+///
+/// # Errors
+///
+/// None of the songs could be downloaded, or the setlist not written.
+pub fn download(
+    library: &session_library::Library,
+    title: &str,
+    songs: &[session_library::Song],
+    into: &std::path::Path,
+    progress: &(dyn Fn(Downloading) + Sync),
+) -> eyre::Result<PathBuf> {
+    let runtime = crate::open::engine_runtime()?;
+    let _entered = runtime.enter();
+    let root = into.join(DOWNLOADED_SONGS);
+    std::fs::create_dir_all(&root)?;
+    let count = songs.len();
+    let mut lines = Vec::new();
+    let mut failed = Vec::new();
+    for (index, song) in songs.iter().enumerate() {
+        let step = |done, total| {
+            progress(Downloading {
+                title: title.to_owned(),
+                song: song.title.clone(),
+                index,
+                count,
+                done,
+                total,
+            });
+        };
+        step(0, 0);
+        let fetched = runtime.block_on(async {
+            let source: Arc<dyn SongSource> =
+                Arc::new(TaskSource::of(library.clone(), &song.slug).await?);
+            crate::song_stream::download(source, &root, &step).await
+        });
+        match fetched {
+            Ok(folder) => {
+                if let Ok(relative) = folder.strip_prefix(into) {
+                    lines.push(relative.to_string_lossy().replace('\\', "/"));
+                }
+            }
+            Err(e) => {
+                tracing::warn!(song.title = %song.title, error = %e, "download: a song did not come down; the set goes on without it");
+                failed.push(song.title.clone());
+            }
+        }
+    }
+    if lines.is_empty() {
+        eyre::bail!("none of its songs could be downloaded");
+    }
+    let file = download_file(into, title);
+    let mut text = format!("# {title}\n");
+    for line in &lines {
+        text.push_str(line);
+        text.push('\n');
+    }
+    std::fs::write(&file, text)?;
+    tracing::info!(
+        download.songs = lines.len(),
+        download.failed = failed.len(),
+        "download: a set is on this device"
+    );
+    Ok(file)
+}
+
+/// Take a downloaded set off this device: its `.setlist`, and every song
+/// folder of it no other downloaded set still lists.
+///
+/// # Errors
+///
+/// A file could not be removed.
+pub fn remove_download(into: &std::path::Path, file: &std::path::Path) -> eyre::Result<()> {
+    let listed = |path: &std::path::Path| -> Vec<String> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_owned)
+            .collect()
+    };
+    let mine = listed(file);
+    let mut kept = std::collections::HashSet::new();
+    for entry in std::fs::read_dir(into)?.flatten() {
+        let other = entry.path();
+        if other != file
+            && other
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("setlist"))
+        {
+            kept.extend(listed(&other));
+        }
+    }
+    std::fs::remove_file(file)?;
+    for line in mine {
+        // Only what the downloads keep: never a folder outside it.
+        if line.starts_with(&format!("{DOWNLOADED_SONGS}/"))
+            && !line.contains("..")
+            && !kept.contains(&line)
+        {
+            let folder = into.join(&line);
+            if folder.is_dir() {
+                std::fs::remove_dir_all(&folder)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod download_tests {
+    use super::{download_file, remove_download};
+
+    #[test]
+    fn a_downloaded_set_is_removed_but_not_the_songs_another_still_lists() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let into = dir.path();
+        for song in ["a", "b", "c"] {
+            std::fs::create_dir_all(into.join("Songs").join(song)).expect("a song folder");
+        }
+        std::fs::write(into.join("One.setlist"), "# One\nSongs/a\nSongs/b\n").expect("one");
+        std::fs::write(into.join("Two.setlist"), "# Two\nSongs/b\nSongs/c\n").expect("two");
+        remove_download(into, &into.join("One.setlist")).expect("removed");
+        assert!(!into.join("One.setlist").exists());
+        assert!(!into.join("Songs/a").exists(), "only One had a");
+        assert!(into.join("Songs/b").exists(), "Two still lists b");
+        assert!(into.join("Songs/c").exists());
+        assert_eq!(
+            download_file(into, "JHM Sunday / 9am"),
+            into.join("JHM Sunday - 9am.setlist")
+        );
+    }
+}
