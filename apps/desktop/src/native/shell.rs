@@ -19,10 +19,16 @@ use session::modes::Mode;
 /// `document::Style` goes through a window head (see `docs/app-on-blitz.md`).
 const TAILWIND: &str = include_str!("../../assets/tailwind-signal.css");
 
-/// How much of the bar's left end the traffic lights take on macOS.
+/// How much of the bar's left end belongs to the system: the traffic
+/// lights on macOS, and on an iPad the window controls iPadOS keeps in
+/// every app's top-left corner. A control there is a trap — the first
+/// press shows the controls, the next lands on them, and the red one
+/// closes the app, which looks like a crash.
 #[cfg(target_os = "macos")]
 const LIGHTS_W: f64 = 78.0;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "ios")]
+const LIGHTS_W: f64 = 76.0;
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 const LIGHTS_W: f64 = 12.0;
 
 const RULE: &str = "#2a2c31";

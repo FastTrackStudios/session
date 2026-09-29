@@ -2,8 +2,8 @@
 //!
 //! A `tracing` layer captures every event (and a panic hook the
 //! panics) into a bounded ring; the keys view's Logs tab renders and
-//! copies it. No files, no network — the diagnostics are wherever the
-//! problem is.
+//! copies it. No network — the diagnostics are wherever the problem is;
+//! the one file is the crash log, a panic's trace kept past the crash.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -29,13 +29,62 @@ pub fn snapshot() -> Vec<String> {
 }
 
 /// Route panics into the ring (chained onto the default hook), so a
-/// crashed thread leaves its trace on the Logs tab.
+/// crashed thread leaves its trace on the Logs tab — and onto the end of
+/// [`crash_log`], so a crash that takes the app down (a panic on the UI
+/// thread aborts on iOS) can still be read afterwards: the panic, where,
+/// the backtrace, and what was logged just before it.
 pub fn install_panic_hook() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         push(format!("PANIC {info}"));
+        record_crash(&info.to_string());
         default(info);
     }));
+}
+
+/// Where crashes are kept: `crash.log` in the app's data folder (on a
+/// phone or a simulator, inside the app's container).
+#[must_use]
+pub fn crash_log() -> Option<std::path::PathBuf> {
+    #[cfg(feature = "native")]
+    {
+        Some(dirs::data_dir()?.join("Session").join("crash.log"))
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        None
+    }
+}
+
+/// Append a crash to [`crash_log`], keeping the file to its last few.
+fn record_crash(what: &str) {
+    use std::io::Write as _;
+    /// Past this the file starts over: the newest crashes are the ones
+    /// read.
+    const KEEP: u64 = 512 * 1024;
+    let Some(path) = crash_log() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > KEEP) {
+        let _ = std::fs::remove_file(&path);
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else {
+        return;
+    };
+    let when = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let thread = std::thread::current();
+    let backtrace = std::backtrace::Backtrace::force_capture();
+    let recent = snapshot();
+    let tail = &recent[recent.len().saturating_sub(40)..];
+    let _ = writeln!(
+        file,
+        "=== crash at unix {when} on thread {} ===\n{what}\n\n{backtrace}\n--- logged before it ---\n{}\n",
+        thread.name().unwrap_or("<unnamed>"),
+        tail.join("\n"),
+    );
 }
 
 /// The capture layer — timestamps relative to process start.

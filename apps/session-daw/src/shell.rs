@@ -166,7 +166,7 @@ pub struct Pins {
     /// Locked: drags scroll, and move nothing (`crate::options::LOCKING`,
     /// which this mirrors so the buttons that show it re-render).
     pub lock: Signal<bool>,
-    /// The inspector down the arrangement's left: the selected track's
+    /// The inspector down the arrangement's right: the selected track's
     /// strip, and its folder's.
     pub inspector: Signal<bool>,
     /// The navigator down the window's left ([`NavigatorColumn`]).
@@ -461,13 +461,13 @@ fn Context(view: View, transport: Option<Element>) -> Element {
             Divider {}
             if let Some(pins) = pins {
                 button {
-                    title: "The inspector: the selected track's strip, down the arrangement's left",
+                    title: "The inspector: the selected track's strip, down the arrangement's right",
                     style: bottom_button((pins.inspector)(), true),
                     onclick: move |_| {
                         let mut on = pins.inspector;
                         on.toggle();
                     },
-                    lucide_dioxus::PanelLeft { size: 19, color: ink((pins.inspector)()) }
+                    lucide_dioxus::PanelRight { size: 19, color: ink((pins.inspector)()) }
                     span { style: LABEL, "Inspect" }
                 }
                 LockButton { lock: pins.lock }
@@ -901,13 +901,13 @@ pub fn AudioBadge(density: Density, #[props(default)] boxed: bool) -> Element {
 /// Ask for `mode`: at once when it drives the same backend (Remote ⇄ Cue),
 /// else remembered for the next launch (`false`).
 #[cfg(feature = "native")]
-fn pick_audio_mode(mode: crate::audio_mode::AudioMode) -> bool {
+pub(crate) fn pick_audio_mode(mode: crate::audio_mode::AudioMode) -> bool {
     crate::open::request_mode(mode)
 }
 
 /// A page cannot change what it is: it is shown, not picked.
 #[cfg(not(feature = "native"))]
-fn pick_audio_mode(mode: crate::audio_mode::AudioMode) -> bool {
+pub(crate) fn pick_audio_mode(mode: crate::audio_mode::AudioMode) -> bool {
     crate::audio_mode::state().requested == mode
 }
 

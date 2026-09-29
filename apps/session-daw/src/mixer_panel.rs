@@ -259,8 +259,9 @@ pub fn DawPanels(
     let touch = crate::touch::use_touch();
     let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, touch);
     let mixer_display = if open { "block" } else { "none" };
-    // The inspector, down the arrangement's left: the arrangement view's
-    // own, not a docked pair's, and only while it is switched on.
+        // The inspector, down the arrangement's right — the left is the
+    // navigator's, when it is open: the arrangement view's own, not a
+    // docked pair's, and only while it is switched on.
     let inspecting = !mixer_only
         && !docked
         && try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.inspector)());
@@ -273,14 +274,14 @@ pub fn DawPanels(
     rsx! {
         if !mixer_only {
             div {
-                style: "position:absolute; top:0; left:{inspector_w}px; right:0; bottom:{arrange_bottom};",
+                style: "position:absolute; top:0; left:0; right:{inspector_w}px; bottom:{arrange_bottom};",
                 crate::studio::Arrangement {}
             }
         }
         if inspecting {
             div {
-                style: "position:absolute; top:0; left:0; width:{inspector_w}px; bottom:{arrange_bottom}; \
-                        border-right:1px solid #000; overflow:hidden;",
+                style: "position:absolute; top:0; right:0; width:{inspector_w}px; bottom:{arrange_bottom}; \
+                        border-left:1px solid #000; overflow:hidden;",
                 Inspector {}
             }
         }
