@@ -80,6 +80,8 @@ pub fn Shell() -> Element {
     // the tabs read and a pick or a recolour writes.
     let opened: session_daw::setlist::Setlist = use_context();
     let mut setlist = use_context_provider(|| Signal::new(opened));
+    // Each song in the mode it was last worked in.
+    session_daw::song_modes::use_song_modes(setlist, mode);
     // A streamed set's songs after the first, as each opens behind it.
     use_future(move || async move {
         let Some(mut arrivals) = session_daw::stream_set::take_arrivals() else {

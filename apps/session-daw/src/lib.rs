@@ -57,6 +57,7 @@ pub mod options;
 #[cfg(feature = "native")]
 pub mod organize;
 #[cfg(any(feature = "native", feature = "web"))]
+pub mod song_modes;
 pub mod song_stream;
 #[cfg(feature = "native")]
 pub mod stream_in;
