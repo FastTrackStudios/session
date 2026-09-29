@@ -284,6 +284,17 @@ pub fn BottomBar(view: Signal<View>) -> Element {
                     },
                     lucide_dioxus::Menu { size: 19, color: "currentColor" }
                 }
+                if let Some(pins) = pins {
+                    button {
+                        title: "The inspector: the selected track's strip, down the arrangement's left",
+                        style: bottom_button((pins.inspector)(), false),
+                        onclick: move |_| {
+                            let mut on = pins.inspector;
+                            on.toggle();
+                        },
+                        lucide_dioxus::PanelLeft { size: 19, color: "currentColor" }
+                    }
+                }
                 {button(View::Setup, true)}
             }
             div {
@@ -331,12 +342,6 @@ pub fn BottomBar(view: Signal<View>) -> Element {
                         what: Pinned::Lock,
                     }
                     MenuSwitch {
-                        on: pins.inspector,
-                        label: "Inspector",
-                        detail: "The selected track's fader, mute and solo down the arrangement's left",
-                        what: Pinned::Inspector,
-                    }
-                    MenuSwitch {
                         on: pins.progress,
                         label: "Song progress on every view",
                         detail: "The sections across the top — press one to play from it",
@@ -363,7 +368,6 @@ enum Pinned {
     Progress,
     Transport,
     Lock,
-    Inspector,
 }
 
 /// A switch in the bottom bar's menu: its words, and a switch a finger can
@@ -586,9 +590,11 @@ pub fn TopBar(
                     lucide_dioxus::ChevronLeft { size: 18, color: "currentColor" }
                 }
             }
-            // The setlist, filling whatever the bar has left.
-            SongTabs { on_pick, on_color, max_shown: tabs_shown(width, crate::touch::use_touch()) }
+            // The controls first, where they stay put, and the setlist
+            // after them filling whatever the bar has left — a longer set
+            // grows into the right, not into the transport.
             {controls}
+            SongTabs { on_pick, on_color, max_shown: tabs_shown(width, crate::touch::use_touch()) }
         }
     }
 }

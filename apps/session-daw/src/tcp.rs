@@ -132,7 +132,7 @@ pub fn fit_names(font: &Font, rows: &[(Track, u32)], layout: crate::layout::Layo
         .map(|(track, depth)| {
             let size = tcp.name_size(layout.height_of(track.height));
             let indent = (f64::from(*depth) * tcp.indent()).min(tcp.max_indent());
-            font.width(&track.name, size) + indent + 16.0
+            font.width(&track.name, size) + indent + 10.0
         })
         .fold(0.0_f64, f64::max);
     let fit = widest.ceil().clamp(NAMES_FIELD_MIN, NAMES_FIELD_W);
@@ -235,7 +235,7 @@ impl Tcp {
     #[must_use]
     pub fn name_x(self) -> f64 {
         let (x, _) = self.name_field();
-        if self.compact { x + 8.0 } else { 58.0 }
+        if self.compact { x + 2.0 } else { 58.0 }
     }
 
     /// The volume knob's centre — the field's right end, either way. The
@@ -592,17 +592,22 @@ fn row_one(
     let (field_x, field_w) = tcp.name_field();
     let field_x = field_x + indent;
     let field_w = (field_w - indent).max(0.0);
-    scene_fill(
-        scene,
-        palette.tcp_field,
-        &RoundedRect::new(
-            field_x,
-            field_top,
-            field_x + field_w,
-            field_top + field_h,
-            (field_h / 2.0, 0.0, 0.0, field_h / 2.0),
-        ),
-    );
+    // The compact panel's name sits on the row's own colour: the field was
+    // the arm's and the knob's box, and the compact row has neither — a
+    // dark pill round a name alone was a box for nothing.
+    if !tcp.compact {
+        scene_fill(
+            scene,
+            palette.tcp_field,
+            &RoundedRect::new(
+                field_x,
+                field_top,
+                field_x + field_w,
+                field_top + field_h,
+                (field_h / 2.0, 0.0, 0.0, field_h / 2.0),
+            ),
+        );
+    }
 
     // The record arm, on the field's left end. Lit when armed, which is
     // the one control on this row that has to be readable at a glance

@@ -121,6 +121,9 @@ pub struct Links {
     /// it sits in — its own strip and the one it goes out through, as
     /// Logic's inspector shows them beside the tracks.
     pub inspector: bool,
+    /// How many strips the inspector shows (one, or two with the folder
+    /// the track goes out through): its column is as wide as they are.
+    pub strips: Rc<Cell<usize>>,
 }
 
 /// A key the mixer passed on.
@@ -147,6 +150,7 @@ impl Links {
             arm_of: Rc::default(),
             fill: false,
             inspector: false,
+            strips: Rc::new(Cell::new(1)),
         }
     }
 
@@ -260,8 +264,9 @@ pub fn DawPanels(
     let inspecting = !mixer_only
         && !docked
         && try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.inspector)());
+    let strips = use_context_provider(|| InspectorStrips(Signal::new(1)));
     let inspector_w = if inspecting {
-        inspector_width(touch)
+        inspector_width((strips.0)())
     } else {
         0.0
     };
@@ -289,9 +294,20 @@ pub fn DawPanels(
     }
 }
 
-/// How wide the inspector is: two strips at the mixer's size here.
-fn inspector_width(touch: bool) -> f64 {
-    if touch { 196.0 } else { 150.0 }
+/// How much bigger the inspector draws its strips: mute, solo and the
+/// fader's cap a finger's size, the strips still slim.
+const INSPECTOR_ZOOM: f64 = 1.25;
+
+/// How many strips the inspector shows, for its column's width: the
+/// inspector's widget says, and its host carries it here each frame.
+#[derive(Clone, Copy)]
+struct InspectorStrips(Signal<usize>);
+
+/// How wide the inspector is: `strips` of its slim strips.
+fn inspector_width(strips: usize) -> f64 {
+    #[expect(clippy::cast_precision_loss, reason = "a strip count")]
+    let strips = strips.max(1) as f64;
+    strips * (f64::from(INSPECTOR_STRIP) + crate::mcp::STRIP_GAP) * INSPECTOR_ZOOM + 2.0
 }
 
 /// The inspector: the arrangement's rows, as the selected track's strip
@@ -303,7 +319,7 @@ fn Inspector() -> Element {
     let outer: Links = use_context();
     use_context_provider(|| Links {
         inspector: true,
-        fill: true,
+        fill: false,
         open: Signal::new(true),
         ..outer
     });
@@ -362,6 +378,11 @@ pub fn Mixer() -> Element {
     let refocus = use_hook(|| Rc::new(Cell::new(false)));
     let window = dioxus_native::use_window();
     let asking = try_use_context::<crate::closeup::Closeups>();
+    let inspecting = (
+        links.inspector,
+        try_use_context::<InspectorStrips>().map(|s| s.0),
+    );
+    let inspector_strips = Rc::clone(&links.strips);
     dioxus_native::use_window_event(move |event, _| match event {
         // A press here: hand the keyboard back to the arrangement. Not
         // from this event: the document is still borrowed while Blitz
@@ -403,6 +424,13 @@ pub fn Mixer() -> Element {
             // A close-up the widget asked for, shown.
             if let Some(closeups) = &asking {
                 closeups.take_ask();
+            }
+            // The inspector's column, as wide as the strips it shows now.
+            if inspecting.0
+                && let Some(mut shown) = inspecting.1
+                && *shown.peek() != inspector_strips.get()
+            {
+                shown.set(inspector_strips.get());
             }
             if refocus.take()
                 && let Some(node) = arrange_node.borrow().clone()
@@ -841,6 +869,7 @@ impl MixerWidget {
                     self.all.clone_from(&shared.1);
                     self.inspected = None;
                     self.rows = inspect(&self.all);
+                    self.links.strips.set(self.rows.len().max(1));
                 } else {
                     self.rows.clone_from(&shared.1);
                 }
@@ -879,6 +908,7 @@ impl MixerWidget {
         }
         self.inspected = selected;
         self.rows = inspect(&self.all);
+        self.links.strips.set(self.rows.len().max(1));
         self.tracks = self.rows.iter().map(|(t, _)| t.clone()).collect();
         self.map = crate::plan::Rows::of(&self.rows, &self.tracks);
         self.mixer = None;
@@ -979,6 +1009,10 @@ impl MixerWidget {
     /// it, so a short dock (the Overview's, on a tablet) gets strips
     /// somewhat less big instead.
     fn zoom_for(&self, width: f64, height: f64) -> f64 {
+        // The inspector's strips are slim at their own size.
+        if self.links.inspector {
+            return (height / MIN_STRIP_H).clamp(0.5, INSPECTOR_ZOOM);
+        }
         let mut zoom = crate::touch::mixer_zoom(self.touch.get(), width);
         if self.links.fill && !self.rows.is_empty() {
             #[expect(clippy::cast_precision_loss, reason = "a strip count")]
@@ -1681,18 +1715,26 @@ fn inspect(rows: &[(daw_proto::Track, u32)]) -> Rows {
     else {
         return Vec::new();
     };
+    let slim = |track: &daw_proto::Track| daw_proto::Track {
+        width: Some(INSPECTOR_STRIP),
+        ..track.clone()
+    };
     let (track, depth) = &rows[at];
-    let mut out = vec![(track.clone(), 0)];
+    let mut out = vec![(slim(track), 0)];
     if *depth > 0
         && let Some((parent, _)) = rows[..at]
             .iter()
             .rev()
             .find(|(t, d)| *d < *depth && t.is_folder)
     {
-        out.push((parent.clone(), 0));
+        out.push((slim(parent), 0));
     }
     out
 }
+
+/// An inspector strip's width: the narrow strip — pan, mute and solo over
+/// a fader with its meter, the name under it — as Logic's inspector is.
+const INSPECTOR_STRIP: u32 = 60;
 
 /// What an edit does to the track it names, predicted here rather than
 /// waited for (the engine is in-process but not instant).
@@ -1741,11 +1783,12 @@ impl MixerWidget {
         // wherever the strips run past the panel.
         #[expect(clippy::cast_precision_loss, reason = "a strip count")]
         let across = self.rows.len() as f64 * (crate::mcp::STRIP_W + crate::mcp::STRIP_GAP);
-        let band = if !self.links.fill && (self.touch.get() || across > css_w) {
-            OVERVIEW_H
-        } else {
-            0.0
-        };
+        let band =
+            if !self.links.fill && !self.links.inspector && (self.touch.get() || across > css_w) {
+                OVERVIEW_H
+            } else {
+                0.0
+            };
         self.band.set(band);
         let css_h = (full_h - band).max(0.0);
         let zoom = self.zoom_for(css_w, css_h);
@@ -1770,7 +1813,8 @@ impl MixerWidget {
         }
         let tone = Rc::clone(&self.tone);
         let store = tone.store.borrow();
-        let open = if self.links.fill {
+        // No rack in a filled mixer, nor in the inspector's slim strips.
+        let open = if self.links.fill || self.links.inspector {
             None
         } else {
             self.tracks

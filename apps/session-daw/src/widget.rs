@@ -2039,6 +2039,16 @@ impl ArrangementWidget {
                         self.holding = true;
                         return true;
                     }
+                    // The panel's own ground, off every control: the whole
+                    // row is the track's, and a press on it picks the track
+                    // as a press on its name does.
+                    if let Some(crate::hit::Target::Track { row }) = hit.map(|h| h.target) {
+                        self.act(crate::pointer::RowSpot {
+                            row,
+                            control: crate::row::Control::Name,
+                        });
+                        return true;
+                    }
                 }
                 self.turning = spot
                     .filter(|spot| {
