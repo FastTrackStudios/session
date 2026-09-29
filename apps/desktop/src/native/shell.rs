@@ -197,7 +197,8 @@ pub fn Shell() -> Element {
                 form: form(),
                 view: phone_view,
                 on_pick: pick,
-                drawer: rsx! {
+                // Who is here and where the sound comes from: More's.
+                more: rsx! {
                     div {
                         style: "display:flex; align-items:center; gap:8px; flex-wrap:wrap;",
                         session_daw::collab_bar::CollabBar {}
@@ -294,7 +295,8 @@ fn PhoneViews(
     use_context_provider(|| session);
     let mode: Signal<Mode> = use_context();
     match view() {
-        PhoneView::Control => rsx! {},
+        // The shell's own pages (`compact::CompactShell`).
+        PhoneView::Control | PhoneView::More | PhoneView::Setup | PhoneView::Editor => rsx! {},
         PhoneView::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
         PhoneView::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
         PhoneView::Arrangement => rsx! {

@@ -1,5 +1,5 @@
 //! Each song's own mode: the one it was last worked in, taken up again
-//! whenever it is gone to.
+//! whenever it is gone to — Live until it is put in another.
 //!
 //! A song still being recorded is a Record song; a live-tracks song is a
 //! Live one; a song being mixed is a Mix one. Picking it — from its tab,
@@ -103,24 +103,34 @@ fn load() -> Option<String> {
 fn store(_text: &str) {}
 
 /// The window's mode follows the song: gone to, a song puts the window in
-/// the mode it was last worked in; the mode changed, the song on screen
-/// keeps it. For a shell, over its setlist and its mode.
+/// the mode it was last worked in — Live, when it has never been put in
+/// another — and the mode changed while on it is what it keeps. Only a
+/// change is remembered: a song merely visited in some mode is not that
+/// mode's from then on. For a shell, over its setlist and its mode.
 pub fn use_song_modes(setlist: Signal<Setlist>, mode: Signal<Mode>) {
     let mut mode = mode;
     // The song on screen, as it changes.
     let current = use_memo(move || setlist().current().map(|song| song.name.clone()));
+    // The mode the song on screen was given when it was gone to: the
+    // mode being that is the song's own doing, not a change to keep.
+    let mut given = use_signal(|| None::<(String, Mode)>);
     use_effect(move || {
-        if let Some(song) = current()
-            && let Some(kept) = of(&song)
-            && *mode.peek() != kept
-        {
-            mode.set(kept);
+        if let Some(song) = current() {
+            let kept = of(&song).unwrap_or(Mode::Live);
+            given.set(Some((song, kept)));
+            if *mode.peek() != kept {
+                mode.set(kept);
+            }
         }
     });
     use_effect(move || {
         let now = mode();
-        if let Some(song) = current.peek().clone() {
+        let Some(song) = current.peek().clone() else {
+            return;
+        };
+        if given.peek().as_ref() != Some(&(song.clone(), now)) {
             remember(&song, now);
+            given.set(Some((song, now)));
         }
     });
 }

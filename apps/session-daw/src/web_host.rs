@@ -617,7 +617,8 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                 form: form(),
                 view: phone_view,
                 on_pick: pick,
-                drawer: rsx! {
+                // Who is here and where the sound comes from: More's.
+                more: rsx! {
                     div {
                         style: "display:flex; align-items:center; gap:8px; flex-wrap:wrap;",
                         crate::collab_bar::CollabBar {}
@@ -758,7 +759,8 @@ fn PhoneViews(
     use crate::compact::PhoneView;
     use_context_provider(|| session);
     match view() {
-        PhoneView::Control => rsx! {},
+        // The shell's own pages (`compact::CompactShell`).
+        PhoneView::Control | PhoneView::More | PhoneView::Setup | PhoneView::Editor => rsx! {},
         PhoneView::Chart => rsx! { crate::chart_panel::WebChart { paged: true } },
         PhoneView::Lyrics => rsx! { crate::lyrics_panel::LyricsPanel {} },
         PhoneView::Arrangement => {

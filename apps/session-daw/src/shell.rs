@@ -438,7 +438,7 @@ fn Modes(mode: Signal<Mode>) -> Element {
 }
 
 /// A mode in the picker: a row a finger can hit.
-fn mode_option(on: bool) -> String {
+pub(crate) fn mode_option(on: bool) -> String {
     let (bg, fg) = if on {
         ("#2a2d33", TEXT)
     } else {
@@ -497,7 +497,7 @@ fn Context(view: View, transport: Option<Element>) -> Element {
 
 /// The lock, as a button: locked, a drag scrolls and moves nothing.
 #[component]
-fn LockButton(lock: Signal<bool>) -> Element {
+pub(crate) fn LockButton(lock: Signal<bool>) -> Element {
     let mut lock = lock;
     let on = lock();
     rsx! {
@@ -518,7 +518,7 @@ fn LockButton(lock: Signal<bool>) -> Element {
 /// The chart's pages: the one before, back to the one being played, the
 /// one after.
 #[component]
-fn ChartPages() -> Element {
+pub(crate) fn ChartPages() -> Element {
     use crate::chart_panel::{Turn, turn};
     rsx! {
         button {
@@ -547,7 +547,7 @@ fn ChartPages() -> Element {
 
 /// Every top-level folder folded, or all of them open (`crate::folds`).
 #[component]
-fn FolderSwitch() -> Element {
+pub(crate) fn FolderSwitch() -> Element {
     let mut folded = use_signal(crate::folds::tops);
     rsx! {
         button {
@@ -573,7 +573,7 @@ fn FolderSwitch() -> Element {
 /// resolves an SVG's `currentColor` once, so an icon kept the colour its
 /// button had when it was made (the view left stayed white, the view gone
 /// to grey).
-const fn ink(on: bool) -> &'static str {
+pub(crate) const fn ink(on: bool) -> &'static str {
     if on { TEXT } else { DIM }
 }
 

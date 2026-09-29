@@ -45,6 +45,10 @@ pub fn SetupView(
     let setlist = try_use_context::<Signal<Setlist>>();
     let back = try_use_context::<crate::shell::Back>();
     let mut tab = use_signal(|| Tab::Setlist);
+    // A phone: the tabs closer together, the set's summary left to the
+    // table.
+    let narrow = room() < 520.0;
+    let tab_pad = if narrow { 12 } else { 20 };
     let summary = setlist.map(|setlist| {
         let list = setlist();
         let secs: f64 = list.songs.iter().map(|s| (s.span.1 - s.span.0).max(0.0)).sum();
@@ -74,7 +78,7 @@ pub fn SetupView(
                         key: "{each.name()}",
                         style: {
                             let (bg, ink) = if tab() == each { (RAISED, TEXT) } else { ("transparent", DIM) };
-                            format!("flex:none; padding:0 20px; border:none; border-right:1px solid {RULE}; \
+                            format!("flex:none; padding:0 {tab_pad}px; border:none; border-right:1px solid {RULE}; \
                                      background:{bg}; color:{ink}; font-family:inherit; font-size:14px; \
                                      font-weight:650; cursor:pointer;")
                         },
@@ -83,7 +87,7 @@ pub fn SetupView(
                     }
                 }
                 div { style: "flex:1;" }
-                if tab() == Tab::Setlist && let Some(summary) = summary {
+                if tab() == Tab::Setlist && !narrow && let Some(summary) = summary {
                     span { style: "align-self:center; padding:0 18px; font-size:13px; color:{DIM}; white-space:nowrap;", "{summary}" }
                 }
             }
@@ -201,6 +205,16 @@ fn Switch(on: Signal<bool>, label: &'static str, detail: &'static str) -> Elemen
     }
 }
 
+/// How wide the page is: the window, less the navigator beside it when it
+/// is open.
+fn room() -> f64 {
+    try_use_context::<crate::shell::WindowSize>().map_or(f64::INFINITY, |window| {
+        let navigator =
+            try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.navigator)());
+        window.0().0 - if navigator { 300.0 } else { 0.0 }
+    })
+}
+
 /// A length as a person reads it: `4:05`, `1:02:30`.
 fn length(secs: f64) -> String {
     #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "whole seconds")]
@@ -255,13 +269,14 @@ fn SongTable(setlist: Signal<Setlist>, on_pick: Option<EventHandler<usize>>) -> 
         };
     }
         let count = list.songs.len();
-    // Narrow (a tablet held upright, the navigator open beside it): the
-    // length and the mode give way, so the songs keep their names.
-    let room = try_use_context::<crate::shell::WindowSize>().map_or(f64::INFINITY, |window| {
-        let navigator = try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.navigator)());
-        window.0().0 - if navigator { 300.0 } else { 0.0 }
-    });
+        // Narrow (a tablet held upright, the navigator open beside it): the
+    // length and the mode give way, so the songs keep their names; on a
+    // phone the tempo too.
+    let room = room();
     let wide = room >= 760.0;
+    let roomy = room >= 520.0;
+    // A row's buttons: a thumb's width each, a little less on a phone.
+    let row_w: u32 = if roomy { 48 } else { 40 };
     let head = "font-size:11px; font-weight:700; letter-spacing:0.08em; color:#6b7280;";
     rsx! {
         div {
@@ -271,12 +286,14 @@ fn SongTable(setlist: Signal<Setlist>, on_pick: Option<EventHandler<usize>>) -> 
                 div { style: cell(0, "center"), "#" }
                 div { style: cell(1, "flex-start"), "SONG" }
                 div { style: cell(2, "flex-start"), "KEY" }
-                div { style: cell(3, "flex-start"), "BPM" }
+                                if roomy {
+                    div { style: cell(3, "flex-start"), "BPM" }
+                }
                                 if wide {
                     div { style: cell(4, "flex-start"), "LENGTH" }
                     div { style: cell(5, "flex-start"), "MODE" }
                 }
-                div { style: cell(6, "flex-end"), "" }
+                                div { style: "{cell(6, \"flex-end\")} width:{3 * row_w}px;", "" }
             }
             for (index, song) in list.songs.iter().cloned().enumerate() {
                 {
@@ -315,13 +332,15 @@ fn SongTable(setlist: Signal<Setlist>, on_pick: Option<EventHandler<usize>>) -> 
                                 }
                             }
                             div { style: "{cell(2, \"flex-start\")} font-weight:600;", "{key}" }
-                            div { style: "{cell(3, \"flex-start\")} font-family:ui-monospace, monospace;", "{bpm}" }
+                                                        if roomy {
+                                div { style: "{cell(3, \"flex-start\")} font-family:ui-monospace, monospace;", "{bpm}" }
+                            }
                                                         if wide {
                                 div { style: "{cell(4, \"flex-start\")} font-family:ui-monospace, monospace; color:{DIM};", "{long}" }
                                 div { style: "{cell(5, \"flex-start\")} color:{DIM};", "{mode}" }
                             }
                             div {
-                                style: "{cell(6, \"flex-end\")} align-items:stretch;",
+                                                                style: "{cell(6, \"flex-end\")} align-items:stretch; width:{3 * row_w}px;",
                                 {row_button("Earlier in the set", earlier, RowIcon::Up,
                                     EventHandler::new(move |()| setlist.write().reorder(index, index - 1)))}
                                 {row_button("Later in the set", later, RowIcon::Down,
@@ -363,7 +382,7 @@ fn row_button(title: &'static str, enabled: bool, icon: RowIcon, on_press: Event
     rsx! {
         button {
             title,
-            style: "flex:none; width:48px; display:flex; align-items:center; justify-content:center; \
+            style: "flex:1; display:flex; align-items:center; justify-content:center; \
                     border:none; background:transparent; cursor:pointer; padding:0;",
             onclick: move |_| {
                 if enabled {
