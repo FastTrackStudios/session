@@ -117,6 +117,10 @@ pub struct Links {
     /// A few strips given more room than they need (the record view's
     /// five): drawn as big as fills it, rather than leaving it empty.
     pub fill: bool,
+    /// The inspector: of the rows, only the selected track and the folder
+    /// it sits in — its own strip and the one it goes out through, as
+    /// Logic's inspector shows them beside the tracks.
+    pub inspector: bool,
 }
 
 /// A key the mixer passed on.
@@ -142,6 +146,7 @@ impl Links {
             alone: false,
             arm_of: Rc::default(),
             fill: false,
+            inspector: false,
         }
     }
 
@@ -247,13 +252,31 @@ pub fn DawPanels(
         }
     });
     let open = (links.open)() || mixer_only;
-    let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, crate::touch::use_touch());
+    let touch = crate::touch::use_touch();
+    let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, touch);
     let mixer_display = if open { "block" } else { "none" };
+    // The inspector, down the arrangement's left: the arrangement view's
+    // own, not a docked pair's, and only while it is switched on.
+    let inspecting = !mixer_only
+        && !docked
+        && try_use_context::<crate::shell::Pins>().is_some_and(|pins| (pins.inspector)());
+    let inspector_w = if inspecting {
+        inspector_width(touch)
+    } else {
+        0.0
+    };
     rsx! {
         if !mixer_only {
             div {
-                style: "position:absolute; top:0; left:0; right:0; bottom:{arrange_bottom};",
+                style: "position:absolute; top:0; left:{inspector_w}px; right:0; bottom:{arrange_bottom};",
                 crate::studio::Arrangement {}
+            }
+        }
+        if inspecting {
+            div {
+                style: "position:absolute; top:0; left:0; width:{inspector_w}px; bottom:{arrange_bottom}; \
+                        border-right:1px solid #000; overflow:hidden;",
+                Inspector {}
             }
         }
         div {
@@ -264,6 +287,27 @@ pub fn DawPanels(
             Mixer {}
         }
     }
+}
+
+/// How wide the inspector is: two strips at the mixer's size here.
+fn inspector_width(touch: bool) -> f64 {
+    if touch { 196.0 } else { 150.0 }
+}
+
+/// The inspector: the arrangement's rows, as the selected track's strip
+/// and the one it goes out through (see [`Links::inspector`]) — a fader,
+/// mute and solo to hand without widening the track panel.
+#[cfg(feature = "native")]
+#[component]
+fn Inspector() -> Element {
+    let outer: Links = use_context();
+    use_context_provider(|| Links {
+        inspector: true,
+        fill: true,
+        open: Signal::new(true),
+        ..outer
+    });
+    rsx! { Mixer {} }
 }
 
 /// The mixer panel. No props: the session and the [`Links`] come from
@@ -606,6 +650,11 @@ struct MixerWidget {
     applier: Option<crate::engine::Applier>,
     /// The tracks [`Links::arm_of`] arms in place of their strips'.
     targets: Vec<daw_proto::Track>,
+    /// An inspector's whole session, as the rows it picks from, with every
+    /// track kept current — its selection among them.
+    all: Rows,
+    /// The track the inspector shows, as it was last built for.
+    inspected: Option<String>,
     /// The Tone rack: each track's EQ, compression and saturation
     /// settings (`crate::tone`), what its strip draws in the rack and what
     /// a grip edits.
@@ -739,6 +788,8 @@ impl MixerWidget {
             rack_pressed: None,
             built_open: None,
             folds_seen: crate::folds::generation(),
+            all: Vec::new(),
+            inspected: None,
             clips: crate::overlay::Clips::default(),
             meters: crate::engine::Meters::start(),
             strips: Rc::default(),
@@ -784,7 +835,15 @@ impl MixerWidget {
             let shared = self.links.rows.borrow();
             if self.generation != Some(shared.0) {
                 self.generation = Some(shared.0);
-                self.rows.clone_from(&shared.1);
+                if self.links.inspector {
+                    // Picked from below, once the engine's word on the
+                    // selection is in.
+                    self.all.clone_from(&shared.1);
+                    self.inspected = None;
+                    self.rows = inspect(&self.all);
+                } else {
+                    self.rows.clone_from(&shared.1);
+                }
                 self.tracks = self.rows.iter().map(|(t, _)| t.clone()).collect();
                 self.map = crate::plan::Rows::of(&self.rows, &self.tracks);
                 self.mixer = None;
@@ -802,6 +861,30 @@ impl MixerWidget {
             predict(&mut self.tracks, edit);
         }
         self.heard();
+        if self.links.inspector {
+            self.reinspect();
+        }
+    }
+
+    /// An inspector's strips follow the selection: built again for the
+    /// newly selected track, carrying what each strip shows now.
+    fn reinspect(&mut self) {
+        let selected = self
+            .all
+            .iter()
+            .find(|(t, _)| t.selected)
+            .map(|(t, _)| t.guid.clone());
+        if selected == self.inspected {
+            return;
+        }
+        self.inspected = selected;
+        self.rows = inspect(&self.all);
+        self.tracks = self.rows.iter().map(|(t, _)| t.clone()).collect();
+        self.map = crate::plan::Rows::of(&self.rows, &self.tracks);
+        self.mixer = None;
+        self.pointer = Pointer::default();
+        self.holds.clear();
+        self.tone.store.borrow_mut().seed(&self.rows);
     }
 
     /// What the engine says changed, applied to the strips. A fader or a
@@ -828,6 +911,14 @@ impl MixerWidget {
             }
             crate::engine::apply_event(&mut self.tracks, event);
             crate::engine::apply_event(&mut self.targets, event);
+            if self.links.inspector {
+                let mut all: Vec<daw_proto::Track> =
+                    self.all.iter().map(|(t, _)| t.clone()).collect();
+                crate::engine::apply_event(&mut all, event);
+                for ((row, _), now) in self.all.iter_mut().zip(all) {
+                    *row = now;
+                }
+            }
         }
         self.show_targets();
     }
@@ -1576,6 +1667,31 @@ impl MixerWidget {
 /// saturation, with the rest of the chain around them.
 fn rack_panels() -> &'static [crate::tone::Which] {
     crate::tone::panels_for(session::mix_phases::MixPhase::Tone)
+}
+
+/// An inspector's strips, out of the session's `rows`: the selected track
+/// (the first, with none), and the folder it sits in — the strip it goes
+/// out through — beside it. Each at the top level: the inspector is two
+/// strips, not a piece of the tree.
+fn inspect(rows: &[(daw_proto::Track, u32)]) -> Rows {
+    let Some(at) = rows
+        .iter()
+        .position(|(t, _)| t.selected)
+        .or((!rows.is_empty()).then_some(0))
+    else {
+        return Vec::new();
+    };
+    let (track, depth) = &rows[at];
+    let mut out = vec![(track.clone(), 0)];
+    if *depth > 0
+        && let Some((parent, _)) = rows[..at]
+            .iter()
+            .rev()
+            .find(|(t, d)| *d < *depth && t.is_folder)
+    {
+        out.push((parent.clone(), 0));
+    }
+    out
 }
 
 /// What an edit does to the track it names, predicted here rather than

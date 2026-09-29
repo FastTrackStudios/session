@@ -160,6 +160,9 @@ pub struct Pins {
     /// Locked: drags scroll, and move nothing (`crate::options::LOCKING`,
     /// which this mirrors so the buttons that show it re-render).
     pub lock: Signal<bool>,
+    /// The inspector down the arrangement's left: the selected track's
+    /// strip, and its folder's.
+    pub inspector: Signal<bool>,
 }
 
 impl Pins {
@@ -169,6 +172,7 @@ impl Pins {
             progress: Signal::new(false),
             transport: Signal::new(false),
             lock: Signal::new(crate::options::LOCKING.get()),
+            inspector: Signal::new(true),
         }
     }
 }
@@ -327,6 +331,12 @@ pub fn BottomBar(view: Signal<View>) -> Element {
                         what: Pinned::Lock,
                     }
                     MenuSwitch {
+                        on: pins.inspector,
+                        label: "Inspector",
+                        detail: "The selected track's fader, mute and solo down the arrangement's left",
+                        what: Pinned::Inspector,
+                    }
+                    MenuSwitch {
                         on: pins.progress,
                         label: "Song progress on every view",
                         detail: "The sections across the top — press one to play from it",
@@ -353,6 +363,7 @@ enum Pinned {
     Progress,
     Transport,
     Lock,
+    Inspector,
 }
 
 /// A switch in the bottom bar's menu: its words, and a switch a finger can

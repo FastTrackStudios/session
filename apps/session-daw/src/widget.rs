@@ -126,52 +126,32 @@ struct Finger {
     second: Option<(blitz_traits::events::BlitzPointerId, (f64, f64))>,
 }
 
-/// The track panel's grip: a pill standing on the panel's edge at `x`,
-/// centred on `y`.
+/// The track panel's grip: a slim handle standing on the panel's edge at
+/// `x`, centred on `y` — what an iPad's split view has between its panes.
+/// Drawn slim; a finger finds it by a generous margin round it
+/// (`GRIP_REACH`).
 fn grip_rect(x: f64, y: f64) -> vello::kurbo::Rect {
-    const W: f64 = 14.0;
-    const H: f64 = 40.0;
+    const W: f64 = 5.0;
+    const H: f64 = 28.0;
     vello::kurbo::Rect::new(x - W / 2.0, y - H / 2.0, x + W / 2.0, y + H / 2.0)
 }
 
-/// The grip itself: a dark pill with a light rule round it, and an arrow
-/// each way on it — the panel goes both ways.
+/// How far round the grip a finger still takes it.
+const GRIP_REACH: (f64, f64) = (16.0, 12.0);
+
+/// The grip itself: a light rounded bar, quiet until it is needed.
 fn paint_grip(out: &mut Scene, rect: vello::kurbo::Rect) {
     use anyrender::PaintScene as _;
-    use vello::kurbo::{BezPath, RoundedRect, Stroke};
+    use vello::kurbo::RoundedRect;
     use vello::peniko::{Color, Fill};
-    let pill = RoundedRect::from_rect(rect, rect.width() / 2.0);
+    let bar = RoundedRect::from_rect(rect, rect.width() / 2.0);
     out.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        Color::from_rgb8(0x26, 0x28, 0x2d),
+        Color::from_rgba8(0x9a, 0x9f, 0xa8, 0xc0),
         None,
-        &pill,
+        &bar,
     );
-    out.stroke(
-        &Stroke::new(1.0),
-        Affine::IDENTITY,
-        Color::from_rgb8(0x5a, 0x5f, 0x68),
-        None,
-        &pill,
-    );
-    let ink = Color::from_rgb8(0xc9, 0xcc, 0xd1);
-    let (cx, cy) = (rect.center().x, rect.center().y);
-    for (dir, dy) in [(-1.0_f64, -6.0_f64), (1.0, 6.0)] {
-        let mut arrow = BezPath::new();
-        arrow.move_to((cx - dir * 2.5, cy + dy - 4.0));
-        arrow.line_to((cx + dir * 2.5, cy + dy));
-        arrow.line_to((cx - dir * 2.5, cy + dy + 4.0));
-        out.stroke(
-            &Stroke::new(1.6)
-                .with_caps(vello::kurbo::Cap::Round)
-                .with_join(vello::kurbo::Join::Round),
-            Affine::IDENTITY,
-            ink,
-            None,
-            &arrow,
-        );
-    }
 }
 
 /// The play cursor's handle, standing on the cursor at `x` in the bars
@@ -1797,7 +1777,7 @@ impl ArrangementWidget {
                 if self
                     .grip
                     .get()
-                    .is_some_and(|g| g.inflate(10.0, 10.0).contains((x, y)))
+                    .is_some_and(|g| g.inflate(GRIP_REACH.0, GRIP_REACH.1).contains((x, y)))
                 {
                     self.fling = None;
                     self.finger = Some(Finger {
