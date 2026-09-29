@@ -147,6 +147,31 @@ pub fn Shell() -> Element {
         }
     });
     use_context_provider(|| session_daw::shell::WindowSize(size));
+    // A phone on its side is drawn to both edges (`BLITZ_SAFE_AREA_SIDES=0`
+    // in main): nothing given up to the camera housing — the view runs under
+    // it — only the top rows' clearance of the rounded corners.
+    #[cfg_attr(not(target_os = "ios"), allow(unused_variables, unused_mut))]
+    let mut sides = use_context_provider(|| Signal::new(session_daw::compact::Sides::default()));
+    #[cfg(target_os = "ios")]
+    {
+        dioxus_native::use_window_event(move |event, _| {
+            use session_daw::compact::Sides;
+            if !matches!(event, winit::event::WindowEvent::RedrawRequested) {
+                return;
+            }
+            let now = match super::ios_scene::island_on_left() {
+                Some(_) => Sides {
+                    left: 0.0,
+                    right: 0.0,
+                    corner: 16.0,
+                },
+                None => Sides::default(),
+            };
+            if *sides.peek() != now {
+                sides.set(now);
+            }
+        });
+    }
     let width = move || size().0;
     let form = use_memo(move || {
         let (w, h) = size();

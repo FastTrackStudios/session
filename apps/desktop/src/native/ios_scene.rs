@@ -119,6 +119,28 @@ fn attach(mtm: MainThreadMarker) {
     );
 }
 
+/// Which side the camera housing is on, for a phone on its side: `Some(true)`
+/// the left, `Some(false)` the right, `None` held upright (or no scene yet).
+/// UIKit names an interface orientation by where the home button would be,
+/// so "landscape right" has the phone's top — the housing — on the left.
+pub fn island_on_left() -> Option<bool> {
+    use objc2_ui_kit::UIInterfaceOrientation;
+    let mtm = MainThreadMarker::new()?;
+    let scenes = UIApplication::sharedApplication(mtm).connectedScenes();
+    let scene = scenes
+        .iter()
+        .find_map(|scene| scene.downcast::<UIWindowScene>().ok())?;
+    #[allow(deprecated)]
+    let orientation = scene.interfaceOrientation();
+    if orientation == UIInterfaceOrientation::LandscapeRight {
+        Some(true)
+    } else if orientation == UIInterfaceOrientation::LandscapeLeft {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Open `url` in the browser.
 pub fn open_url(url: &str) {
     use objc2_foundation::{NSDictionary, NSString, NSURL};

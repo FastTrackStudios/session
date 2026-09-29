@@ -68,6 +68,24 @@ pub fn use_form() -> Form {
     try_use_context::<Signal<Form>>().map_or(Form::Wide, |form| form())
 }
 
+/// How far a phone on its side keeps its controls from each side (`left`,
+/// `right` — nothing, as the app draws edge to edge, under the camera
+/// housing) and how far the top rows keep clear of the screen's rounded
+/// corners (`corner`). Nothing upright, or with no host saying. In logical
+/// pixels; the host provides it as a `Signal<Sides>`.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct Sides {
+    pub left: f64,
+    pub right: f64,
+    pub corner: f64,
+}
+
+/// The sides, as the host measured them (none when it did not say).
+#[must_use]
+pub fn use_sides() -> Sides {
+    try_use_context::<Signal<Sides>>().map_or_else(Sides::default, |sides| sides())
+}
+
 /// The views of the small-screen layout: the five in the tab bar, and
 /// More — everything else, a page of its own: Setup, the Editor, the
 /// modes, the lock.
@@ -148,6 +166,7 @@ pub fn CompactShell(
     body: Element,
 ) -> Element {
     let setlist: Signal<Setlist> = use_context();
+    let sides = use_sides();
     // The record view's song menu (in Control, in record mode) picks as the
     // navigator does.
     use_context_provider(|| crate::record_view::PickSong(on_pick));
@@ -264,12 +283,16 @@ pub fn CompactShell(
                     flex-direction:{direction}; \
                     background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
             if landscape {
-                                Tabs { view, rail: true, controls }
-                                div {
-                    style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
+                div {
+                    style: "position:relative; flex:1; min-width:0; min-height:0; display:flex; flex-direction:column;",
+                    // The song, the transport and the view's own controls:
+                    // one line across the top, edge to edge — the camera
+                    // housing is mid-height, so only the screen's rounded
+                    // corners are kept clear here.
                     div {
-                                                style: "position:relative; z-index:5; flex:none; height:{LINE_H}px; display:flex; \
-                                align-items:stretch; background:{BAR_BG}; border-bottom:1px solid {RULE};",
+                        style: "position:relative; z-index:5; flex:none; height:{LINE_H}px; display:flex; \
+                                align-items:stretch; box-sizing:border-box; padding:0 {sides.corner}px; \
+                                background:{BAR_BG}; border-bottom:1px solid {RULE};",
                         div {
                             style: "flex:1; min-width:0; display:flex; flex-direction:column;",
                             SongLine { view, on_pick, bare: true }
@@ -282,11 +305,28 @@ pub fn CompactShell(
                             }
                         }
                     }
-                    {progress}
-                    {panel}
+                    div {
+                        style: "flex:none; box-sizing:border-box; padding:0 {sides.corner}px; background:{BAR_BG};",
+                        {progress}
+                    }
+                    // Under them, the views' rail and the view: the rail
+                    // kept clear of the housing when it is on the left, the
+                    // view when it is on the right, and nothing else given up.
+                    div {
+                        style: "flex:1; min-height:0; display:flex;",
+                        div {
+                            style: "flex:none; display:flex; padding-left:{sides.left}px; background:{BAR_BG};",
+                            Tabs { view, rail: true, controls }
+                        }
+                        div {
+                            style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column; \
+                                    padding-right:{sides.right}px;",
+                            {panel}
+                        }
+                    }
                 }
             } else {
-                                                                SongLine { view, on_pick }
+                SongLine { view, on_pick }
                 {progress}
                 div {
                     style: "position:relative; flex:1; min-height:0; display:flex; flex-direction:column;",
