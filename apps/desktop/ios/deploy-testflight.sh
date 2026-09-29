@@ -159,7 +159,7 @@ BUNDLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plis
 # requires CFBundleShortVersionString to be 1-3 period-separated integers
 # (the crate's "0.0.1-alpha" is rejected); CFBundleVersion just has to climb.
 BUILD_NO="${BUILD_NO:-$(date +%s)}"
-MARKETING_VER="${MARKETING_VER:-0.0.1}"
+MARKETING_VER="${MARKETING_VER:-0.0.3}"
 # App bundle OS type — App Store requires CFBundlePackageType=APPL (dx omits it).
 /usr/libexec/PlistBuddy -c "Set :CFBundlePackageType APPL" "$APP/Info.plist" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$APP/Info.plist"
