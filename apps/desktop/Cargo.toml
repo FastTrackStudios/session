@@ -102,6 +102,9 @@ tts = ["session-guide/tts"]
 # Network probe for the engine's SetlistService (the browser remote's wire
 # path, natively): `cargo run -p session-desktop --example setlist_probe`.
 [dependencies]
+# A timer that needs no runtime: the native shell's loops (frames while
+# the transport moves; on iOS, Now Playing and the remote commands).
+futures-timer = "3"
 utils.workspace = true
 tracing.workspace = true
 fts-chrome.workspace = true
@@ -248,7 +251,6 @@ objc2-media-player = { version = "0.3", features = [
     "MPRemoteCommandEvent", "MPMediaItem", "block2",
 ] }
 block2 = "0.6"
-futures-timer = "3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dioxus = { workspace = true, default-features = true, features = ["web", "launch"] }

@@ -1524,6 +1524,17 @@ impl Widget for ArrangementWidget {
             // Other people's pointers glide and their play cursors move
             // with nothing happening here.
             || crate::ghosts::active()
+            // The playhead, the meters and the follow scroll, while the
+            // transport moves.
+            || crate::engine::moving()
+            // A throw still carrying the view, and zooms queued for the
+            // next frame.
+            || self.fling.is_some()
+            || !self.zooms.borrow().is_empty()
+            // Previews and folds that changed off the UI thread: the next
+            // paint re-cuts the rows for them.
+            || self.previews.generation() != self.previews_seen
+            || crate::folds::generation() != self.folds_seen
     }
 
     fn handle_event(&mut self, event: &UiEvent) {

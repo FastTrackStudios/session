@@ -1952,7 +1952,12 @@ impl Widget for MixerWidget {
     }
 
     fn needs_redraw(&self) -> bool {
+        // The meters, while the transport moves; a fold or a tone change
+        // made off the UI thread.
         self.dirty.get()
+            || crate::engine::moving()
+            || crate::folds::generation() != self.folds_seen
+            || self.tone.generation() != self.tone_seen
     }
 
     fn paint(

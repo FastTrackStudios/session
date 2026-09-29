@@ -98,6 +98,30 @@ pub fn Shell() -> Element {
         }
     });
     use_live_advance(setlist, mode);
+    // The window draws a frame only when something asks: an event, a
+    // change here, or a panel whose picture moves (the arrangement, the
+    // mixer, the chart — each asks while the transport moves). While it
+    // moves, frames are asked for here too: for the views with no such
+    // panel (Perform, Lyrics), whose playhead and progress read the
+    // transport on each frame, and for the first frame after a start that
+    // came from outside the window (the space bar, the lock screen, a
+    // collaborator leading).
+    {
+        let window = dioxus_native::use_window();
+        use_future(move || {
+            let window = window.clone();
+            async move {
+                loop {
+                    let moving = session_daw::engine::moving();
+                    if moving {
+                        window.request_redraw();
+                    }
+                    let wait = if moving { 33 } else { 100 };
+                    futures_timer::Delay::new(std::time::Duration::from_millis(wait)).await;
+                }
+            }
+        });
+    }
     session_daw::collab_bar::use_follow_song(setlist);
     // `FTS_SESSION_SONG=<n>` (1-based): open the set on its n-th song — to
     // start somewhere other than the top, or (the collaboration demo) to

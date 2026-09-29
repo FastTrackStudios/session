@@ -632,6 +632,16 @@ impl Transport {
     }
 }
 
+/// Whether the transport is moving (playing or recording): what keeps the
+/// panels drawing frames with no hand on them.
+#[must_use]
+pub fn moving() -> bool {
+    Transport::shared().is_some_and(|t| {
+        let reading = t.reading();
+        reading.playing || reading.recording
+    })
+}
+
 /// What the transport has been asked to do.
 ///
 /// A command, not a state: the engine owns whether it is playing, and
