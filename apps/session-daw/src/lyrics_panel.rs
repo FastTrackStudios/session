@@ -389,9 +389,48 @@ fn ticks(every: Duration) -> futures_channel::mpsc::UnboundedReceiver<()> {
 
 /// The panel's size in pixels, read back from the layout and kept up to
 /// date — the Audience's words are sized to it.
+///
+/// It starts at the size the lyrics last had (a view switched back to
+/// takes the same place), and is read the moment the panel is mounted:
+/// the words are drawn at their size from the first frame, not small and
+/// then grown a tick later.
 fn use_size() -> (Signal<(f64, f64)>, Signal<Option<Rc<MountedData>>>) {
-    let mut size = use_signal(|| (0.0_f64, 0.0_f64));
+    thread_local! {
+        static LAST: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((0.0, 0.0)) };
+    }
+    // Where it starts: the size it last had, or — never shown yet — the
+    // window less the bars, which is where the Lyrics view is. Never
+    // nothing: words drawn late are worse than words a hair off.
+    let mut size = use_signal(|| {
+        let last = LAST.with(std::cell::Cell::get);
+        if last.0 > 0.0 && last.1 > 0.0 {
+            return last;
+        }
+        try_consume_context::<crate::shell::WindowSize>().map_or((0.0, 0.0), |window| {
+            let (w, h) = *window.0.peek();
+            (w, (h - crate::shell::BAR_H - crate::shell::BOTTOM_H).max(0.0))
+        })
+    });
     let node = use_signal(|| None::<Rc<MountedData>>);
+    use_effect(move || {
+        let (w, h) = size();
+        if w > 0.0 && h > 0.0 {
+            LAST.with(|last| last.set((w, h)));
+        }
+    });
+    // Mounted: measured now, not at the next tick.
+    use_effect(move || {
+        if let Some(node) = node() {
+            spawn(async move {
+                if let Ok(rect) = node.get_client_rect().await {
+                    let now = (rect.size.width, rect.size.height);
+                    if *size.peek() != now {
+                        size.set(now);
+                    }
+                }
+            });
+        }
+    });
     use_future(move || async move {
         // Read on a tick: a panel resizes when a divider or the window
         // moves, and nothing tells it.
@@ -446,6 +485,9 @@ pub fn LyricsPanel() -> Element {
                     "No lyrics for this song yet — put a synced .lrc beside its chart \
                      (session lyrics fetch) and prepare the song again."
                 }
+            } else if size().0 <= 0.0 || size().1 <= 0.0 {
+                // Not measured yet: nothing, rather than words sized to
+                // nothing (a frame, at most — see `use_size`).
             } else {
                 match view() {
                     View::Audience => rsx! { Audience { words: words.clone(), layer: layer(), at, size: size() } },

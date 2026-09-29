@@ -124,6 +124,12 @@ impl View {
     }
 }
 
+/// The window's size in logical pixels, as the host keeps it: what a view
+/// that sizes itself to its panel (the lyrics) starts from before its
+/// panel is measured — the window less the bars.
+#[derive(Clone, Copy, PartialEq)]
+pub struct WindowSize(pub Signal<(f64, f64)>);
+
 /// Back out of the set to where sets are picked (the start screen, and
 /// its library), when the host has one: a context the host provides while
 /// a set is open. The top bar shows a Back button while it is there.
@@ -151,7 +157,7 @@ pub fn EditorComing() -> Element {
 
 /// What stays on screen over every view — the song's progress along the
 /// top, the performance transport along the foot — each a setting a
-/// button in the bottom bar (and a switch on the Setup page) turns on;
+/// switch on the Setup page turns on;
 /// a context the shell provides.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Pins {
@@ -163,6 +169,8 @@ pub struct Pins {
     /// The inspector down the arrangement's left: the selected track's
     /// strip, and its folder's.
     pub inspector: Signal<bool>,
+    /// The navigator down the window's left ([`NavigatorColumn`]).
+    pub navigator: Signal<bool>,
 }
 
 impl Pins {
@@ -173,6 +181,7 @@ impl Pins {
             transport: Signal::new(false),
             lock: Signal::new(crate::options::LOCKING.get()),
             inspector: Signal::new(true),
+            navigator: Signal::new(false),
         }
     }
 }
@@ -181,6 +190,16 @@ impl Default for Pins {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Provide the window's [`Pins`], for a shell: and the lock, wherever it
+/// is switched (the Setup page, a view's own lock button), is what
+/// [`crate::options::LOCKING`] says.
+pub fn use_pins() -> Pins {
+    let pins = use_context_provider(Pins::new);
+    let lock = pins.lock;
+    use_effect(move || crate::options::LOCKING.set(lock()));
+    pins
 }
 
 /// Whether a view carries the progress bar and the transport already
@@ -229,38 +248,33 @@ pub fn PinnedTransport(view: View) -> Element {
 /// `viewport-fit=cover` runs the page under them. Blitz keeps them out of
 /// the page already, and there the insets are nothing.
 pub const SAFE_AREA: &str = "position:absolute; top:0; left:0; width:100vw; height:100vh; \
-    box-sizing:border-box; display:flex; background:#17181b; \
+    box-sizing:border-box; display:flex; overflow:hidden; background:#17181b; \
     padding:env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) \
     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);";
+
+/// A press-outside-closes layer under a popup: the whole screen, from
+/// wherever the popup is. Past the screen's edges on every side, because
+/// Blitz places a `fixed` box from its container rather than the
+/// viewport — a layer at 0,0 of a picker in the bottom-right corner
+/// covered nothing a finger could press.
+pub const SCRIM: &str = "position:fixed; top:-100vh; left:-100vw; width:300vw; height:300vh;";
 
 /// How tall the bottom bar is: an icon with its word under it, for a
 /// finger.
 pub const BOTTOM_H: f64 = 54.0;
 
-/// How wide the bottom bar's left end is — the menu, the inspector, Setup
-/// and the view's own controls there — kept the same whatever the view,
-/// so the views beside it stay put as they are switched between. Narrow,
-/// the view's controls there go (they are in the menu too).
-const LEFT_W: f64 = 244.0;
-const LEFT_W_NARROW: f64 = 150.0;
-
 /// How wide a view's button is, with its word under the icon.
-const VIEW_W: f64 = 56.0;
+const VIEW_W: f64 = 60.0;
 
-/// How wide the mode picker is.
-const MODE_W: f64 = 96.0;
+/// How wide the modes are (the window's, and the audio's beside it).
+const MODES_W: f64 = 130.0;
 
-/// Below this the bar is narrow (a tablet held upright).
-const BOTTOM_WIDE: f64 = 1000.0;
-
-/// The bottom bar: the views as icons across the foot of the window, the
-/// way the top bar runs across its head — Logic's iPad layout, where what
-/// you look at is picked at the bottom. Each view an icon with its word
-/// under it, in the middle; at the left the menu (the window's switches:
-/// lock, progress, transport), the inspector and Setup; at the right the
-/// mode. Either side of the views is the view's own: the arrangement's
-/// transport, where it is and its tempo and key; the chart's pages; the
-/// mixer's folders ([`LeftContext`], [`RightContext`]).
+/// The bottom bar: at the left Setup (and in it, back to the sets), then the
+/// views, each an icon with its word under it — Logic's iPad layout, what
+/// you look at picked at the bottom. After them, the view's own controls
+/// ([`Context`]): the arrangement's inspector, lock and transport; the
+/// chart's pages; the mixer's lock and folders. At the right, the modes:
+/// what the window is set up for over where the sound comes from.
 ///
 /// On a touchscreen there is no Overview: it is every view at once, which
 /// a tablet or a phone has no room for, and each of its parts is a view
@@ -278,24 +292,20 @@ pub fn BottomBar(
     width: Option<f64>,
 ) -> Element {
     let touch = crate::touch::use_touch();
-    let pins = try_use_context::<Pins>();
-    let mut menu = use_signal(|| false);
-    let mut picking = use_signal(|| false);
-    let views: Vec<View> = View::ALL
+        let views: Vec<View> = View::ALL
         .into_iter()
         .filter(|v| *v != View::Setup && !(touch && *v == View::Overview))
         .collect();
-    let wide = width.is_none_or(|w| w >= BOTTOM_WIDE);
-    let left_w = if wide { LEFT_W } else { LEFT_W_NARROW };
-    // What the right side's controls have, and so how much of the
-    // transport is spelled out there.
+    // What the view's own controls have, and so how much of the transport
+    // is spelled out there: the bar less the Setup button, the
+    // views, the arrangement's two switches and the modes.
     #[allow(clippy::cast_precision_loss)]
     let room = width.map_or(f64::INFINITY, |w| {
-        w - 24.0 - left_w - views.len() as f64 * (VIEW_W + 4.0) - MODE_W - 20.0
+                w - (3.0 + views.len() as f64) * VIEW_W - 2.0 * VIEW_W - MODES_W - 4.0
     });
-    let density = if room >= 510.0 {
+    let density = if room >= 480.0 {
         Density::Full
-    } else if room >= 400.0 {
+    } else if room >= 370.0 {
         Density::Compact
     } else {
         Density::Narrow
@@ -313,7 +323,7 @@ pub fn BottomBar(
                 title: each.name(),
                 style: bottom_button(view() == each, true),
                 onclick: move |_| view.set(each),
-                ViewIcon { view: each }
+                ViewIcon { view: each, color: ink(view() == each) }
                 span { style: LABEL, "{each.label()}" }
             }
         }
@@ -321,90 +331,47 @@ pub fn BottomBar(
     let showing = view();
     rsx! {
         div {
-            style: "position:relative; height:{BOTTOM_H}px; flex:none; display:flex; align-items:center; \
-                    gap:4px; padding:0 12px; background:{BAR_BG}; border-top:1px solid {RULE};",
-            // The menu (the window's switches), the inspector, Setup (the
-            // set and the song's details, set up before the views are
-            // used), and the view's own controls.
-            div {
-                style: "flex:none; width:{left_w}px; display:flex; align-items:center; gap:4px; overflow:hidden;",
+                        style: "position:relative; height:{BOTTOM_H}px; flex:none; display:flex; align-items:stretch; \
+                    background:{BAR_BG}; border-top:1px solid {RULE};",
+                        // Setup: the set and the song's details, set up before the
+            // views are used (and the way back to the sets) — a view of its
+            // own, kept apart from the others.
+                                    {button(View::Setup)}
+            // What stays on over every view, whichever is showing: the
+            // performance transport along the foot, the song's progress
+            // along the top.
+            if let Some(pins) = try_use_context::<Pins>() {
                 button {
-                    title: "Settings",
-                    style: bottom_button(menu(), true),
+                    title: "The transport along the foot of every view",
+                    style: bottom_button((pins.transport)(), true),
                     onclick: move |_| {
-                        menu.toggle();
-                        picking.set(false);
+                        let mut on = pins.transport;
+                        on.toggle();
                     },
-                    lucide_dioxus::Menu { size: 19, color: "currentColor" }
-                    span { style: LABEL, "Menu" }
+                    lucide_dioxus::CirclePlay { size: 19, color: ink((pins.transport)()) }
+                    span { style: LABEL, "Transport" }
                 }
-                if let Some(pins) = pins {
-                    button {
-                        title: "The inspector: the selected track's strip, down the arrangement's left",
-                        style: bottom_button((pins.inspector)(), true),
-                        onclick: move |_| {
-                            let mut on = pins.inspector;
-                            on.toggle();
-                        },
-                        lucide_dioxus::PanelLeft { size: 19, color: "currentColor" }
-                        span { style: LABEL, "Inspect" }
-                    }
+                button {
+                    title: "The song's progress along the top of every view",
+                    style: bottom_button((pins.progress)(), true),
+                    onclick: move |_| {
+                        let mut on = pins.progress;
+                        on.toggle();
+                    },
+                    lucide_dioxus::PanelTop { size: 19, color: ink((pins.progress)()) }
+                    span { style: LABEL, "Progress" }
                 }
-                {button(View::Setup)}
-                if wide {
-                    Divider {}
-                    LeftContext { view: showing }
-                }
-            }
-            div {
-                style: "flex:none; display:flex; align-items:center; gap:4px;",
-                for each in views {
-                    {button(each)}
-                }
-            }
-            // The view's own controls, then the mode.
-            div {
-                style: "flex:1; min-width:0; display:flex; justify-content:flex-end; align-items:center; \
-                        gap:6px; overflow:hidden;",
-                RightContext { view: showing, transport }
             }
             Divider {}
-            ModePicker { mode, picking, menu }
-            if menu() || picking() {
-                // A press outside closes it.
-                div {
-                    style: "position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:40;",
-                    onclick: move |_| {
-                        menu.set(false);
-                        picking.set(false);
-                    },
-                }
+            for each in views {
+                {button(each)}
             }
-            if menu() && let Some(pins) = pins {
-                div {
-                    style: "position:absolute; left:10px; bottom:{BOTTOM_H + 6.0}px; z-index:41; width:300px; \
-                            padding:6px; border-radius:12px; background:{BAR_BG}; border:1px solid {RULE}; \
-                            box-shadow:0 10px 30px rgba(0,0,0,0.5); display:flex; flex-direction:column; gap:2px;",
-                    MenuSwitch {
-                        on: pins.lock,
-                        label: "Lock",
-                        detail: "A drag scrolls and moves nothing — items, faders, knobs",
-                        what: Pinned::Lock,
-                    }
-                    MenuSwitch {
-                        on: pins.progress,
-                        label: "Song progress on every view",
-                        detail: "The sections across the top — press one to play from it",
-                        what: Pinned::Progress,
-                    }
-                    MenuSwitch {
-                        on: pins.transport,
-                        label: "Transport on every view",
-                        detail: "Back, Play, Loop and Advance along the foot",
-                        what: Pinned::Transport,
-                    }
-                }
+            // The view's own controls, from the views on.
+            div {
+                                style: "flex:1; min-width:0; display:flex; align-items:stretch; overflow:hidden;",
+                Context { view: showing, transport }
             }
+            Modes { mode }
         }
     }
 }
@@ -416,36 +383,41 @@ const LABEL: &str = "font-size:10px; line-height:12px; font-weight:600; white-sp
 #[component]
 fn Divider() -> Element {
     rsx! {
-        div { style: "flex:none; width:1px; height:30px; margin:0 4px; background:{RULE};" }
+                div { style: "flex:none; width:1px; margin:12px 0; background:{RULE};" }
     }
 }
 
-/// The mode, at the bottom bar's right end: what it is, and every mode
-/// to pick from over it.
+/// The modes, at the bottom bar's right end, side by side: what the
+/// window is set up for (Record, Mix, Live…) and where the sound comes
+/// from (Engine, Cue, Remote) — each its value over its word, as the
+/// views are, and pressed for its picker.
 #[component]
-fn ModePicker(mode: Signal<Mode>, picking: Signal<bool>, menu: Signal<bool>) -> Element {
+fn Modes(mode: Signal<Mode>) -> Element {
     let mut mode = mode;
-    let mut picking = picking;
-    let mut menu = menu;
+    let mut picking = use_signal(|| false);
     rsx! {
         div {
-            style: "position:relative; flex:none; width:{MODE_W}px; display:flex; justify-content:flex-end;",
+                        style: "position:relative; flex:none; display:flex; align-items:stretch;",
+            Divider {}
             button {
                 title: "The mode: what the window is set up for",
-                style: "height:44px; min-width:88px; box-sizing:border-box; display:flex; flex-direction:column; \
-                        align-items:center; justify-content:center; gap:2px; padding:0 10px; border-radius:9px; \
-                        border:1px solid {RULE}; background:#0f1012; color:{TEXT}; cursor:pointer; \
-                        font-family:inherit;",
-                onclick: move |_| {
-                    picking.toggle();
-                    menu.set(false);
-                },
-                span { style: "font-size:13px; line-height:15px; font-weight:700;", "{mode().display_name()}" }
-                span { style: "{LABEL} color:{DIM};", "Mode" }
+                style: "{bottom_button(picking(), true)} min-width:76px;",
+                onclick: move |_| picking.toggle(),
+                span {
+                    style: "font-size:13px; line-height:19px; font-weight:700; color:{TEXT}; white-space:nowrap;",
+                    "{mode().display_name()}"
+                }
+                span { style: LABEL, "Mode" }
             }
+            AudioBadge { density: Density::Compact, boxed: true }
             if picking() {
+                // A press outside closes it.
                 div {
-                    style: "position:absolute; right:0; bottom:{BOTTOM_H - 2.0}px; z-index:41; \
+                    style: "{SCRIM} z-index:40;",
+                    onclick: move |_| picking.set(false),
+                }
+                div {
+                    style: "position:absolute; right:0; bottom:52px; z-index:41; \
                             min-width:180px; padding:6px; background:{BAR_BG}; \
                             border:1px solid {RULE}; border-radius:12px; display:flex; \
                             flex-direction:column; gap:2px; box-shadow:0 10px 30px rgba(0,0,0,0.5);",
@@ -478,15 +450,47 @@ fn mode_option(on: bool) -> String {
     )
 }
 
-/// The view's own controls at the bottom bar's left, beside Setup: the
-/// lock where things can be dragged (the arrangement, the mixer).
+/// The view's own controls, after the views in the bottom bar: the
+/// arrangement's inspector, lock and transport (where it is, its tempo
+/// and key); the chart's pages; the mixer's lock and folders.
 #[component]
-fn LeftContext(view: View) -> Element {
-    let Some(pins) = try_use_context::<Pins>() else {
-        return rsx! {};
-    };
+fn Context(view: View, transport: Option<Element>) -> Element {
+    let pins = try_use_context::<Pins>();
     match view {
-        View::Daw | View::Mixer => rsx! { LockButton { lock: pins.lock } },
+        View::Daw => rsx! {
+            Divider {}
+            if let Some(pins) = pins {
+                button {
+                    title: "The inspector: the selected track's strip, down the arrangement's left",
+                    style: bottom_button((pins.inspector)(), true),
+                    onclick: move |_| {
+                        let mut on = pins.inspector;
+                        on.toggle();
+                    },
+                    lucide_dioxus::PanelLeft { size: 19, color: ink((pins.inspector)()) }
+                    span { style: LABEL, "Inspect" }
+                }
+                LockButton { lock: pins.lock }
+            }
+            if let Some(transport) = transport {
+                                Divider {}
+                div {
+                    style: "flex:none; display:flex; align-items:stretch;",
+                    {transport}
+                }
+            }
+        },
+        View::Chart => rsx! {
+            Divider {}
+            ChartPages {}
+        },
+        View::Mixer => rsx! {
+            Divider {}
+            if let Some(pins) = pins {
+                LockButton { lock: pins.lock }
+            }
+            FolderSwitch {}
+        },
         _ => rsx! {},
     }
 }
@@ -500,37 +504,14 @@ fn LockButton(lock: Signal<bool>) -> Element {
         button {
             title: "Locked: a drag scrolls and moves nothing",
             style: bottom_button(on, true),
-            onclick: move |_| {
-                lock.toggle();
-                crate::options::LOCKING.set(lock());
-            },
+            onclick: move |_| lock.toggle(),
             if on {
-                lucide_dioxus::Lock { size: 19, color: "currentColor" }
+                lucide_dioxus::Lock { size: 19, color: ink(on) }
             } else {
-                lucide_dioxus::LockOpen { size: 19, color: "currentColor" }
+                lucide_dioxus::LockOpen { size: 19, color: ink(on) }
             }
             span { style: LABEL, "Lock" }
         }
-    }
-}
-
-/// The view's own controls at the bottom bar's right, beside the mode:
-/// the arrangement's transport, where it is and its tempo and key; the
-/// chart's pages; the mixer's folders.
-#[component]
-fn RightContext(view: View, transport: Option<Element>) -> Element {
-    match view {
-        View::Daw => rsx! {
-            if let Some(transport) = transport {
-                div {
-                    style: "flex:none; display:flex; align-items:center; height:44px;",
-                    {transport}
-                }
-            }
-        },
-        View::Chart => rsx! { ChartPages {} },
-        View::Mixer => rsx! { FolderSwitch {} },
-        _ => rsx! {},
     }
 }
 
@@ -578,106 +559,70 @@ fn FolderSwitch() -> Element {
                 folded.set(on);
             },
             if folded() {
-                lucide_dioxus::FolderClosed { size: 19, color: "currentColor" }
+                lucide_dioxus::FolderClosed { size: 19, color: ink(folded()) }
             } else {
-                lucide_dioxus::FolderOpen { size: 19, color: "currentColor" }
+                lucide_dioxus::FolderOpen { size: 19, color: ink(folded()) }
             }
             span { style: LABEL, if folded() { "Folded" } else { "Open" } }
         }
     }
 }
 
-/// What a switch in the bottom bar's menu switches.
-#[derive(Clone, Copy, PartialEq)]
-enum Pinned {
-    Progress,
-    Transport,
-    Lock,
-}
-
-/// A switch in the bottom bar's menu: its words, and a switch a finger can
-/// hit.
-#[component]
-fn MenuSwitch(
-    on: Signal<bool>,
-    label: &'static str,
-    detail: &'static str,
-    what: Pinned,
-) -> Element {
-    let mut on = on;
-    let lit = on();
-    let (track, knob) = if lit {
-        ("#2563eb", "18px")
-    } else {
-        ("#3a3d44", "2px")
-    };
-    rsx! {
-        button {
-            style: "display:flex; align-items:center; gap:12px; width:100%; min-height:48px; padding:6px 10px; \
-                    border:none; border-radius:8px; background:transparent; color:{TEXT}; text-align:left; \
-                    font-family:inherit; cursor:pointer;",
-            onclick: move |_| {
-                on.toggle();
-                if what == Pinned::Lock {
-                    crate::options::LOCKING.set(on());
-                }
-            },
-            div {
-                style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;",
-                span { style: "font-size:13px; font-weight:600;", "{label}" }
-                span { style: "font-size:11px; color:{DIM}; line-height:1.4;", "{detail}" }
-            }
-            div {
-                style: "position:relative; flex:none; width:38px; height:22px; border-radius:11px; background:{track};",
-                div { style: "position:absolute; top:2px; left:{knob}; width:18px; height:18px; border-radius:9px; background:#f3f4f6;" }
-            }
-        }
-    }
+/// An icon's colour in a bar: white for what is on or showing, grey for
+/// the rest. Given to the icon outright, never as `currentColor` — Blitz
+/// resolves an SVG's `currentColor` once, so an icon kept the colour its
+/// button had when it was made (the view left stayed white, the view gone
+/// to grey).
+const fn ink(on: bool) -> &'static str {
+    if on { TEXT } else { DIM }
 }
 
 /// A bottom-bar button: a grey icon with its word under it, or, for what
-/// is showing, white on a light pill; `label` false, the icon alone.
+/// is showing, white and raised; `label` false, the icon alone.
 fn bottom_button(on: bool, label: bool) -> String {
-    let (fg, bg) = if on {
-        (TEXT, "#3a3d44")
+        let (fg, bg) = if on {
+        (TEXT, RAISED)
     } else {
         (DIM, "transparent")
     };
     let shape = if label {
-        "min-width:52px; padding:0 6px; flex-direction:column; gap:3px;"
+        "min-width:58px; padding:0 8px; flex-direction:column; gap:3px;"
     } else {
-        "width:44px;"
+        "width:52px;"
     };
+    // Flat and the bar's full height, as the top bar's parts are: what is
+    // showing raised, nothing a card.
     format!(
-        "{shape} height:46px; flex:none; box-sizing:border-box; display:flex; align-items:center; \
-         justify-content:center; border:none; border-radius:9px; background:{bg}; color:{fg}; \
+        "{shape} height:100%; flex:none; box-sizing:border-box; display:flex; align-items:center; \
+         justify-content:center; border:none; border-radius:0; background:{bg}; color:{fg}; \
          cursor:pointer; font-family:inherit;"
     )
 }
 
 /// A view's icon, as the bottom bar shows it.
 #[component]
-fn ViewIcon(view: View) -> Element {
+fn ViewIcon(view: View, color: &'static str) -> Element {
     use lucide_dioxus::{
         ChartNoAxesGantt, FileMusic, LayoutDashboard, ListMusic, MicVocal, Settings,
         SlidersVertical,
     };
     let size = 19;
     match view {
-        View::Performance => rsx! { ListMusic { size, color: "currentColor" } },
-        View::Overview => rsx! { LayoutDashboard { size, color: "currentColor" } },
-        View::Chart => rsx! { FileMusic { size, color: "currentColor" } },
-        View::Lyrics => rsx! { MicVocal { size, color: "currentColor" } },
-        View::Editor => rsx! { lucide_dioxus::AudioWaveform { size, color: "currentColor" } },
-        View::Daw => rsx! { ChartNoAxesGantt { size, color: "currentColor" } },
-        View::Mixer => rsx! { SlidersVertical { size, color: "currentColor" } },
-        View::Setup => rsx! { Settings { size, color: "currentColor" } },
+        View::Performance => rsx! { ListMusic { size, color } },
+        View::Overview => rsx! { LayoutDashboard { size, color } },
+        View::Chart => rsx! { FileMusic { size, color } },
+        View::Lyrics => rsx! { MicVocal { size, color } },
+        View::Editor => rsx! { lucide_dioxus::AudioWaveform { size, color } },
+        View::Daw => rsx! { ChartNoAxesGantt { size, color } },
+        View::Mixer => rsx! { SlidersVertical { size, color } },
+        View::Setup => rsx! { Settings { size, color } },
     }
 }
 
-/// The top bar: back to the sets, the host's badges (who is here, where
-/// the sound comes from), and the setlist's tabs. The transport and the
-/// mode are in the bottom bar ([`BottomBar`]).
+/// The top bar: the navigator's switch (the whole set down the left, as
+/// a vertical progress bar — [`NavigatorColumn`]), the song before, the setlist's tabs, the song
+/// after, and the host's badges (who is here) at the right. Back to the
+/// sets, the views and the modes are in the bottom bar ([`BottomBar`]).
 ///
 /// `lights` is how much of the left end belongs to the window's own
 /// controls (the traffic lights on macOS, nothing in a page), and
@@ -706,22 +651,16 @@ pub fn TopBar(
             shared.set(density);
         }
     }));
-    let back = try_use_context::<Back>();
-    let controls = rsx! {
-        // A row: whatever the host puts here (the collaboration bar).
-        div {
-            style: "flex:none; display:flex; align-items:center;",
-            onmousedown: move |event| event.stop_propagation(),
-            {badges}
-        }
-        // Where the sound comes from: Engine / Cue / Remote.
-        AudioBadge { density }
+    let navigator = try_use_context::<Pins>().map(|pins| pins.navigator);
+    let (lit, ink) = if navigator.is_some_and(|open| open()) {
+        (RAISED, TEXT)
+    } else {
+        ("transparent", DIM)
     };
     rsx! {
         div {
             style: "position:relative; height:{BAR_H}px; flex:none; display:flex; \
-                    align-items:center; gap:8px; padding-left:{lights}px; \
-                    padding-right:10px; background:{BAR_BG}; \
+                    align-items:stretch; padding-left:{lights}px; background:{BAR_BG}; \
                     border-bottom:1px solid {RULE}; z-index:30;",
             onmousedown: move |_| {
                 if let Some(drag) = on_drag {
@@ -733,25 +672,64 @@ pub fn TopBar(
                     zoom.call(());
                 }
             },
-            if let Some(Back(back)) = back {
-                button {
-                    title: "Back to your sets",
-                    style: "flex:none; width:32px; height:28px; display:flex; align-items:center; \
-                            justify-content:center; padding:0; border-radius:7px; border:1px solid {RULE}; \
-                            background:#0f1012; color:{TEXT}; cursor:pointer;",
-                    onmousedown: move |event| event.stop_propagation(),
-                    onclick: move |_| back.call(()),
-                    lucide_dioxus::ChevronLeft { size: 18, color: "currentColor" }
-                }
+            button {
+                title: "The navigator: every song in the set, and the sections of the one playing",
+                style: "flex:none; width:48px; display:flex; align-items:center; \
+                        justify-content:center; padding:0; border:none; \
+                        background:{lit}; color:{ink}; cursor:pointer;",
+                onmousedown: move |event| event.stop_propagation(),
+                onclick: move |_| {
+                    if let Some(mut open) = navigator {
+                        open.toggle();
+                    }
+                },
+                lucide_dioxus::Menu { size: 18, color: ink }
             }
-            // The controls first, where they stay put, and the setlist
-            // after them filling whatever the bar has left — a longer set
-            // grows into the right, not into the transport.
-            {controls}
+            Rule {}
             SongTabs { on_pick, on_color, max_shown: tabs_shown(width, crate::touch::use_touch()) }
+            Rule {}
+            // Whatever the host puts here (who is here, together).
+            div {
+                style: "flex:none; display:flex; align-items:stretch;",
+                onmousedown: move |event| event.stop_propagation(),
+                {badges}
+            }
         }
     }
 }
+
+/// The navigator, down the window's left beside the views, which move
+/// over for it: the set as a vertical progress bar
+/// ([`crate::navigator::Navigator`]) — every song filled as far as the set
+/// has got through it, the one playing opened into its sections. A song
+/// pressed is gone to; a section of the one playing, played from. Opened
+/// and closed from the top bar's corner, and it stays as it is left.
+#[component]
+pub fn NavigatorColumn(on_pick: EventHandler<usize>) -> Element {
+    let open = try_use_context::<Pins>().is_some_and(|pins| (pins.navigator)());
+    if !open || try_use_context::<Signal<Setlist>>().is_none() {
+        return rsx! {};
+    }
+    rsx! {
+        div {
+            style: "position:relative; flex:none; width:300px; background:{BAR_BG}; \
+                    border-right:1px solid {RULE};",
+            crate::navigator::Navigator { on_pick }
+        }
+    }
+}
+
+/// The top bar's separator: a hairline between its parts, which are flat
+/// and the bar's full height rather than cards on it.
+#[component]
+fn Rule() -> Element {
+    rsx! {
+        div { style: "flex:none; width:1px; margin:9px 0; background:{RULE};" }
+    }
+}
+
+/// What a raised part of a bar is: the song showing, a panel open.
+pub const RAISED: &str = "#26292f";
 
 /// How many song tabs the top bar shows at once: on a touchscreen, five
 /// across a tablet on its side, three held upright, the current and next
@@ -782,8 +760,11 @@ fn tabs_shown(width: Option<f64>, touch: bool) -> usize {
 /// room for — `Remote · REAPER`, `Engine · loading 12/38` — and, pressed, a
 /// menu that says what was asked for, what is driven, how far loading has
 /// got, and offers the three modes (see [`crate::audio_mode`]).
+///
+/// `boxed`, it is the bottom bar's indicator beside the mode ([`Modes`]):
+/// an icon in the mode's colour, its menu opening upward.
 #[component]
-pub fn AudioBadge(density: Density) -> Element {
+pub fn AudioBadge(density: Density, #[props(default)] boxed: bool) -> Element {
     let mut open = use_signal(|| false);
     // A note under the picker: a mode that needs another launch.
     let mut note = use_signal(|| None::<String>);
@@ -827,25 +808,53 @@ pub fn AudioBadge(density: Density) -> Element {
         Some(target) => format!("Audio: {} — driving {target}", state.label(2)),
         None => format!("Audio: {}", state.label(2)),
     };
+        let (outer, face, menu_at) = if boxed {
+        (
+            "position:relative; flex:none; display:flex;",
+                        bottom_button(open(), false),
+            "right:0; bottom:52px;",
+        )
+    } else {
+        (
+            "position:relative; flex:none;",
+            format!(
+                "display:flex; align-items:center; gap:6px; height:26px; \
+                 padding:0 9px; border-radius:6px; border:1px solid {RULE}; \
+                 background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer; \
+                 white-space:nowrap;"
+            ),
+            "right:0; top:30px;",
+        )
+    };
     rsx! {
         div {
-            style: "position:relative; flex:none;",
+            style: outer,
             onmousedown: move |event| event.stop_propagation(),
             button {
                 title: "{title}",
-                style: "display:flex; align-items:center; gap:6px; height:26px; \
-                        padding:0 9px; border-radius:6px; border:1px solid {RULE}; \
-                        background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer; \
-                        white-space:nowrap;",
+                style: face,
                 onclick: move |_| open.toggle(),
-                span { style: "flex:none; width:8px; height:8px; border-radius:4px; background:{dot};" }
-                if !label.is_empty() {
-                    span { style: "font-weight:600;", "{label}" }
+                                                if boxed {
+                    // An indicator: the sound, in the colour of where it
+                    // comes from (the title and the menu say the rest).
+                    lucide_dioxus::AudioLines { size: 20, color: dot }
+                } else {
+                    span { style: "flex:none; width:8px; height:8px; border-radius:4px; background:{dot};" }
+                    if !label.is_empty() {
+                        span { style: "font-weight:600; overflow:hidden; text-overflow:ellipsis;", "{label}" }
+                    }
                 }
             }
             if open() {
+                if boxed {
+                    // A press outside closes it.
+                    div {
+                        style: "{SCRIM} z-index:40;",
+                        onclick: move |_| open.set(false),
+                    }
+                }
                 div {
-                    style: "position:absolute; right:0; top:30px; z-index:40; \
+                    style: "position:absolute; {menu_at} z-index:41; \
                             width:260px; padding:6px; background:{BAR_BG}; \
                             border:1px solid {RULE}; border-radius:8px; \
                             box-shadow:0 8px 24px rgba(0,0,0,0.5); font-size:12px;",
@@ -945,7 +954,7 @@ pub fn SongTabs(
     on_pick: Option<EventHandler<usize>>,
     /// The most tabs shown at once: a longer set shows the ones around the
     /// current song, with the previous and next song a press away either
-    /// side and the whole set in a menu. 0 shows every song.
+    /// side and the whole set in the navigator. 0 shows every song.
     #[props(default)]
     max_shown: usize,
     /// A colour picked for a song by hand: its index and the CSS colour,
@@ -959,7 +968,6 @@ pub fn SongTabs(
     };
     let reading = crate::progress::use_reading();
     let mut coloring = use_signal(|| None::<usize>);
-    let mut listing = use_signal(|| false);
     let list = setlist();
     if list.songs.is_empty() {
         return rsx! { div { style: "flex:1;" } };
@@ -976,8 +984,7 @@ pub fn SongTabs(
     } else {
         max_shown.min(count)
     };
-    let windowed = cap < count;
-    let start = if windowed {
+    let start = if cap < count {
         let before = if cap <= 2 { 0 } else { (cap - 1) / 2 };
         list.at.saturating_sub(before).min(count - cap)
     } else {
@@ -995,24 +1002,23 @@ pub fn SongTabs(
     let arrow = |enabled: bool| {
         let ink = if enabled { TEXT } else { "#3a3d44" };
         format!(
-            "flex:none; width:28px; height:30px; display:flex; align-items:center; \
-             justify-content:center; border-radius:8px; border:1px solid {RULE}; \
-             background:#0f1012; color:{ink}; cursor:pointer; padding:0;"
+            "flex:none; width:40px; display:flex; align-items:center; \
+             justify-content:center; border:none; background:transparent; \
+             color:{ink}; cursor:pointer; padding:0;"
         )
     };
     let tabs = rsx! {
         div {
             // Never narrower than a dot (and who is there) per song: the
             // names give way first, then the bar's other controls.
-            style: "position:relative; flex:1; min-width:{min_w}px; display:flex; height:30px; \
-                    padding:2px; gap:0; align-items:stretch; background:#0f1012; \
-                    border:1px solid {RULE}; border-radius:9px;",
+            style: "position:relative; flex:1; min-width:{min_w}px; display:flex; \
+                    align-items:stretch;",
             onmousedown: move |event| event.stop_propagation(),
             for (index, song) in list.songs.iter().cloned().enumerate().filter(|(i, _)| shown.contains(i)) {
                 {
                     let current = index == list.at;
                     let percent = list.progress_of(index, at) * 100.0;
-                    let ground = if current { "#2b2e35" } else { "transparent" };
+                    let ground = if current { RAISED } else { "transparent" };
                     let ink = if current { TEXT } else { DIM };
                     // A hairline between two tabs that are not raised, as
                     // Safari draws it; none beside the current one.
@@ -1030,7 +1036,7 @@ pub fn SongTabs(
                             key: "{song.project}",
                             style: "position:relative; flex:1; min-width:0; display:flex; \
                                     align-items:center; justify-content:center; gap:7px; \
-                                    padding:0 {pad}px; border-radius:7px; background:{ground}; \
+                                    padding:0 {pad}px; background:{ground}; \
                                     border-left:1px solid {divider}; cursor:default; \
                                     overflow:hidden;",
                             onclick: move |_| {
@@ -1061,11 +1067,10 @@ pub fn SongTabs(
                             {peer_dots(song.project.clone())}
                             // How far through the song: a line along the foot.
                             div {
-                                style: "position:absolute; left:10px; right:10px; bottom:2px; \
-                                        height:2px; border-radius:1px; background:#ffffff14;",
+                                style: "position:absolute; left:0; right:0; bottom:0; \
+                                        height:2px; background:#ffffff14;",
                                 div {
-                                    style: "width:{percent}%; height:2px; border-radius:1px; \
-                                            background:{color};",
+                                    style: "width:{percent}%; height:2px; background:{color};",
                                 }
                             }
                         }
@@ -1083,7 +1088,7 @@ pub fn SongTabs(
                     key: "pending-{title}",
                     title: "{title} — loading",
                     style: "position:relative; flex:1; min-width:0; display:flex; align-items:center; \
-                            justify-content:center; gap:7px; padding:0 4px; border-radius:7px; \
+                            justify-content:center; gap:7px; padding:0 4px; \
                             opacity:0.5; cursor:default; overflow:hidden;",
                     div {
                         style: "flex:none; width:9px; height:9px; border-radius:5px; box-sizing:border-box; \
@@ -1113,12 +1118,11 @@ pub fn SongTabs(
             }
         }
     };
-    if !windowed {
-        return tabs;
-    }
+    // The song before and the song after, either side of the tabs; the
+    // whole set is the navigator's (see [`TopBar`]).
     rsx! {
         div {
-            style: "position:relative; flex:1; min-width:0; display:flex; align-items:center; gap:4px;",
+            style: "position:relative; flex:1; min-width:0; display:flex; align-items:stretch;",
             onmousedown: move |event| event.stop_propagation(),
             button {
                 title: "The song before",
@@ -1128,7 +1132,7 @@ pub fn SongTabs(
                         pick(current - 1);
                     }
                 },
-                lucide_dioxus::ChevronLeft { size: 16, color: "currentColor" }
+                lucide_dioxus::ChevronLeft { size: 16, color: if current > 0 { TEXT } else { "#3a3d44" } }
             }
             {tabs}
             button {
@@ -1139,51 +1143,7 @@ pub fn SongTabs(
                         pick(current + 1);
                     }
                 },
-                lucide_dioxus::ChevronRight { size: 16, color: "currentColor" }
-            }
-            button {
-                title: "The whole set",
-                style: arrow(true),
-                onclick: move |_| listing.toggle(),
-                lucide_dioxus::ChevronDown { size: 16, color: "currentColor" }
-            }
-            if listing() {
-                div {
-                    style: "position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:44;",
-                    onclick: move |_| listing.set(false),
-                }
-                div {
-                    style: "position:absolute; right:0; top:36px; z-index:45; width:280px; max-height:60vh; \
-                            overflow-y:auto; padding:4px; background:{BAR_BG}; border:1px solid {RULE}; \
-                            border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.5); \
-                            display:flex; flex-direction:column; gap:2px;",
-                    for (index, song) in list.songs.iter().cloned().enumerate() {
-                        button {
-                            key: "{song.project}",
-                            style: {
-                                let (bg, ink) = if index == current { ("#2b2e35", TEXT) } else { ("transparent", DIM) };
-                                format!("display:flex; align-items:center; gap:10px; min-height:40px; padding:0 10px; \
-                                         border:none; border-radius:7px; background:{bg}; color:{ink}; \
-                                         font-family:inherit; font-size:13px; font-weight:600; text-align:left; cursor:pointer;")
-                            },
-                            onclick: move |_| {
-                                listing.set(false);
-                                pick(index);
-                            },
-                            span { style: "flex:none; width:18px; color:#6b7280; font-size:11px;", "{index + 1}" }
-                            div { style: "flex:none; width:9px; height:9px; border-radius:5px; background:{song.color};" }
-                            span { style: "flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;", "{song.name}" }
-                        }
-                    }
-                    for title in list.pending.iter().cloned() {
-                        div {
-                            key: "list-pending-{title}",
-                            style: "display:flex; align-items:center; gap:10px; min-height:36px; padding:0 10px 0 38px; \
-                                    color:#6b7280; font-size:13px; opacity:0.6;",
-                            "{title} — loading"
-                        }
-                    }
-                }
+                lucide_dioxus::ChevronRight { size: 16, color: if current + 1 < songs_len { TEXT } else { "#3a3d44" } }
             }
         }
     }
@@ -1195,7 +1155,7 @@ pub fn SongTabs(
 fn ColorMenu(left: String, on_pick: EventHandler<Option<String>>) -> Element {
     rsx! {
         div {
-            style: "position:absolute; top:34px; left:{left}; margin-left:-86px; z-index:20; \
+            style: "position:absolute; top:{BAR_H}px; left:{left}; margin-left:-86px; z-index:20; \
                     width:172px; padding:8px; display:flex; flex-wrap:wrap; gap:6px; \
                     background:{BAR_BG}; border:1px solid {RULE}; border-radius:9px; \
                     box-shadow:0 8px 24px rgba(0,0,0,0.5);",

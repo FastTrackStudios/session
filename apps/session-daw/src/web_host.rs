@@ -579,6 +579,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     // The page's shape: a phone's (or a window that small) takes the
     // small-screen layout, the same panels rearranged.
     let viewport = use_viewport_size();
+    use_context_provider(|| crate::shell::WindowSize(viewport));
     let form = use_viewport_form(viewport);
     use_context_provider(|| form);
     let landscape = move || {
@@ -608,7 +609,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     // What is shown full screen, if anything, and the racks' settings
     // every view of them shares (`crate::closeup`).
     use_context_provider(crate::closeup::Closeups::new);
-    use_context_provider(crate::shell::Pins::new);
+    crate::shell::use_pins();
     let current = setlist.read().current().cloned();
     if form().compact() {
         return rsx! {
@@ -660,10 +661,20 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
                 on_pick: pick,
             }
 
-            if let Some(song) = current.clone() {
-                // Keyed by the song: picking another remounts every panel
-                // on that song's session rather than patching the last one's.
-                SongViews { key: "{song.project}", session: song.session.clone(), engine: engine.clone(), view }
+            // The navigator down the left when it is open, and the views
+            // beside it.
+            div {
+                style: "flex:1; min-height:0; display:flex;",
+                crate::shell::NavigatorColumn { on_pick: pick }
+                div {
+                    style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
+                    if let Some(song) = current.clone() {
+                        // Keyed by the song: picking another remounts every
+                        // panel on that song's session rather than patching
+                        // the last one's.
+                        SongViews { key: "{song.project}", session: song.session.clone(), engine: engine.clone(), view }
+                    }
+                }
             }
             // The views, across the foot of the page, and each view's own
             // controls beside them — the arrangement's the transport, which

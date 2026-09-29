@@ -250,15 +250,10 @@ impl Tcp {
     #[must_use]
     pub fn shows(self, control: crate::row::Control) -> bool {
         use crate::row::Control;
-        // The compact panel is the track's name: its arm, mute and solo
-        // on a second line where the row is tall enough for one
-        // (`Row::rect`), and nothing else — the expanded panel has the
-        // rest, a swipe away.
-        !self.compact
-            || matches!(
-                control,
-                Control::Folder | Control::Name | Control::Mute | Control::Solo | Control::RecArm
-            )
+                // The compact panel is the track's name and nothing else, however
+        // tall the row: mute, solo and the arm are the inspector's (down
+        // the window's left) and the expanded panel's, a swipe away.
+        !self.compact || matches!(control, Control::Folder | Control::Name)
     }
 
     /// How far a folder's children are indented per level, and at most.

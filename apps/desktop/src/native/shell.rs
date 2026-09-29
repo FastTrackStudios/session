@@ -73,7 +73,7 @@ pub fn Shell() -> Element {
     // What is shown full screen, if anything, and the racks' settings
     // every view of them shares (`session_daw::closeup`).
     use_context_provider(session_daw::closeup::Closeups::new);
-    use_context_provider(session_daw::shell::Pins::new);
+    session_daw::shell::use_pins();
     // The lyrics' Audience / Performer and layer, held across songs.
     use_context_provider(session_daw::lyrics_panel::LyricsChoice::new);
     // The songs, as the launch opened them — a signal from here on, which
@@ -140,6 +140,7 @@ pub fn Shell() -> Element {
             }
         }
     });
+    use_context_provider(|| session_daw::shell::WindowSize(size));
     let width = move || size().0;
     let form = use_memo(move || {
         let (w, h) = size();
@@ -210,7 +211,7 @@ pub fn Shell() -> Element {
         style { {TAILWIND} }
         div {
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; flex-direction:column; \
-                    background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
+                    overflow:hidden; background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
             // A press anywhere but the chart editor (which stops it) gives
             // the keyboard back to the transport.
             onmousedown: move |_| session_daw::keys::set_editing(false),
@@ -238,10 +239,20 @@ pub fn Shell() -> Element {
                 },
             }
 
-            if let Some(song) = current.clone() {
-                // Keyed by the song: picking another remounts every panel
-                // on that song's session rather than patching the last one's.
-                SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
+            // The navigator down the left when it is open, and the views
+            // beside it.
+            div {
+                style: "flex:1; min-height:0; display:flex;",
+                session_daw::shell::NavigatorColumn { on_pick: pick }
+                div {
+                    style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
+                    if let Some(song) = current.clone() {
+                        // Keyed by the song: picking another remounts every
+                        // panel on that song's session rather than patching
+                        // the last one's.
+                        SongViews { key: "{song.project}", session: song.session.clone(), view, editor_open }
+                    }
+                }
             }
             // The views, across the foot of the window, and each view's
             // own controls beside them — the arrangement's the transport,
