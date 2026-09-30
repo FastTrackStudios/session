@@ -68,11 +68,11 @@ pub fn use_form() -> Form {
     try_use_context::<Signal<Form>>().map_or(Form::Wide, |form| form())
 }
 
-/// How far a phone on its side keeps the controls at its edges clear of the
-/// camera housing: `left` or `right`, whichever side it is on — the views'
-/// rail on the left, the inspector's strip on the right (the view itself
-/// runs under it) — and how far the top rows keep clear of the screen's
-/// rounded corners (`corner`). Nothing upright, or with no host saying. In
+/// Where a phone on its side has its camera housing, and how far the controls
+/// beside it keep clear: `right`, the inspector's strip moving in from that
+/// edge; `left`, the views' rail moving to the right edge instead (no gap
+/// kept — the view runs under the housing) — and how far the top rows keep
+/// clear of the screen's rounded corners (`corner`). Nothing upright, or with no host saying. In
 /// logical pixels; the host provides it as a `Signal<Sides>`.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Sides {
@@ -168,6 +168,8 @@ pub fn CompactShell(
 ) -> Element {
     let setlist: Signal<Setlist> = use_context();
     let sides = use_sides();
+    // The housing on the left: the rail goes to the right edge instead.
+    let mirrored = sides.left > 0.0;
     // The record view's song menu (in Control, in record mode) picks as the
     // navigator does.
     use_context_provider(|| crate::record_view::PickSong(on_pick));
@@ -309,21 +311,32 @@ pub fn CompactShell(
                             }
                         }
                     }
-                                        {progress}
-                    // Under them, the views' rail and the view: the rail
-                    // kept clear of the housing when it is on the left, the
-                    // view when it is on the right, and nothing else given up.
-                    div {
-                        style: "flex:1; min-height:0; display:flex;",
+                    {progress}
+                    // Under them, the views' rail and the view, the view
+                    // running to both edges. The rail is on the left — or,
+                    // with the camera housing on the left, on the right, so
+                    // no button is under it and no gap is kept for it (the
+                    // view runs under the housing instead). With the housing
+                    // on the right, the inspector's strip keeps clear of it
+                    // itself. Two rows, not one with the rail moved: Blitz
+                    // left a box where it was when one was put before it.
+                    if mirrored {
                         div {
-                            style: "flex:none; display:flex; padding-left:{sides.left}px; background:{BAR_BG};",
-                            Tabs { view, rail: true, controls }
+                            style: "flex:1; min-height:0; display:flex;",
+                            div {
+                                style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
+                                {panel}
+                            }
+                            Tabs { view, rail: true, controls, right: true }
                         }
+                    } else {
                         div {
-                                                        // The view to the right edge, under the housing:
-                            // the inspector's strip keeps clear of it itself.
-                            style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
-                            {panel}
+                            style: "flex:1; min-height:0; display:flex;",
+                            Tabs { view, rail: true, controls }
+                            div {
+                                style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
+                                {panel}
+                            }
                         }
                     }
                 }
@@ -558,9 +571,15 @@ fn More(view: Signal<PhoneView>, session: Element) -> Element {
     }
 }
 
-/// The views, picked: a tab bar along the bottom, or a rail down the left.
+/// The views, picked: a tab bar along the bottom, or a rail down the left
+/// (the right, `right`).
 #[component]
-fn Tabs(view: Signal<PhoneView>, rail: bool, controls: Signal<bool>) -> Element {
+fn Tabs(
+    view: Signal<PhoneView>,
+    rail: bool,
+    controls: Signal<bool>,
+    #[props(default)] right: bool,
+) -> Element {
     let mut controls = controls;
     let buttons = rsx! {
         for each in PhoneView::ALL {
@@ -576,10 +595,11 @@ fn Tabs(view: Signal<PhoneView>, rail: bool, controls: Signal<bool>) -> Element 
         }
     };
     if rail {
+        let rule = if right { "border-left" } else { "border-right" };
         return rsx! {
             div {
                 style: "flex:none; width:60px; display:flex; flex-direction:column; justify-content:center; \
-                        background:{BAR_BG}; border-right:1px solid {RULE};",
+                        background:{BAR_BG}; {rule}:1px solid {RULE};",
                 {buttons}
             }
         };
