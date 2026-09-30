@@ -206,6 +206,20 @@ fn Settings() -> Element {
         if let Some(text) = note() {
             div { style: "padding:10px 18px; color:#e3b341; font-size:12px;", "{text}" }
         }
+        if let Some(stems) = listening() {
+            Heading { title: "Playback" }
+            Toggle {
+                on: stems,
+                label: "Multitracks",
+                detail: stems_detail(stems),
+                on_change: move |on: bool| {
+                    if on {
+                        load_multitracks();
+                        picked += 1;
+                    }
+                },
+            }
+        }
         if let Some(crate::touch::Touch(on)) = touch {
             Heading { title: "Touch" }
             Switch {
@@ -215,6 +229,36 @@ fn Settings() -> Element {
             }
         }
     }
+}
+
+/// How the streamed songs are heard, where some are: by their stems
+/// (`true`) or their reference (`false`). `None` with nothing streamed —
+/// and on a page, which offers the stems its own way.
+fn listening() -> Option<bool> {
+    #[cfg(feature = "native")]
+    {
+        let stems = crate::reference_play::multitracks();
+        (stems || crate::reference_play::any()).then_some(stems)
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        None
+    }
+}
+
+/// What the Multitracks switch says, on or off.
+const fn stems_detail(stems: bool) -> &'static str {
+    if stems {
+        "Every song is heard by its stems, so the mix can be changed."
+    } else {
+        "Off: each song plays its stereo reference — a few MB — with the guide live over it. On: every stem of every song is downloaded, so the mix can be changed."
+    }
+}
+
+/// Hear every streamed song by its stems.
+fn load_multitracks() {
+    #[cfg(feature = "native")]
+    crate::reference_play::load_multitracks();
 }
 
 /// A fact about the device, as a row: its name and its value.

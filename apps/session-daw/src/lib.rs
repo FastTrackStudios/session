@@ -147,6 +147,8 @@ pub mod progress;
 pub mod rails;
 pub mod record_view;
 pub mod reference;
+#[cfg(feature = "native")]
+pub mod reference_play;
 pub mod rename;
 pub mod routes;
 pub mod row;

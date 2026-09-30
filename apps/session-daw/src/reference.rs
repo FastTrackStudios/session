@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 use daw::service::{Items, TrackRef};
 use daw::service::{ProjectContext, Tracks};
 use daw::standalone::Standalone;
+use daw::standalone::audio_engine::streamed::{CHUNK, Streamed};
 
 /// The reference proxy's file stem, lower-case, as a streamed song keys
 /// its proxies (`Media/Proxies/Reference.ogg`).
@@ -208,6 +209,69 @@ pub fn left_out(daw: &Standalone, project: &str) -> HashSet<String> {
         }
         if out.len() == before {
             return out;
+        }
+    }
+}
+
+/// Add a song's reference into `buf` — interleaved, `channels` a frame, at
+/// `rate` — from `at` seconds on, at the transport's `playrate`: the
+/// reference proper where it has arrived at the playhead, else its
+/// `preview`. Each is told that is where it is read, so both decode there.
+/// Silent where neither has arrived. Allocation-free: it runs on the audio
+/// thread (a device's callback, a page's audio loop).
+pub fn mix(
+    full: &Streamed,
+    preview: Option<&Streamed>,
+    at: f64,
+    rate: f64,
+    playrate: f64,
+    buf: &mut [f32],
+    channels: usize,
+) {
+    let channels = channels.max(1);
+    let frames = buf.len() / channels;
+    let here = |s: &Streamed| (at.max(0.0) * f64::from(s.sample_rate())) as u64;
+    full.want(here(full));
+    if let Some(preview) = preview {
+        preview.want(here(preview));
+    }
+    let arrived = |s: &Streamed| {
+        let chunk = |frame: u64| usize::try_from(frame).unwrap_or(usize::MAX) / CHUNK;
+        let span = frames as f64 * f64::from(s.sample_rate()) / rate.max(1.0) * playrate;
+        let last = here(s) + span as u64;
+        s.resident(chunk(here(s))) && s.resident(chunk(last.min(s.frames().saturating_sub(1))))
+    };
+    let source = match preview {
+        Some(preview) if !arrived(full) => preview,
+        _ => full,
+    };
+    mix_in(source, at, rate, playrate, buf, channels);
+}
+
+/// Add `source` from `at` seconds into `buf` — read at its own rate between
+/// samples, a mono one to both sides, and both sides folded into a mono
+/// output.
+fn mix_in(source: &Streamed, at: f64, rate: f64, playrate: f64, buf: &mut [f32], channels: usize) {
+    let source_rate = f64::from(source.sample_rate().max(1));
+    let step = source_rate / rate.max(1.0) * playrate;
+    let right = usize::from(source.channels() > 1);
+    let from = at.max(0.0) * source_rate;
+    for (i, out) in buf.chunks_exact_mut(channels).enumerate() {
+        let position = from + i as f64 * step;
+        let frame = position as usize;
+        let frac = (position - frame as f64) as f32;
+        let read = |ch: usize| {
+            let a = source.sample(frame, ch);
+            a + (source.sample(frame + 1, ch) - a) * frac
+        };
+        let (l, r) = (read(0), read(right));
+        match out {
+            [mono] => *mono += (l + r) * 0.5,
+            [left, right, ..] => {
+                *left += l;
+                *right += r;
+            }
+            [] => {}
         }
     }
 }

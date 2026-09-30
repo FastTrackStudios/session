@@ -768,50 +768,24 @@ impl MeterTake {
     }
 }
 
-/// Mix a song's reference in from the playhead frame `at`: the reference
-/// proper where it has arrived, else its preview — each told that is
-/// where it is read, so both decode there.
+/// Mix a song's reference in from the playhead frame `at` (at [`RATE`]),
+/// into interleaved stereo — [`crate::reference::mix`], the one mix the
+/// app's device plays too.
 fn mix_reference(
     full: &streamed::Streamed,
     preview: Option<&streamed::Streamed>,
     at: u64,
     samples: &mut [f32],
 ) {
-    let here = |s: &streamed::Streamed| at * u64::from(s.sample_rate()) / u64::from(RATE);
-    full.want(here(full));
-    if let Some(preview) = preview {
-        preview.want(here(preview));
-    }
-    let arrived = |s: &streamed::Streamed| {
-        let chunk = |frame: u64| usize::try_from(frame).unwrap_or(usize::MAX) / streamed::CHUNK;
-        let last =
-            here(s) + (samples.len() / 2) as u64 * u64::from(s.sample_rate()) / u64::from(RATE);
-        s.resident(chunk(here(s))) && s.resident(chunk(last.min(s.frames().saturating_sub(1))))
-    };
-    match preview {
-        Some(preview) if !arrived(full) => mix_in(preview, at, samples),
-        _ => mix_in(full, at, samples),
-    }
-}
-
-/// Add `source`'s audio from the playhead frame `at` (at [`RATE`]) into
-/// `samples`, interleaved stereo — read at its own rate between samples, a
-/// mono one to both sides. Silent where it has not arrived.
-fn mix_in(source: &streamed::Streamed, at: u64, samples: &mut [f32]) {
-    let step = f64::from(source.sample_rate().max(1)) / f64::from(RATE);
-    let right = usize::from(source.channels() > 1);
-    let from = at as f64 * step;
-    for (i, out) in samples.chunks_exact_mut(2).enumerate() {
-        let position = from + i as f64 * step;
-        let frame = position as usize;
-        let frac = (position - frame as f64) as f32;
-        let read = |ch: usize| {
-            let a = source.sample(frame, ch);
-            a + (source.sample(frame + 1, ch) - a) * frac
-        };
-        out[0] += read(0);
-        out[1] += read(right);
-    }
+    crate::reference::mix(
+        full,
+        preview,
+        at as f64 / f64::from(RATE),
+        f64::from(RATE),
+        1.0,
+        samples,
+        2,
+    );
 }
 
 /// Unlock audio on the page's first press or key — a gesture is the only
