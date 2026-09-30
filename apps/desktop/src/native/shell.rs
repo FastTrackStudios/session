@@ -173,9 +173,10 @@ pub fn Shell() -> Element {
     use_context_provider(|| session_daw::shell::WindowSize(size));
     // A phone on its side is drawn to both edges (`BLITZ_SAFE_AREA_SIDES=0`
     // in main): the view runs under the camera housing, and only the
-    // controls on its side move clear of it — the views' rail when it is on
-    // the left, the inspector's strip when it is on the right — while the
-    // top rows keep clear of the rounded corners.
+    // controls on its side get out of its way — the views' rail moving to the
+    // right edge when it is on the left, the inspector's strip moving in when
+    // it is on the right — while the top rows keep clear of the rounded
+    // corners.
     #[cfg_attr(not(target_os = "ios"), allow(unused_variables, unused_mut))]
     let mut sides = use_context_provider(|| Signal::new(session_daw::compact::Sides::default()));
     #[cfg(target_os = "ios")]
