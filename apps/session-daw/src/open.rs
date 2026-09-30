@@ -531,7 +531,8 @@ pub fn runtime() -> Option<&'static tokio::runtime::Runtime> {
 /// read a session by.
 /// The audio engine, playing whichever song is current. Replaced — the old
 /// one dropped, which closes its stream — when the current song changes.
-static AUDIO: std::sync::Mutex<Option<daw::standalone::audio_engine::AudioEngine>> =
+/// With the song it plays.
+static AUDIO: std::sync::Mutex<Option<(String, daw::standalone::audio_engine::AudioEngine)>> =
     std::sync::Mutex::new(None);
 
 fn attach_audio(daw: &Standalone, project_guid: &str) {
@@ -542,6 +543,17 @@ fn attach_audio(daw: &Standalone, project_guid: &str) {
     let mut slot = AUDIO
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Playing this song already: nothing to move. Opening the device again
+    // for the same song (a song opened, then picked) closed a stream and
+    // opened another within a few milliseconds — on iOS, a suspect in an
+    // output that stayed silent until the app was sent away and brought
+    // back.
+    if slot
+        .as_ref()
+        .is_some_and(|(playing, _)| playing == project_guid)
+    {
+        return;
+    }
     // Close the old stream before opening the device again.
     drop(slot.take());
     match daw.attach_audio_engine(project_guid) {
@@ -549,7 +561,10 @@ fn attach_audio(daw: &Standalone, project_guid: &str) {
             if let Some(stats) = engine.stats() {
                 log_audio_health(stats, engine.sample_rate());
             }
-            *slot = Some(engine);
+            // A streamed song heard by its reference: the reference, mixed
+            // in after the song's own tracks (the guide, live over it).
+            engine.set_aux_renderer(crate::reference_play::renderer(project_guid.to_owned()));
+            *slot = Some((project_guid.to_owned(), engine));
         }
         Err(e) => tracing::warn!(error = %e, "no audio engine; the transport will run silent"),
     }

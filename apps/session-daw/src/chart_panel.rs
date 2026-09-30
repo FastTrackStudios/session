@@ -130,6 +130,8 @@ struct ChartWidget {
     moved: std::cell::Cell<bool>,
     /// The last page turn taken ([`turn`]).
     turn_seen: u64,
+    /// The last fit asked for that it has taken ([`set_fit`]).
+    fit_seen: u64,
 }
 
 /// A collaborator's pointer over the chart, anchored to the music: the
@@ -204,6 +206,12 @@ impl ChartWidget {
             }
             self.live_seen = number;
         }
+        // A fit picked: fitted again, wherever it was moved by hand.
+        let asked = FIT_ASKED.load(std::sync::atomic::Ordering::Relaxed);
+        if asked != self.fit_seen {
+            self.fit_seen = asked;
+            self.live.borrow_mut().manual = false;
+        }
         if let Some((turned, number)) = turn_since(self.turn_seen) {
             self.turn_seen = number;
             let last = u32::try_from(self.view.pages()).unwrap_or(u32::MAX).max(1);
@@ -226,6 +234,9 @@ impl ChartWidget {
             .songstart
             .zip(crate::engine::Transport::shared())
             .map(|(songstart, t)| t.read().0 - songstart);
+        // Laid out on its first paint: before that there is no page to fit
+        // to, and the fit waits for the frame after — asked for below.
+        let laid_out = self.view.pages() > 0;
         if self.paged {
             self.fit_page(w, h, scale, chart_secs);
         }
@@ -245,6 +256,11 @@ impl ChartWidget {
             scroll_pt,
             chart_secs,
         );
+        if self.paged && !laid_out && self.view.pages() > 0 {
+            // Laid out just now: one more frame, fitted. (The window draws
+            // only when something asks — nothing else would.)
+            self.moved.set(true);
+        }
         let mut live = self.live.borrow_mut();
         live.content_pt = content_pt;
         live.px_per_pt = points_to_px(scale) * zoom;
@@ -303,7 +319,15 @@ impl ChartWidget {
         // read from a music stand. (The Overview's pane is shaped for the
         // page and its peek — `FITTED_WIDTH_OVER_HEIGHT`, the page about
         // 0.73 of it — and stays across.)
-        let fit_width = w < h || page_w / page_h * h < w * 0.7;
+        let fit_width = match fit() {
+            Some(Fit::Width) => true,
+            Some(Fit::Page) => false,
+            None => w < h || page_w / page_h * h < w * 0.7,
+        };
+        SHOWN.store(
+            if fit_width { Fit::Width } else { Fit::Page } as u8,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         if fit_width {
             let zoom = w / (page_w * per_pt);
             let visible = h / (zoom * per_pt);
@@ -400,6 +424,7 @@ impl Widget for ChartWidget {
         // live.
         self.moved.get()
             || turn_since(self.turn_seen).is_some()
+            || FIT_ASKED.load(std::sync::atomic::Ordering::Relaxed) != self.fit_seen
             || live_since(self.live_seen).is_some()
             || crate::engine::moving()
     }
@@ -466,6 +491,7 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         moved: std::cell::Cell::new(false),
         // Turns asked for before this chart was up are not for it.
         turn_seen: turn_since(0).map_or(0, |(_, number)| number),
+        fit_seen: FIT_ASKED.load(std::sync::atomic::Ordering::Relaxed),
     };
     Some((widget, live))
 }
@@ -727,6 +753,107 @@ pub fn Chart(
         }
     }
 }
+
+/// How a chart's page fits its panel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum Fit {
+    /// The whole page down the panel's height — zoomed out as far as that
+    /// takes, the next page beside it where there is room.
+    Page = 1,
+    /// The page across the panel's width, zoomed in, following the song
+    /// down it.
+    Width = 2,
+}
+
+impl Fit {
+    const fn from_u8(n: u8) -> Option<Self> {
+        match n {
+            1 => Some(Self::Page),
+            2 => Some(Self::Width),
+            _ => None,
+        }
+    }
+
+    /// Its name, as the bottom bar says it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Page => "Full Page",
+            Self::Width => "Full Width",
+        }
+    }
+}
+
+/// The fit picked (0: none — the panel's shape decides, a panel taller
+/// than wide or too short for a page reading across its width).
+static FIT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// Numbered, so each chart re-fits once for each pick.
+static FIT_ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The fit the chart last drew with, picked or not.
+static SHOWN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(Fit::Page as u8);
+
+/// The fit picked, if one was (kept between launches in the app).
+#[must_use]
+pub fn fit() -> Option<Fit> {
+    let picked = FIT.load(std::sync::atomic::Ordering::Relaxed);
+    if picked != 0 {
+        return Fit::from_u8(picked);
+    }
+    let kept = kept_fit();
+    if let Some(kept) = kept {
+        FIT.store(kept as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+    kept
+}
+
+/// The fit the chart shows now: the one picked, else the one its shape
+/// chose.
+#[must_use]
+pub fn shown_fit() -> Fit {
+    fit().unwrap_or_else(|| {
+        Fit::from_u8(SHOWN.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(Fit::Page)
+    })
+}
+
+/// Pick how the chart's page fits: every chart on screen re-fits to it.
+pub fn set_fit(fit: Fit) {
+    FIT.store(fit as u8, std::sync::atomic::Ordering::Relaxed);
+    FIT_ASKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    keep_fit(fit);
+}
+
+/// Where the app keeps the fit picked.
+#[cfg(feature = "native")]
+fn fit_file() -> Option<std::path::PathBuf> {
+    Some(dirs::data_dir()?.join("Session").join("chart-fit"))
+}
+
+#[cfg(feature = "native")]
+fn kept_fit() -> Option<Fit> {
+    let text = std::fs::read_to_string(fit_file()?).ok()?;
+    Fit::from_u8(text.trim().parse().ok()?)
+}
+
+#[cfg(not(feature = "native"))]
+const fn kept_fit() -> Option<Fit> {
+    None
+}
+
+#[cfg(feature = "native")]
+fn keep_fit(fit: Fit) {
+    let Some(file) = fit_file() else { return };
+    let written = file
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&file, (fit as u8).to_string()));
+    if let Err(e) = written {
+        tracing::warn!(error = %e, "chart: the fit picked could not be kept");
+    }
+}
+
+#[cfg(not(feature = "native"))]
+const fn keep_fit(_: Fit) {}
 
 /// A turn of the chart's page, asked for from outside it (the bottom
 /// bar's paging controls).

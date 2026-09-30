@@ -519,8 +519,33 @@ pub(crate) fn LockButton(lock: Signal<bool>) -> Element {
 /// one after.
 #[component]
 pub(crate) fn ChartPages() -> Element {
-    use crate::chart_panel::{Turn, turn};
+    use crate::chart_panel::{Fit, Turn, set_fit, shown_fit, turn};
+    // What the chart shows, and the other way it could: a press switches.
+    let mut shown = use_signal(shown_fit);
+    let other = match shown() {
+        Fit::Page => Fit::Width,
+        Fit::Width => Fit::Page,
+    };
+    let fit_title = match other {
+        Fit::Page => "Show the whole page, zoomed out to its full height",
+        Fit::Width => "Show the page across the full width, zoomed in, scrolling with the song",
+    };
+    let fit_name = shown().name();
     rsx! {
+        button {
+            title: fit_title,
+            style: bottom_button(false, true),
+            onclick: move |_| {
+                set_fit(other);
+                shown.set(other);
+            },
+            if shown() == Fit::Page {
+                lucide_dioxus::FileText { size: 19, color: TEXT }
+            } else {
+                lucide_dioxus::MoveHorizontal { size: 20, color: TEXT }
+            }
+            span { style: LABEL, "{fit_name}" }
+        }
         button {
             title: "The page before",
             style: bottom_button(false, true),
