@@ -20,9 +20,9 @@ use std::path::PathBuf;
 
 use dioxus::prelude::*;
 use lucide_dioxus::{
-    Check, ChevronRight, CircleAlert, CircleCheck, CloudDownload, FileMusic, HardDriveDownload,
-    House, Library, LibraryBig, Link, ListMusic, LogOut, Music, Pencil, Play, Plus, Radio, Search,
-    Trash2, X,
+    Check, ChevronRight, ChevronsUpDown, CircleAlert, CircleCheck, CloudDownload, FileMusic,
+    HardDriveDownload, House, Library, LibraryBig, Link, ListMusic, LogOut, Music, Pencil, Play,
+    Plus, Radio, Search, Trash2, X,
 };
 use session_daw::loading::{Loading, Progress, mark_src};
 use session_daw::setlist::Setlist;
@@ -310,6 +310,8 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let mut songs = use_signal(|| Load::<Vec<(LibrarySong, bool)>>::Waiting);
     // The list editor, over the page; leaving it reads the lists again.
     let mut editing = use_signal(|| None::<Editing>);
+    // The song editor, over the page: `Some(None)` making one.
+    let mut song_editing = use_signal(|| None::<Option<LibrarySong>>);
     let mut reread = use_signal(|| 0_u32);
     let account = match sign_in() {
         SignIn::In(account) => Some(account),
@@ -415,7 +417,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             }
             let Some(live) = live_link(&text) else {
                 opening.set(Opening::Failed(
-                    "that is not a Session or Task live link".to_owned(),
+                    "that is not a Session live link".to_owned(),
                 ));
                 return;
             };
@@ -521,10 +523,29 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                 .await;
                 downloading.set(None);
                 match outcome {
-                    Some(Ok(_)) => {
+                    Some(Ok(done)) if done.failed.is_empty() => {
                         note.set(Some((
                             true,
                             format!("{title} is on this device — it opens with no connection."),
+                        )));
+                        local.set(documents());
+                    }
+                    Some(Ok(done)) => {
+                        // Part of it: said, with which songs and why.
+                        let names: Vec<&str> =
+                            done.failed.iter().map(|(song, _)| song.as_str()).collect();
+                        let why = done
+                            .failed
+                            .first()
+                            .map(|(_, why)| why.clone())
+                            .unwrap_or_default();
+                        note.set(Some((
+                            false,
+                            format!(
+                                "{title} is on this device without {} of its songs ({}) — {why}",
+                                names.len(),
+                                names.join(", "),
+                            ),
                         )));
                         local.set(documents());
                     }
@@ -551,6 +572,21 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     // Opening: the loading screen, whole.
     if let Opening::Busy(progress) = opening() {
         return rsx! { Loading { progress } };
+    }
+    // The song editor, whole; leaving it reads the songs again.
+    if let Some(song) = song_editing()
+        && let (Some(account), Some(slug)) = (account.clone(), org())
+    {
+        return rsx! {
+            super::library::SongEditor {
+                library: account.library(&slug),
+                song,
+                on_done: move |()| {
+                    song_editing.set(None);
+                    reread += 1;
+                },
+            }
+        };
     }
     // The list editor, whole.
     if let Some(Editing { open, create }) = editing()
@@ -600,7 +636,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                 }
             },
             SignIn::Starting => rsx! {
-                Card { span { style: "font-size:14px; color:{DIM};", "Asking Task for a code…" } }
+                Card { span { style: "font-size:14px; color:{DIM};", "Getting a sign-in code…" } }
             },
             SignIn::Code(started) => rsx! {
                 Card {
@@ -722,7 +758,6 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             // The library's setlists.
             if signed_in {
                 Shelf { title: "Your setlists", on_more: move |()| section.set(Section::Setlists),
-                    OrgChips { orgs: orgs(), org }
                     match setlists() {
                         Load::Waiting => rsx! { Quiet { text: "Finding your setlists…" } },
                         Load::Failed(why) => rsx! { Banner { good: false, text: format!("Could not read the library — {why}") } },
@@ -791,7 +826,6 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             };
             rsx! {
                 if signed_in {
-                    OrgChips { orgs: orgs(), org }
                     match setlists() {
                         Load::Waiting => rsx! { Quiet { text: "Finding your lists…" } },
                         Load::Failed(why) => rsx! { Banner { good: false, text: format!("Could not read the library — {why}") } },
@@ -832,7 +866,6 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
         }
         Section::Songs => rsx! {
             if signed_in {
-                OrgChips { orgs: orgs(), org }
                 SongsList {
                     songs: songs(),
                     downloaded: move |title: String| downloaded(&title),
@@ -853,6 +886,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                             download.call((account, song.title.clone(), vec![song]));
                         }
                     },
+                    on_edit: move |song: LibrarySong| song_editing.set(Some(Some(song))),
                 }
             } else {
                 {sign_in_card.clone()}
@@ -912,6 +946,9 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                 }
             }
         }
+        Section::Songs if signed_in => rsx! {
+            Pill { label: "New song", primary: true, on_press: move |()| song_editing.set(Some(None)) }
+        },
         _ => rsx! {},
     };
     let account_line = account
@@ -934,8 +971,11 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                 span { style: "flex:1; min-width:0; font-size:26px; font-weight:800; letter-spacing:-0.02em;", "{here.label()}" }
                 {action}
                 if !wide {
-                    AccountButton {
+                    OrgSwitcher {
                         email: account_line.clone(),
+                        orgs: orgs(),
+                        org,
+                        compact: true,
                         on_sign_in: start_sign_in,
                         on_sign_out: move |()| {
                             task_account::sign_out();
@@ -1003,10 +1043,20 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                         }
                     }
                     div { style: "flex:1;" }
-                    AccountLine { email: account_line.clone(), on_sign_in: start_sign_in, on_sign_out: move |()| {
-                        task_account::sign_out();
-                        sign_in.set(SignIn::Out);
-                    } }
+                    div {
+                        style: "display:flex; flex-direction:column; padding:10px 8px 0; border-top:1px solid {RULE};",
+                        OrgSwitcher {
+                            email: account_line.clone(),
+                            orgs: orgs(),
+                            org,
+                            compact: false,
+                            on_sign_in: start_sign_in,
+                            on_sign_out: move |()| {
+                                task_account::sign_out();
+                                sign_in.set(SignIn::Out);
+                            },
+                        }
+                    }
                 }
                 {main}
             }
@@ -1072,39 +1122,6 @@ fn NavItem(section: Section, on: bool, on_press: EventHandler<()>) -> Element {
             onclick: move |_| on_press.call(()),
             SectionIcon { section, color: if on { ACCENT } else { DIM } }
             "{section.label()}"
-        }
-    }
-}
-
-/// Who is signed in, at the sidebar's foot — or signing in.
-#[component]
-fn AccountLine(
-    email: Option<String>,
-    on_sign_in: EventHandler<()>,
-    on_sign_out: EventHandler<()>,
-) -> Element {
-    rsx! {
-        div {
-            style: "display:flex; flex-direction:column; gap:8px; padding:12px 18px 0; border-top:1px solid {RULE};",
-            match email {
-                Some(email) => rsx! {
-                    div {
-                        style: "display:flex; align-items:center; gap:10px;",
-                        Avatar { email: email.clone(), size: 30 }
-                        span { style: "flex:1; min-width:0; font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{email}" }
-                        button {
-                            title: "Sign out",
-                            style: "flex:none; width:32px; height:32px; display:flex; align-items:center; justify-content:center; \
-                                    border:none; border-radius:8px; background:transparent; cursor:pointer;",
-                            onclick: move |_| on_sign_out.call(()),
-                            LogOut { size: 16, color: DIM }
-                        }
-                    }
-                },
-                None => rsx! {
-                    Pill { label: "Sign in", primary: true, on_press: on_sign_in }
-                },
-            }
         }
     }
 }
@@ -1292,6 +1309,134 @@ fn Shortcut(
     }
 }
 
+/// An org's name as a person reads it: its slug, words capitalised
+/// (`days-to-praise` → Days To Praise).
+fn org_name(slug: &str) -> String {
+    slug.split(['-', '_'])
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The organization this library is, and who is signed in: at the
+/// sidebar's foot (a phone's page head, `compact`: the org's badge
+/// alone). Pressed, it opens a menu of every org this person is in — a
+/// press switches the library to it — and signing out. Signed out, a
+/// Sign in button.
+#[component]
+fn OrgSwitcher(
+    email: Option<String>,
+    orgs: Load<Vec<String>>,
+    org: Signal<Option<String>>,
+    compact: bool,
+    on_sign_in: EventHandler<()>,
+    on_sign_out: EventHandler<()>,
+) -> Element {
+    let mut org = org;
+    let mut open = use_signal(|| false);
+    let Some(email) = email else {
+        return rsx! {
+            Pill { label: "Sign in", primary: true, on_press: on_sign_in }
+        };
+    };
+    let current = org().unwrap_or_default();
+    let name = if current.is_empty() {
+        "No organization".to_owned()
+    } else {
+        org_name(&current)
+    };
+    let list = match orgs {
+        Load::Ready(list) => list,
+        _ => Vec::new(),
+    };
+    // The menu opens up from the sidebar's foot, down from a page's head.
+    let (anchor, align) = if compact {
+        ("top:calc(100% + 6px);", "right:0;")
+    } else {
+        ("bottom:calc(100% + 6px);", "left:10px; right:10px;")
+    };
+    let width = if compact { "width:260px;" } else { "" };
+    let trigger_style = if compact {
+        "flex:none; padding:0; border:none; background:transparent; cursor:pointer;".to_owned()
+    } else {
+        format!(
+            "width:100%; display:flex; align-items:center; gap:10px; padding:10px 12px; border:none; \
+             border-radius:10px; background:transparent; color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer;"
+        )
+    };
+    rsx! {
+        div {
+            style: "position:relative; flex:none;",
+            if open() {
+                div {
+                    style: "{session_daw::shell::SCRIM} z-index:20;",
+                    onclick: move |_| open.set(false),
+                }
+                div {
+                    style: "position:absolute; {anchor} {align} {width} z-index:21; display:flex; flex-direction:column; \
+                            padding:6px; border-radius:14px; background:#1c1e23; border:1px solid {RULE}; \
+                            box-shadow:0 12px 32px #0009;",
+                    span { style: "padding:8px 10px 6px; font-size:11px; font-weight:700; letter-spacing:0.08em; color:{DIM};", "ORGANIZATIONS" }
+                    if list.is_empty() {
+                        span { style: "padding:6px 10px 10px; font-size:13px; color:{DIM};", "Finding your organizations…" }
+                    }
+                    for slug in list {
+                        button {
+                            key: "{slug}",
+                            style: "display:flex; align-items:center; gap:10px; min-height:44px; padding:0 10px; border:none; \
+                                    border-radius:9px; background:transparent; color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer;",
+                            onclick: {
+                                let slug = slug.clone();
+                                move |_| {
+                                    org.set(Some(slug.clone()));
+                                    open.set(false);
+                                }
+                            },
+                            Avatar { email: org_name(&slug), size: 28 }
+                            span { style: "flex:1; min-width:0; font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{org_name(&slug)}" }
+                            if slug == current {
+                                Check { size: 16, color: ACCENT }
+                            }
+                        }
+                    }
+                    div { style: "height:1px; margin:6px 4px; background:{RULE};" }
+                    span { style: "padding:4px 10px 2px; font-size:12px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{email}" }
+                    button {
+                        style: "display:flex; align-items:center; gap:10px; min-height:40px; padding:0 10px; border:none; \
+                                border-radius:9px; background:transparent; color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer;",
+                        onclick: move |_| {
+                            open.set(false);
+                            on_sign_out.call(());
+                        },
+                        LogOut { size: 16, color: DIM }
+                        span { style: "font-size:14px;", "Sign out" }
+                    }
+                }
+            }
+            button {
+                title: "{name}",
+                style: "{trigger_style}",
+                onclick: move |_| open.set(!open()),
+                Avatar { email: name.clone(), size: if compact { 34 } else { 32 } }
+                if !compact {
+                    div {
+                        style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;",
+                        span { style: "font-size:14px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{name}" }
+                        span { style: "font-size:11px; color:{DIM}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{email}" }
+                    }
+                    ChevronsUpDown { size: 16, color: DIM }
+                }
+            }
+        }
+    }
+}
+
 /// Initials in a circle: who is signed in.
 #[component]
 fn Avatar(email: String, size: u32) -> Element {
@@ -1310,34 +1455,6 @@ fn Avatar(email: String, size: u32) -> Element {
                     background:linear-gradient(135deg, {from} 0%, {to} 100%);",
             "{letter}"
         }
-    }
-}
-
-/// Signed in or not, at the head of a phone's page (which has no
-/// sidebar to carry it): the avatar, which asks before signing out.
-#[component]
-fn AccountButton(
-    email: Option<String>,
-    on_sign_in: EventHandler<()>,
-    on_sign_out: EventHandler<()>,
-) -> Element {
-    let mut asking = use_signal(|| false);
-    match email {
-        Some(_) if asking() => rsx! {
-            Pill { label: "Sign out", primary: false, on_press: move |()| { asking.set(false); on_sign_out.call(()); } }
-            Act { title: "Keep", on_press: move |()| asking.set(false), X { size: 16, color: DIM } }
-        },
-        Some(email) => rsx! {
-            button {
-                title: "{email}",
-                style: "flex:none; padding:0; border:none; background:transparent; cursor:pointer;",
-                onclick: move |_| asking.set(true),
-                Avatar { email: email.clone(), size: 34 }
-            }
-        },
-        None => rsx! {
-            Pill { label: "Sign in", primary: true, on_press: on_sign_in }
-        },
     }
 }
 
@@ -1378,31 +1495,6 @@ fn Banner(good: bool, text: String) -> Element {
                 CircleAlert { size: 18, color: ink }
             }
             span { style: "flex:1; min-width:0;", "{text}" }
-        }
-    }
-}
-
-/// The orgs to pick between, when there is more than one.
-#[component]
-fn OrgChips(orgs: Load<Vec<String>>, org: Signal<Option<String>>) -> Element {
-    let mut org = org;
-    let Load::Ready(list) = orgs else {
-        return rsx! {};
-    };
-    if list.len() < 2 {
-        return rsx! {};
-    }
-    rsx! {
-        div {
-            style: "display:flex; flex-wrap:wrap; gap:6px;",
-            for slug in list {
-                Chip {
-                    key: "{slug}",
-                    label: slug.clone(),
-                    on: org().as_deref() == Some(slug.as_str()),
-                    on_press: move |()| org.set(Some(slug.clone())),
-                }
-            }
         }
     }
 }
@@ -1488,6 +1580,7 @@ fn SongsList(
     downloaded: Callback<String, bool>,
     on_play: EventHandler<LibrarySong>,
     on_download: EventHandler<LibrarySong>,
+    on_edit: EventHandler<LibrarySong>,
 ) -> Element {
     let mut query = use_signal(String::new);
     let wanted = query().trim().to_lowercase();
@@ -1564,6 +1657,14 @@ fn SongsList(
                                     },
                                     CloudDownload { size: 18, color: TEXT }
                                 }
+                            }
+                            Act {
+                                title: "Edit the song",
+                                on_press: {
+                                    let song = song.clone();
+                                    move |()| on_edit.call(song.clone())
+                                },
+                                Pencil { size: 17, color: TEXT }
                             }
                         }
                     }

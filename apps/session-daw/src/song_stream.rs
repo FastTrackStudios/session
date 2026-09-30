@@ -54,6 +54,19 @@ pub trait SongSource: Send + Sync + 'static {
         let _ = paths;
         Box::pin(async { None })
     }
+    /// The whole of `path` written to the file `into`, in one request,
+    /// adding each piece's length to `got` as it lands — when the source
+    /// can stream a whole file. `None` when it cannot: a download then
+    /// reads the file by ranges.
+    fn fetch_whole(
+        &self,
+        path: String,
+        into: PathBuf,
+        got: Arc<std::sync::atomic::AtomicU64>,
+    ) -> Pending<Option<eyre::Result<()>>> {
+        let _ = (path, into, got);
+        Box::pin(async { None })
+    }
 }
 
 /// Where a song's files come from (see the native definition: here a
@@ -212,6 +225,45 @@ impl SongSource for TaskSource {
         let library = self.library.clone();
         let slug = self.song.slug.clone();
         Box::pin(async move { library.song_chart(&slug).await })
+    }
+
+    fn fetch_whole(
+        &self,
+        path: String,
+        into: PathBuf,
+        got: Arc<std::sync::atomic::AtomicU64>,
+    ) -> Pending<Option<eyre::Result<()>>> {
+        let song = self.song.clone();
+        Box::pin(async move {
+            Some(
+                async {
+                    use std::io::Write as _;
+                    let mut file = std::io::BufWriter::new(std::fs::File::create(&into)?);
+                    let mut failed = None;
+                    song.read_to(&path, |piece| {
+                        if failed.is_some() {
+                            return;
+                        }
+                        match file.write_all(piece) {
+                            Ok(()) => {
+                                got.fetch_add(
+                                    piece.len() as u64,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                            }
+                            Err(e) => failed = Some(e),
+                        }
+                    })
+                    .await?;
+                    if let Some(e) = failed {
+                        return Err(e.into());
+                    }
+                    file.flush()?;
+                    Ok(())
+                }
+                .await,
+            )
+        })
     }
 }
 
@@ -558,51 +610,143 @@ pub async fn download(
     root: &Path,
     progress: &(dyn Fn(u64, u64) + Sync),
 ) -> eyre::Result<PathBuf> {
-    use std::io::Write as _;
-    /// Read at a time: a proxy is tens of megabytes, and a person wants to
-    /// see it move.
-    const CHUNK: u64 = 4 * 1024 * 1024;
+    use futures_util::StreamExt as _;
+    /// Proxies fetched at once: each is its own request, so a few side by
+    /// side keep the connection full while one waits on the server.
+    const AT_ONCE: usize = 4;
+    /// Tries at one proxy before the song is given up on: a phone's
+    /// connection drops a request now and then.
+    const TRIES: u32 = 4;
     let keep = Keep::Disk(root.to_path_buf());
     let song = mirror(Arc::clone(&source), keep.clone()).await?;
     let mut proxies: Vec<(String, u64)> = song.proxies.values().cloned().collect();
     proxies.sort();
     let total: u64 = proxies.iter().map(|(_, size)| size).sum();
-    let mut done = 0;
-    progress(done, total);
+    // What has arrived: the proxies already here, and each one being
+    // fetched by its own count (a failed try zeroes its own, not the rest).
+    let mut here = 0;
+    let mut wanted = Vec::new();
     for (path, size) in proxies {
         let local = song.base.join(&path);
         if keep.has(&local, size) {
-            done += size;
-            progress(done, total);
-            continue;
+            here += size;
+        } else {
+            wanted.push((
+                path,
+                size,
+                local,
+                Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            ));
         }
-        if let Some(parent) = local.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        // Written aside and moved in whole: a download cut short never
-        // leaves a proxy that looks complete.
-        let part = PathBuf::from(format!("{}.download", local.display()));
-        let mut file = std::fs::File::create(&part)?;
-        let mut at = 0;
-        while at < size {
-            let end = (at + CHUNK).min(size);
-            let bytes = source
-                .read(path.clone(), at..end)
-                .await
-                .map_err(|e| eyre::eyre!("{path}: {e}"))?;
-            if bytes.is_empty() {
-                eyre::bail!("{path}: the source sent nothing at {at} of {size}");
+    }
+    let counts: Vec<Arc<std::sync::atomic::AtomicU64>> =
+        wanted.iter().map(|(.., got)| Arc::clone(got)).collect();
+    let done = || {
+        (here
+            + counts
+                .iter()
+                .map(|c| c.load(Ordering::Relaxed))
+                .sum::<u64>())
+        .min(total)
+    };
+    progress(done(), total);
+    let fetching = futures_util::stream::iter(wanted)
+        .map(|(path, size, local, got)| {
+            let source = Arc::clone(&source);
+            async move { fetch_proxy(&*source, &path, size, &local, &got, TRIES).await }
+        })
+        .buffer_unordered(AT_ONCE)
+        .collect::<Vec<eyre::Result<()>>>();
+    tokio::pin!(fetching);
+    let outcomes = loop {
+        tokio::select! {
+            outcomes = &mut fetching => break outcomes,
+            () = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                progress(done(), total);
             }
-            file.write_all(&bytes)?;
-            at += bytes.len() as u64;
-            done += bytes.len() as u64;
-            progress(done, total);
         }
-        file.flush()?;
-        drop(file);
-        std::fs::rename(&part, &local)?;
+    };
+    progress(done(), total);
+    for outcome in outcomes {
+        outcome?;
     }
     Ok(song.base)
+}
+
+/// Fetch proxy `path` (`size` bytes) of `source` to `local`: streamed
+/// whole where the source can, else read by ranges — written aside and
+/// moved in whole, so a download cut short never leaves a proxy that looks
+/// complete. `got` is this proxy's own count, each piece added as it lands;
+/// a failed try sets it back to nothing and starts again, `tries` times at
+/// most.
+#[cfg(not(target_arch = "wasm32"))]
+async fn fetch_proxy(
+    source: &dyn SongSource,
+    path: &str,
+    size: u64,
+    local: &Path,
+    got: &Arc<std::sync::atomic::AtomicU64>,
+    tries: u32,
+) -> eyre::Result<()> {
+    use std::io::Write as _;
+    /// A range read, where the source cannot stream a file: well inside
+    /// the library's per-read timeout on a slow connection.
+    const RANGE: u64 = 1024 * 1024;
+    if let Some(parent) = local.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let part = PathBuf::from(format!("{}.download", local.display()));
+    let mut tried = 0;
+    loop {
+        tried += 1;
+        got.store(0, Ordering::Relaxed);
+        let outcome = match source
+            .fetch_whole(path.to_owned(), part.clone(), Arc::clone(got))
+            .await
+        {
+            Some(outcome) => outcome,
+            None => {
+                async {
+                    let mut file = std::fs::File::create(&part)?;
+                    let mut at = 0;
+                    while at < size {
+                        let end = (at + RANGE).min(size);
+                        let bytes = source
+                            .read(path.to_owned(), at..end)
+                            .await
+                            .map_err(|e| eyre::eyre!("{path}: {e}"))?;
+                        if bytes.is_empty() {
+                            eyre::bail!("{path}: the source sent nothing at {at} of {size}");
+                        }
+                        file.write_all(&bytes)?;
+                        at += bytes.len() as u64;
+                        got.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                    }
+                    file.flush()?;
+                    Ok(())
+                }
+                .await
+            }
+        };
+        match outcome {
+            Ok(()) => {
+                std::fs::rename(&part, local)?;
+                return Ok(());
+            }
+            Err(e) => {
+                got.store(0, Ordering::Relaxed);
+                let _ = std::fs::remove_file(&part);
+                if tried >= tries {
+                    return Err(e);
+                }
+                tracing::warn!(download.path = %path, download.tried = tried, error = %e, "download: a proxy did not come down; trying again");
+                architect::platform::sleep(std::time::Duration::from_millis(
+                    500 * u64::from(tried),
+                ))
+                .await;
+            }
+        }
+    }
 }
 
 /// Mirror a song from `source` into `keep`: every small file fetched whole

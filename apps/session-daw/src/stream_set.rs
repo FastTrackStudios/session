@@ -483,7 +483,7 @@ pub fn download(
     songs: &[session_library::Song],
     into: &std::path::Path,
     progress: &(dyn Fn(Downloading) + Sync),
-) -> eyre::Result<PathBuf> {
+) -> eyre::Result<Downloaded> {
     let runtime = crate::open::engine_runtime()?;
     let _entered = runtime.enter();
     let root = into.join(DOWNLOADED_SONGS);
@@ -516,12 +516,17 @@ pub fn download(
             }
             Err(e) => {
                 tracing::warn!(song.title = %song.title, error = %e, "download: a song did not come down; the set goes on without it");
-                failed.push(song.title.clone());
+                failed.push((song.title.clone(), format!("{e:#}")));
             }
         }
     }
     if lines.is_empty() {
-        eyre::bail!("none of its songs could be downloaded");
+        // Why, in the words of the first song's failure: "none could be"
+        // alone said nothing a person (or a bug report) could act on.
+        let why = failed
+            .first()
+            .map_or_else(String::new, |(title, e)| format!(" — {title}: {e}"));
+        eyre::bail!("none of its songs could be downloaded{why}");
     }
     let file = download_file(into, title);
     let mut text = format!("# {title}\n");
@@ -535,7 +540,15 @@ pub fn download(
         download.failed = failed.len(),
         "download: a set is on this device"
     );
-    Ok(file)
+    Ok(Downloaded { file, failed })
+}
+
+/// A set downloaded: its `.setlist`, and the songs that did not come down
+/// (title, why) — the set plays without them, and the person is told.
+#[derive(Debug)]
+pub struct Downloaded {
+    pub file: PathBuf,
+    pub failed: Vec<(String, String)>,
 }
 
 /// Take a downloaded set off this device: its `.setlist`, and every song
@@ -604,5 +617,58 @@ mod download_tests {
             download_file(into, "JHM Sunday / 9am"),
             into.join("JHM Sunday - 9am.setlist")
         );
+    }
+}
+
+#[cfg(test)]
+mod download_probe {
+    /// The smallest setlist in the signed-in account's orgs, downloaded
+    /// into a temporary folder as the start screen does it — through the
+    /// library, not a share. Needs this machine to be signed in:
+    /// `cargo test -p session-daw --lib download_probe -- --ignored`.
+    #[test]
+    #[ignore = "needs a signed-in account and the network"]
+    fn a_library_setlist_downloads_and_lists_its_songs() {
+        let account = crate::task_account::signed_in().expect("signed in on this machine");
+        let orgs = crate::task_account::orgs(&account).expect("the orgs");
+        let (library, list) = orgs
+            .iter()
+            .filter_map(|org| {
+                let library = account.library(org);
+                let lists = super::setlists(&library).ok()?;
+                let list = lists
+                    .into_iter()
+                    .filter(|l| !l.songs.is_empty())
+                    .min_by_key(|l| l.songs.len())?;
+                Some((library, list))
+            })
+            .next()
+            .unwrap_or_else(|| panic!("no setlist with songs in any of {orgs:?}"));
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let downloaded = super::download(&library, &list.title, &list.songs, dir.path(), &|_| {})
+            .unwrap_or_else(|e| panic!("{} did not download: {e:#}", list.title));
+        assert!(
+            downloaded.failed.is_empty(),
+            "{} came down without {} of its songs:\n{}",
+            list.title,
+            downloaded.failed.len(),
+            downloaded
+                .failed
+                .iter()
+                .map(|(song, why)| format!("  {song}: {why}\n"))
+                .collect::<String>()
+        );
+        let file = downloaded.file;
+        let text = std::fs::read_to_string(&file).expect("the .setlist");
+        let songs: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+        assert!(!songs.is_empty(), "{} lists no songs:\n{text}", list.title);
+        for song in songs {
+            let folder = dir.path().join(song);
+            assert!(folder.is_dir(), "{song} is not a folder");
+            assert!(
+                crate::setlist::song_in(&folder).is_some(),
+                "{song} has no song to open in it"
+            );
+        }
     }
 }
