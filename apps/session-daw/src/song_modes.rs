@@ -116,7 +116,18 @@ pub fn use_song_modes(setlist: Signal<Setlist>, mode: Signal<Mode>) {
     let mut given = use_signal(|| None::<(String, Mode)>);
     use_effect(move || {
         if let Some(song) = current() {
-            let kept = of(&song).unwrap_or(Mode::Live);
+            // `FTS_SESSION_MODE` names the mode the window opens in, so the
+            // first song shown takes it over what it last kept.
+            let opening = given.peek().is_none();
+            let forced = std::env::var("FTS_SESSION_MODE").ok().and_then(|name| {
+                Mode::ALL
+                    .into_iter()
+                    .find(|m| m.display_name().eq_ignore_ascii_case(&name))
+            });
+            let kept = forced
+                .filter(|_| opening)
+                .or_else(|| of(&song))
+                .unwrap_or(Mode::Live);
             given.set(Some((song, kept)));
             if *mode.peek() != kept {
                 mode.set(kept);
