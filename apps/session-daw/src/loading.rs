@@ -49,7 +49,7 @@ pub fn Loading(progress: Progress) -> Element {
     let (headline, detail, retry) = match progress {
         Progress::Joining { retry } => (
             "Joining the live session".to_owned(),
-            "Reaching Task…".to_owned(),
+            "Connecting…".to_owned(),
             retry,
         ),
         Progress::Fetching { title, retry } => (

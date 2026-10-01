@@ -144,6 +144,15 @@ impl Library {
         format!("{}/org/{}/vox", self.server.trim_end_matches('/'), self.org)
     }
 
+    /// The server over HTTP — `https://host` for `wss://host`.
+    #[must_use]
+    pub fn http_base(&self) -> String {
+        self.server
+            .trim_end_matches('/')
+            .replacen("wss://", "https://", 1)
+            .replacen("ws://", "http://", 1)
+    }
+
     async fn client<C: vox_core::FromVoxLane + 'static>(&self) -> eyre::Result<C> {
         task_dial::establish_at::<C>(&self.org_url(), self.token.as_deref())
             .await
@@ -287,6 +296,93 @@ impl Library {
             .collect();
         songs.sort_by(|a, b| a.0.title.to_lowercase().cmp(&b.0.title.to_lowercase()));
         Ok(songs)
+    }
+
+    /// A new song called `title`, in `key` (empty when unset), by
+    /// `writers` — no chart and no session yet: it can be put in lists at
+    /// once, and plays once a session is made for it. The server makes its
+    /// slug from the title.
+    ///
+    /// # Errors
+    /// An empty title, or the server refused.
+    pub async fn create_song(
+        &self,
+        title: &str,
+        key: &str,
+        writers: &[String],
+    ) -> eyre::Result<Song> {
+        let title = title.trim();
+        if title.is_empty() {
+            eyre::bail!("a song needs a title");
+        }
+        let resources: ResourcesServiceClient = self.client().await?;
+        let made = resources
+            .upsert_song(resources_proto::SongDoc {
+                title: title.to_owned(),
+                key: key.trim().to_owned(),
+                writers: writers.to_vec(),
+                ..resources_proto::SongDoc::default()
+            })
+            .await
+            .map_err(|e| eyre::eyre!("making {title}: {e:?}"))?;
+        Ok(Song {
+            slug: made.slug,
+            title: title.to_owned(),
+            writers: writers.to_vec(),
+            key: key.trim().to_owned(),
+        })
+    }
+
+    /// Change song `song.slug`'s title, key and writers to `song`'s — its
+    /// tags, chart and session as they were.
+    ///
+    /// # Errors
+    /// No such song, an empty title, or the server refused.
+    pub async fn update_song(&self, song: &Song) -> eyre::Result<()> {
+        if song.title.trim().is_empty() {
+            eyre::bail!("a song needs a title");
+        }
+        let resources: ResourcesServiceClient = self.client().await?;
+        let mut doc = resources
+            .song(song.slug.clone())
+            .await
+            .map_err(|e| eyre::eyre!("reading {}: {e:?}", song.slug))?;
+        doc.title = song.title.trim().to_owned();
+        doc.key = song.key.trim().to_owned();
+        doc.writers.clone_from(&song.writers);
+        resources
+            .upsert_song(doc)
+            .await
+            .map_err(|e| eyre::eyre!("saving {}: {e:?}", song.title))?;
+        Ok(())
+    }
+
+    /// Delete song `slug` from the library. Lists that name it keep a
+    /// reference to nothing, which they skip.
+    ///
+    /// # Errors
+    /// The server refused.
+    pub async fn delete_song(&self, slug: &str) -> eyre::Result<()> {
+        let resources: ResourcesServiceClient = self.client().await?;
+        resources
+            .delete_song(slug.to_owned())
+            .await
+            .map_err(|e| eyre::eyre!("deleting {slug}: {e:?}"))?;
+        Ok(())
+    }
+
+    /// A copy of list `from` called `title`, of the same kind, with its
+    /// songs in the same order — last week's set as the start of this
+    /// week's.
+    ///
+    /// # Errors
+    /// No such list, or the server refused.
+    pub async fn duplicate_list(&self, from: &Setlist, title: &str) -> eyre::Result<Setlist> {
+        let mut made = self.create_list(title, from.kind).await?;
+        let order: Vec<String> = from.songs.iter().map(|s| s.slug.clone()).collect();
+        self.set_songs(&made.id, &order).await?;
+        made.songs.clone_from(&from.songs);
+        Ok(made)
     }
 
     /// A new, empty list called `title`.
@@ -579,8 +675,7 @@ impl Library {
         originals: bool,
     ) -> eyre::Result<PathBuf> {
         std::fs::create_dir_all(into)?;
-        let mut lines =
-            vec!["# Pulled from the Task library. One song folder per line.".to_owned()];
+        let mut lines = vec!["# Pulled from the library. One song folder per line.".to_owned()];
         for song in &setlist.songs {
             self.pull_session(&song.slug, into, originals).await?;
             lines.push(song.slug.clone());
@@ -646,41 +741,99 @@ pub struct TaskSong {
 }
 
 /// How long one range read may take before its connection is taken for
-/// dead: a stalled read would otherwise hold a fetch slot forever.
-const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// dead — a stalled read would otherwise hold a fetch slot forever: a few
+/// seconds, and a second more for each 100 KB asked for. A flat 20 s let
+/// one stalled 200-byte read (a song has hundreds) hold a download up for
+/// 20 s at a time; a small read that takes more than a few is not coming.
+fn read_timeout(len: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(5) + std::time::Duration::from_millis(len / 100)
+}
 
 impl TaskSong {
     /// The bytes `range` of `path` in the song's session — a seek, not a
     /// download. A read that fails or stalls redials the library and is
-    /// tried once more: a streamed song outlives any one connection.
+    /// tried again, a few times: a streamed song outlives any one
+    /// connection.
     ///
     /// # Errors
     ///
-    /// The server refused, or the file is not there, twice.
+    /// The server refused, or the file is not there, every time.
     pub async fn read(&self, path: &str, range: std::ops::Range<u64>) -> eyre::Result<Vec<u8>> {
+        /// Tries at one read, each after the last on a fresh connection: the
+        /// server's byte streams sometimes stall (no answer, or closed
+        /// before done), and a download reads hundreds of small files — one
+        /// stall in them lost a whole song when a read had two tries.
+        const TRIES: u32 = 4;
         if range.is_empty() {
             return Ok(Vec::new());
         }
-        let (generation, files) = self.files.lock().await.clone();
-        let first = match self.read_on(&files, path, &range).await {
-            Ok(bytes) => return Ok(bytes),
-            Err(e) => e,
-        };
-        let files = {
+        let mut errors = Vec::new();
+        for tried in 0..TRIES {
+            let (generation, files) = self.files.lock().await.clone();
+            match self.read_on(&files, path, &range).await {
+                Ok(bytes) => return Ok(bytes),
+                Err(e) => errors.push(e.to_string()),
+            }
+            if tried + 1 == TRIES {
+                break;
+            }
+            // Redialled once for everyone who found this connection dead,
+            // not by every read that did.
             let mut held = self.files.lock().await;
             if held.0 == generation {
-                let fresh = self
-                    .library
-                    .files()
-                    .await
-                    .map_err(|e| eyre::eyre!("{first} (and redialling: {e})"))?;
-                *held = (generation + 1, fresh);
+                match self.library.files().await {
+                    Ok(fresh) => *held = (generation + 1, fresh),
+                    Err(e) => errors.push(format!("redialling: {e}")),
+                }
             }
-            held.1.clone()
-        };
-        self.read_on(&files, path, &range)
+            drop(held);
+            architect::platform::sleep(std::time::Duration::from_millis(
+                300 * u64::from(tried + 1),
+            ))
+            .await;
+        }
+        eyre::bail!("{}", errors.join(" (then) "))
+    }
+
+    /// Where many of the song's documents are read in one request (the
+    /// server's `files/{root}/docs`: the paths in the body, one per line;
+    /// a record per path back).
+    #[must_use]
+    pub fn docs_url(&self) -> String {
+        format!(
+            "{}/org/{}/files/{}/docs",
+            self.library.http_base(),
+            self.library.org,
+            self.root.get()
+        )
+    }
+
+    /// The token the server knows the signed-in person by, if any.
+    #[must_use]
+    pub fn token(&self) -> Option<&str> {
+        self.library.token.as_deref()
+    }
+
+    /// The whole of `path`, streamed into `sink` a piece at a time — one
+    /// request for the file, not one per range: how a download fetches a
+    /// proxy. No timeout of its own (a proxy is tens of megabytes, and a
+    /// slow phone may take minutes); a dropped connection ends it with an
+    /// error. Returns the bytes read.
+    ///
+    /// # Errors
+    ///
+    /// The server refused, the file is not there, or the stream broke.
+    ///
+    /// Each on a connection of its own: on a shared one, once a whole-file
+    /// stream had finished, the next ones started on it received nothing
+    /// and never ended (three proxies came down; the next three sat at 0
+    /// bytes for ten minutes). A dial per proxy costs far less than that.
+    pub async fn read_to(&self, path: &str, sink: impl FnMut(&[u8])) -> eyre::Result<u64> {
+        let files = self.library.files().await?;
+        files
+            .read_to(self.root, path, sink)
             .await
-            .map_err(|e| eyre::eyre!("{e} (and before that: {first})"))
+            .map_err(|e| eyre::eyre!("{path}: {e}"))
     }
 
     async fn read_on(
@@ -689,12 +842,13 @@ impl TaskSong {
         path: &str,
         range: &std::ops::Range<u64>,
     ) -> eyre::Result<Vec<u8>> {
+        let limit = read_timeout(range.end - range.start);
         architect::platform::timeout(
-            READ_TIMEOUT,
+            limit,
             files.read_range(self.root, path, range.start, range.end - 1),
         )
         .await
-        .map_err(|_| eyre::eyre!("{path} {range:?}: no answer in {}s", READ_TIMEOUT.as_secs()))?
+        .map_err(|_| eyre::eyre!("{path} {range:?}: no answer in {:.0}s", limit.as_secs_f64()))?
         .map_err(|e| eyre::eyre!("{path} {range:?}: {e}"))
     }
 }

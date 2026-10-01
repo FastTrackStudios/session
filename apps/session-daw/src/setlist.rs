@@ -363,6 +363,9 @@ impl Setlist {
         let guid = opened.project_guid.clone();
         if let Some(streamed) = streamed {
             crate::stream_set::stream(streamed, &guid);
+        } else if let Some(folder) = path.parent() {
+            // A song downloaded by its reference plays it from disk.
+            crate::reference_play::hear_local(&guid, folder);
         }
         let rpp_text = crate::open::project_text(&plan.open)?.text;
         let chart_text = prepare
@@ -416,6 +419,9 @@ impl Setlist {
                 Ok((session, guid)) => {
                     if let Some(streamed) = streamed {
                         crate::stream_set::stream(streamed, &guid);
+                    } else if let Some(folder) = path.parent() {
+                        // A song downloaded by its reference plays it from disk.
+                        crate::reference_play::hear_local(&guid, folder);
                     }
                     songs.push(Song::opened(path, title, guid, session));
                 }

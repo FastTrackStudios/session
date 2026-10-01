@@ -49,6 +49,31 @@ pub fn hear(project: &str, full: Streamed, preview: Option<Streamed>) {
     }
 }
 
+/// Hear `project` — a song opened from `folder` on this device — by its
+/// reference, when it came down by its reference only
+/// ([`crate::song_stream::REFERENCE_ONLY`]): its stems are not here, and
+/// its reference is, read from disk as a streamed one is from the network.
+/// Nothing for a song downloaded whole, or never downloaded.
+pub fn hear_local(project: &str, folder: &std::path::Path) {
+    let proxies = folder.join("Media").join("Proxies");
+    if !proxies.join(crate::song_stream::REFERENCE_ONLY).exists() {
+        return;
+    }
+    let file = proxies.join("Reference.ogg");
+    match fts_sample::ogg_stream::OggStream::open_file(&file) {
+        Ok(stream) => {
+            let full = Streamed::new(stream.channels(), stream.sample_rate(), stream.frames());
+            let feeder =
+                daw::standalone::audio_engine::streamed::StreamFeeder::new(full.clone(), stream);
+            daw::standalone::audio_engine::streamed::butler_adopt(feeder);
+            hear(project, full, None);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, reference.song = %project, "reference: a downloaded song's reference would not open; it plays its guide alone")
+        }
+    }
+}
+
 /// Hear `project` by its stems: its reference goes.
 pub fn stop(project: &str) {
     if let Ok(mut heard) = HEARD.lock() {

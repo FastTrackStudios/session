@@ -263,6 +263,81 @@ pub fn LibraryEditor(
         }
     };
 
+    // A copy of the list being edited, named after it: last week's set as
+    // the start of this week's.
+    let duplicate = {
+        let library = library.clone();
+        move |()| {
+            let Some(id) = selected() else { return };
+            let Some(from_list) = lists.peek().iter().find(|l| l.id == id).cloned() else {
+                return;
+            };
+            let title = format!("{} (copy)", from_list.title);
+            let library = library.clone();
+            spawn(async move {
+                match off_thread(move || {
+                    with_library(&library, |l| async move {
+                        l.duplicate_list(&from_list, &title).await
+                    })
+                })
+                .await
+                {
+                    Some(Ok(copy)) => {
+                        let id = copy.id.clone();
+                        let title = copy.title.clone();
+                        lists.write().push(copy);
+                        selected.set(Some(id));
+                        renaming.set(Some(title));
+                        deleting.set(false);
+                    }
+                    Some(Err(e)) => problem.set(Some(brief(&e))),
+                    None => {}
+                }
+            });
+        }
+    };
+    // A song the library does not have yet, made from what was searched for
+    // and put straight in the list being edited.
+    let make_song = {
+        let library = library.clone();
+        let edit = edit.clone();
+        move |title: String| {
+            let title = title.trim().to_owned();
+            if title.is_empty() {
+                return;
+            }
+            let library = library.clone();
+            let mut edit = edit.clone();
+            spawn(async move {
+                match off_thread(move || {
+                    with_library(
+                        &library,
+                        |l| async move { l.create_song(&title, "", &[]).await },
+                    )
+                })
+                .await
+                {
+                    Some(Ok(song)) => {
+                        if let Load::Ready(all) = &mut *songs.write() {
+                            all.push((song.clone(), false));
+                            all.sort_by(|a, b| {
+                                a.0.title.to_lowercase().cmp(&b.0.title.to_lowercase())
+                            });
+                        }
+                        query.set(String::new());
+                        edit(&move |list: &mut Vec<LibrarySong>| {
+                            if !list.iter().any(|s| s.slug == song.slug) {
+                                list.push(song.clone());
+                            }
+                        });
+                    }
+                    Some(Err(e)) => problem.set(Some(brief(&e))),
+                    None => {}
+                }
+            });
+        }
+    };
+
     let all_lists = lists();
     let current = selected().and_then(|id| all_lists.iter().find(|l| l.id == id).cloned());
     let in_current: Vec<String> = current
@@ -304,6 +379,14 @@ pub fn LibraryEditor(
         .filter(|l| l.kind == ListKind::Songs)
         .cloned()
         .collect();
+    // What was typed, and whether the library has a song called exactly that.
+    let typed = query().trim().to_owned();
+    let exact = match &*songs.read() {
+        Load::Ready(all) => all
+            .iter()
+            .any(|(s, _)| s.title.eq_ignore_ascii_case(&typed)),
+        _ => true,
+    };
     let status = match (problem(), saving) {
         (Some(why), _) => (WARN, format!("Not saved — {why}")),
         (None, true) => (DIM, "Saving…".to_owned()),
@@ -421,6 +504,7 @@ pub fn LibraryEditor(
                                         "Play"
                                     }
                                 }
+                                Pill { label: "Duplicate", primary: false, on_press: duplicate.clone() }
                                 Pill {
                                     label: if deleting() { "Tap again to delete" } else { "Delete" },
                                     primary: false,
@@ -490,6 +574,21 @@ pub fn LibraryEditor(
                             placeholder: "Search songs",
                             value: "{query}",
                             oninput: move |e| query.set(e.value()),
+                        }
+                    }
+                    // Not in the library: made here, into the list.
+                    if !typed.is_empty() && !exact && current.is_some() {
+                        button {
+                            style: "display:flex; align-items:center; gap:10px; min-height:44px; padding:0 12px; border-radius:10px; \
+                                    border:1px dashed {ACCENT}; background:transparent; color:{TEXT}; font-family:inherit; \
+                                    font-size:14px; text-align:left; cursor:pointer;",
+                            onclick: {
+                                let make_song = make_song.clone();
+                                let typed = typed.clone();
+                                move |_| make_song(typed.clone())
+                            },
+                            Plus { size: 16, color: ACCENT }
+                            span { style: "flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;", "New song \u{201c}{typed}\u{201d}" }
                         }
                     }
                     match source {
@@ -701,6 +800,189 @@ fn IconButton(
                     border-radius:10px; border:none; background:transparent; color:{color}; cursor:pointer;",
             onclick: move |_| if enabled { on_press.call(()) },
             {children}
+        }
+    }
+}
+
+/// A song of the library, made or changed: its title, key and writers —
+/// and, for one that is there already, deleting it. Whole-page, as the
+/// list editor is; `song` `None` makes a new one.
+#[component]
+pub fn SongEditor(
+    library: Library,
+    song: Option<LibrarySong>,
+    /// Done: saved, deleted, or left.
+    on_done: EventHandler<()>,
+) -> Element {
+    let is_new = song.is_none();
+    let title = use_signal(|| song.as_ref().map(|s| s.title.clone()).unwrap_or_default());
+    let key = use_signal(|| song.as_ref().map(|s| s.key.clone()).unwrap_or_default());
+    let writers = use_signal(|| {
+        song.as_ref()
+            .map(|s| s.writers.join(", "))
+            .unwrap_or_default()
+    });
+    let mut busy = use_signal(|| false);
+    let mut deleting = use_signal(|| false);
+    let mut problem = use_signal(|| None::<String>);
+
+    let save = {
+        let library = library.clone();
+        let song = song.clone();
+        move |()| {
+            if busy() {
+                return;
+            }
+            let name = title().trim().to_owned();
+            if name.is_empty() {
+                problem.set(Some("A song needs a title.".to_owned()));
+                return;
+            }
+            let list: Vec<String> = writers()
+                .split(',')
+                .map(str::trim)
+                .filter(|w| !w.is_empty())
+                .map(str::to_owned)
+                .collect();
+            let key_now = key().trim().to_owned();
+            let library = library.clone();
+            let was = song.clone();
+            busy.set(true);
+            spawn(async move {
+                let outcome = off_thread(move || {
+                    with_library(&library, |l| async move {
+                        match was {
+                            Some(was) => {
+                                l.update_song(&LibrarySong {
+                                    title: name,
+                                    key: key_now,
+                                    writers: list,
+                                    ..was
+                                })
+                                .await
+                            }
+                            None => l.create_song(&name, &key_now, &list).await.map(drop),
+                        }
+                    })
+                })
+                .await;
+                busy.set(false);
+                match outcome {
+                    Some(Ok(())) => on_done.call(()),
+                    Some(Err(e)) => problem.set(Some(brief(&e))),
+                    None => {}
+                }
+            });
+        }
+    };
+    let delete = {
+        let library = library.clone();
+        let song = song.clone();
+        move |()| {
+            let Some(song) = song.clone() else { return };
+            if !deleting() {
+                deleting.set(true);
+                return;
+            }
+            let library = library.clone();
+            busy.set(true);
+            spawn(async move {
+                let slug = song.slug.clone();
+                let outcome = off_thread(move || {
+                    with_library(&library, |l| async move { l.delete_song(&slug).await })
+                })
+                .await;
+                busy.set(false);
+                match outcome {
+                    Some(Ok(())) => on_done.call(()),
+                    Some(Err(e)) => problem.set(Some(brief(&e))),
+                    None => {}
+                }
+            });
+        }
+    };
+
+    let field = |label: &'static str, hint: &'static str, value: Signal<String>| {
+        let mut value = value;
+        rsx! {
+            label {
+                style: "display:flex; flex-direction:column; gap:6px;",
+                span { style: "font-size:12px; font-weight:650; color:{DIM};", "{label}" }
+                div {
+                    style: "position:relative; height:44px;",
+                    if value().is_empty() {
+                        span {
+                            style: "position:absolute; top:0; left:12px; height:44px; display:flex; align-items:center; \
+                                    font-size:15px; color:#6b7280; pointer-events:none;",
+                            "{hint}"
+                        }
+                    }
+                    input {
+                        style: "position:absolute; top:0; left:0; width:100%; height:44px; box-sizing:border-box; padding:0 12px; \
+                                border-radius:10px; border:1px solid {RULE}; background:#101216; color:{TEXT}; \
+                                font-family:inherit; font-size:15px;",
+                        r#type: "text",
+                        value: "{value}",
+                        oninput: move |e| value.set(e.value()),
+                    }
+                }
+            }
+        }
+    };
+    let heading = if is_new { "New song" } else { "Song" };
+    let save_label = if busy() {
+        "Saving…"
+    } else if is_new {
+        "Make song"
+    } else {
+        "Save"
+    };
+
+    rsx! {
+        div {
+            style: "position:absolute; inset:0; display:flex; flex-direction:column; background:{BG}; color:{TEXT}; \
+                    font-family:system-ui, -apple-system, sans-serif;",
+            div {
+                style: "flex:none; display:flex; align-items:center; gap:12px; padding:{TOP}px 16px 12px; \
+                        border-bottom:1px solid {RULE}; background:{BAR};",
+                button {
+                    style: "height:36px; display:flex; align-items:center; gap:6px; padding:0 12px 0 8px; border-radius:9px; \
+                            border:1px solid {RULE}; background:#1c1e22; color:{TEXT}; font-family:inherit; font-size:14px; cursor:pointer;",
+                    onclick: move |_| on_done.call(()),
+                    ChevronLeft { size: 18, color: TEXT }
+                    "Back"
+                }
+                span { style: "flex:1; min-width:0; font-size:17px; font-weight:700;", "{heading}" }
+                Pill { label: save_label, primary: true, on_press: save }
+            }
+            div {
+                style: "flex:1; min-height:0; overflow-y:auto;",
+                div {
+                    style: "box-sizing:border-box; width:100%; max-width:560px; padding:20px 20px 40px; \
+                            display:flex; flex-direction:column; gap:18px;",
+                    {field("Title", "What the song is called", title)}
+                    {field("Key", "The key it is usually played in — G, Bb, F#m", key)}
+                    {field("Writers", "Who wrote it, separated by commas", writers)}
+                    if let Some(why) = problem() {
+                        span { style: "font-size:13px; color:{WARN}; line-height:1.45;", "{why}" }
+                    }
+                    if is_new {
+                        span {
+                            style: "font-size:13px; color:{DIM}; line-height:1.5;",
+                            "A new song can go in setlists straight away. It plays once its session is made — its tracks, chart and lyrics — from REAPER or the desktop app."
+                        }
+                    } else {
+                        div {
+                            style: "display:flex; margin-top:10px;",
+                            Pill {
+                                label: if deleting() { "Tap again to delete this song" } else { "Delete song" },
+                                primary: false,
+                                on_press: delete,
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

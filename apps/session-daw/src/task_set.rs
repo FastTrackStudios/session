@@ -45,7 +45,7 @@ pub async fn join(url: &str) -> eyre::Result<live_proto::LiveSet> {
     use live_proto::LiveSessionsClient;
     let lane: LiveSessionsClient = task_dial::establish_at(url, None)
         .await
-        .map_err(|e| eyre::eyre!("Task is not answering ({})", brief(&e)))?;
+        .map_err(|e| eyre::eyre!("Session's servers are not answering ({})", brief(&e)))?;
     lane.join(String::new())
         .await
         .map_err(|e| eyre::eyre!("the set could not be joined ({e:?})"))
