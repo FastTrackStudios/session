@@ -482,6 +482,7 @@ pub fn download(
     title: &str,
     songs: &[session_library::Song],
     into: &std::path::Path,
+    offline: crate::song_stream::Offline,
     progress: &(dyn Fn(Downloading) + Sync),
 ) -> eyre::Result<Downloaded> {
     let runtime = crate::open::engine_runtime()?;
@@ -506,7 +507,7 @@ pub fn download(
         let fetched = runtime.block_on(async {
             let source: Arc<dyn SongSource> =
                 Arc::new(TaskSource::of(library.clone(), &song.slug).await?);
-            crate::song_stream::download(source, &root, &step).await
+            crate::song_stream::download(source, &root, offline, &step).await
         });
         match fetched {
             Ok(folder) => {
@@ -645,8 +646,20 @@ mod download_probe {
             .next()
             .unwrap_or_else(|| panic!("no setlist with songs in any of {orgs:?}"));
         let dir = tempfile::tempdir().expect("a temp dir");
-        let downloaded = super::download(&library, &list.title, &list.songs, dir.path(), &|_| {})
-            .unwrap_or_else(|e| panic!("{} did not download: {e:#}", list.title));
+        let offline = if std::env::var("FTS_PROBE_MULTITRACKS").is_ok() {
+            crate::song_stream::Offline::Multitracks
+        } else {
+            crate::song_stream::Offline::Reference
+        };
+        let downloaded = super::download(
+            &library,
+            &list.title,
+            &list.songs,
+            dir.path(),
+            offline,
+            &|_| {},
+        )
+        .unwrap_or_else(|e| panic!("{} did not download: {e:#}", list.title));
         assert!(
             downloaded.failed.is_empty(),
             "{} came down without {} of its songs:\n{}",
@@ -669,6 +682,51 @@ mod download_probe {
                 crate::setlist::song_in(&folder).is_some(),
                 "{song} has no song to open in it"
             );
+            let proxies = folder.join("Media").join("Proxies");
+            if offline == crate::song_stream::Offline::Reference
+                && proxies.join("Reference.ogg").exists()
+            {
+                // By its reference: that, not its stems — and it opens from
+                // disk as a song opened offline plays it.
+                assert!(
+                    proxies.join(crate::song_stream::REFERENCE_ONLY).exists(),
+                    "{song} is not marked"
+                );
+                let project = format!("probe-{song}");
+                crate::reference_play::hear_local(&project, &folder);
+                assert!(
+                    crate::reference_play::any(),
+                    "{song}'s reference did not open from disk"
+                );
+                crate::reference_play::stop(&project);
+            }
         }
+        // Every proxy that came down, and how much.
+        let bytes: u64 = walk(dir.path())
+            .iter()
+            .filter(|p| p.extension().is_some_and(|e| e == "ogg"))
+            .filter_map(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len())
+            .sum();
+        if offline == crate::song_stream::Offline::Reference {
+            assert!(
+                bytes < 40_000_000 * list.songs.len() as u64,
+                "{} by its reference came to {bytes} bytes",
+                list.title
+            );
+        }
+    }
+
+    fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(walk(&path));
+            } else {
+                out.push(path);
+            }
+        }
+        out
     }
 }

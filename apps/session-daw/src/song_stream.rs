@@ -592,14 +592,32 @@ fn is_media(lower: &str) -> bool {
         && !lower.ends_with(".ogg.idx")
 }
 
-/// Bring a song onto this device whole, to open with no connection: its
-/// small files mirrored into `root` (as [`mirror`] does, the source's
-/// chart written in), and each proxy fetched whole beside them. The
-/// originals are not fetched: a song opened from disk plays
-/// `Media/Proxies/<name>.ogg` where its original is missing (the engine's
-/// `ProjectRelativeResolver`). A file already here at its size is kept.
-/// `progress` hears the proxies' bytes: fetched so far, and in all.
-/// Returns the song's folder.
+/// What a download brings onto the device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Offline {
+    /// The song's reference (its mix but the guide, one stereo proxy of a
+    /// few megabytes, and its preview) and the tracks it leaves out — the
+    /// guide — which play live over it: what a phone plays by default. A
+    /// song with no reference comes down whole.
+    Reference,
+    /// Every proxy: each track of the song, to mix.
+    Multitracks,
+}
+
+/// The file beside a song's proxies that says it came down by its
+/// reference only ([`Offline::Reference`]): opened from disk, it is heard
+/// by its reference ([`crate::reference_play::hear_local`]), its stems not
+/// being there.
+pub const REFERENCE_ONLY: &str = ".reference-only";
+
+/// Bring a song onto this device, to open with no connection: its small
+/// files mirrored into `root` (as [`mirror`] does, the source's chart
+/// written in), and its proxies fetched whole beside them — every one, or
+/// only its reference and guide (`offline`). The originals are never
+/// fetched: a song opened from disk plays `Media/Proxies/<name>.ogg` where
+/// its original is missing (the engine's `ProjectRelativeResolver`). A
+/// file already here at its size is kept. `progress` hears the proxies'
+/// bytes: fetched so far, and in all. Returns the song's folder.
 ///
 /// # Errors
 ///
@@ -608,6 +626,7 @@ fn is_media(lower: &str) -> bool {
 pub async fn download(
     source: Arc<dyn SongSource>,
     root: &Path,
+    offline: Offline,
     progress: &(dyn Fn(u64, u64) + Sync),
 ) -> eyre::Result<PathBuf> {
     use futures_util::StreamExt as _;
@@ -619,7 +638,36 @@ pub async fn download(
     const TRIES: u32 = 4;
     let keep = Keep::Disk(root.to_path_buf());
     let song = mirror(Arc::clone(&source), keep.clone()).await?;
-    let mut proxies: Vec<(String, u64)> = song.proxies.values().cloned().collect();
+    // By its reference: the reference, its preview, and the guide's own
+    // proxies — or, a song with no reference, all of them.
+    let only: Option<std::collections::HashSet<String>> = match offline {
+        Offline::Reference if song.has_reference() => Some(reference_stems(&song.base)?),
+        _ => None,
+    };
+    let marker = song.base.join("Media").join("Proxies").join(REFERENCE_ONLY);
+    match &only {
+        Some(_) => {
+            if let Some(dir) = marker.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(
+                &marker,
+                "The stems of this song are not on this device: it plays its reference.\n",
+            )?;
+        }
+        None => {
+            let _ = std::fs::remove_file(&marker);
+        }
+    }
+    let mut proxies: Vec<(String, u64)> = song
+        .proxies
+        .iter()
+        .filter(|(stem, _)| {
+            only.as_ref()
+                .is_none_or(|only| only.contains(stem.as_str()))
+        })
+        .map(|(_, proxy)| proxy.clone())
+        .collect();
     proxies.sort();
     let total: u64 = proxies.iter().map(|(_, size)| size).sum();
     // What has arrived: the proxies already here, and each one being
@@ -671,6 +719,50 @@ pub async fn download(
         outcome?;
     }
     Ok(song.base)
+}
+
+/// The proxies a song mirrored into `folder` is heard by, by its
+/// reference: the reference and its preview, and the proxies of the tracks
+/// the reference leaves out (the guide) — lower-case file stems, as a
+/// streamed song keys its proxies. Found by opening the song, its media
+/// left unloaded, into an engine of its own.
+///
+/// # Errors
+///
+/// The song could not be found in `folder` or opened.
+#[cfg(feature = "native")]
+fn reference_stems(folder: &Path) -> eyre::Result<std::collections::HashSet<String>> {
+    let song = crate::setlist::song_in(folder)
+        .ok_or_else(|| eyre::eyre!("no song in {}", folder.display()))?;
+    let daw = daw::standalone::Standalone::new();
+    let prepare = crate::prepare::Prepare::for_song(&song);
+    let (opened, _) =
+        crate::open::open_song_into_with(&daw, &song, &prepare, crate::open::Media::Deferred)?;
+    let project = opened.project_guid;
+    let live = crate::reference::left_out(&daw, &project);
+    let mut stems: std::collections::HashSet<String> =
+        [crate::reference::STEM, crate::reference::PREVIEW_STEM]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+    stems.extend(
+        daw::standalone::audio_engine::materialize::pending_media(&daw, &project)
+            .into_iter()
+            .filter(|m| live.contains(&m.track_guid))
+            .filter_map(|m| {
+                Path::new(&m.path)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_lowercase())
+            }),
+    );
+    Ok(stems)
+}
+
+/// Without the engine to open a song in, a song downloaded by its
+/// reference comes down whole.
+#[cfg(not(feature = "native"))]
+fn reference_stems(_folder: &Path) -> eyre::Result<std::collections::HashSet<String>> {
+    eyre::bail!("no engine here to find a song's guide in")
 }
 
 /// Fetch proxy `path` (`size` bytes) of `source` to `local`: streamed

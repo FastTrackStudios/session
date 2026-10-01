@@ -732,8 +732,13 @@ pub struct TaskSong {
 }
 
 /// How long one range read may take before its connection is taken for
-/// dead: a stalled read would otherwise hold a fetch slot forever.
-const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// dead — a stalled read would otherwise hold a fetch slot forever: a few
+/// seconds, and a second more for each 100 KB asked for. A flat 20 s let
+/// one stalled 200-byte read (a song has hundreds) hold a download up for
+/// 20 s at a time; a small read that takes more than a few is not coming.
+fn read_timeout(len: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(5) + std::time::Duration::from_millis(len / 100)
+}
 
 impl TaskSong {
     /// The bytes `range` of `path` in the song's session — a seek, not a
@@ -809,12 +814,13 @@ impl TaskSong {
         path: &str,
         range: &std::ops::Range<u64>,
     ) -> eyre::Result<Vec<u8>> {
+        let limit = read_timeout(range.end - range.start);
         architect::platform::timeout(
-            READ_TIMEOUT,
+            limit,
             files.read_range(self.root, path, range.start, range.end - 1),
         )
         .await
-        .map_err(|_| eyre::eyre!("{path} {range:?}: no answer in {}s", READ_TIMEOUT.as_secs()))?
+        .map_err(|_| eyre::eyre!("{path} {range:?}: no answer in {:.0}s", limit.as_secs_f64()))?
         .map_err(|e| eyre::eyre!("{path} {range:?}: {e}"))
     }
 }

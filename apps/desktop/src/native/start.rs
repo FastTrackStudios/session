@@ -26,6 +26,7 @@ use lucide_dioxus::{
 };
 use session_daw::loading::{Loading, Progress, mark_src};
 use session_daw::setlist::Setlist;
+use session_daw::song_stream::Offline;
 use session_daw::stream_set::{
     Downloading, LibrarySetlist, LibrarySong, ListKind, Remote, with_library,
 };
@@ -484,7 +485,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let mut downloading = use_signal(|| None::<Downloading>);
     let mut note = use_signal(|| None::<(bool, String)>);
     let download = use_callback(
-        move |(account, title, list): (Account, String, Vec<LibrarySong>)| {
+        move |(account, title, list, offline): (Account, String, Vec<LibrarySong>, Offline)| {
             let (Some(org), Some(into)) = (org(), documents_dir()) else {
                 return;
             };
@@ -516,9 +517,16 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             spawn(async move {
                 let named = title.clone();
                 let outcome = off_thread(move || {
-                    session_daw::stream_set::download(&library, &named, &list, &into, &|step| {
-                        drop(tell.send(step));
-                    })
+                    session_daw::stream_set::download(
+                        &library,
+                        &named,
+                        &list,
+                        &into,
+                        offline,
+                        &|step| {
+                            drop(tell.send(step));
+                        },
+                    )
                 })
                 .await;
                 downloading.set(None);
@@ -848,7 +856,7 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                                         },
                                         on_download: {
                                             let (account, list) = (account.clone(), list.clone());
-                                            move |()| if let Some(account) = account.clone() { download.call((account, list.title.clone(), list.songs.clone())) }
+                                            move |offline: Offline| if let Some(account) = account.clone() { download.call((account, list.title.clone(), list.songs.clone(), offline)) }
                                         },
                                         on_edit: {
                                             let id = list.id.clone();
@@ -882,8 +890,8 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                     },
                     on_download: {
                         let account = account.clone();
-                        move |song: LibrarySong| if let Some(account) = account.clone() {
-                            download.call((account, song.title.clone(), vec![song]));
+                        move |(song, offline): (LibrarySong, Offline)| if let Some(account) = account.clone() {
+                            download.call((account, song.title.clone(), vec![song], offline));
                         }
                     },
                     on_edit: move |song: LibrarySong| song_editing.set(Some(Some(song))),
@@ -1523,14 +1531,9 @@ fn ListRow2(
     downloaded: bool,
     busy: bool,
     on_play: EventHandler<()>,
-    on_download: EventHandler<()>,
+    on_download: EventHandler<Offline>,
     on_edit: EventHandler<()>,
 ) -> Element {
-    let save_title = if downloaded {
-        "Download again (to update it)"
-    } else {
-        "Download to this device"
-    };
     rsx! {
         div {
             style: "display:flex; align-items:center; gap:14px; min-height:68px; padding:8px 4px; border-bottom:1px solid {RULE};",
@@ -1557,9 +1560,32 @@ fn ListRow2(
                 }
             }
             Act { title: "Play", on_press: on_play, Play { size: 18, color: TEXT } }
-                        Act {
-                title: save_title,
-                on_press: on_download,
+            DownloadChoice { downloaded, busy, on_pick: on_download }
+            Act { title: "Edit", on_press: on_edit, Pencil { size: 17, color: TEXT } }
+        }
+    }
+}
+
+/// Downloading, as a button: pressed, the two ways a song comes onto the
+/// device — by its reference (small: what a phone plays by default) or
+/// every track (large: to change the mix).
+#[component]
+fn DownloadChoice(downloaded: bool, busy: bool, on_pick: EventHandler<Offline>) -> Element {
+    let mut open = use_signal(|| false);
+    let title = if downloaded {
+        "Download again (to update it)"
+    } else {
+        "Download to this device"
+    };
+    let option = "display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:10px 12px; \
+                  border:none; border-radius:9px; background:transparent; color:#e5e7eb; font-family:inherit; \
+                  text-align:left; cursor:pointer;";
+    rsx! {
+        div {
+            style: "position:relative; flex:none;",
+            Act {
+                title,
+                on_press: move |()| open.set(!open()),
                 if busy {
                     HardDriveDownload { size: 18, color: ACCENT }
                 } else if downloaded {
@@ -1568,7 +1594,35 @@ fn ListRow2(
                     CloudDownload { size: 18, color: TEXT }
                 }
             }
-            Act { title: "Edit", on_press: on_edit, Pencil { size: 17, color: TEXT } }
+            if open() {
+                div {
+                    style: "{session_daw::shell::SCRIM} z-index:20;",
+                    onclick: move |_| open.set(false),
+                }
+                div {
+                    style: "position:absolute; top:calc(100% + 4px); right:0; z-index:21; width:270px; display:flex; \
+                            flex-direction:column; padding:6px; border-radius:14px; background:#1c1e23; \
+                            border:1px solid {RULE}; box-shadow:0 12px 32px #0009;",
+                    button {
+                        style: "{option}",
+                        onclick: move |_| {
+                            open.set(false);
+                            on_pick.call(Offline::Reference);
+                        },
+                        span { style: "font-size:14px; font-weight:650;", "Reference mix" }
+                        span { style: "font-size:12px; color:{DIM}; line-height:1.4;", "The stereo mix, with the click and guide live over it. A few MB a song." }
+                    }
+                    button {
+                        style: "{option}",
+                        onclick: move |_| {
+                            open.set(false);
+                            on_pick.call(Offline::Multitracks);
+                        },
+                        span { style: "font-size:14px; font-weight:650;", "Multitracks" }
+                        span { style: "font-size:12px; color:{DIM}; line-height:1.4;", "Every track, to change the mix. About 100 MB a song." }
+                    }
+                }
+            }
         }
     }
 }
@@ -1579,7 +1633,7 @@ fn SongsList(
     songs: Load<Vec<(LibrarySong, bool)>>,
     downloaded: Callback<String, bool>,
     on_play: EventHandler<LibrarySong>,
-    on_download: EventHandler<LibrarySong>,
+    on_download: EventHandler<(LibrarySong, Offline)>,
     on_edit: EventHandler<LibrarySong>,
 ) -> Element {
     let mut query = use_signal(String::new);
@@ -1649,13 +1703,13 @@ fn SongsList(
                                     },
                                     Play { size: 18, color: TEXT }
                                 }
-                                Act {
-                                    title: "Download to this device",
-                                    on_press: {
+                                DownloadChoice {
+                                    downloaded: false,
+                                    busy: false,
+                                    on_pick: {
                                         let song = song.clone();
-                                        move |()| on_download.call(song.clone())
+                                        move |offline: Offline| on_download.call((song.clone(), offline))
                                     },
-                                    CloudDownload { size: 18, color: TEXT }
                                 }
                             }
                             Act {
