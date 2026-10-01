@@ -109,7 +109,7 @@ pub fn squashed(
 /// separate call per variant — and this runs while the scene is RECORDED,
 /// once per control per track, not per frame. The allocation is paid at
 /// project open and never again.
-fn path_of(shape: &Shape) -> BezPath {
+pub(crate) fn path_of(shape: &Shape) -> BezPath {
     /// Fine enough that a 9px knob ring has no visible facets.
     const TOLERANCE: f64 = 0.05;
 

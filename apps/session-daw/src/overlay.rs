@@ -719,29 +719,33 @@ pub fn controls(
             mixer.height,
             mixer.live,
             mixer.touch,
-            mixer.skin.is_some(),
+            mixer.themed(row).is_some(),
         );
         // A theme's strip: its live parts, over its recording.
-        if let Some(theme) = &mixer.skin {
+        if let Some(theme) = mixer.themed(row) {
             let on = |spot: Option<Spot>| spot.filter(|s| s.row == row).map(|s| s.control);
             let fields = crate::skin::fields(
                 palette,
                 track,
                 crate::skin::Shown {
-                    label: mixer.label(row).map(|(text, _)| text),
-                    depth: mixer.depth_of(row),
-                    collapsed: false,
-                    level: usize::try_from(track.index).ok().and_then(|i| levels.get(i)).copied(),
+                    level: usize::try_from(track.index)
+                        .ok()
+                        .and_then(|i| levels.get(i))
+                        .copied(),
                     clipped: clipped.is(&track.guid),
                     hover: on(pointer.hovered()),
                     pressed: on(pointer.pressed()),
+                    ..mixer.shown(row, font)
                 },
             );
             theme.live(
                 crate::skin::STRIP,
                 (strip_w, strip_h - mixer.rack_h),
                 &fields,
-                &mut theme_runtime::AnyRender(&mut scene),
+                &mut crate::skin::canvas::Host {
+                    scene: &mut scene,
+                    font,
+                },
                 Affine::translate((left, mixer.rack_h)),
             );
         }
@@ -1419,16 +1423,7 @@ fn readout(
     use vello::kurbo::Rect;
     use vello::peniko::Fill;
 
-    let db = art::fader_db(crate::tcp::volume_fraction(volume));
-    // Silence has no logarithm and should not be given a number that
-    // implies one.
-    let label = if volume <= 0.0 {
-        "-inf".to_owned()
-    } else if db >= 0.0 {
-        format!("+{db:.1}")
-    } else {
-        format!("{db:.1}")
-    };
+    let label = volume_label(volume);
     const SIZE: f32 = 9.0;
     let width = font.width(&label, SIZE) + 6.0;
     let height = f64::from(SIZE) + 4.0;
@@ -1450,6 +1445,21 @@ fn readout(
         top + height - 4.0,
         SIZE,
     );
+}
+
+/// The fader's value as its readout prints it.
+#[must_use]
+pub fn volume_label(volume: f64) -> String {
+    let db = art::fader_db(crate::tcp::volume_fraction(volume));
+    // Silence has no logarithm and should not be given a number that
+    // implies one.
+    if volume <= 0.0 {
+        "-inf".to_owned()
+    } else if db >= 0.0 {
+        format!("+{db:.1}")
+    } else {
+        format!("{db:.1}")
+    }
 }
 
 /// How clear the window in the fader cap is.

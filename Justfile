@@ -1512,6 +1512,21 @@ daw-animate PROJECT="" SIZE="2560x1440":
     FTS_BENCH_ANIMATE=1 FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 \
         | grep -viE 'vulkan|objects:|WARN'
 
+# How far the themed mixer is from the painters' one: regenerates the
+# fts-dark theme from the painters' own drawings (skin::export), shoots the
+# mixer both ways and diffs them (percentage of pixels that differ, and a
+# picture of where). THEME_DIFF_CROP=x0,y0,x1,y1 also writes a blown-up
+# side-by-side of one region. OUT is where the pictures go.
+theme-parity PROJECT="features/dynamic-template/fixtures/golden/template.rpp" SIZE="1600x900" OUT="/tmp/fts-theme-parity":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "{{OUT}}"
+    cargo build -q --release -p session-daw --bin bench --bin theme_diff --bin theme_export
+    ./target/release/theme_export apps/session-daw/themes/fts-dark.fm
+    FTS_BENCH_MIXER="{{OUT}}/native.png" FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "{{PROJECT}}" 2>&1 | grep -E 'wrote' || true
+    FTS_THEME=apps/session-daw/themes/fts-dark.fm FTS_BENCH_MIXER="{{OUT}}/themed.png" FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "{{PROJECT}}" 2>&1 | grep -E 'wrote|theme' || true
+    ./target/release/theme_diff "{{OUT}}/native.png" "{{OUT}}/themed.png" "{{OUT}}/diff.png"
+
 # The studio window (Blitz + the painted arrangement) on a real session,
 # prepared first: organize it, build the song from its keyflow chart
 # (tempo, markers, section regions, Keyflow folder), and generate the

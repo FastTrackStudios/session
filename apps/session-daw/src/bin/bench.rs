@@ -745,8 +745,49 @@ fn mixer_shot(
             tracing::error!(error = %e, path = out, "could not write the row list");
         }
     }
+    // `FTS_BENCH_STATES=1`: every state a strip can be in, spread across
+    // the strips — muted, soloed, armed or not, each monitoring mode,
+    // panned, with and without a chain, sends, receives — so a shot
+    // shows them all. Deterministic, so two shots compare.
+    if std::env::var_os("FTS_BENCH_STATES").is_some() {
+        for (i, (track, _)) in planned.iter_mut().enumerate() {
+            let n = u32::try_from(i).unwrap_or(0);
+            track.muted = n % 3 == 1;
+            track.soloed = n % 4 == 2;
+            track.armed = n % 2 == 0;
+            track.input_monitor = match n % 3 {
+                0 => daw_proto::InputMonitoringMode::Off,
+                1 => daw_proto::InputMonitoringMode::Normal,
+                _ => daw_proto::InputMonitoringMode::NotWhenPlaying,
+            };
+            track.pan = f64::from(n * 37 % 21) / 10.0 - 1.0;
+            track.fx_count = n % 3;
+            track.send_count = n % 2;
+            track.receive_count = (n / 2) % 2;
+            track.parent_send = n % 5 != 0;
+            track.selected = n == 3;
+            track.volume = 0.1 + f64::from(n % 9) * 0.2;
+        }
+    }
     let tracks: Vec<daw_proto::Track> = planned.iter().map(|(t, _)| t.clone()).collect();
     let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(planned));
+    // `FTS_BENCH_POINTER=row,control[,press]`: the pointer over (or
+    // pressing) one control, by its theme name (`mute`, `fader`, `pan`…).
+    let mut pointer = session_daw::pointer::Pointer::default();
+    if let Ok(spec) = std::env::var("FTS_BENCH_POINTER") {
+        let parts: Vec<&str> = spec.split(',').collect();
+        if let (Some(row), Some(control)) = (
+            parts.first().and_then(|r| r.trim().parse::<usize>().ok()),
+            parts
+                .get(1)
+                .and_then(|c| session_daw::skin::control(c.trim())),
+        ) {
+            pointer.hover(Some(session_daw::pointer::Spot { row, control }));
+            if parts.get(2).is_some_and(|p| p.trim() == "press") {
+                pointer.press();
+            }
+        }
+    }
 
     let scroll_x = std::env::var("FTS_BENCH_SCROLL")
         .ok()
@@ -898,7 +939,7 @@ fn mixer_shot(
                 &mixer,
                 &tracks,
                 &map,
-                &session_daw::pointer::Pointer::default(),
+                &pointer,
                 // At rest unless live: the still shot is the reference
                 // every viewport in the sweep is compared against, and
                 // a lit meter in it would be a difference nobody asked

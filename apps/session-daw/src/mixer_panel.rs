@@ -1005,15 +1005,12 @@ impl MixerWidget {
         let mixer = self.mixer.as_ref()?;
         let row = mixer.strip_at(content_x)?;
         let (left, width, height) = mixer.strip_box(row)?;
-        let control = match (&mixer.skin, self.track_at(row)) {
+        let control = match (mixer.themed(row), self.track_at(row)) {
             // A theme's strip is hit where the theme drew it — below the
             // rack, which is still the painters'.
             (Some(theme), Some(track)) if content_y >= mixer.rack_h => {
-                let fields = crate::skin::fields(
-                    &self.palette,
-                    track,
-                    crate::skin::Shown { label: mixer.label(row).map(|(t, _)| t), ..Default::default() },
-                );
+                let fields =
+                    crate::skin::fields(&self.palette, track, mixer.shown(row, &self.font));
                 theme
                     .hit(
                         crate::skin::STRIP,
@@ -1855,15 +1852,11 @@ impl MixerWidget {
                 .find(|t| t.selected)
                 .map(|t| t.guid.clone())
         };
-        let stale = self
-            .mixer
-            .as_ref()
-            .is_none_or(|m| {
-                (m.height - h).abs() > 0.5
-                    || m.touch != self.touch.get()
-                    || m.skin_version != crate::skin::version()
-            })
-            || open != self.built_open;
+        let stale = self.mixer.as_ref().is_none_or(|m| {
+            (m.height - h).abs() > 0.5
+                || m.touch != self.touch.get()
+                || m.skin_version != crate::skin::version()
+        }) || open != self.built_open;
         if stale {
             self.built_open.clone_from(&open);
             for analyser in self.spectra.values_mut() {
@@ -1979,7 +1972,10 @@ impl Widget for MixerWidget {
         // made off the UI thread.
         // A theme file saved since the last look: the mixer re-records.
         crate::skin::poll()
-            || self.mixer.as_ref().is_some_and(|m| m.skin_version != crate::skin::version())
+            || self
+                .mixer
+                .as_ref()
+                .is_some_and(|m| m.skin_version != crate::skin::version())
             || self.dirty.get()
             || crate::engine::moving()
             || crate::folds::generation() != self.folds_seen

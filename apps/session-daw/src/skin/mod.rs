@@ -25,6 +25,9 @@ use theme_runtime::{Fields, Rgba, Schema, Theme, Value};
 use crate::arrangement::Palette;
 use crate::mcp::Control;
 
+pub mod canvas;
+pub mod export;
+
 /// The role a theme draws a mixer strip as.
 pub const STRIP: &str = "mcp.strip";
 
@@ -49,6 +52,15 @@ pub fn schema() -> Schema {
         .field("track.collapsed")
         .field("track.depth")
         .field("track.input")
+        .field("track.ground")
+        .field("track.edge")
+        .field("track.has_edge")
+        .field("track.tint")
+        .field("track.band")
+        .field("track.label_size")
+        .field("track.parent_send")
+        .field("ui.rack")
+        .layout("mixer.h")
         .live("track.mute")
         .live("track.solo")
         .live("track.armed")
@@ -67,6 +79,9 @@ pub fn schema() -> Schema {
         .live("meter.clip")
         .live("ui.hover")
         .live("ui.pressed")
+        .live("meter.peak")
+        .live("track.volume_label")
+        .live("track.volume_label_w")
 }
 
 /// One strip's values, in [`schema`]'s order.
@@ -81,8 +96,8 @@ impl Fields for StripFields {
 /// What a strip shows beyond the track itself.
 #[derive(Clone, Copy, Default)]
 pub struct Shown<'a> {
-    /// The name as fitted to the plate.
-    pub label: Option<&'a str>,
+    /// The name as fitted to the plate, and the size it fits at.
+    pub label: Option<(&'a str, f32)>,
     pub depth: usize,
     pub collapsed: bool,
     pub level: Option<daw_proto::TrackLevels>,
@@ -90,50 +105,112 @@ pub struct Shown<'a> {
     /// The control the pointer is over, and the one it is pressing.
     pub hover: Option<Control>,
     pub pressed: Option<Control>,
+    /// The strip's width (the record input is elided to it).
+    pub width: f64,
+    /// The height the mixer's sections are resolved against: the whole
+    /// panel's, less the rack — the same for every strip, however deep.
+    pub mixer_h: f64,
+    /// Whether a rack sits over the strip (which then draws the
+    /// selection rule itself, at the top of the rack).
+    pub rack: bool,
+    /// The face text is measured in, for what has to be sized to it.
+    pub font: Option<&'a crate::text::Font>,
 }
+
+static SCHEMA: std::sync::LazyLock<Schema> = std::sync::LazyLock::new(schema);
 
 /// `track`'s values for a strip theme.
 #[must_use]
 pub fn fields(palette: &Palette, track: &Track, shown: Shown<'_>) -> StripFields {
-    let color = crate::tcp::track_color(palette, track);
-    let [r, g, b, a] = color.to_rgba8().to_u8_array();
-    let fraction = |v: f32| Value::Num(crate::engine::meter_fraction(v));
+    let mut values = vec![Value::Missing; SCHEMA.names().count()];
+    let mut set = |name: &str, v: Value| {
+        if let Some(slot) = SCHEMA.slot(name).and_then(|s| usize::try_from(s).ok())
+            && let Some(at) = values.get_mut(slot)
+        {
+            *at = v;
+        }
+    };
+    let color = |c: vello::peniko::Color| {
+        let [r, g, b, a] = c.to_rgba8().to_u8_array();
+        Value::Color(Rgba::from_rgba8(r, g, b, a))
+    };
+    let fraction = |v: f32| crate::engine::meter_fraction(v);
     let level = shown.level.unwrap_or_default();
     let named = |c: Option<Control>| c.map_or(Value::text(""), |c| Value::text(name(c)));
-    StripFields(vec![
-        Value::text(&track.name),
-        Value::text(shown.label.unwrap_or(&track.name)),
-        Value::Num(f64::from(track.index) + 1.0),
-        Value::Color(Rgba::from_rgba8(r, g, b, a)),
-        Value::Bool(track.color.is_some()),
-        Value::Bool(track.selected),
-        Value::Bool(track.is_folder),
-        Value::Bool(shown.collapsed),
-        Value::Num(crate::num::coord(shown.depth)),
-        Value::text(&crate::tcp::record_input(track)),
-        Value::Bool(track.muted),
-        Value::Bool(track.soloed),
-        Value::Bool(track.armed),
+
+    set("track.name", Value::text(&track.name));
+    let (label, label_size) = shown.label.unwrap_or((&track.name, 11.0));
+    set("track.label", Value::text(label));
+    set("track.label_size", Value::Num(f64::from(label_size)));
+    set("track.number", Value::Num(f64::from(track.index) + 1.0));
+    set(
+        "track.color",
+        color(crate::tcp::track_color(palette, track)),
+    );
+    set("track.has_color", Value::Bool(track.color.is_some()));
+    set("track.selected", Value::Bool(track.selected));
+    set("track.folder", Value::Bool(track.is_folder));
+    set("track.collapsed", Value::Bool(shown.collapsed));
+    set("track.depth", Value::Num(crate::num::coord(shown.depth)));
+    let input = crate::tcp::record_input(track);
+    let input = match shown.font {
+        // As the painters elide it: to the field, less its caret.
+        Some(font) => font.elide(&input, 10.0, (shown.width - 12.0).min(75.0) - 14.0),
+        None => input,
+    };
+    set("track.input", Value::text(&input));
+    set(
+        "track.ground",
+        color(crate::mcp::strip_ground(palette, track)),
+    );
+    let edge = crate::mcp::strip_edge(palette, track);
+    set("track.has_edge", Value::Bool(edge.is_some()));
+    set("track.edge", edge.map_or(Value::Missing, color));
+    set("track.tint", color(crate::tcp::row_tint(palette, track)));
+    set("track.band", color(crate::tcp::folder_band(palette, track)));
+    set("track.parent_send", Value::Bool(track.parent_send));
+    set("ui.rack", Value::Bool(shown.rack));
+    set("mixer.h", Value::Num(shown.mixer_h));
+
+    set("track.mute", Value::Bool(track.muted));
+    set("track.solo", Value::Bool(track.soloed));
+    set("track.armed", Value::Bool(track.armed));
+    set(
+        "track.monitor",
         Value::Num(match track.input_monitor {
             daw_proto::InputMonitoringMode::Off => 0.0,
             daw_proto::InputMonitoringMode::Normal => 1.0,
             daw_proto::InputMonitoringMode::NotWhenPlaying => 2.0,
         }),
-        Value::Bool(track.phase_inverted),
+    );
+    set("track.phase", Value::Bool(track.phase_inverted));
+    set(
+        "track.fader",
         Value::Num(crate::tcp::volume_fraction(track.volume)),
-        Value::Num(track.volume),
-        Value::Num(track.pan.clamp(-1.0, 1.0)),
-        Value::Num(f64::from(track.fx_count)),
-        Value::Num(f64::from(track.send_count)),
-        Value::Num(f64::from(track.receive_count)),
-        fraction(level.peak_left),
-        fraction(level.peak_right),
-        fraction(level.hold_left),
-        fraction(level.hold_right),
-        Value::Bool(shown.clipped),
-        named(shown.hover),
-        named(shown.pressed),
-    ])
+    );
+    set("track.volume", Value::Num(track.volume));
+    set("track.pan", Value::Num(track.pan.clamp(-1.0, 1.0)));
+    set("track.fx", Value::Num(f64::from(track.fx_count)));
+    set("track.sends", Value::Num(f64::from(track.send_count)));
+    set("track.receives", Value::Num(f64::from(track.receive_count)));
+    let (left, right) = (fraction(level.peak_left), fraction(level.peak_right));
+    set("meter.left", Value::Num(left));
+    set("meter.right", Value::Num(right));
+    set("meter.peak", Value::Num(left.max(right)));
+    set("meter.hold_left", Value::Num(fraction(level.hold_left)));
+    set("meter.hold_right", Value::Num(fraction(level.hold_right)));
+    set("meter.clip", Value::Bool(shown.clipped));
+    set("ui.hover", named(shown.hover));
+    set("ui.pressed", named(shown.pressed));
+    let readout = crate::overlay::volume_label(track.volume);
+    if let Some(font) = shown.font {
+        set(
+            "track.volume_label_w",
+            Value::Num(font.width(&readout, 9.0) + 6.0),
+        );
+    }
+    set("track.volume_label", Value::text(&readout));
+    StripFields(values)
 }
 
 /// A control's name in a theme: the `x` of a node named `@x`.
@@ -191,7 +268,10 @@ static SOURCE: Mutex<Option<Loaded>> = Mutex::new(None);
 /// The theme the mixer draws with, when there is one with a strip.
 #[must_use]
 pub fn current() -> Option<Arc<Theme>> {
-    let theme = THEME.read().unwrap_or_else(PoisonError::into_inner).clone()?;
+    let theme = THEME
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()?;
     theme.has_role(STRIP).then_some(theme)
 }
 
@@ -215,8 +295,13 @@ pub fn set(theme: Option<Arc<Theme>>) {
 pub fn load(path: PathBuf, mode: Option<String>) -> Result<(), String> {
     let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
     let result = compile(&path, mode.as_deref());
-    *SOURCE.lock().unwrap_or_else(PoisonError::into_inner) =
-        Some(Loaded { path, mode, modified, checked: Instant::now(), reported: result.as_ref().err().cloned() });
+    *SOURCE.lock().unwrap_or_else(PoisonError::into_inner) = Some(Loaded {
+        path,
+        mode,
+        modified,
+        checked: Instant::now(),
+        reported: result.as_ref().err().cloned(),
+    });
     result.map(|theme| set(Some(Arc::new(theme))))
 }
 
@@ -224,7 +309,9 @@ pub fn load(path: PathBuf, mode: Option<String>) -> Result<(), String> {
 pub fn from_env() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let Some(path) = std::env::var_os("FTS_THEME").map(PathBuf::from) else { return };
+        let Some(path) = std::env::var_os("FTS_THEME").map(PathBuf::from) else {
+            return;
+        };
         let mode = std::env::var("FTS_THEME_MODE").ok();
         if let Err(why) = load(path, mode) {
             tracing::warn!(theme.error = %why, "theme did not load");
@@ -236,12 +323,16 @@ pub fn from_env() {
 /// at no more than every [`POLL`]). True when [`current`] changed.
 pub fn poll() -> bool {
     let mut source = SOURCE.lock().unwrap_or_else(PoisonError::into_inner);
-    let Some(loaded) = source.as_mut() else { return false };
+    let Some(loaded) = source.as_mut() else {
+        return false;
+    };
     if loaded.checked.elapsed() < POLL {
         return false;
     }
     loaded.checked = Instant::now();
-    let modified = std::fs::metadata(&loaded.path).and_then(|m| m.modified()).ok();
+    let modified = std::fs::metadata(&loaded.path)
+        .and_then(|m| m.modified())
+        .ok();
     if modified == loaded.modified {
         return false;
     }
@@ -266,7 +357,11 @@ pub fn poll() -> bool {
 fn compile(path: &std::path::Path, mode: Option<&str>) -> Result<Theme, String> {
     let src = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     Theme::from_markup(&src, schema(), mode).map_err(|errors| {
-        errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")
+        errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")
     })
 }
 
@@ -306,14 +401,28 @@ mod tests {
         std::fs::write(&path, THEME.replace("#202020", "#303030")).expect("write");
         assert!(poll(), "a fixed theme is taken");
         assert!(version() > first);
-        let ground = current().and_then(|t| t.token("ground").and_then(Value::color)).map(Rgba::to_hex);
+        let ground = current()
+            .and_then(|t| t.token("ground").and_then(Value::color))
+            .map(Rgba::to_hex);
         assert_eq!(ground.as_deref(), Some("#303030"));
 
         // And a mute lands where the theme put it.
         let theme = current().expect("theme");
-        let track = Track { muted: true, ..Track::default() };
-        let fields = fields(&Palette::from_theme(&daw_ui::theming::Theme::dark()), &track, Shown::default());
-        let hit = theme.hit(STRIP, (86.0, 400.0), &fields, vello::kurbo::Point::new(60.0, 130.0));
+        let track = Track {
+            muted: true,
+            ..Track::default()
+        };
+        let fields = fields(
+            &Palette::from_theme(&daw_ui::theming::Theme::dark()),
+            &track,
+            Shown::default(),
+        );
+        let hit = theme.hit(
+            STRIP,
+            (86.0, 400.0),
+            &fields,
+            vello::kurbo::Point::new(60.0, 130.0),
+        );
         assert_eq!(hit.as_deref().and_then(control), Some(Control::Mute));
         let _ = std::fs::remove_dir_all(&dir);
     }

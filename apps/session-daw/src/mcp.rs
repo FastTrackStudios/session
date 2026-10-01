@@ -284,6 +284,9 @@ pub struct Mixer {
     pub skin: Option<std::sync::Arc<theme_runtime::Theme>>,
     /// `skin::version()` when recorded: a different one is a stale mixer.
     pub skin_version: u64,
+    /// Which strips the theme drew. One it cannot draw yet — a live or
+    /// touch strip, a strip with its rack beside it — is the painters'.
+    themed: Vec<bool>,
 }
 
 impl Mixer {
@@ -430,6 +433,7 @@ impl Mixer {
         let skin_version = crate::skin::version();
         let skin = crate::skin::current();
 
+        let mut themed_rows = Vec::with_capacity(rows.len());
         let mut x = 0.0_f64;
         for (ordinal, (track, depth)) in rows.iter().enumerate() {
             let depth = usize::try_from(*depth).unwrap_or(0);
@@ -462,34 +466,76 @@ impl Mixer {
                     .get(ordinal.saturating_add(1))
                     .is_none_or(|(_, next)| usize::try_from(*next).unwrap_or(0) <= depth);
             let slot = Slot {
-                    x,
-                    width: w,
-                    height: strip_h,
-                    buttons_top,
-                    rack_h,
-                    mixer_h: height,
-                    column,
-                    collapsed,
-                    live,
-                    touch,
+                x,
+                width: w,
+                height: strip_h,
+                buttons_top,
+                rack_h,
+                mixer_h: height,
+                column,
+                collapsed,
+                live,
+                touch,
             };
             // A track with no settings yet gets none drawn rather than
             // someone else's — `Store::seed` runs before this, so the
             // miss is a track that arrived between the two. Nor does one
             // whose rack the live pass will draw.
-            let tone = if live_racks { None } else { tone_settings.get(&track.guid) };
-            match &skin {
-                Some(theme) => themed(
-                    &mut strips,
-                    theme,
-                    palette,
-                    font,
-                    track,
-                    slot,
-                    (rack, tone),
-                    (&ancestors, labels.last().map(|(l, _)| l.as_str())),
-                ),
-                None => strip(&mut strips, palette, font, track, slot, rack, tone, &ancestors),
+            let tone = if live_racks {
+                None
+            } else {
+                tone_settings.get(&track.guid)
+            };
+            // The theme draws the stacked desktop strip; the rest is still
+            // the painters'.
+            let stacked = crate::strip::Strip::laid_out(
+                w,
+                strip_h,
+                height,
+                rack_h,
+                buttons_top,
+                column,
+                live,
+            )
+            .layout()
+                == crate::strip::Layout::Stacked;
+            match skin.as_ref().filter(|_| stacked && !live && !touch) {
+                Some(theme) => {
+                    let shown = crate::skin::Shown {
+                        label: labels.last().map(|(l, size)| (l.as_str(), *size)),
+                        depth,
+                        collapsed,
+                        width: w,
+                        mixer_h: height - rack_h,
+                        rack: rack_h > 0.0,
+                        font: Some(font),
+                        ..crate::skin::Shown::default()
+                    };
+                    themed(
+                        &mut strips,
+                        theme,
+                        palette,
+                        font,
+                        track,
+                        slot,
+                        (rack, tone),
+                        (&ancestors, shown),
+                    );
+                    themed_rows.push(true);
+                }
+                None => {
+                    strip(
+                        &mut strips,
+                        palette,
+                        font,
+                        track,
+                        slot,
+                        rack,
+                        tone,
+                        &ancestors,
+                    );
+                    themed_rows.push(false);
+                }
             }
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
@@ -513,6 +559,30 @@ impl Mixer {
             labels,
             skin,
             skin_version,
+            themed: themed_rows,
+        }
+    }
+
+    /// The theme `row` was drawn with, if it was.
+    #[must_use]
+    pub fn themed(&self, row: usize) -> Option<&std::sync::Arc<theme_runtime::Theme>> {
+        self.skin
+            .as_ref()
+            .filter(|_| self.themed.get(row).copied().unwrap_or(false))
+    }
+
+    /// What a theme is told about `row`'s strip beyond its track: one
+    /// answer for the recording, the live pass and the hit tests.
+    #[must_use]
+    pub fn shown<'a>(&'a self, row: usize, font: &'a Font) -> crate::skin::Shown<'a> {
+        crate::skin::Shown {
+            label: self.label(row),
+            depth: self.depth_of(row),
+            width: self.strip_box(row).map_or(STRIP_W, |(_, w, _)| w),
+            mixer_h: self.height - self.rack_h,
+            rack: self.rack_h > 0.0,
+            font: Some(font),
+            ..crate::skin::Shown::default()
         }
     }
 
@@ -649,7 +719,7 @@ fn themed(
     track: &Track,
     slot: Slot,
     (rack, tone): (&[crate::tone::Which], Option<&crate::tone::Tone>),
-    (ancestors, label): (&[Color], Option<&str>),
+    (ancestors, shown): (&[Color], crate::skin::Shown<'_>),
 ) {
     let geometry = crate::strip::Strip::laid_out(
         slot.width,
@@ -661,26 +731,54 @@ fn themed(
         slot.live,
     )
     .touched(slot.touch);
+    // Over the rack, what `strip` draws there: the ground, the edge, the
+    // selection rule (the theme draws its own when there is no rack).
     if slot.rack_h > 0.0 {
-        fill(scene, strip_ground(palette, track), Rect::new(slot.x, 0.0, slot.x + slot.width, slot.rack_h));
+        fill(
+            scene,
+            strip_ground(palette, track),
+            Rect::new(slot.x, 0.0, slot.x + slot.width, slot.rack_h),
+        );
+        if let Some(edge) = strip_edge(palette, track) {
+            fill(
+                scene,
+                edge,
+                Rect::new(slot.x, 0.0, slot.x + STRIP_EDGE, slot.rack_h),
+            );
+        }
+        if track.selected {
+            fill(
+                scene,
+                palette.accent,
+                Rect::new(slot.x, 0.0, slot.x + slot.width, SELECTED_RULE),
+            );
+        }
     }
-    record_rack(scene, palette, font, track, geometry.rack_rect().map(|r| (r, slot.x)), rack, tone);
+    record_rack(
+        scene,
+        palette,
+        font,
+        track,
+        geometry.rack_rect().map(|r| (r, slot.x)),
+        rack,
+        tone,
+    );
     // The folders this strip sits inside, as steps under it — see `strip`.
     let full = slot.height + crate::num::coord(ancestors.len()) * INDENT_STEP;
     for (level, tint) in ancestors.iter().enumerate() {
         let top = full - crate::num::coord(level + 1) * INDENT_STEP;
-        fill(scene, *tint, Rect::new(slot.x, top, slot.x + slot.width, top + INDENT_STEP));
+        fill(
+            scene,
+            *tint,
+            Rect::new(slot.x, top, slot.x + slot.width, top + INDENT_STEP),
+        );
     }
-    let fields = crate::skin::fields(
-        palette,
-        track,
-        crate::skin::Shown { label, depth: ancestors.len(), collapsed: slot.collapsed, ..Default::default() },
-    );
+    let fields = crate::skin::fields(palette, track, shown);
     theme.record(
         crate::skin::STRIP,
         (slot.width, slot.height - slot.rack_h),
         &fields,
-        &mut theme_runtime::AnyRender(scene),
+        &mut crate::skin::canvas::Host { scene, font },
         Affine::translate((slot.x, slot.rack_h)),
     );
 }
@@ -1086,7 +1184,15 @@ fn strip(
     // starts. It used to begin one FX-section below that, leaving a
     // band of empty strip above it — room reserved for the FX pill back
     // when the pill sat up here.
-    record_rack(scene, palette, font, track, geometry.rack_rect().map(|r| (r, x)), rack, tone);
+    record_rack(
+        scene,
+        palette,
+        font,
+        track,
+        geometry.rack_rect().map(|r| (r, x)),
+        rack,
+        tone,
+    );
 
     let band_top = fx_section;
     tinted_band(
@@ -1178,6 +1284,13 @@ pub fn rack_ground(palette: &Palette, track: &Track) -> Option<Color> {
 #[must_use]
 pub fn strip_ground(palette: &Palette, track: &Track) -> Color {
     wash(crate::layout::strip_fill(), palette, track).unwrap_or(palette.tcp_tint)
+}
+
+/// The rule up a strip's left edge in the track's colour, when the mixer
+/// is set to draw one — see `layout::strip_edge`.
+#[must_use]
+pub fn strip_edge(palette: &Palette, track: &Track) -> Option<Color> {
+    wash(crate::layout::strip_edge(), palette, track)
 }
 
 /// A wash setting as a colour for this track: nothing, the band's
