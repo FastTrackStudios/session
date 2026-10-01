@@ -269,3 +269,52 @@ fn compile(path: &std::path::Path, mode: Option<&str>) -> Result<Theme, String> 
         errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const THEME: &str = r##"<Document>
+  <Variables modes="dark"><Var name="ground" value="#202020" /></Variables>
+  <Page name="mcp.strip">
+    <Frame name="Strip" w=86 h=400 bind:fill="$ground">
+      <Frame name="@mute" x=55 y=127 w=21 h=20 bind:fill="track.mute ? #ff0000 : #000000" />
+    </Frame>
+  </Page>
+</Document>"##;
+
+    /// The file is the theme: saved, it reloads; saved broken, the last
+    /// good one stays.
+    #[test]
+    fn a_saved_theme_reloads_and_a_broken_one_does_not() {
+        let dir = std::env::temp_dir().join(format!("fts-skin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("strip.fm");
+        std::fs::write(&path, THEME).expect("write");
+        load(path.clone(), None).expect("loads");
+        let first = version();
+        assert!(current().is_some_and(|t| t.token("ground").is_some()));
+
+        let wait = || std::thread::sleep(POLL + Duration::from_millis(20));
+        wait();
+        std::fs::write(&path, THEME.replace("track.mute", "track.nonsense")).expect("write");
+        assert!(!poll(), "a broken theme is not taken");
+        assert_eq!(version(), first);
+        assert!(current().is_some(), "the last good one stays");
+
+        wait();
+        std::fs::write(&path, THEME.replace("#202020", "#303030")).expect("write");
+        assert!(poll(), "a fixed theme is taken");
+        assert!(version() > first);
+        let ground = current().and_then(|t| t.token("ground").and_then(Value::color)).map(Rgba::to_hex);
+        assert_eq!(ground.as_deref(), Some("#303030"));
+
+        // And a mute lands where the theme put it.
+        let theme = current().expect("theme");
+        let track = Track { muted: true, ..Track::default() };
+        let fields = fields(&Palette::from_theme(&daw_ui::theming::Theme::dark()), &track, Shown::default());
+        let hit = theme.hit(STRIP, (86.0, 400.0), &fields, vello::kurbo::Point::new(60.0, 130.0));
+        assert_eq!(hit.as_deref().and_then(control), Some(Control::Mute));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
