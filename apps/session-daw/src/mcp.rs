@@ -278,6 +278,12 @@ pub struct Mixer {
     /// and selection, which change constantly. So the expensive,
     /// constant part is recorded and the cheap, varying part is not.
     labels: Vec<(String, f32)>,
+    /// The theme the strips were recorded with, if any — see `skin`. The
+    /// live pass and the hit tests read the same one, so a theme that
+    /// reloads mid-frame cannot draw one strip two ways.
+    pub skin: Option<std::sync::Arc<theme_runtime::Theme>>,
+    /// `skin::version()` when recorded: a different one is a stale mixer.
+    pub skin_version: u64,
 }
 
 impl Mixer {
@@ -420,6 +426,10 @@ impl Mixer {
         let mut columns = Vec::with_capacity(rows.len());
         let mut labels = Vec::with_capacity(rows.len());
 
+        crate::skin::from_env();
+        let skin_version = crate::skin::version();
+        let skin = crate::skin::current();
+
         let mut x = 0.0_f64;
         for (ordinal, (track, depth)) in rows.iter().enumerate() {
             let depth = usize::try_from(*depth).unwrap_or(0);
@@ -451,12 +461,7 @@ impl Mixer {
                 && rows
                     .get(ordinal.saturating_add(1))
                     .is_none_or(|(_, next)| usize::try_from(*next).unwrap_or(0) <= depth);
-            strip(
-                &mut strips,
-                palette,
-                font,
-                track,
-                Slot {
+            let slot = Slot {
                     x,
                     width: w,
                     height: strip_h,
@@ -467,19 +472,25 @@ impl Mixer {
                     collapsed,
                     live,
                     touch,
-                },
-                rack,
-                // A track with no settings yet gets none drawn rather
-                // than someone else's — `Store::seed` runs before this,
-                // so the miss is a track that arrived between the two.
-                // Nor does one whose rack the live pass will draw.
-                if live_racks {
-                    None
-                } else {
-                    tone_settings.get(&track.guid)
-                },
-                &ancestors,
-            );
+            };
+            // A track with no settings yet gets none drawn rather than
+            // someone else's — `Store::seed` runs before this, so the
+            // miss is a track that arrived between the two. Nor does one
+            // whose rack the live pass will draw.
+            let tone = if live_racks { None } else { tone_settings.get(&track.guid) };
+            match &skin {
+                Some(theme) => themed(
+                    &mut strips,
+                    theme,
+                    palette,
+                    font,
+                    track,
+                    slot,
+                    (rack, tone),
+                    (&ancestors, labels.last().map(|(l, _)| l.as_str())),
+                ),
+                None => strip(&mut strips, palette, font, track, slot, rack, tone, &ancestors),
+            }
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
         }
@@ -500,7 +511,20 @@ impl Mixer {
             heights,
             columns,
             labels,
+            skin,
+            skin_version,
         }
+    }
+
+    /// How many folders `row` sits inside: its strip is shortened by one
+    /// step for each.
+    #[must_use]
+    pub fn depth_of(&self, row: usize) -> usize {
+        self.heights.get(row).map_or(0, |h| {
+            let steps = ((self.height - h) / INDENT_STEP).round().max(0.0);
+            // A count of steps, a handful at most.
+            usize::try_from(steps as u64).unwrap_or(0)
+        })
     }
 
     /// One strip's geometry — the `Strip` everything reads.
@@ -613,6 +637,52 @@ impl Mixer {
         }
         counts
     }
+}
+
+/// One channel strip drawn by a theme: the rack and the folder steps
+/// as `strip` draws them, the REAPER part below the rack the theme's.
+fn themed(
+    scene: &mut Scene,
+    theme: &theme_runtime::Theme,
+    palette: &Palette,
+    font: &Font,
+    track: &Track,
+    slot: Slot,
+    (rack, tone): (&[crate::tone::Which], Option<&crate::tone::Tone>),
+    (ancestors, label): (&[Color], Option<&str>),
+) {
+    let geometry = crate::strip::Strip::laid_out(
+        slot.width,
+        slot.height,
+        slot.mixer_h,
+        slot.rack_h,
+        slot.buttons_top,
+        slot.column,
+        slot.live,
+    )
+    .touched(slot.touch);
+    if slot.rack_h > 0.0 {
+        fill(scene, strip_ground(palette, track), Rect::new(slot.x, 0.0, slot.x + slot.width, slot.rack_h));
+    }
+    record_rack(scene, palette, font, track, geometry.rack_rect().map(|r| (r, slot.x)), rack, tone);
+    // The folders this strip sits inside, as steps under it — see `strip`.
+    let full = slot.height + crate::num::coord(ancestors.len()) * INDENT_STEP;
+    for (level, tint) in ancestors.iter().enumerate() {
+        let top = full - crate::num::coord(level + 1) * INDENT_STEP;
+        fill(scene, *tint, Rect::new(slot.x, top, slot.x + slot.width, top + INDENT_STEP));
+    }
+    let fields = crate::skin::fields(
+        palette,
+        track,
+        crate::skin::Shown { label, depth: ancestors.len(), collapsed: slot.collapsed, ..Default::default() },
+    );
+    theme.record(
+        crate::skin::STRIP,
+        (slot.width, slot.height - slot.rack_h),
+        &fields,
+        &mut theme_runtime::AnyRender(scene),
+        Affine::translate((slot.x, slot.rack_h)),
+    );
 }
 
 /// One channel strip, at `x`.
@@ -1016,37 +1086,7 @@ fn strip(
     // starts. It used to begin one FX-section below that, leaving a
     // band of empty strip above it — room reserved for the FX pill back
     // when the pill sat up here.
-    let rack_box = geometry.rack_rect();
-    if let (Some(rack_box), Some(tone)) = (rack_box, tone) {
-        // Clipped to the box, like the live rack is: the chain is
-        // longer than the box and would otherwise run down over the
-        // strip's own controls. A whole strip is replayed as one span,
-        // so the layer's push and pop are never split by the culling.
-        scene.push_clip_layer(
-            Affine::IDENTITY,
-            &Rect::new(rack_box.x0 + x, rack_box.y0, rack_box.x1 + x, rack_box.y1),
-        );
-        crate::tone::record(
-            scene,
-            palette,
-            font,
-            tone,
-            // The track's own chain: a return draws its one instance,
-            // a channel the eleven.
-            tone.panels(rack),
-            // From `Strip::rack_rect`, translated by the strip's left
-            // edge — so the box the rack is drawn in is the box a grip
-            // is measured against.
-            crate::tone::Panel::of(rack_box, x),
-            // The recorded rack is at rest — Rescue shut, the rest
-            // open, see `Folded::rest` — and a fold beyond that is
-            // live: a strip whose rack the overlay draws is the one
-            // that answers to it. See `overlay::Racks::folded`.
-            crate::tone::Folded::rest(),
-            rack_ground(palette, track),
-        );
-        scene.pop_layer();
-    }
+    record_rack(scene, palette, font, track, geometry.rack_rect().map(|r| (r, x)), rack, tone);
 
     let band_top = fx_section;
     tinted_band(
@@ -1076,6 +1116,49 @@ fn strip(
     let _ = stretch_h;
 
     bottom(scene, palette, font, track, x, chrome_w, h, slot.collapsed);
+}
+
+/// The Tone rack over a strip, clipped to its box: `rack_box` in the
+/// strip's own space, with the strip's left edge.
+fn record_rack(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    track: &Track,
+    rack_box: Option<(Rect, f64)>,
+    rack: &[crate::tone::Which],
+    tone: Option<&crate::tone::Tone>,
+) {
+    if let (Some((rack_box, x)), Some(tone)) = (rack_box, tone) {
+        // Clipped to the box, like the live rack is: the chain is
+        // longer than the box and would otherwise run down over the
+        // strip's own controls. A whole strip is replayed as one span,
+        // so the layer's push and pop are never split by the culling.
+        scene.push_clip_layer(
+            Affine::IDENTITY,
+            &Rect::new(rack_box.x0 + x, rack_box.y0, rack_box.x1 + x, rack_box.y1),
+        );
+        crate::tone::record(
+            scene,
+            palette,
+            font,
+            tone,
+            // The track's own chain: a return draws its one instance,
+            // a channel the eleven.
+            tone.panels(rack),
+            // From `Strip::rack_rect`, translated by the strip's left
+            // edge — so the box the rack is drawn in is the box a grip
+            // is measured against.
+            crate::tone::Panel::of(rack_box, x),
+            // The recorded rack is at rest — Rescue shut, the rest
+            // open, see `Folded::rest` — and a fold beyond that is
+            // live: a strip whose rack the overlay draws is the one
+            // that answers to it. See `overlay::Racks::folded`.
+            crate::tone::Folded::rest(),
+            rack_ground(palette, track),
+        );
+        scene.pop_layer();
+    }
 }
 
 /// What the rack paints under its chain's end: the track's colour when

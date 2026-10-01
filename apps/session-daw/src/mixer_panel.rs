@@ -1004,8 +1004,27 @@ impl MixerWidget {
         let (content_x, content_y) = self.content(x, y);
         let mixer = self.mixer.as_ref()?;
         let row = mixer.strip_at(content_x)?;
-        let (left, _, _) = mixer.strip_box(row)?;
-        let control = crate::mcp::control_at(mixer, row, content_x - left, content_y)?;
+        let (left, width, height) = mixer.strip_box(row)?;
+        let control = match (&mixer.skin, self.track_at(row)) {
+            // A theme's strip is hit where the theme drew it — below the
+            // rack, which is still the painters'.
+            (Some(theme), Some(track)) if content_y >= mixer.rack_h => {
+                let fields = crate::skin::fields(
+                    &self.palette,
+                    track,
+                    crate::skin::Shown { label: mixer.label(row).map(|(t, _)| t), ..Default::default() },
+                );
+                theme
+                    .hit(
+                        crate::skin::STRIP,
+                        (width, height - mixer.rack_h),
+                        &fields,
+                        vello::kurbo::Point::new(content_x - left, content_y - mixer.rack_h),
+                    )
+                    .and_then(|name| crate::skin::control(&name))?
+            }
+            _ => crate::mcp::control_at(mixer, row, content_x - left, content_y)?,
+        };
         Some(Spot { row, control })
     }
 
@@ -1839,7 +1858,11 @@ impl MixerWidget {
         let stale = self
             .mixer
             .as_ref()
-            .is_none_or(|m| (m.height - h).abs() > 0.5 || m.touch != self.touch.get())
+            .is_none_or(|m| {
+                (m.height - h).abs() > 0.5
+                    || m.touch != self.touch.get()
+                    || m.skin_version != crate::skin::version()
+            })
             || open != self.built_open;
         if stale {
             self.built_open.clone_from(&open);
@@ -1954,7 +1977,10 @@ impl Widget for MixerWidget {
     fn needs_redraw(&self) -> bool {
         // The meters, while the transport moves; a fold or a tone change
         // made off the UI thread.
-        self.dirty.get()
+        // A theme file saved since the last look: the mixer re-records.
+        crate::skin::poll()
+            || self.mixer.as_ref().is_some_and(|m| m.skin_version != crate::skin::version())
+            || self.dirty.get()
             || crate::engine::moving()
             || crate::folds::generation() != self.folds_seen
             || self.tone.generation() != self.tone_seen

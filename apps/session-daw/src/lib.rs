@@ -160,6 +160,7 @@ pub mod settings;
 pub mod setup;
 pub mod shell;
 pub mod simulate;
+pub mod skin;
 pub mod strip;
 pub mod studio;
 pub mod take_rating;

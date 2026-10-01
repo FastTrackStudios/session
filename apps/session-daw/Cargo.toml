@@ -123,6 +123,9 @@ daw = { workspace = true }
 # Depending on kurbo and peniko directly would mean pinning two more
 # versions by hand and keeping them in step with whatever Vello moves to.
 anyrender = "0.11"
+# Themes: the mixer's strips drawn from a frame document instead of the
+# painters here, when one is loaded (`skin`).
+theme-runtime.workspace = true
 anyrender_vello = { version = "0.12", optional = true }
 vello = "0.9"
 pollster = { version = "0.4", optional = true }

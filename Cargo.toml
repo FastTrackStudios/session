@@ -128,6 +128,14 @@ input = { path = "../daw/crates/input/input" }
 input-dioxus = { path = "../daw/crates/input/input-dioxus" }
 input-keybinds = { path = "../daw/crates/input/input-keybinds" }
 
+# ── frame themes ──────────────────────────────────────────────────────
+# The mixer (then the TCP, then the arrangement) drawn from frame
+# documents — runtime-swappable, hot-reloaded themes. See
+# docs/frame-themes.md. A path dep on a local checkout of
+# github.com/FastTrackStudios/frame while the theme runtime is built out;
+# becomes a tagged git dep once frame cuts one.
+theme-runtime = { path = "../../frame/features/theme/theme-runtime", features = ["anyrender-0-11"] }
+
 # ── daw domain (wave 2) ───────────────────────────────────────────────
 # Facade crate — the only public API surface for the daw domain.
 # daw-proto, daw-control, daw-standalone, dawfile-* are INTERNAL to the

@@ -1659,7 +1659,7 @@ dependencies = [
  "stylo_static_prefs",
  "stylo_taffy",
  "stylo_traits",
- "taffy",
+ "taffy 0.12.2",
  "thread_local",
  "tracing",
  "url",
@@ -1709,7 +1709,7 @@ dependencies = [
  "peniko 0.6.1",
  "smallvec 1.16.0",
  "stylo",
- "taffy",
+ "taffy 0.12.2",
  "usvg 0.46.0",
 ]
 
@@ -4897,6 +4897,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "document-proto"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "facet",
+ "motion-proto",
+ "serde",
+ "surface-proto",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "document-text"
+version = "0.1.0"
+dependencies = [
+ "document-proto",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "dom_query"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5912,6 +5935,14 @@ name = "fearless_simd"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
+
+[[package]]
+name = "feed-proto"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "serde",
+]
 
 [[package]]
 name = "fiat-crypto"
@@ -6975,6 +7006,12 @@ checksum = "fdf242682df893b86f33a73828fb09ca4b2d3bb6cc95249707fc684d27484b91"
 dependencies = [
  "bitflags 2.13.1",
 ]
+
+[[package]]
+name = "grid"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36119f3a540b086b4e436bb2b588cf98a68863470e0e880f4d0842f112a3183a"
 
 [[package]]
 name = "grid"
@@ -9531,6 +9568,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "motion-proto"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "serde",
 ]
 
 [[package]]
@@ -12729,6 +12774,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "render"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "document-proto",
+ "kurbo 0.13.1",
+ "render-fonts",
+ "roxmltree 0.20.0",
+ "serde",
+ "serde_json",
+ "taffy 0.7.7",
+ "tokio",
+]
+
+[[package]]
+name = "render-canvas"
+version = "0.1.0"
+dependencies = [
+ "anyrender",
+ "document-proto",
+ "kurbo 0.13.1",
+ "peniko 0.6.1",
+ "render",
+ "render-fonts",
+ "skrifa 0.26.6",
+]
+
+[[package]]
+name = "render-fonts"
+version = "0.1.0"
+dependencies = [
+ "kurbo 0.13.1",
+ "skrifa 0.26.6",
+]
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13757,6 +13838,7 @@ dependencies = [
  "skrifa 0.42.1",
  "task-dial",
  "tempfile",
+ "theme-runtime",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -14861,7 +14943,7 @@ source = "git+https://github.com/FastTrackStudios/blitz?rev=ee0a9d3f86dfc1885768
 dependencies = [
  "stylo",
  "stylo_atoms",
- "taffy",
+ "taffy 0.12.2",
 ]
 
 [[package]]
@@ -14985,6 +15067,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c64fc7232dd8d2e4ac5ce4ef302b1d81e0b80d055b9d77c7c4f51f6aa4c867d6"
 dependencies = [
  "is_ci",
+]
+
+[[package]]
+name = "surface-proto"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "feed-proto",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -15318,12 +15411,24 @@ dependencies = [
 
 [[package]]
 name = "taffy"
+version = "0.7.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab4f4d046dd956a47a7e1a2947083d7ac3e6aa3cfaaead36173ceaa5ab11878c"
+dependencies = [
+ "arrayvec",
+ "grid 0.15.0",
+ "serde",
+ "slotmap",
+]
+
+[[package]]
+name = "taffy"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "340a09581f29809fc0df82a3955501dc7f2a21f887e5d1c13dbe288fe1c0bef4"
 dependencies = [
  "arrayvec",
- "grid",
+ "grid 1.0.1",
  "serde",
  "slotmap",
 ]
@@ -15479,6 +15584,22 @@ name = "text-size"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f18aa187839b2bdb1ad2fa35ead8c4c2976b64e4363c386d45ac0f7ee85c9233"
+
+[[package]]
+name = "theme-expr"
+version = "0.1.0"
+
+[[package]]
+name = "theme-runtime"
+version = "0.1.0"
+dependencies = [
+ "document-proto",
+ "document-text",
+ "kurbo 0.13.1",
+ "render",
+ "render-canvas",
+ "theme-expr",
+]
 
 [[package]]
 name = "thin-vec"
@@ -18933,6 +19054,10 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -19034,8 +19159,4 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "dsp-golden"
 version = "0.1.0"

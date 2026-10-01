@@ -719,7 +719,32 @@ pub fn controls(
             mixer.height,
             mixer.live,
             mixer.touch,
+            mixer.skin.is_some(),
         );
+        // A theme's strip: its live parts, over its recording.
+        if let Some(theme) = &mixer.skin {
+            let on = |spot: Option<Spot>| spot.filter(|s| s.row == row).map(|s| s.control);
+            let fields = crate::skin::fields(
+                palette,
+                track,
+                crate::skin::Shown {
+                    label: mixer.label(row).map(|(text, _)| text),
+                    depth: mixer.depth_of(row),
+                    collapsed: false,
+                    level: usize::try_from(track.index).ok().and_then(|i| levels.get(i)).copied(),
+                    clipped: clipped.is(&track.guid),
+                    hover: on(pointer.hovered()),
+                    pressed: on(pointer.pressed()),
+                },
+            );
+            theme.live(
+                crate::skin::STRIP,
+                (strip_w, strip_h - mixer.rack_h),
+                &fields,
+                &mut theme_runtime::AnyRender(&mut scene),
+                Affine::translate((left, mixer.rack_h)),
+            );
+        }
         // The racks of the strips that are not selected, darkened —
         // over the recording and everything live on it, so the
         // selected one's is the bright one. The rack only: the strip's
@@ -776,6 +801,8 @@ fn draw_strip_controls(
     mixer_h: f64,
     live: bool,
     touch: bool,
+    // A theme draws the strip's own controls: only the rack is drawn here.
+    themed: bool,
 ) {
     let strip = crate::strip::Strip::laid_out(
         width,
@@ -792,138 +819,140 @@ fn draw_strip_controls(
     let at = |control| strip.rect(control).map(|r| (left + r.x0, r.y0));
     let state = |control| pointer.state(Spot { row, control });
 
-    if let Some((x, y)) = at(Control::Pan) {
-        crate::art::place(
-            scene,
-            &art::pan_knob(
-                &palette.chrome,
-                track.pan.clamp(-1.0, 1.0),
-                crate::tcp::to_theme(palette.pan),
-                state(Control::Pan),
-            ),
-            font,
-            x,
-            y,
-        );
-    }
+    if !themed {
+        if let Some((x, y)) = at(Control::Pan) {
+            crate::art::place(
+                scene,
+                &art::pan_knob(
+                    &palette.chrome,
+                    track.pan.clamp(-1.0, 1.0),
+                    crate::tcp::to_theme(palette.pan),
+                    state(Control::Pan),
+                ),
+                font,
+                x,
+                y,
+            );
+        }
 
-    // The FX button, whose state is the track's chain count — a live
-    // value like any other, and one that used to be recorded as Empty
-    // and stay Empty for the life of the window.
-    // Across the strip: a wide pill, the label centred, not the track
-    // panel's small one pinned to the left.
-    if let Some(r) = strip.rect(Control::Fx) {
-        crate::art::place(
-            scene,
-            &art::fx_pill_wide(
-                &palette.chrome,
-                crate::tcp::lit(palette),
-                chain(track),
-                state(Control::Fx),
-                r.width(),
-            ),
-            font,
-            left + r.x0,
-            r.y0,
-        );
-    }
+        // The FX button, whose state is the track's chain count — a live
+        // value like any other, and one that used to be recorded as Empty
+        // and stay Empty for the life of the window.
+        // Across the strip: a wide pill, the label centred, not the track
+        // panel's small one pinned to the left.
+        if let Some(r) = strip.rect(Control::Fx) {
+            crate::art::place(
+                scene,
+                &art::fx_pill_wide(
+                    &palette.chrome,
+                    crate::tcp::lit(palette),
+                    chain(track),
+                    state(Control::Fx),
+                    r.width(),
+                ),
+                font,
+                left + r.x0,
+                r.y0,
+            );
+        }
 
-    // Routing, which used to be recorded — and recorded four pixels
-    // above where the hit test looked for it, because the two resolved
-    // against different lines. One layout, one position.
-    if let Some((x, y)) = at(Control::Routing) {
-        crate::art::place(
-            scene,
-            &art::routing(
-                &palette.chrome,
-                // The mixer stacks the lanes; the track panel sets them
-                // in a row. That is the whole difference between the
-                // theme's two routing images.
-                art::Axis::Vertical,
-                routes(track),
-                route_ink(palette),
-                state(Control::Routing),
-            ),
-            font,
-            x,
-            y,
-        );
-    }
+        // Routing, which used to be recorded — and recorded four pixels
+        // above where the hit test looked for it, because the two resolved
+        // against different lines. One layout, one position.
+        if let Some((x, y)) = at(Control::Routing) {
+            crate::art::place(
+                scene,
+                &art::routing(
+                    &palette.chrome,
+                    // The mixer stacks the lanes; the track panel sets them
+                    // in a row. That is the whole difference between the
+                    // theme's two routing images.
+                    art::Axis::Vertical,
+                    routes(track),
+                    route_ink(palette),
+                    state(Control::Routing),
+                ),
+                font,
+                x,
+                y,
+            );
+        }
 
-    if let Some((x, y)) = at(Control::RecArm) {
-        crate::art::place(
-            scene,
-            &art::record_arm(
-                &palette.chrome,
-                crate::tcp::lit(palette).rec,
-                track.armed,
-                state(Control::RecArm),
-                strip.arm(),
-                crate::tcp::to_theme(crate::mcp::strip_ground(palette, track)),
-            ),
-            font,
-            x,
-            y,
-        );
-    }
+        if let Some((x, y)) = at(Control::RecArm) {
+            crate::art::place(
+                scene,
+                &art::record_arm(
+                    &palette.chrome,
+                    crate::tcp::lit(palette).rec,
+                    track.armed,
+                    state(Control::RecArm),
+                    strip.arm(),
+                    crate::tcp::to_theme(crate::mcp::strip_ground(palette, track)),
+                ),
+                font,
+                x,
+                y,
+            );
+        }
 
-    // Input monitoring, directly OVER the arm, in the band — the two
-    // are one decision made twice, what the track records and whether
-    // you hear it while it does, so they stack; and over rather than
-    // under so the column below the arm is mute, solo, routing with
-    // no gap where a lamp is not lit.
-    //
-    // Only on an armed track: monitoring is a fact about recording,
-    // and a lamp for it on a track that is not recording is a lamp
-    // with nothing to report.
-    if let Some((x, y)) = at(Control::Monitor).filter(|_| track.armed) {
-        crate::art::place(
-            scene,
-            &art::monitor(
-                &palette.chrome,
-                monitoring(track),
-                monitor_lit(palette, monitoring(track)),
-                state(Control::Monitor),
-                art::Facing::Up,
-            ),
-            font,
-            x,
-            y,
-        );
-    }
+        // Input monitoring, directly OVER the arm, in the band — the two
+        // are one decision made twice, what the track records and whether
+        // you hear it while it does, so they stack; and over rather than
+        // under so the column below the arm is mute, solo, routing with
+        // no gap where a lamp is not lit.
+        //
+        // Only on an armed track: monitoring is a fact about recording,
+        // and a lamp for it on a track that is not recording is a lamp
+        // with nothing to report.
+        if let Some((x, y)) = at(Control::Monitor).filter(|_| track.armed) {
+            crate::art::place(
+                scene,
+                &art::monitor(
+                    &palette.chrome,
+                    monitoring(track),
+                    monitor_lit(palette, monitoring(track)),
+                    state(Control::Monitor),
+                    art::Facing::Up,
+                ),
+                font,
+                x,
+                y,
+            );
+        }
 
-    for (control, label, on, lit) in [
-        (
-            Control::Mute,
-            "M",
-            track.muted,
-            crate::tcp::mute_lit(palette),
-        ),
-        (
-            Control::Solo,
-            "S",
-            track.soloed,
-            crate::tcp::solo_lit(palette),
-        ),
-    ] {
-        // At the size the strip gives it: a touchscreen's are bigger.
-        let Some(r) = strip.rect(control) else {
-            continue;
-        };
-        crate::art::place(
-            scene,
-            &art::gutter_button_sized(
-                &palette.chrome,
-                label,
-                on,
-                lit,
-                state(control),
-                (r.width(), r.height()),
+        for (control, label, on, lit) in [
+            (
+                Control::Mute,
+                "M",
+                track.muted,
+                crate::tcp::mute_lit(palette),
             ),
-            font,
-            left + r.x0,
-            r.y0,
-        );
+            (
+                Control::Solo,
+                "S",
+                track.soloed,
+                crate::tcp::solo_lit(palette),
+            ),
+        ] {
+            // At the size the strip gives it: a touchscreen's are bigger.
+            let Some(r) = strip.rect(control) else {
+                continue;
+            };
+            crate::art::place(
+                scene,
+                &art::gutter_button_sized(
+                    &palette.chrome,
+                    label,
+                    on,
+                    lit,
+                    state(control),
+                    (r.width(), r.height()),
+                ),
+                font,
+                left + r.x0,
+                r.y0,
+            );
+        }
     }
 
     // A rack that is MOVING is drawn whole, live, over its own
@@ -1024,6 +1053,9 @@ fn draw_strip_controls(
     // and re-recording a mixer to dim one name is the trade this
     // architecture exists to refuse. The plate under it is recorded;
     // only the text on it is not.
+    if themed {
+        return;
+    }
     if let (Some((text, size)), Some(plate)) = (label, strip.rect(Control::Name)) {
         name(scene, palette, font, track, text, size, left, plate);
     }

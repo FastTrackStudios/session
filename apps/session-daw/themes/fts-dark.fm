@@ -1,0 +1,119 @@
+<Document>
+  <Variables modes="dark light">
+    <Var name="strip.ground" dark="#18181b" light="#e4e4e7" />
+    <Var name="strip.band" dark="#1f1f23" light="#d4d4d8" />
+    <Var name="strip.edge" dark="#09090b" light="#a1a1aa" />
+    <Var name="field" dark="#0a0a0c" light="#f4f4f5" />
+    <Var name="border" dark="#27272a" light="#a1a1aa" />
+    <Var name="button" dark="#09090b" light="#fafafa" />
+    <Var name="hardware" dark="#18181b" light="#d4d4d8" />
+    <Var name="hardware.mark" dark="#c3c3c9" light="#3f3f46" />
+    <Var name="text" dark="#e4e4e7" light="#18181b" />
+    <Var name="text.dim" dark="#a1a1aa" light="#52525b" />
+    <Var name="text.faint" dark="#71717a" light="#71717a" />
+    <Var name="accent" value="#38bdf8" />
+    <Var name="mute" value="#ef4444" />
+    <Var name="solo" value="#eab308" />
+    <Var name="rec" value="#ef4444" />
+    <Var name="pan" value="#eab308" />
+    <Var name="meter.safe" value="#22c55e" />
+    <Var name="meter.warn" value="#f59e0b" />
+    <Var name="meter.danger" value="#ef4444" />
+    <Var name="meter.well" dark="#0a0a0c" light="#27272a" />
+    <Var name="scale.ink" value="$text.faint" />
+    <Var name="scale.mark" value="$border" />
+    <Var name="fx.on" value="mix($field, $accent, 0.35)" />
+  </Variables>
+  <Page name="mcp.strip">
+    <Frame name="Strip" w=86 h=400 clip=true bind:fill="$strip.ground">
+      <Frame name="Band" w=86 h=120 resize-x="stretch" bind:fill="mix($strip.band, track.color, 0.06)" />
+      <Rectangle name="Edge" w=1 h=400 resize-y="stretch" bind:fill="track.color" />
+      <Rectangle name="Divider" x=85 w=1 h=400 resize-x="right" resize-y="stretch" bind:fill="$strip.edge" />
+      <Rectangle name="Selected" w=86 h=2 resize-x="stretch" bind:fill="$accent" bind:visible="track.selected" />
+
+      <Frame name="@fx" x=7 y=9 w=72 h=16 radius=3 resize-x="stretch" bind:fill="track.fx > 0 ? $fx.on : $field" bind:stroke="$border" stroke-align="inside">
+        <Text name="FX label" y=3 w=72 h=10 size=8 weight=600 text-align="center" resize-x="stretch" bind:fill="track.fx > 0 ? $text : $text.dim">FX</Text>
+        <Rectangle name="FX tab" x=64 y=4 w=3 h=8 radius=1 resize-x="right" bind:fill="$text.faint" />
+      </Frame>
+
+      <Frame name="@pan" x=5 y=35 w=24 h=24>
+        <Ellipse name="Knob" x=4 y=4 w=16 h=16 bind:fill="$hardware" bind:stroke="$border" stroke-align="inside" />
+        <Vector name="Pointer" x=12 y=12 w=1 h=1 geometry="M -1 0 L 1 0 L 1 -7 L -1 -7 Z" bind:fill="$pan" bind:rotation="track.pan * 135" />
+      </Frame>
+
+      <Frame name="Input" x=6 y=68 w=75 h=16 radius=2 bind:fill="$field" bind:stroke="$border" stroke-align="inside" bind:visible="w >= 70">
+        <Text name="Input label" x=4 y=4 w=60 h=10 size=8 bind:text="track.input" bind:fill="$text.dim">Input</Text>
+        <Vector name="Caret" x=66 y=7 w=5 h=3 geometry="M 0 0 L 5 0 L 2.5 3 Z" bind:fill="$text.dim" />
+      </Frame>
+
+      <Frame name="@monitor" resize-x="right" x=55 y=86 w=21 h=20 bind:visible="track.armed">
+        <Vector name="Waves" x=4 y=3 w=13 h=10 stroke-weight=1.4 stroke-cap="round" geometry="M 1 5 Q 6.5 -1 12 5 M 3.5 7.5 Q 6.5 4 9.5 7.5" bind:stroke="track.monitor > 0 ? $accent : $text" />
+        <Ellipse name="Dot" x=5.5 y=11 w=3 h=3 bind:fill="track.monitor > 0 ? $accent : $text" />
+      </Frame>
+
+      <Frame name="@arm" resize-x="right" x=55 y=104 w=21 h=21>
+        <Ellipse name="Ring" x=3 y=3 w=15 h=15 stroke-weight=2.5 stroke-align="inside" bind:stroke="$rec" bind:fill="track.armed ? $rec : $button" />
+        <Ellipse name="Core" x=8 y=8 w=5 h=5 bind:fill="track.armed ? #ffffff : $rec" />
+      </Frame>
+
+      <Frame name="@mute" resize-x="right" x=55 y=127 w=21 h=20 radius=3 bind:fill="track.mute ? $mute : $button" bind:stroke="$border" stroke-align="inside">
+        <Text name="M" y=5 w=21 h=10 size=8 weight=600 text-align="center" bind:fill="track.mute ? #ffffff : $text">M</Text>
+      </Frame>
+      <Frame name="@solo" resize-x="right" x=55 y=152 w=21 h=20 radius=3 bind:fill="track.solo ? $solo : $button" bind:stroke="$border" stroke-align="inside">
+        <Text name="S" y=5 w=21 h=10 size=8 weight=600 text-align="center" bind:fill="track.solo ? #18181b : $text">S</Text>
+      </Frame>
+      <Frame name="@routing" resize-x="right" x=54 y=179 w=23 h=32 radius=3 bind:fill="$hardware">
+        <Rectangle name="Out" x=6 y=8 w=11 h=3 radius=1.5 bind:fill="$accent" bind:opacity="track.receives >= 0 ? 0.9 : 0.4" />
+        <Rectangle name="Sends" x=6 y=14 w=11 h=3 radius=1.5 bind:fill="track.sends > 0 ? $meter.warn : $text.faint" />
+        <Rectangle name="Receives" x=6 y=20 w=11 h=3 radius=1.5 bind:fill="track.receives > 0 ? $meter.danger : $text.faint" />
+      </Frame>
+
+      <Frame name="Fader zone" y=120 w=86 h=233 resize-x="stretch" resize-y="stretch">
+        <Frame name="Scale" x=4 resize-x="center" w=24 h=233 resize-y="stretch" bind:visible="w >= 60">
+          <Text name="tick +6" x=0 y=0 w=18 h=10 size=7 text-align="right" bind:fill="$scale.ink" bind:y="(1 - 0.9118) * ph - 5">+6</Text>
+          <Rectangle name="tick mark +6" x=19 y=0 w=4 h=1 bind:fill="$scale.mark" bind:y="(1 - 0.9118) * ph" />
+          <Text name="tick 0" x=0 y=0 w=18 h=10 size=7 text-align="right" bind:fill="$scale.ink" bind:y="(1 - 0.8235) * ph - 5">0</Text>
+          <Rectangle name="tick mark 0" x=19 y=0 w=4 h=1 bind:fill="$scale.mark" bind:y="(1 - 0.8235) * ph" />
+          <Text name="tick 6" x=0 y=0 w=18 h=10 size=7 text-align="right" bind:fill="$scale.ink" bind:y="(1 - 0.7353) * ph - 5">6</Text>
+          <Rectangle name="tick mark 6" x=19 y=0 w=4 h=1 bind:fill="$scale.mark" bind:y="(1 - 0.7353) * ph" />
+          <Text name="tick 18" x=0 y=0 w=18 h=10 size=7 text-align="right" bind:fill="$scale.ink" bind:y="(1 - 0.5588) * ph - 5">18</Text>
+          <Rectangle name="tick mark 18" x=19 y=0 w=4 h=1 bind:fill="$scale.mark" bind:y="(1 - 0.5588) * ph" />
+          <Text name="tick 30" x=0 y=0 w=18 h=10 size=7 text-align="right" bind:fill="$scale.ink" bind:y="(1 - 0.3824) * ph - 5">30</Text>
+          <Rectangle name="tick mark 30" x=19 y=0 w=4 h=1 bind:fill="$scale.mark" bind:y="(1 - 0.3824) * ph" />
+          <Text name="tick 42" x=0 y=0 w=18 h=10 size=7 text-align="right" bind:fill="$scale.ink" bind:y="(1 - 0.2059) * ph - 5">42</Text>
+          <Rectangle name="tick mark 42" x=19 y=0 w=4 h=1 bind:fill="$scale.mark" bind:y="(1 - 0.2059) * ph" />
+          <Text name="tick 54" x=0 y=0 w=18 h=10 size=7 text-align="right" bind:fill="$scale.ink" bind:y="(1 - 0.0294) * ph - 5">54</Text>
+          <Rectangle name="tick mark 54" x=19 y=0 w=4 h=1 bind:fill="$scale.mark" bind:y="(1 - 0.0294) * ph" />
+        </Frame>
+        <Frame name="@fader" x=28 resize-x="center" w=30 h=233 resize-y="stretch">
+          <Rectangle name="Groove" x=14 w=2 h=233 resize-y="stretch" bind:fill="$meter.well" />
+          <Rectangle name="Well L" x=10 w=3 h=233 resize-y="stretch" bind:fill="$meter.well" />
+          <Rectangle name="Well R" x=17 w=3 h=233 resize-y="stretch" bind:fill="$meter.well" />
+          <Rectangle name="Level L" x=10 w=3 h=233 bind:h="ph * meter.left" bind:y="ph * (1 - meter.left)" bind:fill="meter.left > 0.8235 ? $meter.danger : meter.left > 0.7353 ? $meter.warn : $meter.safe" />
+          <Rectangle name="Level R" x=17 w=3 h=233 bind:h="ph * meter.right" bind:y="ph * (1 - meter.right)" bind:fill="meter.right > 0.8235 ? $meter.danger : meter.right > 0.7353 ? $meter.warn : $meter.safe" />
+          <Rectangle name="Hold L" x=10 w=3 h=1 bind:y="ph * (1 - meter.hold_left)" bind:visible="meter.hold_left > 0.02" bind:fill="$text" />
+          <Rectangle name="Hold R" x=17 w=3 h=1 bind:y="ph * (1 - meter.hold_right)" bind:visible="meter.hold_right > 0.02" bind:fill="$text" />
+          <Frame name="Cap" x=4 w=22 h=42 bind:y="clamp((1 - track.fader) * ph - 21, 0, ph - 42)">
+            <Rectangle name="Body" w=22 h=42 radius=2 bind:fill="alpha($hardware, 0.85)" bind:stroke="$border" stroke-align="inside" />
+            <Rectangle name="Grip 1" x=5 y=15 w=12 h=1 bind:fill="$text.faint" />
+            <Rectangle name="Grip 2" x=5 y=18 w=12 h=1 bind:fill="$text.faint" />
+            <Rectangle name="Mark" x=3 y=20.5 w=16 h=1 bind:fill="$hardware.mark" />
+            <Rectangle name="Grip 3" x=5 y=23 w=12 h=1 bind:fill="$text.faint" />
+            <Rectangle name="Grip 4" x=5 y=26 w=12 h=1 bind:fill="$text.faint" />
+          </Frame>
+        </Frame>
+        <Rectangle name="@clip" x=28 resize-x="center" w=30 h=5 bind:fill="$meter.danger" bind:visible="meter.clip" />
+      </Frame>
+
+      <Frame name="@name" y=362 w=86 h=26 resize-y="bottom" resize-x="stretch">
+        <Text name="Label" x=2 y=7 w=82 h=13 size=11 text-align="center" resize-x="stretch" bind:text="track.label" bind:fill="track.mute ? $text.faint : track.selected ? $accent : $text">Track</Text>
+      </Frame>
+      <Frame name="Plate" y=388 w=86 h=12 resize-y="bottom" resize-x="stretch" bind:fill="track.has_color ? mix($strip.ground, track.color, 0.45) : $strip.band">
+        <Text name="Number" y=2 w=86 h=9 size=7 text-align="center" resize-x="stretch" bind:text="fmt(track.number)" bind:fill="$text.dim">1</Text>
+      </Frame>
+      <Frame name="@folder" y=388 w=14 h=12 resize-y="bottom" bind:visible="track.folder">
+        <Vector name="Fold" x=4 y=4 w=6 h=4 geometry="M 0 0 L 6 0 L 3 4 Z" bind:fill="$text.dim" bind:rotation="track.collapsed ? -90 : 0" />
+      </Frame>
+    </Frame>
+  </Page>
+</Document>
