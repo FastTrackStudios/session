@@ -28,7 +28,7 @@ on:
       marketing_version:
         description: "CFBundleShortVersionString (e.g. 0.0.2)"
         required: false
-        default: "0.0.3"
+        default: "0.0.4"
 
 # Per-workflow group: a newer run supersedes an older queued one. NOT shared
 # across products — a concurrency group holds only one pending run, so a
@@ -83,7 +83,7 @@ jobs:
         env:
           KEYCHAIN: fts-build.keychain
           KEYCHAIN_PW: fts-build
-          MARKETING_VER: ${{ inputs.marketing_version || '0.0.3' }}
+          MARKETING_VER: ${{ inputs.marketing_version || '0.0.4' }}
           # The release Xcode xcode-select points at (27, on macOS 27) builds,
           # compiles the icon catalog, signs and uploads: App Store Connect
           # refuses a beta SDK (90534), and actool must match the macOS.

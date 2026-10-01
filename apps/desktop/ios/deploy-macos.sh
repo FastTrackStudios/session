@@ -319,7 +319,7 @@ fi
 echo "=== packaging .dmg ==="
 BUILD_NO="${BUILD_NO:-$(date +%s)}"
 PRODUCT_NAME="${PRODUCT_NAME:-FastTrackStudio}"
-DMG="$ROOT/target/${PRODUCT_NAME}-${MARKETING_VER:-0.0.3}-${BUILD_NO}-macos.dmg"
+DMG="$ROOT/target/${PRODUCT_NAME}-${MARKETING_VER:-0.0.4}-${BUILD_NO}-macos.dmg"
 STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
