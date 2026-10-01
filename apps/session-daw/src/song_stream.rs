@@ -227,6 +227,39 @@ impl SongSource for TaskSource {
         Box::pin(async move { library.song_chart(&slug).await })
     }
 
+    /// The song's small files in one request (the server's
+    /// `files/{root}/docs`) — its session's hundreds of objects and its
+    /// waveforms, which read one by one took 19 s a song. `None` when the
+    /// server has no such request, or it failed: they are read one by one.
+    fn read_many(&self, paths: Vec<String>) -> Pending<Option<Vec<(String, Option<Vec<u8>>)>>> {
+        let url = self.song.docs_url();
+        let token = self.song.token().map(str::to_owned);
+        Box::pin(async move {
+            let mut request = reqwest::Client::new()
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "text/plain")
+                .body(paths.join("\n"));
+            if let Some(token) = token {
+                request = request.bearer_auth(token);
+            }
+            let response = request.send().await.ok()?;
+            if !response.status().is_success() {
+                tracing::warn!(
+                    http.status = response.status().as_u16(),
+                    "library: the documents batch was refused; reading them one by one"
+                );
+                return None;
+            }
+            let body = response.bytes().await.ok()?;
+            Some(
+                batch_records(&body)?
+                    .into_iter()
+                    .map(|(path, status, bytes)| (path, (status == 0).then_some(bytes)))
+                    .collect(),
+            )
+        })
+    }
+
     fn fetch_whole(
         &self,
         path: String,

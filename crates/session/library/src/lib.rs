@@ -144,6 +144,15 @@ impl Library {
         format!("{}/org/{}/vox", self.server.trim_end_matches('/'), self.org)
     }
 
+    /// The server over HTTP — `https://host` for `wss://host`.
+    #[must_use]
+    pub fn http_base(&self) -> String {
+        self.server
+            .trim_end_matches('/')
+            .replacen("wss://", "https://", 1)
+            .replacen("ws://", "http://", 1)
+    }
+
     async fn client<C: vox_core::FromVoxLane + 'static>(&self) -> eyre::Result<C> {
         task_dial::establish_at::<C>(&self.org_url(), self.token.as_deref())
             .await
@@ -784,6 +793,25 @@ impl TaskSong {
             .await;
         }
         eyre::bail!("{}", errors.join(" (then) "))
+    }
+
+    /// Where many of the song's documents are read in one request (the
+    /// server's `files/{root}/docs`: the paths in the body, one per line;
+    /// a record per path back).
+    #[must_use]
+    pub fn docs_url(&self) -> String {
+        format!(
+            "{}/org/{}/files/{}/docs",
+            self.library.http_base(),
+            self.library.org,
+            self.root.get()
+        )
+    }
+
+    /// The token the server knows the signed-in person by, if any.
+    #[must_use]
+    pub fn token(&self) -> Option<&str> {
+        self.library.token.as_deref()
     }
 
     /// The whole of `path`, streamed into `sink` a piece at a time — one
