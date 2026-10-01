@@ -82,6 +82,32 @@ impl Planner {
     pub fn plan(&self, raw: &daw_ui::studio::project::Project) -> (ProjectRef, RowsRef) {
         plan_rows_with(raw, self.scene, &self.kinds)
     }
+
+    /// The mixer's rows for `raw`: the scene laid out for the mixer — each
+    /// track as wide as the scene opens it, the one it focuses selected —
+    /// and every folder as the scene leaves it, the way the scene renders
+    /// (`tests/golden_scenes.rs`). `extent` is the panel's height.
+    #[must_use]
+    pub fn plan_mixer(&self, raw: &daw_ui::studio::project::Project, extent: f64) -> RowsRef {
+        let (visible, depths) =
+            daw_ui::components::folders::FolderState::default().visible(&raw.tracks);
+        let planned: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
+        let Some(scene) = self.scene.and_then(dynamic_template::scenes::scene) else {
+            return RowsRef(Arc::new(planned));
+        };
+        RowsRef(Arc::new(crate::plan::apply_scene(
+            &planned,
+            &self.kinds,
+            scene,
+            crate::plan::Panel {
+                surface: crate::plan::Surface::Mixer,
+                mode: None,
+                settings: crate::settings::Settings::default(),
+                extent,
+                active_language: None,
+            },
+        )))
+    }
 }
 
 impl PartialEq for StudioSession {

@@ -34,6 +34,16 @@ impl Prepare {
     /// [`Self::for_song`] for a song in `folder`.
     #[must_use]
     pub fn for_song_in(folder: &dyn crate::folder::Folder, path: &std::path::Path) -> Self {
+        // `FTS_SESSION_PREPARE=0`: the multitrack as it is — a template
+        // already laid out (the golden session) opens as the scenes render
+        // it rather than organized a second time.
+        if std::env::var("FTS_SESSION_PREPARE").as_deref() == Ok("0") {
+            return Self {
+                organize: false,
+                chart: None,
+                guide: false,
+            };
+        }
         let chart = path
             .parent()
             .and_then(|dir| folder.only_with_extension(dir, "kf"));

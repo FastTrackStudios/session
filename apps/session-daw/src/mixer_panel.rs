@@ -124,6 +124,11 @@ pub struct Links {
     /// How many strips the inspector shows (one, or two with the folder
     /// the track goes out through): its column is as wide as they are.
     pub strips: Rc<Cell<usize>>,
+    /// The mixer alone in Mix mode: laid out by the scene for mixing,
+    /// racks on every strip wide enough, framed by the phase rails — what
+    /// the scene renders (`tests/golden_scenes.rs`). Set every render, as
+    /// the mode changes.
+    pub mix: Rc<Cell<bool>>,
 }
 
 /// A key the mixer passed on.
@@ -151,6 +156,7 @@ impl Links {
             fill: false,
             inspector: false,
             strips: Rc::new(Cell::new(1)),
+            mix: Rc::new(Cell::new(false)),
         }
     }
 
@@ -236,6 +242,9 @@ pub fn DawPanels(
         links.planner = Some(session.planner.clone());
         links
     });
+    links
+        .mix
+        .set(mixer_only && mode == Some(session::modes::Mode::Mix));
     // Into another mode: the mixer as that mode last had it.
     let mut open_sig = links.open;
     let mut shown_in = use_signal(|| mode);
@@ -726,6 +735,15 @@ struct MixerWidget {
     built_open: Option<String>,
     /// The folds the rows were planned at ([`crate::folds::generation`]).
     folds_seen: u64,
+    /// Whether the rows were last planned for Mix mode (`Links::mix`);
+    /// `None` before the first plan.
+    mix_seen: Option<bool>,
+    /// Where the strips start in the panel (CSS px): past the phase
+    /// rails when mixing, under the overview band otherwise.
+    origin: Cell<(f64, f64)>,
+    /// The panel's height when last painted (CSS px): the extent a Mix
+    /// mode plan lays the scene out for.
+    extent: Cell<f64>,
     /// The strips still moving after a finger threw them.
     fling: Option<crate::touch::Fling>,
     /// Ask the host for another frame: Blitz paints a widget after an
@@ -830,6 +848,9 @@ impl MixerWidget {
             rack_pressed: None,
             built_open: None,
             folds_seen: crate::folds::generation(),
+            mix_seen: None,
+            origin: Cell::new((0.0, 0.0)),
+            extent: Cell::new(1440.0),
             all: Vec::new(),
             inspected: None,
             clips: crate::overlay::Clips::default(),
@@ -850,12 +871,20 @@ impl MixerWidget {
         // them. The strips keep what they show now (a level, a mute) —
         // the plan is the song as it opened.
         let folds = crate::folds::generation();
-        if folds != self.folds_seen {
+        let mix = self.links.mix.get();
+        if folds != self.folds_seen || Some(mix) != self.mix_seen {
             self.folds_seen = folds;
+            self.mix_seen = Some(mix);
             if self.links.alone
                 && let Some(planner) = &self.links.planner
             {
-                let (_, planned) = planner.plan(&planner.raw);
+                // Mixing, the scene's own layout for the mixer; otherwise
+                // the arrangement's rows, folded as the window has them.
+                let planned = if mix {
+                    planner.plan_mixer(&planner.raw, self.extent.get())
+                } else {
+                    planner.plan(&planner.raw).1
+                };
                 let now: std::collections::HashMap<&str, &daw_proto::Track> =
                     self.tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
                 let rows: Rows = planned
@@ -1057,7 +1086,8 @@ impl MixerWidget {
     /// anchors need not know about the zoom.
     fn content(&self, x: f64, y: f64) -> (f64, f64) {
         let zoom = self.zoom();
-        ((x + self.scroll.get()) / zoom, (y - self.band.get()) / zoom)
+        let (left, top) = self.origin.get();
+        ((x - left + self.scroll.get()) / zoom, (y - top) / zoom)
     }
 
     /// Whether a finger at `(x, y)` is on `row`'s fader cap, give or take
@@ -1819,9 +1849,29 @@ impl MixerWidget {
             } else {
                 0.0
             };
+        // Mixing, the strips sit inside the phase rails, at their own
+        // size — the frame the scene renders in (`rails::Frame`).
+        let mix = self.links.mix.get();
+        let band = if mix { 0.0 } else { band };
         self.band.set(band);
-        let css_h = (full_h - band).max(0.0);
-        let zoom = self.zoom_for(css_w, css_h);
+        let frame = crate::rails::Frame::new(css_w, full_h);
+        let origin = if mix {
+            (crate::rails::SIDE, crate::rails::TOP)
+        } else {
+            (0.0, band)
+        };
+        self.origin.set(origin);
+        let (css_w, css_h) = if mix {
+            (frame.content_width(), frame.content_height())
+        } else {
+            (css_w, (full_h - band).max(0.0))
+        };
+        self.extent.set(full_h);
+        let zoom = if mix {
+            1.0
+        } else {
+            self.zoom_for(css_w, css_h)
+        };
         self.drawn_zoom.set(zoom);
         // Laid out at the size it has once zoomed, and drawn bigger.
         let (w, h) = (css_w / zoom, css_h / zoom);
@@ -1856,6 +1906,7 @@ impl MixerWidget {
             (m.height - h).abs() > 0.5
                 || m.touch != self.touch.get()
                 || m.skin_version != crate::skin::version()
+                || m.live == mix
         }) || open != self.built_open;
         if stale {
             self.built_open.clone_from(&open);
@@ -1866,7 +1917,12 @@ impl MixerWidget {
                 daw_ui::studio::project::Project::default(),
             ));
             let mut rows = self.rows.clone();
+            // Mixing with nothing selected, the scene's own focus stands.
+            let keep_scene = mix && open.is_none();
             for (track, _) in &mut rows {
+                if keep_scene {
+                    continue;
+                }
                 let selected = open.as_deref() == Some(track.guid.as_str());
                 track.selected = selected;
                 if selected {
@@ -1887,10 +1943,17 @@ impl MixerWidget {
                 &rows,
                 h,
                 self.layout,
-                if open.is_some() { rack_panels() } else { &[] },
-                open.is_some(),
+                // Mixing, every strip wide enough has its rack.
+                if mix || open.is_some() {
+                    rack_panels()
+                } else {
+                    &[]
+                },
+                open.is_some() && !mix,
                 crate::settings::Settings {
                     touch_strips: self.touch.get(),
+                    // Mixing, the full strip: the input, the arm.
+                    live_strips: !mix,
                     ..crate::settings::Settings::default()
                 },
                 &store,
@@ -1920,7 +1983,7 @@ impl MixerWidget {
             .map(crate::engine::Meters::levels)
             .unwrap_or_default();
         let at = Affine::scale(scale)
-            * Affine::translate((0.0, band))
+            * Affine::translate(origin)
             * Affine::scale(zoom)
             * Affine::translate((-scroll, 0.0));
         mixer.replay(&mut out, scroll, w, at);
@@ -1957,6 +2020,32 @@ impl MixerWidget {
         if band > 0.0 {
             let overview = self.overview(&levels, css_w, band);
             anyrender::PaintScene::append_scene(&mut out, overview, Affine::scale(scale));
+        }
+        // Mixing: the phase rails around the strips, over them — the frame
+        // the scene renders in.
+        if mix {
+            let profile = crate::rails::profile(
+                crate::rails::Surface::Mixer,
+                session::modes::Mode::Mix,
+                session::mix_phases::MixPhase::Tone,
+                self.links.planner.as_ref().and_then(|p| p.scene),
+                crate::settings::Settings::default(),
+                dynamic_template::scenes::Audience::Engineer,
+                "drums",
+            );
+            let mut rails = Scene::new();
+            crate::rails::draw(
+                &mut rails,
+                &self.palette,
+                &self.font,
+                &mut crate::icons::Icons::none(),
+                (None, None),
+                frame,
+                &profile.left,
+                &profile.right,
+                &profile.top,
+            );
+            anyrender::PaintScene::append_scene(&mut out, rails, Affine::scale(scale));
         }
         out
     }
