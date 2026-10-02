@@ -1530,6 +1530,28 @@ daw-animate PROJECT="" SIZE="2560x1440":
     FTS_BENCH_ANIMATE=1 FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 \
         | grep -viE 'vulkan|objects:|WARN'
 
+# The app's Mixer, on the golden session, the way the scene pictures show
+# it — opened straight from the fixtures (not organized a second time, so
+# nothing is written beside it), in Mix mode, drawn by the fts-dark theme,
+# with a simulated signal in the meters and the racks (FTS_SIMULATE) since
+# the template has no media. Compare with
+# features/dynamic-template/fixtures/golden/scenes/drum-mixing.png.
+#
+#   just mixer-golden                    at the pictures' 2560x1440
+#   SIMULATE=0 just mixer-golden         silent, as the engine has it
+mixer-golden SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --profile release-fast -p session-desktop
+    FTS_SESSION_PREPARE=0 \
+    FTS_SESSION_MODE=Mix \
+    FTS_SESSION_VIEW=mixer \
+    FTS_SIMULATE="${SIMULATE:-1}" \
+    FTS_THEME="$PWD/apps/session-daw/themes/fts-dark.fm" \
+    FTS_WINDOW_SIZE="{{SIZE}}" \
+    FTS_SESSION_PROJECT="$PWD/{{GOLDEN_DIR}}/template.rpp" \
+    ./target/release-fast/session-desktop
+
 # How far the themed mixer is from the painters' one: regenerates the
 # fts-dark theme from the painters' own drawings (skin::export), shoots the
 # mixer both ways and diffs them (percentage of pixels that differ, and a

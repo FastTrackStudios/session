@@ -565,3 +565,129 @@ mod tests {
         );
     }
 }
+
+/// The simulated signal fed into a mixer, frame by frame — the engine
+/// and the analysers it stands in for, for a window with nothing
+/// playing (`FTS_SIMULATE=1`), and for the bench's pictures.
+///
+/// Fed through exactly what the engine feeds: each track's
+/// [`TrackLevels`](daw_proto::TrackLevels) for its meter, and its rack's
+/// level history and spectrum, at [`PUBLISH_HZ`](crate::tone::PUBLISH_HZ)
+/// like the engine publishes. What it is fed is a function of the
+/// seconds it is given, so the same second is the same picture.
+#[derive(Debug, Default)]
+pub struct Feed {
+    /// How many publishes have been fed so far.
+    published: usize,
+}
+
+impl Feed {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Everything up to `seconds`: the rack history gets every publish
+    /// since the last call (a first call fills it whole, ending at
+    /// `seconds`), the spectra and the returned meter levels — indexed
+    /// by project track index — are the signal at `seconds`.
+    pub fn feed(
+        &mut self,
+        seconds: f64,
+        rows: &[(daw_proto::Track, u32)],
+        settings: &crate::tone::Store,
+        history: &mut std::collections::HashMap<String, crate::tone::Levels>,
+        spectra: &mut std::collections::HashMap<String, crate::tone::Analyser>,
+    ) -> Vec<daw_proto::TrackLevels> {
+        let hz = f64::from(crate::tone::PUBLISH_HZ);
+        // Publishes are whole frames of the clock: the n-th at n / hz.
+        let now = crate::num::index(seconds.max(0.0) * hz);
+        let from = if self.published == 0 {
+            now.saturating_sub(crate::tone::HISTORY - 1)
+        } else {
+            self.published + 1
+        };
+        let mut levels = Vec::new();
+        for (i, (track, _)) in rows.iter().enumerate() {
+            let Some(tone) = settings.get(&track.guid) else {
+                continue;
+            };
+            let entry = history.entry(track.guid.clone()).or_default();
+            for n in from..=now {
+                let meters = meters(i, crate::num::coord(n) / hz, tone);
+                entry.push(meters.sat_peak);
+                entry.push_fire(meters.deess_deepest());
+                entry.push_ess(meters.ess_db, meters.ess_ref_db);
+            }
+            let meters = meters(i, seconds, tone);
+            let peak = meters.sat_peak;
+            if let Ok(index) = usize::try_from(track.index) {
+                if levels.len() <= index {
+                    levels.resize(index + 1, daw_proto::TrackLevels::default());
+                }
+                levels[index] = daw_proto::TrackLevels {
+                    peak_left: peak,
+                    peak_right: peak * 0.85,
+                    hold_left: peak,
+                    hold_right: peak,
+                };
+            }
+            spectra.entry(track.guid.clone()).or_default().set(meters);
+        }
+        self.published = now.max(self.published);
+        levels
+    }
+}
+
+#[cfg(test)]
+mod feed_tests {
+    use super::Feed;
+
+    fn rows() -> Vec<(daw_proto::Track, u32)> {
+        (0..4)
+            .map(|n| {
+                (
+                    daw_proto::Track {
+                        guid: format!("g{n}"),
+                        index: n * 2,
+                        name: format!("T{n}"),
+                        ..daw_proto::Track::default()
+                    },
+                    0,
+                )
+            })
+            .collect()
+    }
+
+    fn fed(seconds: f64) -> Vec<daw_proto::TrackLevels> {
+        let rows = rows();
+        let mut store = crate::tone::Store::default();
+        store.seed(&rows);
+        let (mut history, mut spectra) = (
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
+        let levels = Feed::new().feed(seconds, &rows, &store, &mut history, &mut spectra);
+        assert_eq!(spectra.len(), rows.len(), "every rack gets a spectrum");
+        assert_eq!(history.len(), rows.len(), "and a history");
+        levels
+    }
+
+    #[test]
+    fn the_meters_are_indexed_by_project_track() {
+        let levels = fed(2.5);
+        // Tracks at 0, 2, 4, 6: a slot per project index, the gaps silent.
+        assert_eq!(levels.len(), 7);
+        assert!(levels[0].peak_left > 0.0 && levels[6].peak_left > 0.0);
+        assert_eq!(levels[1].peak_left, 0.0);
+    }
+
+    #[test]
+    fn the_same_second_is_the_same_signal_and_another_is_not() {
+        let peaks = |levels: Vec<daw_proto::TrackLevels>| {
+            levels.iter().map(|l| l.peak_left).collect::<Vec<_>>()
+        };
+        assert_eq!(peaks(fed(2.5)), peaks(fed(2.5)));
+        assert_ne!(peaks(fed(2.5)), peaks(fed(3.1)));
+    }
+}

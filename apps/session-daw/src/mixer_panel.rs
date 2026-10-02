@@ -746,6 +746,11 @@ struct MixerWidget {
     spectra: std::collections::HashMap<String, crate::tone::Analyser>,
     /// Each track's level history, for the rack's compressors.
     levels: std::collections::HashMap<String, crate::tone::Levels>,
+    /// `FTS_SIMULATE=1`: a signal where there is none — the meters and
+    /// every rack's history and spectrum fed by [`crate::simulate::Feed`]
+    /// on the clock since the window opened, as the engine would feed them
+    /// while playing.
+    simulated: Option<(std::time::Instant, crate::simulate::Feed)>,
     /// Which mix phases are folded shut in the racks.
     folds: crate::tone::Fold,
     /// How far the racks' chains are scrolled under their boxes.
@@ -871,6 +876,9 @@ impl MixerWidget {
             closeups: None,
             spectra: std::collections::HashMap::new(),
             levels: std::collections::HashMap::new(),
+            simulated: std::env::var_os("FTS_SIMULATE")
+                .is_some_and(|v| !v.is_empty() && v != "0")
+                .then(|| (std::time::Instant::now(), crate::simulate::Feed::new())),
             folds: crate::tone::Fold::rest(),
             rack_scroll: 0.0,
             rack_hover: None,
@@ -2129,11 +2137,20 @@ impl MixerWidget {
         let screen_scroll = self.scroll.get().clamp(0.0, most);
         self.scroll.set(screen_scroll);
         let scroll = screen_scroll / zoom;
-        let levels = self
-            .meters
-            .as_ref()
-            .map(crate::engine::Meters::levels)
-            .unwrap_or_default();
+        let levels = match &mut self.simulated {
+            Some((since, feed)) => feed.feed(
+                since.elapsed().as_secs_f64(),
+                &self.rows,
+                &store,
+                &mut self.levels,
+                &mut self.spectra,
+            ),
+            None => self
+                .meters
+                .as_ref()
+                .map(crate::engine::Meters::levels)
+                .unwrap_or_default(),
+        };
         let at = Affine::scale(scale)
             * Affine::translate(origin)
             * Affine::scale(zoom)
@@ -2211,6 +2228,8 @@ impl Widget for MixerWidget {
                 .is_some_and(|m| m.skin_version != crate::skin::version())
             || self.dirty.get()
             || crate::engine::moving()
+            // A simulated signal moves as a playing one does.
+            || self.simulated.is_some()
             || crate::folds::generation() != self.folds_seen
             || self.tone.generation() != self.tone_seen
     }
