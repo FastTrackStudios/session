@@ -129,6 +129,9 @@ pub struct Links {
     /// the scene renders (`tests/golden_scenes.rs`). Set every render, as
     /// the mode changes.
     pub mix: Rc<Cell<bool>>,
+    /// The mixer alone in Record mode: full strips, laid out for
+    /// recording. Set every render, as the mode changes.
+    pub recording: Rc<Cell<bool>>,
 }
 
 /// The phase rails' state, mixing — see [`MixerWidget`]'s `rails`.
@@ -182,6 +185,7 @@ impl Links {
             inspector: false,
             strips: Rc::new(Cell::new(1)),
             mix: Rc::new(Cell::new(false)),
+            recording: Rc::new(Cell::new(false)),
         }
     }
 
@@ -270,6 +274,9 @@ pub fn DawPanels(
     links
         .mix
         .set(mixer_only && mode == Some(session::modes::Mode::Mix));
+    links
+        .recording
+        .set(mixer_only && mode == Some(session::modes::Mode::Record));
     // Into another mode: the mixer as that mode last had it.
     let mut open_sig = links.open;
     let mut shown_in = use_signal(|| mode);
@@ -2064,6 +2071,7 @@ impl MixerWidget {
         // Mixing, the strips sit inside the phase rails, at their own
         // size — the frame the scene renders in (`rails::Frame`).
         let mix = self.links.mix.get();
+        let recording = self.links.recording.get();
         let band = if mix { 0.0 } else { band };
         self.band.set(band);
         let frame = crate::rails::Frame::new(css_w, full_h);
@@ -2118,7 +2126,8 @@ impl MixerWidget {
             (m.height - h).abs() > 0.5
                 || m.touch != self.touch.get()
                 || m.skin_version != crate::skin::version()
-                || m.live == mix
+                || m.live == (mix || recording)
+                || m.recording != recording
         }) || open != self.built_open;
         if stale {
             self.built_open.clone_from(&open);
@@ -2166,8 +2175,10 @@ impl MixerWidget {
                 open.is_some() && !mix,
                 crate::settings::Settings {
                     touch_strips: self.touch.get(),
-                    // Mixing, the full strip: the input, the arm.
-                    live_strips: !mix,
+                    // Mixing or recording, the full strip.
+                    live_strips: !(mix || recording),
+                    mixing: mix,
+                    recording,
                     focus_selected: self.rails.settings.focus_selected,
                     take_focus_width: self.rails.settings.take_focus_width,
                     ..crate::settings::Settings::default()

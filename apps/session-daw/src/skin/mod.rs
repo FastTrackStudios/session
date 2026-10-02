@@ -61,6 +61,8 @@ pub fn schema() -> Schema {
         .field("track.parent_send")
         .field("ui.rack")
         .layout("mixer.h")
+        .layout("ui.mixing")
+        .layout("ui.recording")
         .live("track.mute")
         .live("track.solo")
         .live("track.armed")
@@ -115,6 +117,9 @@ pub struct Shown<'a> {
     pub rack: bool,
     /// The face text is measured in, for what has to be sized to it.
     pub font: Option<&'a crate::text::Font>,
+    /// The mode the strip is laid out for — see `Settings::mixing`.
+    pub mixing: bool,
+    pub recording: bool,
 }
 
 static SCHEMA: std::sync::LazyLock<Schema> = std::sync::LazyLock::new(schema);
@@ -171,6 +176,8 @@ pub fn fields(palette: &Palette, track: &Track, shown: Shown<'_>) -> StripFields
     set("track.parent_send", Value::Bool(track.parent_send));
     set("ui.rack", Value::Bool(shown.rack));
     set("mixer.h", Value::Num(shown.mixer_h));
+    set("ui.mixing", Value::Bool(shown.mixing));
+    set("ui.recording", Value::Bool(shown.recording));
 
     set("track.mute", Value::Bool(track.muted));
     set("track.solo", Value::Bool(track.soloed));

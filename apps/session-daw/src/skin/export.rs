@@ -107,6 +107,9 @@ struct Spots {
     pan: Spot,
     fx: Spot,
     routing: Spot,
+    /// Routing across the head of the strip, as a row rather than a
+    /// column (`Axis::Horizontal`) — where a layout puts it first.
+    routing_head: Option<Spot>,
     /// The housing (on a full strip) and the ring.
     arm_mixer: Spot,
     arm_panel: Spot,
@@ -473,6 +476,7 @@ impl Gen<'_> {
                 format!("{head} && {} + {} > 26", self.pan_band(), self.input_band()),
             ),
             fx: Spot::new("7", "9", "max(w - 14, 36)", "24", head.clone()),
+            routing_head: None,
             routing: Spot::new(
                 format!("{col} - {}", n(art::ROUTING_INSET_V)),
                 step(crate::mcp::Control::Routing),
@@ -521,55 +525,82 @@ impl Gen<'_> {
     ///  scale | fader | route  the level
     /// ```
     ///
-    /// Mute and solo are in the same place on every strip, whatever its
-    /// width: one column, its right edge four pixels in from the strip's,
-    /// mute at 58 and solo at 80 — so "which of these is muted" is one
-    /// look along a line, across a kit's 30-pixel mics and its 86-pixel
-    /// buses alike. The arm heads the same column. What gives way on a
-    /// narrow strip is everything else: the pan where there is no room
-    /// beside the column, the FX below 46, the input and the monitor
-    /// below a full strip.
+    /// The mode decides what is first. Mixing, the chain heads the strip
+    /// and there is no recording row at all — nothing is armed in a mix —
+    /// so the mix rows and the fader move up into its room. Recording, the
+    /// routing heads it (where the take comes in and goes out), the chain
+    /// beside it where the strip is wide enough, the recording row under.
+    ///
+    /// Mute and solo are in the same place on every strip of a mode,
+    /// whatever its width: one column, its right edge four pixels in from
+    /// the strip's — so "which of these is muted" is one look along a
+    /// line, across a kit's 30-pixel mics and its 86-pixel buses alike.
+    /// The arm heads the same column. What gives way on a narrow strip is
+    /// everything else.
     fn console_spots(&self) -> Spots {
         let full = format!("({OWN_W} >= 78)");
         let column = format!("({OWN_W} - 25)");
+        let (mixing, recording) = ("ui.mixing", "ui.recording");
+        // The mix rows start where the recording row would have.
+        let lift = format!("({mixing} ? 26 : 0)");
         let name_top = self.name_top();
-        let fader_top = "106".to_owned();
+        let fader_top = format!("(106 - {lift})");
         let travel = format!("max({name_top} - 3 - {fader_top}, 0)");
         let fader_x = format!("(({OWN_W} - 30) / 2)");
+        let records = format!("!{mixing}");
         Spots {
-            band: ("0".into(), "102".into()),
+            band: ("0".into(), format!("(102 - {lift})")),
+            fx: Spot::new(
+                format!("{recording} ? 39 : 7"),
+                "5",
+                format!("{recording} ? max(w - 46, 36) : max(w - 14, 36)"),
+                "24",
+                format!("{recording} ? {OWN_W} >= 82 : {OWN_W} >= 46"),
+            ),
+            routing_head: Some(Spot::new(
+                format!("{full} ? 7 : ({OWN_W} - 28) / 2"),
+                "6",
+                "28",
+                "22",
+                format!("{recording} && w >= 30"),
+            )),
             input: Spot::new(
                 "6",
                 "32",
                 format!("{OWN_W} - 60"),
                 "16",
-                format!("{full} && track.armed"),
+                format!("{records} && {full} && track.armed"),
             ),
             monitor: Spot::new(
                 format!("{OWN_W} - 48"),
                 "30",
                 "21",
                 "20",
-                format!("{full} && track.armed"),
+                format!("{records} && {full} && track.armed"),
             ),
             arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
-            arm_panel: Spot::new(format!("{column} + 0.5"), "30", "20", "20", "w >= 22"),
-            fx: Spot::new(
-                "7",
-                "5",
-                "max(w - 14, 36)",
-                "24",
-                format!("({OWN_W} >= 46)"),
+            arm_panel: Spot::new(
+                format!("{column} + 0.5"),
+                "30",
+                "20",
+                "20",
+                format!("{records} && w >= 22"),
             ),
-            pan: Spot::new("5", "56", "24", "25", format!("({OWN_W} >= 55)")),
-            mute: Spot::new(column.clone(), "58", "21", "20", ""),
-            solo: Spot::new(column, "80", "21", "20", ""),
+            pan: Spot::new(
+                "5",
+                format!("56 - {lift}"),
+                "24",
+                "25",
+                format!("({OWN_W} >= 55)"),
+            ),
+            mute: Spot::new(column.clone(), format!("58 - {lift}"), "21", "20", ""),
+            solo: Spot::new(column, format!("80 - {lift}"), "21", "20", ""),
             routing: Spot::new(
                 format!("{OWN_W} - 27"),
                 fader_top.clone(),
                 n(art::ROUTING_CELL_V.0),
                 n(art::ROUTING_CELL_V.1),
-                full,
+                format!("!{recording} && {full}"),
             ),
             scale_x: format!("max({fader_x} - 24, 1)"),
             scale_visible: format!("({OWN_W} >= 46) && {travel} > 0"),
@@ -1011,6 +1042,61 @@ impl Gen<'_> {
                         extra: "",
                     },
                 );
+            }
+        }
+
+        // Routing across the head, where the layout puts it first.
+        if let Some(head) = &spots.routing_head {
+            for bits in 0..8_u8 {
+                let routes = art::Routing {
+                    parent_send: bits & 1 != 0,
+                    sends: bits & 2 != 0,
+                    receives: bits & 4 != 0,
+                };
+                let when = format!(
+                    "{} && {} && {}",
+                    if routes.parent_send {
+                        "track.parent_send"
+                    } else {
+                        "!track.parent_send"
+                    },
+                    if routes.sends {
+                        "track.sends > 0"
+                    } else {
+                        "track.sends == 0"
+                    },
+                    if routes.receives {
+                        "track.receives > 0"
+                    } else {
+                        "track.receives == 0"
+                    }
+                );
+                for at in STATES {
+                    let d = art::routing(
+                        chrome,
+                        art::Axis::Horizontal,
+                        routes,
+                        crate::overlay::route_ink(p),
+                        at,
+                    );
+                    let (name, visible) = (
+                        format!("Routing head {bits} {at:?}"),
+                        format!("{} && {when} && {}", head.visible, state("routing", at)),
+                    );
+                    self.drawing(
+                        3,
+                        &d,
+                        &Place {
+                            name: &name,
+                            x: &head.x,
+                            y: &head.y,
+                            visible: &visible,
+                            follow: Follow::Fixed,
+                            track: "",
+                            extra: "",
+                        },
+                    );
+                }
             }
         }
 
@@ -1573,6 +1659,10 @@ impl Gen<'_> {
             let (x, y, w, h, visible) = hit(spot);
             rows.push((name, x, y, w, h, visible));
         }
+        if let Some(head) = &spots.routing_head {
+            let (x, y, w, h, visible) = hit(head);
+            rows.push(("routing", x, y, w, h, visible));
+        }
         rows.push(("arm", arm_x, arm_y, arm_w, arm_h, arm_visible));
         for (name, x, y, w, h, visible) in rows {
             let mut a = format!(
@@ -1751,11 +1841,42 @@ mod tests {
         }
         assert!(checked > 3000);
     }
+    /// A console theme's controls for a strip in a mode.
+    fn console_targets(
+        theme: &Theme,
+        palette: &Palette,
+        (width, height): (f64, f64),
+        (mixing, recording, armed): (bool, bool, bool),
+    ) -> Vec<(&'static str, vello::kurbo::Rect)> {
+        let track = daw_proto::Track {
+            armed,
+            ..daw_proto::Track::default()
+        };
+        let fields = super::super::fields(
+            palette,
+            &track,
+            super::super::Shown {
+                width,
+                mixer_h: height,
+                mixing,
+                recording,
+                ..Default::default()
+            },
+        );
+        [
+            "fx", "pan", "arm", "monitor", "mute", "solo", "routing", "fader", "name",
+        ]
+        .into_iter()
+        .filter_map(|name| {
+            theme
+                .target_rect(super::super::STRIP, (width, height), &fields, name)
+                .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+                .map(|r| (name, r))
+        })
+        .collect()
+    }
 
-    /// The console layout: at every width, its controls stay inside the
-    /// strip and off each other, armed or not.
-    #[test]
-    fn the_console_controls_do_not_collide() {
+    fn console() -> (Theme, Palette) {
         let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
         let theme = Theme::from_markup(&super::fts_console(&palette), super::super::schema(), None)
             .unwrap_or_else(|e| {
@@ -1767,50 +1888,46 @@ mod tests {
                         .join("\n")
                 )
             });
-        let names = [
-            "fx", "pan", "arm", "monitor", "mute", "solo", "routing", "fader", "name",
-        ];
-        for armed in [false, true] {
-            for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37, 260.5] {
-                for height in [300.0, 600.0, 900.0] {
-                    let track = daw_proto::Track {
-                        armed,
-                        ..daw_proto::Track::default()
-                    };
-                    let fields = super::super::fields(
-                        &palette,
-                        &track,
-                        super::super::Shown {
-                            width,
-                            mixer_h: height,
-                            ..Default::default()
-                        },
-                    );
-                    let rects: Vec<(&str, vello::kurbo::Rect)> = names
-                        .iter()
-                        .filter_map(|name| {
-                            theme
-                                .target_rect(super::super::STRIP, (width, height), &fields, name)
-                                .filter(|r| r.width() > 0.0 && r.height() > 0.0)
-                                .map(|r| (*name, r))
-                        })
-                        .collect();
-                    for (name, r) in &rects {
-                        assert!(
-                            r.x0 >= -0.5
-                                && r.x1 <= width + 0.5
-                                && r.y0 >= -0.5
-                                && r.y1 <= height + 0.5,
-                            "{name} at {width}x{height} armed {armed}: {r:?} outside the strip"
+        (theme, palette)
+    }
+
+    const MODES: [(bool, bool); 3] = [(false, false), (true, false), (false, true)];
+
+    /// The console layout: in every mode, at every width, its controls stay
+    /// inside the strip and off each other, armed or not.
+    #[test]
+    fn the_console_controls_do_not_collide() {
+        let (theme, palette) = console();
+        for (mixing, recording) in MODES {
+            for armed in [false, true] {
+                for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37, 260.5] {
+                    for height in [300.0, 600.0, 900.0] {
+                        let rects = console_targets(
+                            &theme,
+                            &palette,
+                            (width, height),
+                            (mixing, recording, armed),
                         );
-                    }
-                    for (i, (a, ra)) in rects.iter().enumerate() {
-                        for (b, rb) in rects.iter().skip(i + 1) {
-                            let overlap = ra.intersect(*rb);
+                        let mode = format!(
+                            "{width}x{height} armed {armed} mixing {mixing} recording {recording}"
+                        );
+                        for (name, r) in &rects {
                             assert!(
-                                overlap.width() <= 0.5 || overlap.height() <= 0.5,
-                                "{a} and {b} collide at {width}x{height} armed {armed}: {ra:?} {rb:?}"
+                                r.x0 >= -0.5
+                                    && r.x1 <= width + 0.5
+                                    && r.y0 >= -0.5
+                                    && r.y1 <= height + 0.5,
+                                "{name} outside the strip at {mode}: {r:?}"
                             );
+                        }
+                        for (i, (a, ra)) in rects.iter().enumerate() {
+                            for (b, rb) in rects.iter().skip(i + 1) {
+                                let overlap = ra.intersect(*rb);
+                                assert!(
+                                    overlap.width() <= 0.5 || overlap.height() <= 0.5,
+                                    "{a} and {b} collide at {mode}: {ra:?} {rb:?}"
+                                );
+                            }
                         }
                     }
                 }
@@ -1818,42 +1935,38 @@ mod tests {
         }
     }
 
-    /// Mute and solo are in one place on every console strip: the same
-    /// heights, the same distance from the strip's right edge.
+    /// Mute and solo are in one place on every console strip of a mode:
+    /// the same heights, the same distance from the strip's right edge.
+    /// Mixing, no arm at all; recording, the routing heads the strip.
     #[test]
     fn the_console_puts_mute_and_solo_in_one_place_at_every_width() {
-        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
-        let theme = Theme::from_markup(&super::fts_console(&palette), super::super::schema(), None)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "{}",
-                    e.iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            });
-        let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
-        for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37] {
-            let fields = super::super::fields(
-                &palette,
-                &daw_proto::Track::default(),
-                super::super::Shown {
-                    width,
-                    mixer_h: 600.0,
-                    ..Default::default()
-                },
-            );
-            let at = |name| {
-                theme
-                    .target_rect(super::super::STRIP, (width, 600.0), &fields, name)
-                    .expect(name)
-            };
-            let (mute, solo) = (at("mute"), at("solo"));
-            // Measured from the right: the column's edge, and the heights.
-            seen.push((width - mute.x1, mute.y0, width - solo.x1, solo.y0));
+        let (theme, palette) = console();
+        for ((mixing, recording), heights) in
+            MODES
+                .into_iter()
+                .zip([(58.0, 80.0), (32.0, 54.0), (58.0, 80.0)])
+        {
+            let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
+            for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37] {
+                let rects =
+                    console_targets(&theme, &palette, (width, 600.0), (mixing, recording, true));
+                let at = |name| rects.iter().find(|(n, _)| *n == name).map(|(_, r)| *r);
+                let (mute, solo) = (at("mute").expect("mute"), at("solo").expect("solo"));
+                seen.push((width - mute.x1, mute.y0, width - solo.x1, solo.y0));
+                assert_eq!(
+                    at("arm").is_some(),
+                    !mixing,
+                    "arm at {width} (mixing {mixing})"
+                );
+                if recording {
+                    assert!(
+                        at("routing").is_some_and(|r| r.y0 < 10.0),
+                        "routing heads the strip at {width}"
+                    );
+                }
+            }
+            assert!(seen.windows(2).all(|w| w[0] == w[1]), "{seen:?}");
+            assert_eq!(seen[0], (4.0, heights.0, 4.0, heights.1));
         }
-        assert!(seen.windows(2).all(|w| w[0] == w[1]), "{seen:?}");
-        assert_eq!(seen[0], (4.0, 58.0, 4.0, 80.0));
     }
 }

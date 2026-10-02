@@ -845,6 +845,10 @@ fn mixer_shot(
         // band) — see `strip::shape`.
         session_daw::settings::Settings {
             live_strips,
+            // `FTS_BENCH_MODE=mix|record`: the strips laid out for that
+            // mode, where a theme asks.
+            mixing: std::env::var("FTS_BENCH_MODE").as_deref() == Ok("mix"),
+            recording: std::env::var("FTS_BENCH_MODE").as_deref() == Ok("record"),
             ..session_daw::settings::Settings::default()
         },
         &settings,

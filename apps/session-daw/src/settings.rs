@@ -54,6 +54,11 @@ pub struct Settings {
     /// Touchscreen strips: mute and solo grown to fill their column
     /// (`strip::Strip::touched`).
     pub touch_strips: bool,
+    /// The mode the strips are laid out for, where a theme asks: a strip
+    /// in Mix mode has no use for an arm, one in Record mode has the most
+    /// for its routing (`skin`'s `ui.mixing` / `ui.recording`).
+    pub mixing: bool,
+    pub recording: bool,
 }
 
 impl Default for Settings {
@@ -66,6 +71,8 @@ impl Default for Settings {
             folded_takes: true,
             live_strips: true,
             touch_strips: false,
+            mixing: false,
+            recording: false,
         }
     }
 }

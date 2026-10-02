@@ -254,6 +254,9 @@ pub struct Mixer {
     pub live: bool,
     /// Touchscreen strips — see `strip::Strip::touched`.
     pub touch: bool,
+    /// The mode the strips were laid out for — see `Settings::mixing`.
+    pub mixing: bool,
+    pub recording: bool,
     /// Each strip's own height.
     ///
     /// NOT the mixer's: nesting shortens a strip from the bottom, so a
@@ -509,6 +512,8 @@ impl Mixer {
                         mixer_h: height - rack_h,
                         rack: rack_h > 0.0,
                         font: Some(font),
+                        mixing: settings.mixing,
+                        recording: settings.recording,
                         ..crate::skin::Shown::default()
                     };
                     themed(
@@ -560,6 +565,8 @@ impl Mixer {
             skin,
             skin_version,
             themed: themed_rows,
+            mixing: settings.mixing,
+            recording: settings.recording,
         }
     }
 
@@ -582,6 +589,8 @@ impl Mixer {
             mixer_h: self.height - self.rack_h,
             rack: self.rack_h > 0.0,
             font: Some(font),
+            mixing: self.mixing,
+            recording: self.recording,
             ..crate::skin::Shown::default()
         }
     }
