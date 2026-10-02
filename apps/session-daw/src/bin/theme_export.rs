@@ -2,8 +2,8 @@
 //! pixel, the reference the native strip is checked against.
 //!
 //! ```sh
-//! cargo run -r -p session-daw --bin theme_export              # to apps/session-daw/themes/fts-dark.fm
-//! cargo run -r -p session-daw --bin theme_export -- out.fm    # elsewhere
+//! cargo run -r -p session-daw --bin theme_export              # to apps/session-daw/themes/fts-dark.frame
+//! cargo run -r -p session-daw --bin theme_export -- out.frame # elsewhere
 //! ```
 //!
 //! The console theme (`apps/session-daw/themes/console/`) is not written
@@ -14,7 +14,7 @@ fn main() {
     let palette = session_daw::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
     let out = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "apps/session-daw/themes/fts-dark.fm".to_owned());
+        .unwrap_or_else(|| "apps/session-daw/themes/fts-dark.frame".to_owned());
     let themes = vec![(out, session_daw::skin::export::fts_dark(&palette))];
     for (out, markup) in themes {
         // Compiled before it is written: a theme the mixer would refuse is

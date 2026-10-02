@@ -1545,13 +1545,13 @@ mixer-golden SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --profile release-fast -p session-desktop
-    # A theme by name is themes/<name>/ or themes/fts-<name>.fm; anything
+    # A theme by name is themes/<name>/ or themes/fts-<name>.frame; anything
     # else is a path. `:` layers them.
     theme=""
     IFS=: read -ra layers <<< "${THEME:-dark}"
     for layer in "${layers[@]}"; do
         if [ -d "apps/session-daw/themes/$layer" ]; then path="$PWD/apps/session-daw/themes/$layer"
-        elif [ -f "apps/session-daw/themes/fts-$layer.fm" ]; then path="$PWD/apps/session-daw/themes/fts-$layer.fm"
+        elif [ -f "apps/session-daw/themes/fts-$layer.frame" ]; then path="$PWD/apps/session-daw/themes/fts-$layer.frame"
         else path="${layer/#\~/$HOME}"; fi
         theme="${theme:+$theme:}$path"
     done
@@ -1574,9 +1574,9 @@ theme-parity PROJECT="features/dynamic-template/fixtures/golden/template.rpp" SI
     set -euo pipefail
     mkdir -p "{{OUT}}"
     cargo build -q --release -p session-daw --bin bench --bin theme_diff --bin theme_export
-    ./target/release/theme_export apps/session-daw/themes/fts-dark.fm
+    ./target/release/theme_export apps/session-daw/themes/fts-dark.frame
     FTS_BENCH_MIXER="{{OUT}}/native.png" FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "{{PROJECT}}" 2>&1 | grep -E 'wrote' || true
-    FTS_THEME=apps/session-daw/themes/fts-dark.fm FTS_BENCH_MIXER="{{OUT}}/themed.png" FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "{{PROJECT}}" 2>&1 | grep -E 'wrote|theme' || true
+    FTS_THEME=apps/session-daw/themes/fts-dark.frame FTS_BENCH_MIXER="{{OUT}}/themed.png" FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "{{PROJECT}}" 2>&1 | grep -E 'wrote|theme' || true
     ./target/release/theme_diff "{{OUT}}/native.png" "{{OUT}}/themed.png" "{{OUT}}/diff.png"
 
 # The studio window (Blitz + the painted arrangement) on a real session,

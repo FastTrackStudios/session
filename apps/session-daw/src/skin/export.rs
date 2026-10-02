@@ -1,6 +1,6 @@
 //! The painters' mixer strip, written out as a theme.
 //!
-//! `fts-dark.fm` is not drawn by hand. It is generated from the same
+//! `fts-dark.frame` is not drawn by hand. It is generated from the same
 //! sources the painters draw from — `daw_theme_art`'s controls, every
 //! state of each, and `strip::Strip`'s geometry written as bindings — so
 //! the themed mixer is the painters' mixer to the pixel, and from then on

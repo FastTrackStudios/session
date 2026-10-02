@@ -16,7 +16,7 @@ Status: the mixer strip is themed (2026-10-02). Spans this repo and
   - `themes/console/` is the console layout as hand-edited files:
     `tokens.frame`, `controls.frame` (each control a component) and
     `strip.frame` (the strip placing them by name).
-  - `themes/fts-dark.fm` is REAPER's layout, still generated from the
+  - `themes/fts-dark.frame` is REAPER's layout, still generated from the
     painters (`skin::export`) because it is the reference the native strip
     is held to, pixel for pixel.
 - **Still native:** the rails, the Tone rack, the strip's edge, selection and

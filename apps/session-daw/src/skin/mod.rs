@@ -474,7 +474,7 @@ mod tests {
     fn a_saved_theme_reloads_and_a_broken_one_does_not() {
         let dir = std::env::temp_dir().join(format!("fts-skin-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("strip.fm");
+        let path = dir.join("strip.frame");
         std::fs::write(&path, THEME).expect("write");
         load(vec![path.clone()], None).expect("loads");
         assert!(current().is_some_and(|t| t.token("ground").is_some()));
