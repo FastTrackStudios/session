@@ -1539,6 +1539,7 @@ daw-animate PROJECT="" SIZE="2560x1440":
 #
 #   just mixer-golden                    at the pictures' 2560x1440
 #   SIMULATE=0 just mixer-golden         silent, as the engine has it
+#   THEME=console just mixer-golden      apps/session-daw/themes/fts-console.fm
 mixer-golden SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1547,7 +1548,7 @@ mixer-golden SIZE="2560x1440":
     FTS_SESSION_MODE=Mix \
     FTS_SESSION_VIEW=mixer \
     FTS_SIMULATE="${SIMULATE:-1}" \
-    FTS_THEME="$PWD/apps/session-daw/themes/fts-dark.fm" \
+    FTS_THEME="$PWD/apps/session-daw/themes/fts-${THEME:-dark}.fm" \
     FTS_WINDOW_SIZE="{{SIZE}}" \
     FTS_SESSION_PROJECT="$PWD/{{GOLDEN_DIR}}/template.rpp" \
     ./target/release-fast/session-desktop

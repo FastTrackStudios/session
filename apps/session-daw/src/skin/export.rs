@@ -56,20 +56,96 @@ const SENTINEL: Tc = Tc {
 /// REAPER width lays its controls out at REAPER's.
 const OWN_W: &str = "(w >= 172 ? 86 : w)";
 
-/// The theme, as markup.
+/// The theme, as markup: the painters' strip, REAPER's layout.
 #[must_use]
 pub fn fts_dark(palette: &Palette) -> String {
+    generate(palette, Layout::Reaper)
+}
+
+/// The same controls, laid out as a console strip — an experiment in
+/// where things go: what records together sits together (input,
+/// monitoring and arm on one row at the top), the chain under it, and
+/// pan, mute and solo on one row right over the fader they set the
+/// level beside.
+#[must_use]
+pub fn fts_console(palette: &Palette) -> String {
+    generate(palette, Layout::Console)
+}
+
+fn generate(palette: &Palette, layout: Layout) -> String {
     let mut x = Gen {
         out: String::new(),
         palette,
+        layout,
     };
     x.document();
     x.out
 }
 
+/// Where a strip's controls go.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Layout {
+    /// `strip::Strip`'s: REAPER's MCP, to the pixel.
+    Reaper,
+    /// Recording on top, the chain under it, pan, mute and solo over the
+    /// fader.
+    Console,
+}
+
 struct Gen<'a> {
     out: String,
     palette: &'a Palette,
+    layout: Layout,
+}
+
+/// Every control's place on the strip, as expressions over the box: the
+/// one table the drawing and the hit targets both read, so a layout is a
+/// table and a control is hit where it is drawn.
+struct Spots {
+    band: (String, String),
+    input: Spot,
+    pan: Spot,
+    fx: Spot,
+    routing: Spot,
+    /// The housing (on a full strip) and the ring.
+    arm_mixer: Spot,
+    arm_panel: Spot,
+    monitor: Spot,
+    mute: Spot,
+    solo: Spot,
+    fader_x: String,
+    fader_top: String,
+    travel: String,
+    scale_x: String,
+    scale_visible: String,
+}
+
+/// A control's left, top, width and height, and when it shows (empty:
+/// always).
+struct Spot {
+    x: String,
+    y: String,
+    w: String,
+    h: String,
+    visible: String,
+}
+
+impl Spot {
+    fn new(
+        x: impl Into<String>,
+        y: impl Into<String>,
+        w: impl Into<String>,
+        h: impl Into<String>,
+        visible: impl Into<String>,
+    ) -> Self {
+        Self {
+            x: x.into(),
+            y: y.into(),
+            w: w.into(),
+            h: h.into(),
+            visible: visible.into(),
+        }
+    }
 }
 
 /// Formats a number the way markup wants it: exactly, and short.
@@ -358,6 +434,161 @@ impl Gen<'_> {
         })
     }
 
+    /// Every control's place, for this layout.
+    fn spots(&self) -> Spots {
+        match self.layout {
+            Layout::Reaper => self.reaper_spots(),
+            Layout::Console => self.console_spots(),
+        }
+    }
+
+    fn reaper_spots(&self) -> Spots {
+        let (full, head) = (self.full(), self.head());
+        let arm_top = self.arm_top();
+        let col = self.column_x();
+        let axis = self.column_axis();
+        let step = |c| format!("{arm_top} + {}", self.step(c));
+        let show_input = piecewise("mixer.h", 2000.0, |h| {
+            crate::strip::shape(h, false).show_record_input.to_string()
+        });
+        let travel = self.travel();
+        let shown = format!("{} && {travel} > 0", self.has_fader());
+        Spots {
+            band: (
+                "33".into(),
+                format!("{} + {}", self.pan_band(), self.input_band()),
+            ),
+            input: Spot::new(
+                "6",
+                format!("(33 + {} + 2)", self.pan_band()),
+                "min(w - 12, 75)",
+                "16",
+                format!("{head} && {show_input} && track.armed"),
+            ),
+            pan: Spot::new(
+                "5",
+                "35",
+                n(f64::from(g::PAN_KNOB_W)),
+                format!("{} - 35", self.band_bottom()),
+                format!("{head} && {} + {} > 26", self.pan_band(), self.input_band()),
+            ),
+            fx: Spot::new("7", "9", "max(w - 14, 36)", "24", head.clone()),
+            routing: Spot::new(
+                format!("{col} - {}", n(art::ROUTING_INSET_V)),
+                step(crate::mcp::Control::Routing),
+                n(art::ROUTING_CELL_V.0),
+                n(art::ROUTING_CELL_V.1),
+                full.clone(),
+            ),
+            arm_mixer: Spot::new(
+                format!("{axis} - {}", n(f64::from(g::ARM_CELL_W) * 0.486)),
+                arm_top.clone(),
+                "36",
+                "24",
+                full.clone(),
+            ),
+            arm_panel: Spot::new(
+                format!("{axis} - 10"),
+                arm_top.clone(),
+                "20",
+                "20",
+                format!("!{full} && w >= 22"),
+            ),
+            monitor: Spot::new(
+                col.clone(),
+                format!("{arm_top} + 3 - {}", n(f64::from(g::BUTTON_H))),
+                "21",
+                "20",
+                format!("{full} && track.armed"),
+            ),
+            mute: Spot::new(col.clone(), step(crate::mcp::Control::Mute), "21", "20", ""),
+            solo: Spot::new(col, step(crate::mcp::Control::Solo), "21", "20", ""),
+            fader_x: self.fader_x(),
+            fader_top: self.fader_top(),
+            scale_x: format!("max({} - 24, 1)", self.fader_x()),
+            scale_visible: format!("{head} && {shown}"),
+            travel,
+        }
+    }
+
+    /// The console layout. Rows, top to bottom, on a full strip:
+    ///
+    /// ```text
+    ///  [Input ▾      ][◠][●]   recording: what, whether you hear it, armed
+    ///  [      FX      ]       the chain
+    ///  (pan)      [M][S]      the mix: where, whether, alone
+    ///  scale | fader | route  the level
+    /// ```
+    ///
+    /// Narrower than that, the rows stack centred instead.
+    fn console_spots(&self) -> Spots {
+        let full = format!("({OWN_W} >= 78)");
+        let fits = format!("({OWN_W} >= 46)");
+        let name_top = self.name_top();
+        let fader_top = format!("({full} ? 90 : 128)");
+        let travel = format!("max({name_top} - 3 - {fader_top}, 0)");
+        let fader_x = format!("(({OWN_W} - 30) / 2)");
+        Spots {
+            band: ("0".into(), format!("({full} ? 82 : 120)")),
+            input: Spot::new(
+                "6",
+                "6",
+                format!("{OWN_W} - 60"),
+                "16",
+                format!("{full} && track.armed"),
+            ),
+            monitor: Spot::new(
+                format!("{OWN_W} - 48"),
+                "4",
+                "21",
+                "20",
+                format!("{full} && track.armed"),
+            ),
+            arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
+            arm_panel: Spot::new(
+                format!("{full} ? {OWN_W} - 25 : ({OWN_W} - 20) / 2"),
+                "4",
+                "20",
+                "20",
+                "w >= 22",
+            ),
+            fx: Spot::new("7", "30", "max(w - 14, 36)", "24", fits.clone()),
+            pan: Spot::new(
+                format!("{full} ? 6 : ({OWN_W} - 24) / 2"),
+                "56",
+                "24",
+                "25",
+                fits.clone(),
+            ),
+            mute: Spot::new(
+                format!("{full} ? {OWN_W} - 48 : ({OWN_W} - 21) / 2"),
+                format!("{full} ? 58 : 84"),
+                "21",
+                "20",
+                "",
+            ),
+            solo: Spot::new(
+                format!("{full} ? {OWN_W} - 25 : ({OWN_W} - 21) / 2"),
+                format!("{full} ? 58 : 106"),
+                "21",
+                "20",
+                "",
+            ),
+            routing: Spot::new(
+                format!("{OWN_W} - 27"),
+                fader_top.clone(),
+                n(art::ROUTING_CELL_V.0),
+                n(art::ROUTING_CELL_V.1),
+                full.clone(),
+            ),
+            scale_x: format!("max({fader_x} - 24, 1)"),
+            scale_visible: format!("{fits} && {travel} > 0"),
+            fader_x,
+            fader_top,
+            travel,
+        }
+    }
+
     // ── drawings as nodes ─────────────────────────────────────────────
 
     /// A frame holding `drawing`, at `x`/`y` (expressions), shown when
@@ -602,24 +833,25 @@ impl Gen<'_> {
         self.line(3, "<Rectangle name=\"Ground\" w=86 h=400 bind:w=\"w\" bind:h=\"h\" bind:fill=\"track.ground\" />");
         self.line(3, "<Rectangle name=\"Edge\" w=1 h=400 bind:h=\"h\" bind:fill=\"track.edge\" bind:visible=\"track.has_edge\" />");
         self.line(3, "<Rectangle name=\"Selected\" w=86 h=2 bind:fill=\"$accent\" bind:w=\"w\" bind:visible=\"track.selected && !ui.rack\" />");
-        let band = format!("{} + {}", self.pan_band(), self.input_band());
-        self.line(
-            3,
-            &format!("<Rectangle name=\"Band\" y=33 w=86 h=87 bind:w=\"w\" bind:h={} bind:fill=\"track.tint\" />", q(&band)),
-        );
-
-        // The record input, on armed tracks.
-        let show_input = piecewise("mixer.h", 2000.0, |h| {
-            crate::strip::shape(h, false).show_record_input.to_string()
-        });
-        let field_top = format!("(33 + {} + 2)", self.pan_band());
+        let spots = self.spots();
         self.line(
             3,
             &format!(
-                "<Frame name=\"Input\" x=6 w=75 h=16 bind:y={} bind:w={} bind:visible={} fill=\"{}\">",
-                q(&field_top),
-                q("min(w - 12, 75)"),
-                q(&format!("{} && {show_input} && track.armed", self.head())),
+                "<Rectangle name=\"Band\" y=33 w=86 h=87 bind:w=\"w\" bind:y={} bind:h={} bind:fill=\"track.tint\" />",
+                q(&spots.band.0),
+                q(&spots.band.1)
+            ),
+        );
+
+        // The record input, on armed tracks.
+        self.line(
+            3,
+            &format!(
+                "<Frame name=\"Input\" x=6 w=75 h=16 bind:x={} bind:y={} bind:w={} bind:visible={} fill=\"{}\">",
+                q(&spots.input.x),
+                q(&spots.input.y),
+                q(&spots.input.w),
+                q(&spots.input.visible),
                 hex(to_theme(p.tcp_combo))
             ),
         );
@@ -682,16 +914,16 @@ impl Gen<'_> {
     fn live(&mut self) {
         let p = self.palette;
         let chrome = &p.chrome;
-        let head = self.head();
-        let full = self.full();
+        let spots = self.spots();
 
         // The pan knob.
-        let pan_show = format!("{head} && {} + {} > 26", self.pan_band(), self.input_band());
         self.line(
             3,
             &format!(
-                "<Frame name=\"Pan\" x=5 y=35 w=24 h=25 bind:visible={}>",
-                q(&pan_show)
+                "<Frame name=\"Pan\" x=5 y=35 w=24 h=25 bind:x={} bind:y={} bind:visible={}>",
+                q(&spots.pan.x),
+                q(&spots.pan.y),
+                q(&spots.pan.visible)
             ),
         );
         self.pan_knob(4);
@@ -710,15 +942,15 @@ impl Gen<'_> {
                 };
                 let (name, visible) = (
                     format!("FX {chain:?} {at:?}"),
-                    format!("{head} && {has} && {}", state("fx", at)),
+                    format!("{} && {has} && {}", spots.fx.visible, state("fx", at)),
                 );
                 self.drawing(
                     3,
                     &d,
                     &Place {
                         name: &name,
-                        x: "7",
-                        y: "9",
+                        x: &spots.fx.x,
+                        y: &spots.fx.y,
                         visible: &visible,
                         follow: Follow::Width {
                             w0,
@@ -730,17 +962,12 @@ impl Gen<'_> {
                     },
                 );
                 // The pill is as wide as the strip lets it be.
-                self.patch_last_frame_width("max(w - 14, 36)");
+                self.patch_last_frame_width(&spots.fx.w);
             }
         }
 
         // Routing.
-        let route_y = format!(
-            "{} + {}",
-            self.arm_top(),
-            self.step(crate::mcp::Control::Routing)
-        );
-        let route_x = format!("{} - {}", self.column_x(), n(art::ROUTING_INSET_V));
+        let (route_x, route_y) = (spots.routing.x.clone(), spots.routing.y.clone());
         for bits in 0..8_u8 {
             let routes = art::Routing {
                 parent_send: bits & 1 != 0,
@@ -775,7 +1002,11 @@ impl Gen<'_> {
                 );
                 let (name, visible) = (
                     format!("Routing {bits} {at:?}"),
-                    format!("{full} && {when} && {}", state("routing", at)),
+                    format!(
+                        "{} && {when} && {}",
+                        spots.routing.visible,
+                        state("routing", at)
+                    ),
                 );
                 self.drawing(
                     3,
@@ -794,20 +1025,11 @@ impl Gen<'_> {
         }
 
         // The record arm: the housing on a full strip, the ring otherwise.
-        let arm_top = self.arm_top();
-        let axis = self.column_axis();
-        for (style, tier, x) in [
-            (
-                art::Arm::Mixer,
-                full.clone(),
-                format!("{axis} - {}", n(f64::from(g::ARM_CELL_W) * 0.486)),
-            ),
-            (
-                art::Arm::Panel,
-                format!("!{full} && w >= 22"),
-                format!("{axis} - 10"),
-            ),
+        for (style, spot) in [
+            (art::Arm::Mixer, &spots.arm_mixer),
+            (art::Arm::Panel, &spots.arm_panel),
         ] {
+            let (tier, x, arm_top) = (spot.visible.clone(), spot.x.clone(), spot.y.clone());
             for armed in [false, true] {
                 for at in STATES {
                     let d =
@@ -835,9 +1057,8 @@ impl Gen<'_> {
             }
         }
 
-        let column_x = self.column_x();
-        // Input monitoring, over the arm, on armed tracks.
-        let monitor_y = format!("{arm_top} + 3 - {}", n(f64::from(g::BUTTON_H)));
+        // Input monitoring, beside the arm, on armed tracks.
+        let (monitor_x, monitor_y) = (spots.monitor.x.clone(), spots.monitor.y.clone());
         for (mode, value) in [
             (art::Monitoring::Off, 0),
             (art::Monitoring::Normal, 1),
@@ -856,7 +1077,8 @@ impl Gen<'_> {
                 let d = art::monitor(chrome, mode, lit, at, art::Facing::Up);
                 let name = format!("Monitor {mode:?} {at:?}");
                 let visible = format!(
-                    "{full} && track.armed && track.monitor == {value} && {}",
+                    "{} && track.monitor == {value} && {}",
+                    spots.monitor.visible,
                     state("monitor", at)
                 );
                 self.drawing(
@@ -864,7 +1086,7 @@ impl Gen<'_> {
                     &d,
                     &Place {
                         name: &name,
-                        x: &column_x,
+                        x: &monitor_x,
                         y: &monitor_y,
                         visible: &visible,
                         follow: Follow::Fixed,
@@ -890,7 +1112,12 @@ impl Gen<'_> {
                 crate::tcp::solo_lit(p),
             ),
         ] {
-            let y = format!("{arm_top} + {}", self.step(control));
+            let spot = if control == crate::mcp::Control::Mute {
+                &spots.mute
+            } else {
+                &spots.solo
+            };
+            let (x, y) = (spot.x.clone(), spot.y.clone());
             for on in [false, true] {
                 for at in STATES {
                     let d = art::gutter_button_sized(
@@ -913,7 +1140,7 @@ impl Gen<'_> {
                         &d,
                         &Place {
                             name: &title,
-                            x: &column_x,
+                            x: &x,
                             y: &y,
                             visible: &visible,
                             follow: Follow::Fixed,
@@ -1057,13 +1284,14 @@ impl Gen<'_> {
             to_theme(p.meter_warn),
             to_theme(p.meter_danger),
         ];
-        let top = self.fader_top();
-        let travel = self.travel();
+        let spots = self.spots();
+        let top = spots.fader_top.clone();
+        let travel = spots.travel.clone();
         let shown = format!("{} && {travel} > 0", self.has_fader());
 
         // The scale, against the meter.
-        let scale_x = format!("max({} - 24, 1)", self.fader_x());
-        let scale_shown = format!("{} && {shown}", self.head());
+        let scale_x = spots.scale_x.clone();
+        let scale_shown = spots.scale_visible.clone();
         self.line(
             3,
             &format!(
@@ -1125,7 +1353,7 @@ impl Gen<'_> {
         self.line(3, "</Frame>");
 
         // The fader's column: the meter in the groove, the cap over it.
-        let fader_x = self.fader_x();
+        let fader_x = spots.fader_x.clone();
         self.line(
             3,
             &format!(
@@ -1282,15 +1510,34 @@ impl Gen<'_> {
     /// The controls a click lands on, last on top — the order
     /// `Strip::control_at` asks them in, reversed.
     fn hits(&mut self) {
-        let full = self.full();
-        let head = self.head();
-        let arm_top = self.arm_top();
-        let col = self.column_x();
-        let axis = self.column_axis();
-        let top = self.fader_top();
-        let travel = self.travel();
-        let pan_show = format!("{head} && {} + {} > 26", self.pan_band(), self.input_band());
-        let rows: Vec<(&str, String, String, String, String, String)> = vec![
+        let spots = self.spots();
+        let arm_x = format!(
+            "{} ? {} : {}",
+            spots.arm_mixer.visible, spots.arm_mixer.x, spots.arm_panel.x
+        );
+        let arm_y = format!(
+            "{} ? {} : {}",
+            spots.arm_mixer.visible, spots.arm_mixer.y, spots.arm_panel.y
+        );
+        let arm_w = format!(
+            "{} ? {} : {}",
+            spots.arm_mixer.visible, spots.arm_mixer.w, spots.arm_panel.w
+        );
+        let arm_h = format!(
+            "{} ? {} : {}",
+            spots.arm_mixer.visible, spots.arm_mixer.h, spots.arm_panel.h
+        );
+        let arm_visible = format!("{} || {}", spots.arm_mixer.visible, spots.arm_panel.visible);
+        let hit = |s: &Spot| {
+            (
+                s.x.clone(),
+                s.y.clone(),
+                s.w.clone(),
+                s.h.clone(),
+                s.visible.clone(),
+            )
+        };
+        let mut rows: Vec<(&str, String, String, String, String, String)> = vec![
             (
                 "name",
                 "0".into(),
@@ -1309,80 +1556,34 @@ impl Gen<'_> {
             ),
             (
                 "fader",
-                self.fader_x(),
-                top.clone(),
+                spots.fader_x.clone(),
+                spots.fader_top.clone(),
                 "30".into(),
-                travel.clone(),
+                spots.travel.clone(),
                 String::new(),
             ),
             (
                 "clip",
-                self.fader_x(),
-                top.clone(),
+                spots.fader_x.clone(),
+                spots.fader_top.clone(),
                 "30".into(),
                 n(art::CLIP_H),
-                format!("{travel} > 0"),
-            ),
-            (
-                "pan",
-                "5".into(),
-                "35".into(),
-                n(f64::from(g::PAN_KNOB_W)),
-                format!("{} - 35", self.band_bottom()),
-                pan_show,
-            ),
-            (
-                "fx",
-                "7".into(),
-                "9".into(),
-                "w - 14".into(),
-                "24".into(),
-                head.clone(),
-            ),
-            (
-                "routing",
-                format!("{col} - {}", n(art::ROUTING_INSET_V)),
-                format!("{arm_top} + {}", self.step(crate::mcp::Control::Routing)),
-                n(art::ROUTING_CELL_V.0),
-                n(art::ROUTING_CELL_V.1),
-                full.clone(),
-            ),
-            (
-                "solo",
-                col.clone(),
-                format!("{arm_top} + {}", self.step(crate::mcp::Control::Solo)),
-                "21".into(),
-                "20".into(),
-                String::new(),
-            ),
-            (
-                "mute",
-                col.clone(),
-                format!("{arm_top} + {}", self.step(crate::mcp::Control::Mute)),
-                "21".into(),
-                "20".into(),
-                String::new(),
-            ),
-            (
-                "monitor",
-                col.clone(),
-                format!("{arm_top} + 3 - 20"),
-                "21".into(),
-                "20".into(),
-                full.clone(),
-            ),
-            (
-                "arm",
-                format!(
-                    "{full} ? {axis} - {} : {axis} - 10",
-                    n(f64::from(g::ARM_CELL_W) * 0.486)
-                ),
-                arm_top.clone(),
-                format!("{full} ? 36 : 20"),
-                format!("{full} ? 24 : 20"),
-                format!("{full} || w >= 22"),
+                format!("{} > 0", spots.travel),
             ),
         ];
+        // Last on top: `Strip::control_at`'s order, reversed.
+        for (name, spot) in [
+            ("pan", &spots.pan),
+            ("fx", &spots.fx),
+            ("routing", &spots.routing),
+            ("solo", &spots.solo),
+            ("mute", &spots.mute),
+            ("monitor", &spots.monitor),
+        ] {
+            let (x, y, w, h, visible) = hit(spot);
+            rows.push((name, x, y, w, h, visible));
+        }
+        rows.push(("arm", arm_x, arm_y, arm_w, arm_h, arm_visible));
         for (name, x, y, w, h, visible) in rows {
             let mut a = format!(
                 "name=\"@{name}\" w=10 h=10 bind:x={} bind:y={} bind:w={} bind:h={}",
@@ -1559,5 +1760,71 @@ mod tests {
             }
         }
         assert!(checked > 3000);
+    }
+
+    /// The console layout: at every width, its controls stay inside the
+    /// strip and off each other, armed or not.
+    #[test]
+    fn the_console_controls_do_not_collide() {
+        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let theme = Theme::from_markup(&super::fts_console(&palette), super::super::schema(), None)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{}",
+                    e.iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            });
+        let names = [
+            "fx", "pan", "arm", "monitor", "mute", "solo", "routing", "fader", "name",
+        ];
+        for armed in [false, true] {
+            for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37, 260.5] {
+                for height in [300.0, 600.0, 900.0] {
+                    let track = daw_proto::Track {
+                        armed,
+                        ..daw_proto::Track::default()
+                    };
+                    let fields = super::super::fields(
+                        &palette,
+                        &track,
+                        super::super::Shown {
+                            width,
+                            mixer_h: height,
+                            ..Default::default()
+                        },
+                    );
+                    let rects: Vec<(&str, vello::kurbo::Rect)> = names
+                        .iter()
+                        .filter_map(|name| {
+                            theme
+                                .target_rect(super::super::STRIP, (width, height), &fields, name)
+                                .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+                                .map(|r| (*name, r))
+                        })
+                        .collect();
+                    for (name, r) in &rects {
+                        assert!(
+                            r.x0 >= -0.5
+                                && r.x1 <= width + 0.5
+                                && r.y0 >= -0.5
+                                && r.y1 <= height + 0.5,
+                            "{name} at {width}x{height} armed {armed}: {r:?} outside the strip"
+                        );
+                    }
+                    for (i, (a, ra)) in rects.iter().enumerate() {
+                        for (b, rb) in rects.iter().skip(i + 1) {
+                            let overlap = ra.intersect(*rb);
+                            assert!(
+                                overlap.width() <= 0.5 || overlap.height() <= 0.5,
+                                "{a} and {b} collide at {width}x{height} armed {armed}: {ra:?} {rb:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }
