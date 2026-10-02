@@ -518,17 +518,18 @@ impl Gen<'_> {
     /// The console layout: one stack, read from the fader up.
     ///
     /// ```text
-    ///  [      FX      ]       the chain
-    ///             [routing]   where it comes in and goes out
-    ///  [Input ▾][◠]   [●]     recording (not while mixing)
-    ///                 (pan)   the mix: where,
-    ///                  [S]    alone,
-    ///                  [M]    whether
-    ///  scale | fader          the level
+    ///  [      FX      ]       the chain                  ┐
+    ///             [routing]   where it comes in and out  │ the track's
+    ///  [Input ▾][◠]   [●]     recording (not mixing)     │ coloured
+    ///                  [S]    alone,                     │ band
+    ///                  [M]    whether                    ┘
+    ///        (pan)            where,                     ┐ the mix,
+    ///  scale | fader          how loud                   ┘ together
     /// ```
     ///
-    /// Mute sits right on the fader, then solo, the pan, the arm, the
-    /// routing and the chain at the head. Mixing, nothing is armed, so the
+    /// The pan sits on the fader, out of the band and centred over it, so
+    /// where a track is and how loud are one place. Above it in the band,
+    /// mute, solo, the arm, the routing and the chain at the head. Mixing, the
     /// recording row is left out and the stack is that much shorter; the
     /// order never changes. Everything is in the same place on every strip
     /// of a mode, whatever its width — one column, its right edge four
@@ -541,17 +542,18 @@ impl Gen<'_> {
         let column = format!("({OWN_W} - 25)");
         let records = "!ui.mixing";
         // From the top: the chain, the routing, then the recording row
-        // when there is one; from there down, the pan, solo, mute and the
-        // fader, each a fixed step below the one before.
-        let pan_y = format!("({records} ? 74 : 52)");
-        let solo_y = format!("({pan_y} + 27)");
+        // when there is one; from there down solo, mute, the band's foot,
+        // the pan and the fader, each a fixed step below the one before.
+        let solo_y = format!("({records} ? 74 : 52)");
         let mute_y = format!("({solo_y} + 22)");
-        let fader_top = format!("({mute_y} + 24)");
+        let band_bottom = format!("({mute_y} + 24)");
+        let pan_y = format!("({band_bottom} + 3)");
+        let fader_top = format!("({pan_y} + 27)");
         let name_top = self.name_top();
         let travel = format!("max({name_top} - 3 - {fader_top}, 0)");
         let fader_x = format!("(({OWN_W} - 30) / 2)");
         Spots {
-            band: ("0".into(), format!("{fader_top} - 4")),
+            band: ("0".into(), band_bottom),
             fx: Spot::new(
                 "7",
                 "4",
@@ -588,7 +590,8 @@ impl Gen<'_> {
                 "20",
                 format!("{records} && w >= 22"),
             ),
-            pan: Spot::new(format!("{column} - 1.5"), pan_y, "24", "25", "w >= 26"),
+            // Centred over the fader's cap.
+            pan: Spot::new(format!("{fader_x} + 3"), pan_y, "24", "25", "w >= 26"),
             solo: Spot::new(column.clone(), solo_y, "21", "20", ""),
             mute: Spot::new(column, mute_y, "21", "20", ""),
             // Routing is in the stack; the fader column keeps none.
@@ -1940,7 +1943,7 @@ mod tests {
         let (theme, palette) = console();
         // (mute, solo) heights: recording and neither, the full stack;
         // mixing, one row shorter.
-        let heights = [(123.0, 101.0), (101.0, 79.0), (123.0, 101.0)];
+        let heights = [(96.0, 74.0), (74.0, 52.0), (96.0, 74.0)];
         for ((mixing, recording), heights) in MODES.into_iter().zip(heights) {
             let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
             for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37] {
@@ -1949,13 +1952,19 @@ mod tests {
                 let at = |name| rects.iter().find(|(n, _)| *n == name).map(|(_, r)| *r);
                 let (mute, solo) = (at("mute").expect("mute"), at("solo").expect("solo"));
                 seen.push((width - mute.x1, mute.y0, width - solo.x1, solo.y0));
-                // From the fader up: mute, solo, pan, the arm, the routing.
+                // From the fader up: the pan, mute, solo, the arm, the routing.
                 let (pan, route) = (at("pan").expect("pan"), at("routing").expect("routing"));
+                let fader = at("fader").expect("fader");
                 assert!(
-                    solo.y1 <= mute.y0 && pan.y1 <= solo.y0,
-                    "mute, solo, pan from the bottom at {width}"
+                    pan.y1 <= fader.y0 && mute.y1 <= pan.y0 && solo.y1 <= mute.y0,
+                    "pan, mute, solo from the fader up at {width}"
                 );
-                assert!(route.y1 <= pan.y0, "the routing over the pan at {width}");
+                // The pan centred on the fader, not on the mute/solo column.
+                assert!(
+                    (pan.center().x - fader.center().x).abs() < 1.0,
+                    "pan over the fader at {width}: {pan:?} {fader:?}"
+                );
+                assert!(route.y1 <= solo.y0, "the routing over solo at {width}");
                 assert_eq!(
                     at("arm").is_some(),
                     !mixing,
@@ -1963,8 +1972,8 @@ mod tests {
                 );
                 if let Some(arm) = at("arm") {
                     assert!(
-                        arm.y1 <= pan.y0 && route.y1 <= arm.y0,
-                        "the arm between pan and routing at {width}"
+                        arm.y1 <= solo.y0 && route.y1 <= arm.y0,
+                        "the arm between solo and routing at {width}"
                     );
                 }
                 if let Some(fx) = at("fx") {
