@@ -515,52 +515,53 @@ impl Gen<'_> {
         }
     }
 
-    /// The console layout.
+    /// The console layout, every control centred on the strip.
     ///
     /// ```text
     ///  [      FX      ]       the chain                  ┐
-    ///             [routing]   where it comes in and out  │ the track's
-    ///                  [S]    alone,                     │ coloured band
-    ///                  [M]    whether                    ┘
-    ///        (pan)            where,                     ┐ the mix,
+    ///     [routing]           where it comes in and out  │ the track's
+    ///       [S]               alone,                     │ coloured band
+    ///       [M]               whether                    ┘
+    ///      (pan)              where,                     ┐ the mix,
     ///  scale | fader          how loud                   ┘ together
-    ///  [Input ▾][◠]   [●]     recording (not mixing)
+    ///  [   Input ▾    ]       recording (not mixing):    ┐ on the name
+    ///    [◠] [●]              heard, armed               ┘ it records to
     ///  ─── name ───
     /// ```
     ///
     /// The band and the mix are the same in every mode: mute, solo and the
-    /// pan are at one height on every strip whatever the mode or width. The
-    /// recording row sits under the fader, on the name it records to —
-    /// mixing, it is left out and the fader has its room. The arm heads
-    /// nothing now; it is in the mute/solo column's line, its right edge
-    /// four pixels in from the strip's. What gives way on a narrow strip
-    /// is what does not fit: the chain below 46, the input and the monitor
-    /// below a full strip.
+    /// pan are at one height on every strip whatever the mode or width, on
+    /// the strip's centre line. The recording rows sit under the fader;
+    /// mixing, they are left out and the fader has their room. What gives
+    /// way on a narrow strip is what does not fit: the chain below 46, the
+    /// input and the monitor below a full strip.
     fn console_spots(&self) -> Spots {
         let full = format!("({OWN_W} >= 78)");
-        let column = format!("({OWN_W} - 25)");
+        // Every control centred on the strip.
+        let centre = |width: f64| format!("(({OWN_W} - {}) / 2)", n(width));
         let records = "!ui.mixing";
         let name_top = self.name_top();
-        // The recording row, right on the name; its 26 rows come out of
-        // the fader's travel when there is one.
+        // The recording rows, right on the name: the arm (and the monitor
+        // beside it), and on a full strip the input over them. Their rows
+        // come out of the fader's travel when there are any.
         let row = format!("({name_top} - 23)");
-        let row_h = format!("({records} ? 26 : 0)");
+        let row_h = format!("({records} ? ({full} ? 44 : 26) : 0)");
         // From the top: the chain, the routing, solo, mute, the band's
         // foot, the pan and the fader, each a fixed step below the last.
         let (solo_y, mute_y, band_bottom, pan_y, fader_top) = ("52", "74", "98", "101", "128");
         let travel = format!("max({name_top} - 3 - {row_h} - {fader_top}, 0)");
-        let fader_x = format!("(({OWN_W} - 30) / 2)");
+        let fader_x = centre(30.0);
         Spots {
             band: ("0".into(), band_bottom.into()),
             fx: Spot::new(
-                "7",
+                "(w - max(w - 14, 36)) / 2",
                 "4",
                 "max(w - 14, 36)",
                 "22",
                 format!("({OWN_W} >= 46)"),
             ),
             routing_head: Some(Spot::new(
-                format!("max({OWN_W} - 32, 1)"),
+                format!("max({}, 1)", centre(28.0)),
                 "28",
                 "28",
                 "22",
@@ -568,13 +569,13 @@ impl Gen<'_> {
             )),
             input: Spot::new(
                 "6",
-                format!("{row} + 2"),
-                format!("{OWN_W} - 60"),
+                format!("{row} - 19"),
+                format!("{OWN_W} - 12"),
                 "16",
-                format!("{records} && {full} && track.armed"),
+                format!("{records} && {full}"),
             ),
             monitor: Spot::new(
-                format!("{OWN_W} - 48"),
+                format!("{} - 24", centre(20.0)),
                 row.clone(),
                 "21",
                 "20",
@@ -582,16 +583,16 @@ impl Gen<'_> {
             ),
             arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
             arm_panel: Spot::new(
-                format!("{column} + 0.5"),
+                centre(20.0),
                 row,
                 "20",
                 "20",
                 format!("{records} && w >= 22"),
             ),
-            // Centred over the fader's cap.
-            pan: Spot::new(format!("{fader_x} + 3"), pan_y, "24", "25", "w >= 26"),
-            solo: Spot::new(column.clone(), solo_y, "21", "20", ""),
-            mute: Spot::new(column, mute_y, "21", "20", ""),
+            // Over the fader's cap.
+            pan: Spot::new(centre(24.0), pan_y, "24", "25", "w >= 26"),
+            solo: Spot::new(centre(21.0), solo_y, "21", "20", ""),
+            mute: Spot::new(centre(21.0), mute_y, "21", "20", ""),
             // Routing is in the band; the fader column keeps none.
             routing: Spot::new(
                 "-100",
@@ -1934,8 +1935,8 @@ mod tests {
     }
 
     /// Mute and solo are in one place on every console strip of a mode:
-    /// the same heights, the same distance from the strip's right edge.
-    /// Mixing, no arm at all; recording, the routing heads the strip.
+    /// the same heights, on the strip's centre line with everything else.
+    /// Mixing, no arm at all; recording, the arm on the name.
     #[test]
     fn the_console_puts_mute_and_solo_in_one_place_at_every_width() {
         let (theme, palette) = console();
@@ -1949,7 +1950,14 @@ mod tests {
                     console_targets(&theme, &palette, (width, 600.0), (mixing, recording, true));
                 let at = |name| rects.iter().find(|(n, _)| *n == name).map(|(_, r)| *r);
                 let (mute, solo) = (at("mute").expect("mute"), at("solo").expect("solo"));
-                seen.push((width - mute.x1, mute.y0, width - solo.x1, solo.y0));
+                // Measured from the strip's centre: on it, at fixed heights.
+                let off = |r: vello::kurbo::Rect| r.center().x - width / 2.0;
+                seen.push((off(mute), mute.y0, off(solo), solo.y0));
+                for name in ["pan", "arm", "routing", "fx"] {
+                    if let Some(r) = at(name) {
+                        assert!(off(r).abs() < 0.01, "{name} off centre at {width}: {r:?}");
+                    }
+                }
                 // From the fader up: the pan, mute, solo, the arm, the routing.
                 let (pan, route) = (at("pan").expect("pan"), at("routing").expect("routing"));
                 let fader = at("fader").expect("fader");
@@ -1981,7 +1989,7 @@ mod tests {
                 }
             }
             assert!(seen.windows(2).all(|w| w[0] == w[1]), "{seen:?}");
-            assert_eq!(seen[0], (4.0, heights.0, 4.0, heights.1));
+            assert_eq!(seen[0], (0.0, heights.0, 0.0, heights.1));
         }
     }
 }
