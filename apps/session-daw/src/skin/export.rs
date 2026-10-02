@@ -529,7 +529,7 @@ impl Gen<'_> {
     ///      (pan)              where,                     ┐ the mix,
     ///  scale | fader          how loud                   ┘ together
     ///  [   Input ▾    ]       recording (not mixing):    ┐ on the name
-    ///    [◠] [●]              heard, armed               ┘ it records to
+    ///      [●] [◠]            armed, heard (once armed)  ┘ it records to
     ///  ─── name ───
     /// ```
     ///
@@ -548,10 +548,11 @@ impl Gen<'_> {
         // The recording rows, right on the name: the arm (and the monitor
         // beside it), and on a full strip the input over them. Their rows
         // come out of the fader's travel when there are any.
-        // The arm's foot on the name plate's top: the plate's own margin
-        // is the gap between them.
-        let row = format!("({name_top} - 20)");
-        let row_h = format!("({records} ? ({full} ? 41 : 23) : 0)");
+        // The arm right over the name: its box reaches four rows into the
+        // name plate's empty top, so the name's letters are just under
+        // the ring.
+        let row = format!("({name_top} - 16)");
+        let row_h = format!("({records} ? ({full} ? 37 : 19) : 0)");
         // From the top: the chain, the routing, solo, mute, the band's
         // foot, the pan and the fader, each a fixed step below the last.
         let (solo_y, mute_y, band_bottom, pan_y, fader_top) = ("52", "74", "98", "101", "128");
@@ -586,11 +587,14 @@ impl Gen<'_> {
                 format!("{records} && {full}"),
             ),
             monitor: Spot::new(
-                format!("{} - 24", centre(20.0)),
+                // Right of the arm, only while it is on, where the strip
+                // has the room for the pair: the arm centred, 4 between,
+                // the monitor's 21 and 2 to spare make 74.
+                format!("{} + 24", centre(20.0)),
                 row.clone(),
                 "21",
                 "20",
-                format!("{records} && {full} && track.armed"),
+                format!("{records} && {OWN_W} >= 74 && track.armed"),
             ),
             arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
             arm_panel: Spot::new(
@@ -1964,8 +1968,16 @@ mod tests {
                         for (i, (a, ra)) in rects.iter().enumerate() {
                             for (b, rb) in rects.iter().skip(i + 1) {
                                 let overlap = ra.intersect(*rb);
+                                // The recording row's boxes reach four rows
+                                // into the name plate's empty top; their
+                                // drawings do not.
+                                let slack = if *b == "name" && matches!(*a, "arm" | "monitor") {
+                                    4.0
+                                } else {
+                                    0.5
+                                };
                                 assert!(
-                                    overlap.width() <= 0.5 || overlap.height() <= 0.5,
+                                    overlap.width() <= 0.5 || overlap.height() <= slack,
                                     "{a} and {b} collide at {mode}: {ra:?} {rb:?}"
                                 );
                             }
@@ -2018,11 +2030,28 @@ mod tests {
                     !mixing,
                     "arm at {width} (mixing {mixing})"
                 );
+                // The monitor right of the arm, once armed and where it fits.
+                if let (Some(arm), Some(monitor)) = (at("arm"), at("monitor")) {
+                    assert!(monitor.x0 >= arm.x1, "monitor right of the arm at {width}");
+                }
+                if recording && width >= 74.0 {
+                    assert!(at("monitor").is_some(), "monitor at {width}");
+                    let unarmed = console_targets(
+                        &theme,
+                        &palette,
+                        (width, 600.0),
+                        (mixing, recording, false),
+                    );
+                    assert!(
+                        unarmed.iter().all(|(n, _)| *n != "monitor"),
+                        "no monitor unarmed at {width}"
+                    );
+                }
                 // The arm under the fader's travel, on the name.
                 if let Some(arm) = at("arm") {
                     let name = at("name").expect("name");
                     assert!(
-                        arm.y0 >= fader.y1 && arm.y1 <= name.y0,
+                        arm.y0 >= fader.y1 && arm.y1 <= name.y0 + 4.0,
                         "the arm on the name at {width}: {arm:?} {fader:?} {name:?}"
                     );
                 }
