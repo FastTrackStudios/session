@@ -63,10 +63,10 @@ pub fn fts_dark(palette: &Palette) -> String {
 }
 
 /// The same controls, laid out as a console strip — an experiment in
-/// where things go: what records together sits together (input,
-/// monitoring and arm on one row at the top), the chain under it, and
-/// pan, mute and solo on one row right over the fader they set the
-/// level beside.
+/// where things go: the chain at the head of the strip, what records
+/// together sitting together under it (input, monitoring and arm on one
+/// row), and pan, mute and solo right over the fader they set the level
+/// beside.
 #[must_use]
 pub fn fts_console(palette: &Palette) -> String {
     generate(palette, Layout::Console)
@@ -514,8 +514,8 @@ impl Gen<'_> {
     /// The console layout. Rows, top to bottom, on a full strip:
     ///
     /// ```text
+    ///  [      FX      ]       the chain, at the head of the strip
     ///  [Input ▾     ][◠] [●]   recording: what, whether you hear it, armed
-    ///  [      FX      ]       the chain
     ///  (pan)          [M]     the mix: where,
     ///                 [S]     whether, alone
     ///  scale | fader | route  the level
@@ -540,23 +540,23 @@ impl Gen<'_> {
             band: ("0".into(), "102".into()),
             input: Spot::new(
                 "6",
-                "6",
+                "32",
                 format!("{OWN_W} - 60"),
                 "16",
                 format!("{full} && track.armed"),
             ),
             monitor: Spot::new(
                 format!("{OWN_W} - 48"),
-                "4",
+                "30",
                 "21",
                 "20",
                 format!("{full} && track.armed"),
             ),
             arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
-            arm_panel: Spot::new(format!("{column} + 0.5"), "4", "20", "20", "w >= 22"),
+            arm_panel: Spot::new(format!("{column} + 0.5"), "30", "20", "20", "w >= 22"),
             fx: Spot::new(
                 "7",
-                "30",
+                "5",
                 "max(w - 14, 36)",
                 "24",
                 format!("({OWN_W} >= 46)"),
