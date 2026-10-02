@@ -672,6 +672,10 @@ enum Hold {
     Press {
         spot: Option<Spot>,
         from: (f64, f64),
+        /// Whether a click here selects the strip's track (`Some`), and
+        /// whether it adds to the selection there is (Shift or Cmd held).
+        /// `None` for a press on a rack, which is the rack's.
+        select: Option<bool>,
     },
     /// A press in the overview band ([`OVERVIEW_H`]): the strips go
     /// wherever it points, as it moves.
@@ -1071,6 +1075,16 @@ impl MixerWidget {
         track.clone()
     }
 
+    /// The strip under a point in the widget's own coordinates, if the
+    /// point is on one (between its top and its floor).
+    fn strip_row_at(&self, x: f64, y: f64) -> Option<usize> {
+        let (content_x, content_y) = self.content(x, y);
+        let mixer = self.mixer.as_ref()?;
+        let row = mixer.strip_at(content_x)?;
+        let (_, _, height) = mixer.strip_box(row)?;
+        (0.0..=height).contains(&content_y).then_some(row)
+    }
+
     /// The control under a point in the widget's own coordinates.
     fn spot_at(&self, x: f64, y: f64) -> Option<Spot> {
         let (content_x, content_y) = self.content(x, y);
@@ -1379,6 +1393,7 @@ impl MixerWidget {
                 Hold::Press {
                     spot: None,
                     from: (x, y),
+                    select: None,
                 },
             ));
             return true;
@@ -1398,6 +1413,7 @@ impl MixerWidget {
                 Hold::Press {
                     spot: None,
                     from: (x, y),
+                    select: None,
                 }
             };
             self.holds.push((id, hold));
@@ -1413,6 +1429,7 @@ impl MixerWidget {
                 Hold::Press {
                     spot: None,
                     from: (x, y),
+                    select: None,
                 },
             ));
             return true;
@@ -1431,6 +1448,7 @@ impl MixerWidget {
                 Hold::Press {
                     spot: None,
                     from: (x, y),
+                    select: None,
                 },
             ));
             return true;
@@ -1764,6 +1782,7 @@ impl MixerWidget {
             None => Hold::Press {
                 spot: spot.filter(|s| !finger || s.control != Control::Volume),
                 from: (x, y),
+                select: Some(mods.shift || mods.cmd),
             },
         };
         let shown = match &hold {
@@ -1896,6 +1915,26 @@ impl MixerWidget {
                     }
                 }
             }
+            // A click on a strip's own ground — not one of its controls —
+            // selects its track, as a click on its name does.
+            Hold::Press {
+                spot: None,
+                from,
+                select: Some(add),
+            } if up.is_none() => {
+                if let Some(row) = self
+                    .strip_row_at(x, y)
+                    .filter(|row| self.strip_row_at(from.0, from.1) == Some(*row))
+                    && let Some(track) = self.track_at(row).cloned()
+                {
+                    self.commit(if add {
+                        Edit::AddToSelection(track.guid)
+                    } else {
+                        Edit::Select(track.guid)
+                    });
+                    self.dirty.set(true);
+                }
+            }
             Hold::Press { .. } | Hold::Overview | Hold::Rack { .. } | Hold::RackScroll { .. } => {}
         }
         self.pointer.release();
@@ -1955,6 +1994,23 @@ const INSPECTOR_STRIP: u32 = 60;
 /// What an edit does to the track it names, predicted here rather than
 /// waited for (the engine is in-process but not instant).
 fn predict(tracks: &mut [daw_proto::Track], edit: &Edit) {
+    // Selection is of the set, not one track: the chosen one on, and —
+    // unless added to — every other off.
+    match edit {
+        Edit::Select(guid) => {
+            for track in tracks.iter_mut() {
+                track.selected = track.guid == *guid;
+            }
+            return;
+        }
+        Edit::AddToSelection(guid) => {
+            for track in tracks.iter_mut().filter(|t| t.guid == *guid) {
+                track.selected = true;
+            }
+            return;
+        }
+        _ => {}
+    }
     let (guid, change): (&str, &dyn Fn(&mut daw_proto::Track)) = match edit {
         Edit::ToggleMute(guid) => (guid, &|t| t.muted = !t.muted),
         Edit::ToggleSolo(guid) => (guid, &|t| t.soloed = !t.soloed),
@@ -2451,6 +2507,70 @@ mod rail_tests {
             // And not where the rails are.
             assert_eq!(widget.spot_at(5.0, y), None);
             crate::skin::set(None);
+        });
+    }
+
+    /// A point on strip `row` that is its own ground: no control, no rack.
+    fn ground_of(widget: &MixerWidget, row: usize) -> (f64, f64) {
+        let mixer = widget.mixer.as_ref().expect("built");
+        let (left, width, height) = mixer.strip_box(row).expect("a strip");
+        let (ox, oy) = widget.origin.get();
+        let steps = 40_u32;
+        (0..steps)
+            .flat_map(|i| (0..steps).map(move |j| (i, j)))
+            .map(|(i, j)| {
+                (
+                    ox + left + width * f64::from(i) / f64::from(steps),
+                    oy + mixer.rack_h + (height - mixer.rack_h) * f64::from(j) / f64::from(steps),
+                )
+            })
+            .find(|&(x, y)| {
+                widget.spot_at(x, y).is_none()
+                    && widget.strip_row_at(x, y) == Some(row)
+                    && widget.rack_grip_at(x, y).is_none()
+            })
+            .expect("a strip has ground to click")
+    }
+
+    #[test]
+    fn a_click_on_a_strip_selects_its_track() {
+        in_runtime(|| {
+            let mut widget = mixing();
+            let narrow = widget
+                .mixer
+                .as_ref()
+                .and_then(|m| m.strip_box(2))
+                .map(|b| b.1)
+                .expect("a strip");
+            let at = ground_of(&widget, 2);
+            click(&mut widget, at);
+            let selected: Vec<bool> = widget.tracks.iter().map(|t| t.selected).collect();
+            assert_eq!(selected, [false, false, true, false, false, false]);
+            // And it opens to work on.
+            let wide = widget
+                .mixer
+                .as_ref()
+                .and_then(|m| m.strip_box(2))
+                .map(|b| b.1)
+                .expect("a strip");
+            assert!(wide > narrow, "{narrow} -> {wide}");
+            // Another click moves it; shift adds.
+            let at = ground_of(&widget, 4);
+            click(&mut widget, at);
+            assert!(widget.tracks[4].selected && !widget.tracks[2].selected);
+            let at = ground_of(&widget, 1);
+            widget.pressed(
+                BlitzPointerId::Mouse,
+                false,
+                at.0,
+                at.1,
+                Mods {
+                    shift: true,
+                    ..Mods::default()
+                },
+            );
+            widget.released(BlitzPointerId::Mouse, false, at.0, at.1);
+            assert!(widget.tracks[4].selected && widget.tracks[1].selected);
         });
     }
 }
