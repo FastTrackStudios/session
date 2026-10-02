@@ -1373,8 +1373,15 @@ pub mod tcp {
         // as one control however they are stacked.
         let flip = |y: f64| match facing {
             Facing::Down => y,
-            Facing::Up => h - y,
+            Facing::Up | Facing::Right => h - y,
         };
+        // A point of the upward glyph, turned to face the way it does:
+        // a quarter clockwise about the cell's centre for Right.
+        let place = |x: f64, y: f64| match facing {
+            Facing::Right => (w / 2.0 - (y - h / 2.0), h / 2.0 + (x - w / 2.0)),
+            Facing::Down | Facing::Up => (x, y),
+        };
+        let turned = facing == Facing::Right;
         // No plate: REAPER's monitor is a bare glyph on the strip,
         // unlike the mute and solo it sits above. That is not an
         // oversight in the theme — the buttons are things you press and
@@ -1393,15 +1400,18 @@ pub mod tcp {
         let cx = w / 2.0;
         // The dome, then two arcs widening under it. Measured off the
         // cell as proportions so the glyph survives a different size.
+        let (dome_x, dome_y) = place(cx, flip(h * 0.34));
+        let (rx, ry) = (w * 0.14, h * 0.15);
         drawing.fill(
             Shape::Ellipse {
-                cx,
-                cy: flip(h * 0.34),
-                rx: w * 0.14,
-                ry: h * 0.15,
+                cx: dome_x,
+                cy: dome_y,
+                rx: if turned { ry } else { rx },
+                ry: if turned { rx } else { ry },
             },
             on(mode != Monitoring::Off),
         );
+        let (arc_x, arc_y) = place(cx, flip(h * 0.42));
         for (index, (radius, thickness)) in [(w * 0.24, 2.0_f64), (w * 0.37, 2.2_f64)]
             .into_iter()
             .enumerate()
@@ -1419,11 +1429,12 @@ pub mod tcp {
             let start = match facing {
                 Facing::Down => 115.0,
                 Facing::Up => -65.0,
+                Facing::Right => 25.0,
             };
             drawing.stroke(
                 Shape::Arc {
-                    cx,
-                    cy: flip(h * 0.42),
+                    cx: arc_x,
+                    cy: arc_y,
                     r: radius,
                     start,
                     sweep: 130.0,
@@ -1444,6 +1455,9 @@ pub mod tcp {
         Down,
         /// Over the arm, in the band, arcs opening upwards.
         Up,
+        /// Right of the arm, arcs opening rightwards: [`Facing::Up`]
+        /// turned a quarter clockwise.
+        Right,
     }
 
     /// Which input-monitoring state a strip is in.

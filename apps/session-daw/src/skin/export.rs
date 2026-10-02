@@ -117,6 +117,8 @@ struct Spots {
     arm_mixer: Spot,
     arm_panel: Spot,
     monitor: Spot,
+    /// Which way the monitor glyph opens.
+    monitor_facing: art::Facing,
     mute: Spot,
     solo: Spot,
     fader_x: String,
@@ -502,6 +504,7 @@ impl Gen<'_> {
                 "20",
                 format!("!{full} && w >= 22"),
             ),
+            monitor_facing: art::Facing::Up,
             monitor: Spot::new(
                 col.clone(),
                 format!("{arm_top} + 3 - {}", n(f64::from(g::BUTTON_H))),
@@ -586,6 +589,8 @@ impl Gen<'_> {
                 "16",
                 format!("{records} && {full}"),
             ),
+            // Opening away from the arm it sits right of.
+            monitor_facing: art::Facing::Right,
             monitor: Spot::new(
                 // Right of the arm, only while it is on, where the strip
                 // has the room for the pair: the arm centred, 4 between,
@@ -1195,7 +1200,7 @@ impl Gen<'_> {
                     },
                     _ => to_theme(p.text),
                 };
-                let d = art::monitor(chrome, mode, lit, at, art::Facing::Up);
+                let d = art::monitor(chrome, mode, lit, at, spots.monitor_facing);
                 let name = format!("Monitor {mode:?} {at:?}");
                 let visible = format!(
                     "{} && track.monitor == {value} && {}",
