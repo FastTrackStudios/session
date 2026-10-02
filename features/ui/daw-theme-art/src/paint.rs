@@ -1376,9 +1376,11 @@ pub mod tcp {
             Facing::Up | Facing::Right => h - y,
         };
         // A point of the upward glyph, turned to face the way it does:
-        // a quarter clockwise about the cell's centre for Right.
+        // a quarter clockwise about the cell's centre for Right, then
+        // against the cell's left edge — the side the arm is on — so the
+        // two read as one control rather than two with a gap.
         let place = |x: f64, y: f64| match facing {
-            Facing::Right => (w / 2.0 - (y - h / 2.0), h / 2.0 + (x - w / 2.0)),
+            Facing::Right => (w / 2.0 - (y - h / 2.0) - 3.0, h / 2.0 + (x - w / 2.0)),
             Facing::Down | Facing::Up => (x, y),
         };
         let turned = facing == Facing::Right;

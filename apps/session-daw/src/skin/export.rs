@@ -592,14 +592,15 @@ impl Gen<'_> {
             // Opening away from the arm it sits right of.
             monitor_facing: art::Facing::Right,
             monitor: Spot::new(
-                // Right of the arm, only while it is on, where the strip
-                // has the room for the pair: the arm centred, 4 between,
-                // the monitor's 21 and 2 to spare make 74.
-                format!("{} + 24", centre(20.0)),
+                // Right of the arm, boxes touching (the glyph's own margin
+                // is the gap), only while it is on, where the strip has
+                // room for the pair: the arm centred, the monitor's 21 and
+                // 2 to spare make 66.
+                format!("{} + 20", centre(20.0)),
                 row.clone(),
                 "21",
                 "20",
-                format!("{records} && {OWN_W} >= 74 && track.armed"),
+                format!("{records} && {OWN_W} >= 66 && track.armed"),
             ),
             arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
             arm_panel: Spot::new(
@@ -2039,7 +2040,7 @@ mod tests {
                 if let (Some(arm), Some(monitor)) = (at("arm"), at("monitor")) {
                     assert!(monitor.x0 >= arm.x1, "monitor right of the arm at {width}");
                 }
-                if recording && width >= 74.0 {
+                if recording && width >= 66.0 {
                     assert!(at("monitor").is_some(), "monitor at {width}");
                     let unarmed = console_targets(
                         &theme,
