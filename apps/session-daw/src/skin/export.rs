@@ -514,22 +514,30 @@ impl Gen<'_> {
     /// The console layout. Rows, top to bottom, on a full strip:
     ///
     /// ```text
-    ///  [Input ▾      ][◠][●]   recording: what, whether you hear it, armed
+    ///  [Input ▾     ][◠] [●]   recording: what, whether you hear it, armed
     ///  [      FX      ]       the chain
-    ///  (pan)      [M][S]      the mix: where, whether, alone
+    ///  (pan)          [M]     the mix: where,
+    ///                 [S]     whether, alone
     ///  scale | fader | route  the level
     /// ```
     ///
-    /// Narrower than that, the rows stack centred instead.
+    /// Mute and solo are in the same place on every strip, whatever its
+    /// width: one column, its right edge four pixels in from the strip's,
+    /// mute at 58 and solo at 80 — so "which of these is muted" is one
+    /// look along a line, across a kit's 30-pixel mics and its 86-pixel
+    /// buses alike. The arm heads the same column. What gives way on a
+    /// narrow strip is everything else: the pan where there is no room
+    /// beside the column, the FX below 46, the input and the monitor
+    /// below a full strip.
     fn console_spots(&self) -> Spots {
         let full = format!("({OWN_W} >= 78)");
-        let fits = format!("({OWN_W} >= 46)");
+        let column = format!("({OWN_W} - 25)");
         let name_top = self.name_top();
-        let fader_top = format!("({full} ? 90 : 128)");
+        let fader_top = "106".to_owned();
         let travel = format!("max({name_top} - 3 - {fader_top}, 0)");
         let fader_x = format!("(({OWN_W} - 30) / 2)");
         Spots {
-            band: ("0".into(), format!("({full} ? 82 : 120)")),
+            band: ("0".into(), "102".into()),
             input: Spot::new(
                 "6",
                 "6",
@@ -545,44 +553,26 @@ impl Gen<'_> {
                 format!("{full} && track.armed"),
             ),
             arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
-            arm_panel: Spot::new(
-                format!("{full} ? {OWN_W} - 25 : ({OWN_W} - 20) / 2"),
-                "4",
-                "20",
-                "20",
-                "w >= 22",
-            ),
-            fx: Spot::new("7", "30", "max(w - 14, 36)", "24", fits.clone()),
-            pan: Spot::new(
-                format!("{full} ? 6 : ({OWN_W} - 24) / 2"),
-                "56",
+            arm_panel: Spot::new(format!("{column} + 0.5"), "4", "20", "20", "w >= 22"),
+            fx: Spot::new(
+                "7",
+                "30",
+                "max(w - 14, 36)",
                 "24",
-                "25",
-                fits.clone(),
+                format!("({OWN_W} >= 46)"),
             ),
-            mute: Spot::new(
-                format!("{full} ? {OWN_W} - 48 : ({OWN_W} - 21) / 2"),
-                format!("{full} ? 58 : 84"),
-                "21",
-                "20",
-                "",
-            ),
-            solo: Spot::new(
-                format!("{full} ? {OWN_W} - 25 : ({OWN_W} - 21) / 2"),
-                format!("{full} ? 58 : 106"),
-                "21",
-                "20",
-                "",
-            ),
+            pan: Spot::new("5", "56", "24", "25", format!("({OWN_W} >= 55)")),
+            mute: Spot::new(column.clone(), "58", "21", "20", ""),
+            solo: Spot::new(column, "80", "21", "20", ""),
             routing: Spot::new(
                 format!("{OWN_W} - 27"),
                 fader_top.clone(),
                 n(art::ROUTING_CELL_V.0),
                 n(art::ROUTING_CELL_V.1),
-                full.clone(),
+                full,
             ),
             scale_x: format!("max({fader_x} - 24, 1)"),
-            scale_visible: format!("{fits} && {travel} > 0"),
+            scale_visible: format!("({OWN_W} >= 46) && {travel} > 0"),
             fader_x,
             fader_top,
             travel,
@@ -1826,5 +1816,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Mute and solo are in one place on every console strip: the same
+    /// heights, the same distance from the strip's right edge.
+    #[test]
+    fn the_console_puts_mute_and_solo_in_one_place_at_every_width() {
+        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let theme = Theme::from_markup(&super::fts_console(&palette), super::super::schema(), None)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{}",
+                    e.iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            });
+        let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
+        for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37] {
+            let fields = super::super::fields(
+                &palette,
+                &daw_proto::Track::default(),
+                super::super::Shown {
+                    width,
+                    mixer_h: 600.0,
+                    ..Default::default()
+                },
+            );
+            let at = |name| {
+                theme
+                    .target_rect(super::super::STRIP, (width, 600.0), &fields, name)
+                    .expect(name)
+            };
+            let (mute, solo) = (at("mute"), at("solo"));
+            // Measured from the right: the column's edge, and the heights.
+            seen.push((width - mute.x1, mute.y0, width - solo.x1, solo.y0));
+        }
+        assert!(seen.windows(2).all(|w| w[0] == w[1]), "{seen:?}");
+        assert_eq!(seen[0], (4.0, 58.0, 4.0, 80.0));
     }
 }
