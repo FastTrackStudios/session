@@ -1328,6 +1328,21 @@ impl Fold {
     }
 
     /// Fold or unfold a phase on a track — or on all of them.
+    /// Every rack open at `phase`'s section alone, the others shut — what
+    /// moving to a phase shows. A phase with no section of its own
+    /// (Balance, Creative, Overview) shuts them all: the faders are the
+    /// question.
+    pub fn focus(&mut self, phase: session::mix_phases::MixPhase) {
+        let mut every = Folded::default();
+        for other in session::mix_phases::MixPhase::ALL {
+            if other != phase {
+                every.toggle(other);
+            }
+        }
+        self.every = every;
+        self.by_guid.clear();
+    }
+
     pub fn toggle(&mut self, guid: &str, phase: session::mix_phases::MixPhase) {
         if self.synced {
             self.every.toggle(phase);

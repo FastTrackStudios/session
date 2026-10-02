@@ -261,17 +261,28 @@ struct Loaded {
     reported: Option<String>,
 }
 
+#[cfg(not(test))]
 static THEME: RwLock<Option<Arc<Theme>>> = RwLock::new(None);
+
+// Each test its own: a test that sets a theme must not reach the
+// painters' tests running beside it.
+#[cfg(test)]
+thread_local! {
+    static THEME: RwLock<Option<Arc<Theme>>> = const { RwLock::new(None) };
+}
 static VERSION: AtomicU64 = AtomicU64::new(0);
 static SOURCE: Mutex<Option<Loaded>> = Mutex::new(None);
 
 /// The theme the mixer draws with, when there is one with a strip.
 #[must_use]
 pub fn current() -> Option<Arc<Theme>> {
+    #[cfg(not(test))]
     let theme = THEME
         .read()
         .unwrap_or_else(PoisonError::into_inner)
         .clone()?;
+    #[cfg(test)]
+    let theme = THEME.with(|t| t.read().unwrap_or_else(PoisonError::into_inner).clone())?;
     theme.has_role(STRIP).then_some(theme)
 }
 
@@ -284,7 +295,12 @@ pub fn version() -> u64 {
 
 /// Use `theme` (or none) from now on.
 pub fn set(theme: Option<Arc<Theme>>) {
-    *THEME.write().unwrap_or_else(PoisonError::into_inner) = theme;
+    #[cfg(not(test))]
+    {
+        *THEME.write().unwrap_or_else(PoisonError::into_inner) = theme;
+    }
+    #[cfg(test)]
+    THEME.with(|t| *t.write().unwrap_or_else(PoisonError::into_inner) = theme);
     VERSION.fetch_add(1, Ordering::AcqRel);
 }
 
@@ -387,20 +403,24 @@ mod tests {
         let path = dir.join("strip.fm");
         std::fs::write(&path, THEME).expect("write");
         load(path.clone(), None).expect("loads");
-        let first = version();
         assert!(current().is_some_and(|t| t.token("ground").is_some()));
 
         let wait = || std::thread::sleep(POLL + Duration::from_millis(20));
         wait();
         std::fs::write(&path, THEME.replace("track.mute", "track.nonsense")).expect("write");
         assert!(!poll(), "a broken theme is not taken");
-        assert_eq!(version(), first);
-        assert!(current().is_some(), "the last good one stays");
+        let ground = current()
+            .and_then(|t| t.token("ground").and_then(Value::color))
+            .map(Rgba::to_hex);
+        assert_eq!(
+            ground.as_deref(),
+            Some("#202020"),
+            "the last good one stays"
+        );
 
         wait();
         std::fs::write(&path, THEME.replace("#202020", "#303030")).expect("write");
         assert!(poll(), "a fixed theme is taken");
-        assert!(version() > first);
         let ground = current()
             .and_then(|t| t.token("ground").and_then(Value::color))
             .map(Rgba::to_hex);

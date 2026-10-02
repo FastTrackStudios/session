@@ -131,6 +131,31 @@ pub struct Links {
     pub mix: Rc<Cell<bool>>,
 }
 
+/// The phase rails' state, mixing — see [`MixerWidget`]'s `rails`.
+#[derive(Clone, Copy, Debug)]
+struct RailState {
+    scene: Option<&'static str>,
+    phase: session::mix_phases::MixPhase,
+    settings: crate::settings::Settings,
+    audience: dynamic_template::scenes::Audience,
+    /// The rail button under the pointer, and the one it is pressing.
+    hover: Option<crate::rails::Action>,
+    pressed: Option<crate::rails::Action>,
+}
+
+impl Default for RailState {
+    fn default() -> Self {
+        Self {
+            scene: None,
+            phase: session::mix_phases::MixPhase::Tone,
+            settings: crate::settings::Settings::default(),
+            audience: dynamic_template::scenes::Audience::Engineer,
+            hover: None,
+            pressed: None,
+        }
+    }
+}
+
 /// A key the mixer passed on.
 #[derive(Clone, Debug)]
 pub enum Key {
@@ -738,6 +763,10 @@ struct MixerWidget {
     /// Whether the rows were last planned for Mix mode (`Links::mix`);
     /// `None` before the first plan.
     mix_seen: Option<bool>,
+    /// What the phase rails have chosen, mixing: the scene shown (`None`:
+    /// the session's), the phase, the right rail's switches, and who the
+    /// window is for.
+    rails: RailState,
     /// Where the strips start in the panel (CSS px): past the phase
     /// rails when mixing, under the overview band otherwise.
     origin: Cell<(f64, f64)>,
@@ -849,6 +878,7 @@ impl MixerWidget {
             built_open: None,
             folds_seen: crate::folds::generation(),
             mix_seen: None,
+            rails: RailState::default(),
             origin: Cell::new((0.0, 0.0)),
             extent: Cell::new(1440.0),
             all: Vec::new(),
@@ -881,7 +911,12 @@ impl MixerWidget {
                 // Mixing, the scene's own layout for the mixer; otherwise
                 // the arrangement's rows, folded as the window has them.
                 let planned = if mix {
-                    planner.plan_mixer(&planner.raw, self.extent.get())
+                    planner.plan_mixer(
+                        &planner.raw,
+                        self.rails.scene,
+                        self.rails.settings,
+                        self.extent.get(),
+                    )
                 } else {
                     planner.plan(&planner.raw).1
                 };
@@ -1084,6 +1119,99 @@ impl MixerWidget {
     /// A point in the widget, in the strips' own (content) coordinates.
     /// The scroll is kept in CSS pixels, so the wheel and the ghosts'
     /// anchors need not know about the zoom.
+    /// The phase rails' buttons, as the rails' state has them.
+    fn rail_profile(&self) -> crate::rails::Profile {
+        crate::rails::profile(
+            crate::rails::Surface::Mixer,
+            session::modes::Mode::Mix,
+            self.rails.phase,
+            self.rails
+                .scene
+                .or(self.links.planner.as_ref().and_then(|p| p.scene)),
+            self.rails.settings,
+            self.rails.audience,
+            "drums",
+        )
+    }
+
+    /// The rails' frame, as last painted (CSS px).
+    fn rail_frame(&self) -> crate::rails::Frame {
+        crate::rails::Frame::new(self.width.get(), self.extent.get())
+    }
+
+    /// Whether `(x, y)` is on the rails rather than the strips (mixing).
+    fn in_rails(&self, x: f64, y: f64) -> bool {
+        self.links.mix.get() && !self.rail_frame().content().contains((x, y))
+    }
+
+    /// The rail button at `(x, y)`, if any.
+    fn rail_at(&self, x: f64, y: f64) -> Option<crate::rails::Action> {
+        if !self.links.mix.get() {
+            return None;
+        }
+        let frame = self.rail_frame();
+        let profile = self.rail_profile();
+        let side = |items: &[crate::rails::Item<'_>], right: bool| {
+            items
+                .iter()
+                .enumerate()
+                .find(|(i, _)| frame.slot(*i, right).is_some_and(|r| r.contains((x, y))))
+                .map(|(_, item)| item.act)
+        };
+        side(&profile.left, false)
+            .or_else(|| side(&profile.right, true))
+            .or_else(|| {
+                profile
+                    .top
+                    .iter()
+                    .enumerate()
+                    .find(|(i, _)| frame.top_slot(*i).is_some_and(|r| r.contains((x, y))))
+                    .map(|(_, item)| item.act)
+            })
+    }
+
+    /// Do what a rail button says.
+    fn rail_act(&mut self, act: crate::rails::Action) {
+        use crate::rails::Action;
+        use dynamic_template::scenes::Audience;
+        match act {
+            // Another scene, or a switch the plan reads: the rows are
+            // planned again.
+            Action::Scene(slug) => {
+                self.rails.scene = Some(slug);
+                self.mix_seen = None;
+            }
+            Action::FocusSelected => {
+                self.rails.settings.focus_selected = !self.rails.settings.focus_selected;
+                self.mix_seen = None;
+            }
+            Action::TakeFocusWidth => {
+                self.rails.settings.take_focus_width = !self.rails.settings.take_focus_width;
+                self.mix_seen = None;
+            }
+            // Every rack opens at that phase's section.
+            Action::Phase(phase) => {
+                self.rails.phase = phase;
+                self.folds.focus(phase);
+                for analyser in self.spectra.values_mut() {
+                    analyser.invalidate();
+                }
+            }
+            Action::Audience => {
+                self.rails.audience = if self.rails.audience == Audience::Engineer {
+                    Audience::Player
+                } else {
+                    Audience::Engineer
+                };
+            }
+            // Not the mixer's: the mode is switched in the bottom bar, the
+            // takes are the arrangement's.
+            Action::Mode(_) | Action::FoldedTakes => {}
+        }
+        // Built again with what changed.
+        self.mixer = None;
+    }
+
     fn content(&self, x: f64, y: f64) -> (f64, f64) {
         let zoom = self.zoom();
         let (left, top) = self.origin.get();
@@ -1525,9 +1653,15 @@ impl MixerWidget {
                 if e.is_finger() {
                     return false;
                 }
+                let rail = self.rail_at(x, y);
+                let rail_lit = rail != self.rails.hover;
+                self.rails.hover = rail;
+                if self.in_rails(x, y) {
+                    return self.pointer.hover(None) || rail_lit;
+                }
                 let spot = self.spot_at(x, y);
                 let grip = self.rack_grip_at(x, y).map(|(row, grip, _)| (row, grip));
-                let lit = grip != self.rack_hover;
+                let lit = grip != self.rack_hover || rail_lit;
                 if lit {
                     self.invalidate_rack_rows(&[self.rack_hover, grip]);
                     self.rack_hover = grip;
@@ -1575,6 +1709,12 @@ impl MixerWidget {
         self.fling = None;
         // A second press by the same pointer means its release was lost.
         self.let_go(id);
+        // Mixing, the rails take what lands on them.
+        if self.in_rails(x, y) {
+            self.rails.pressed = self.rail_at(x, y);
+            self.dirty.set(true);
+            return;
+        }
         // The rack sits over the strip's own controls, so it answers
         // first: a press lands on what it looks like it landed on.
         if y >= self.band.get() && self.rack_pressed_at(id, finger, x, y, mods) {
@@ -1696,6 +1836,14 @@ impl MixerWidget {
     }
 
     fn released(&mut self, id: BlitzPointerId, finger: bool, x: f64, y: f64) {
+        // A rail button acts when it is let go of over itself.
+        if let Some(act) = self.rails.pressed.take() {
+            if self.rail_at(x, y) == Some(act) {
+                self.rail_act(act);
+            }
+            self.dirty.set(true);
+            return;
+        }
         let Some(i) = self.hold_of(id) else {
             return;
         };
@@ -1944,7 +2092,9 @@ impl MixerWidget {
                 h,
                 self.layout,
                 // Mixing, every strip wide enough has its rack.
-                if mix || open.is_some() {
+                if mix {
+                    crate::tone::panels_for(self.rails.phase)
+                } else if open.is_some() {
                     rack_panels()
                 } else {
                     &[]
@@ -1954,6 +2104,8 @@ impl MixerWidget {
                     touch_strips: self.touch.get(),
                     // Mixing, the full strip: the input, the arm.
                     live_strips: !mix,
+                    focus_selected: self.rails.settings.focus_selected,
+                    take_focus_width: self.rails.settings.take_focus_width,
                     ..crate::settings::Settings::default()
                 },
                 &store,
@@ -2024,22 +2176,14 @@ impl MixerWidget {
         // Mixing: the phase rails around the strips, over them — the frame
         // the scene renders in.
         if mix {
-            let profile = crate::rails::profile(
-                crate::rails::Surface::Mixer,
-                session::modes::Mode::Mix,
-                session::mix_phases::MixPhase::Tone,
-                self.links.planner.as_ref().and_then(|p| p.scene),
-                crate::settings::Settings::default(),
-                dynamic_template::scenes::Audience::Engineer,
-                "drums",
-            );
+            let profile = self.rail_profile();
             let mut rails = Scene::new();
             crate::rails::draw(
                 &mut rails,
                 &self.palette,
                 &self.font,
                 &mut crate::icons::Icons::none(),
-                (None, None),
+                (self.rails.hover, self.rails.pressed),
                 frame,
                 &profile.left,
                 &profile.right,
@@ -2080,5 +2224,214 @@ impl Widget for MixerWidget {
         scale: f64,
     ) -> Scene {
         self.paint_scene(width, height, scale)
+    }
+}
+
+#[cfg(test)]
+mod rail_tests {
+    use super::*;
+
+    fn track(n: u32) -> daw_proto::Track {
+        daw_proto::Track {
+            guid: format!("g{n}"),
+            index: n,
+            name: format!("Track {n}"),
+            ..daw_proto::Track::default()
+        }
+    }
+
+    /// Run `test` where a Dioxus signal can be made (`Links` holds one).
+    fn in_runtime(test: impl FnOnce()) {
+        let dom = dioxus::prelude::VirtualDom::new(|| rsx! {});
+        let mut dom = dom;
+        dom.rebuild_in_place();
+        dom.in_scope(dioxus::prelude::ScopeId::ROOT, test);
+    }
+
+    /// A mixer alone, mixing, painted once at the golden size.
+    fn mixing() -> MixerWidget {
+        let rows: Rows = (0..6).map(|n| (track(n), 0)).collect();
+        let links = Links::new(rows);
+        links.mix.set(true);
+        let mut widget = MixerWidget::new(links, Rc::default(), Rc::default(), Rc::default());
+        let _ = widget.paint_scene(2560, 1440, 1.0);
+        widget
+    }
+
+    /// Where the rail button that does `act` is drawn.
+    fn slot_of(widget: &MixerWidget, act: crate::rails::Action) -> (f64, f64) {
+        let frame = widget.rail_frame();
+        let profile = widget.rail_profile();
+        let (i, right) = profile
+            .left
+            .iter()
+            .position(|item| item.act == act)
+            .map(|i| (i, false))
+            .or_else(|| {
+                profile
+                    .right
+                    .iter()
+                    .position(|item| item.act == act)
+                    .map(|i| (i, true))
+            })
+            .expect("the button is on a rail");
+        let r = frame.slot(i, right).expect("and has room");
+        (r.center().x, r.center().y)
+    }
+
+    fn click(widget: &mut MixerWidget, (x, y): (f64, f64)) {
+        widget.pressed(BlitzPointerId::Mouse, false, x, y, Mods::default());
+        widget.released(BlitzPointerId::Mouse, false, x, y);
+        let _ = widget.paint_scene(2560, 1440, 1.0);
+    }
+
+    fn lit(widget: &MixerWidget, act: crate::rails::Action) -> bool {
+        let profile = widget.rail_profile();
+        profile
+            .left
+            .iter()
+            .chain(&profile.right)
+            .any(|item| item.act == act && item.on)
+    }
+
+    #[test]
+    fn a_phase_button_moves_the_phase() {
+        in_runtime(|| {
+            use session::mix_phases::MixPhase;
+            let mut widget = mixing();
+            let balance = crate::rails::Action::Phase(MixPhase::Balance);
+            assert!(!lit(&widget, balance));
+            let at = slot_of(&widget, balance);
+            click(&mut widget, at);
+            assert_eq!(widget.rails.phase, MixPhase::Balance);
+            assert!(lit(&widget, balance));
+            assert!(!lit(&widget, crate::rails::Action::Phase(MixPhase::Tone)));
+            // Balance has no rack section: every rack shuts.
+            let folded = widget.folds.of("g0");
+            assert!(folded.is(MixPhase::Tone) && folded.is(MixPhase::Rescue));
+            let polish = slot_of(&widget, crate::rails::Action::Phase(MixPhase::Polish));
+            click(&mut widget, polish);
+            let folded = widget.folds.of("g0");
+            assert!(!folded.is(MixPhase::Polish) && folded.is(MixPhase::Tone));
+        });
+    }
+
+    #[test]
+    fn a_scene_button_shows_that_scene() {
+        in_runtime(|| {
+            let mut widget = mixing();
+            let scene = widget
+                .rail_profile()
+                .left
+                .iter()
+                .find_map(|item| match item.act {
+                    crate::rails::Action::Scene(slug) if !item.on => Some(slug),
+                    _ => None,
+                })
+                .expect("a scene not showing");
+            let at = slot_of(&widget, crate::rails::Action::Scene(scene));
+            click(&mut widget, at);
+            assert_eq!(widget.rails.scene, Some(scene));
+            assert!(lit(&widget, crate::rails::Action::Scene(scene)));
+        });
+    }
+
+    #[test]
+    fn the_switches_switch() {
+        in_runtime(|| {
+            let mut widget = mixing();
+            let was = widget.rails.settings.focus_selected;
+            let at = slot_of(&widget, crate::rails::Action::FocusSelected);
+            click(&mut widget, at);
+            assert_eq!(widget.rails.settings.focus_selected, !was);
+            let at = slot_of(&widget, crate::rails::Action::Audience);
+            click(&mut widget, at);
+            assert_eq!(
+                widget.rails.audience,
+                dynamic_template::scenes::Audience::Player
+            );
+        });
+    }
+
+    #[test]
+    fn a_press_dragged_off_a_button_does_nothing() {
+        in_runtime(|| {
+            use session::mix_phases::MixPhase;
+            let mut widget = mixing();
+            let (x, y) = slot_of(&widget, crate::rails::Action::Phase(MixPhase::Balance));
+            widget.pressed(BlitzPointerId::Mouse, false, x, y, Mods::default());
+            widget.released(BlitzPointerId::Mouse, false, x + 300.0, y);
+            assert_eq!(widget.rails.phase, MixPhase::Tone);
+        });
+    }
+
+    /// The negative control: a click on the strips is not a rail's.
+    #[test]
+    fn a_click_on_the_strips_leaves_the_rails_alone() {
+        in_runtime(|| {
+            let mut widget = mixing();
+            let before = (
+                widget.rails.phase,
+                widget.rails.scene,
+                widget.rails.settings.focus_selected,
+            );
+            click(&mut widget, (400.0, 900.0));
+            assert_eq!(
+                before,
+                (
+                    widget.rails.phase,
+                    widget.rails.scene,
+                    widget.rails.settings.focus_selected
+                )
+            );
+            assert!(widget.rails.pressed.is_none());
+        });
+    }
+
+    /// Inside the rails, a press on a themed strip's control lands on it.
+    #[test]
+    fn the_strips_answer_inside_the_rails() {
+        in_runtime(|| {
+            let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
+            let theme = theme_runtime::Theme::from_markup(
+                &crate::skin::export::fts_dark(&palette),
+                crate::skin::schema(),
+                None,
+            )
+            .expect("the theme compiles");
+            crate::skin::set(Some(std::sync::Arc::new(theme)));
+            let widget = mixing();
+            let mixer = widget.mixer.as_ref().expect("built");
+            assert!(mixer.themed(1).is_some(), "the strips are the theme's");
+            let (left, width, height) = mixer.strip_box(1).expect("a strip");
+            let fields =
+                crate::skin::fields(&widget.palette, &track(1), mixer.shown(1, &widget.font));
+            let mute = mixer
+                .themed(1)
+                .and_then(|t| {
+                    t.target_rect(
+                        crate::skin::STRIP,
+                        (width, height - mixer.rack_h),
+                        &fields,
+                        "mute",
+                    )
+                })
+                .expect("a mute");
+            let (ox, oy) = widget.origin.get();
+            let (x, y) = (
+                ox + left + mute.center().x,
+                oy + mixer.rack_h + mute.center().y,
+            );
+            assert_eq!(
+                widget.spot_at(x, y),
+                Some(Spot {
+                    row: 1,
+                    control: Control::Mute
+                })
+            );
+            // And not where the rails are.
+            assert_eq!(widget.spot_at(5.0, y), None);
+            crate::skin::set(None);
+        });
     }
 }

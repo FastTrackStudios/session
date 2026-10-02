@@ -88,11 +88,20 @@ impl Planner {
     /// and every folder as the scene leaves it, the way the scene renders
     /// (`tests/golden_scenes.rs`). `extent` is the panel's height.
     #[must_use]
-    pub fn plan_mixer(&self, raw: &daw_ui::studio::project::Project, extent: f64) -> RowsRef {
+    pub fn plan_mixer(
+        &self,
+        raw: &daw_ui::studio::project::Project,
+        scene: Option<&str>,
+        settings: crate::settings::Settings,
+        extent: f64,
+    ) -> RowsRef {
         let (visible, depths) =
             daw_ui::components::folders::FolderState::default().visible(&raw.tracks);
         let planned: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
-        let Some(scene) = self.scene.and_then(dynamic_template::scenes::scene) else {
+        let Some(scene) = scene
+            .or(self.scene)
+            .and_then(dynamic_template::scenes::scene)
+        else {
             return RowsRef(Arc::new(planned));
         };
         RowsRef(Arc::new(crate::plan::apply_scene(
@@ -102,7 +111,7 @@ impl Planner {
             crate::plan::Panel {
                 surface: crate::plan::Surface::Mixer,
                 mode: None,
-                settings: crate::settings::Settings::default(),
+                settings,
                 extent,
                 active_language: None,
             },
