@@ -526,8 +526,9 @@ impl Gen<'_> {
     /// ```
     ///
     /// The mode decides what is first. Mixing, the chain heads the strip
-    /// and there is no recording row at all — nothing is armed in a mix —
-    /// so the mix rows and the fader move up into its room. Recording, the
+    /// and there is no recording row — nothing is armed in a mix — and the
+    /// pan takes the arm's place at the head of the mute/solo column, so
+    /// it is on every strip however narrow. Recording, the
     /// routing heads it (where the take comes in and goes out), the chain
     /// beside it where the strip is wide enough, the recording row under.
     ///
@@ -541,20 +542,19 @@ impl Gen<'_> {
         let full = format!("({OWN_W} >= 78)");
         let column = format!("({OWN_W} - 25)");
         let (mixing, recording) = ("ui.mixing", "ui.recording");
-        // The mix rows start where the recording row would have.
-        let lift = format!("({mixing} ? 26 : 0)");
         let name_top = self.name_top();
-        let fader_top = format!("(106 - {lift})");
+        let fader_top = "106".to_owned();
         let travel = format!("max({name_top} - 3 - {fader_top}, 0)");
         let fader_x = format!("(({OWN_W} - 30) / 2)");
         let records = format!("!{mixing}");
         Spots {
-            band: ("0".into(), format!("(102 - {lift})")),
+            band: ("0".into(), "102".into()),
             fx: Spot::new(
                 format!("{recording} ? 39 : 7"),
                 "5",
                 format!("{recording} ? max(w - 46, 36) : max(w - 14, 36)"),
-                "24",
+                // The pill's own height: nothing under it is the chain's.
+                "22",
                 format!("{recording} ? {OWN_W} >= 82 : {OWN_W} >= 46"),
             ),
             routing_head: Some(Spot::new(
@@ -586,15 +586,19 @@ impl Gen<'_> {
                 "20",
                 format!("{records} && w >= 22"),
             ),
+            // Mixing, at the head of the mute/solo column where the arm
+            // is when recording — centred over the column, so it fits
+            // every strip; otherwise to the left of the column, where
+            // there is room for it.
             pan: Spot::new(
-                "5",
-                format!("56 - {lift}"),
+                format!("{mixing} ? {column} - 1.5 : 5"),
+                format!("{mixing} ? 27.5 : 56"),
                 "24",
                 "25",
-                format!("({OWN_W} >= 55)"),
+                format!("{mixing} ? w >= 26 : ({OWN_W} >= 55)"),
             ),
-            mute: Spot::new(column.clone(), format!("58 - {lift}"), "21", "20", ""),
-            solo: Spot::new(column, format!("80 - {lift}"), "21", "20", ""),
+            mute: Spot::new(column.clone(), "58", "21", "20", ""),
+            solo: Spot::new(column, "80", "21", "20", ""),
             routing: Spot::new(
                 format!("{OWN_W} - 27"),
                 fader_top.clone(),
@@ -1944,7 +1948,7 @@ mod tests {
         for ((mixing, recording), heights) in
             MODES
                 .into_iter()
-                .zip([(58.0, 80.0), (32.0, 54.0), (58.0, 80.0)])
+                .zip([(58.0, 80.0), (58.0, 80.0), (58.0, 80.0)])
         {
             let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
             for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37] {
