@@ -776,11 +776,21 @@ fn themed(
     let full = slot.height + crate::num::coord(ancestors.len()) * INDENT_STEP;
     for (level, tint) in ancestors.iter().enumerate() {
         let top = full - crate::num::coord(level + 1) * INDENT_STEP;
-        fill(
-            scene,
-            *tint,
-            Rect::new(slot.x, top, slot.x + slot.width, top + INDENT_STEP),
-        );
+        if theme.has_role(crate::skin::STEP) {
+            theme.record(
+                crate::skin::STEP,
+                (slot.width, INDENT_STEP),
+                &crate::skin::step_fields(*tint, level + 1),
+                &mut crate::skin::canvas::Host { scene, font },
+                Affine::translate((slot.x, top)),
+            );
+        } else {
+            fill(
+                scene,
+                *tint,
+                Rect::new(slot.x, top, slot.x + slot.width, top + INDENT_STEP),
+            );
+        }
     }
     let fields = crate::skin::fields(palette, track, shown);
     theme.record(

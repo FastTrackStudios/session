@@ -37,6 +37,11 @@ pub mod export;
 /// The role a theme draws a mixer strip as.
 pub const STRIP: &str = "mcp.strip";
 
+/// The role a theme draws one folder step as: the band under a nested
+/// strip for each folder it is inside, `INDENT_STEP` tall. Drawn by the
+/// painters when a theme has none.
+pub const STEP: &str = "mcp.step";
+
 /// How often [`poll`] looks at the file.
 const POLL: Duration = Duration::from_millis(250);
 
@@ -66,6 +71,8 @@ pub fn schema() -> Schema {
         .field("track.label_size")
         .field("track.parent_send")
         .field("ui.rack")
+        .field("folder.tint")
+        .field("folder.level")
         .layout("mixer.h")
         .layout("ui.mixing")
         .layout("ui.recording")
@@ -129,6 +136,27 @@ pub struct Shown<'a> {
 }
 
 static SCHEMA: std::sync::LazyLock<Schema> = std::sync::LazyLock::new(schema);
+
+/// One folder step's values, for [`STEP`]: the colour of the folder it
+/// stands for and how many folders out it is (1, the strip's own).
+#[must_use]
+pub fn step_fields(tint: vello::peniko::Color, level: usize) -> StripFields {
+    let mut values = vec![Value::Missing; SCHEMA.names().count()];
+    let [r, g, b, a] = tint.to_rgba8().to_u8_array();
+    for (name, v) in [
+        ("folder.tint", Value::Color(Rgba::from_rgba8(r, g, b, a))),
+        ("folder.level", Value::Num(crate::num::coord(level))),
+    ] {
+        if let Some(at) = SCHEMA
+            .slot(name)
+            .and_then(|s| usize::try_from(s).ok())
+            .and_then(|s| values.get_mut(s))
+        {
+            *at = v;
+        }
+    }
+    StripFields(values)
+}
 
 /// `track`'s values for a strip theme.
 #[must_use]
