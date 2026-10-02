@@ -106,6 +106,9 @@ struct Spots {
     input: Spot,
     pan: Spot,
     fx: Spot,
+    /// Whether the FX pill is the full one (an expression); where it is
+    /// not, the compact one (`art::fx_pill_compact`) stands in.
+    fx_wide: String,
     routing: Spot,
     /// Routing across the head of the strip, as a row rather than a
     /// column (`Axis::Horizontal`) — where a layout puts it first.
@@ -476,6 +479,7 @@ impl Gen<'_> {
                 format!("{head} && {} + {} > 26", self.pan_band(), self.input_band()),
             ),
             fx: Spot::new("7", "9", "max(w - 14, 36)", "24", head.clone()),
+            fx_wide: "true".into(),
             routing_head: None,
             routing: Spot::new(
                 format!("{col} - {}", n(art::ROUTING_INSET_V)),
@@ -544,22 +548,29 @@ impl Gen<'_> {
         // The recording rows, right on the name: the arm (and the monitor
         // beside it), and on a full strip the input over them. Their rows
         // come out of the fader's travel when there are any.
-        let row = format!("({name_top} - 23)");
-        let row_h = format!("({records} ? ({full} ? 44 : 26) : 0)");
+        // The arm's foot on the name plate's top: the plate's own margin
+        // is the gap between them.
+        let row = format!("({name_top} - 20)");
+        let row_h = format!("({records} ? ({full} ? 41 : 23) : 0)");
         // From the top: the chain, the routing, solo, mute, the band's
         // foot, the pan and the fader, each a fixed step below the last.
         let (solo_y, mute_y, band_bottom, pan_y, fader_top) = ("52", "74", "98", "101", "128");
         let travel = format!("max({name_top} - 3 - {row_h} - {fader_top}, 0)");
         let fader_x = centre(30.0);
+        let fx_wide = format!("({OWN_W} >= 46)");
+        let fx_w = format!("({fx_wide} ? max(w - 14, 36) : {})", n(art::FX_COMPACT_W));
         Spots {
             band: ("0".into(), band_bottom.into()),
+            // Across the strip where the full pill fits; the compact one,
+            // centred, where it does not.
             fx: Spot::new(
-                "(w - max(w - 14, 36)) / 2",
+                format!("(w - {fx_w}) / 2"),
                 "4",
-                "max(w - 14, 36)",
+                fx_w.clone(),
                 "22",
-                format!("({OWN_W} >= 46)"),
+                "w >= 26",
             ),
+            fx_wide,
             routing_head: Some(Spot::new(
                 format!("max({}, 1)", centre(28.0)),
                 "28",
@@ -962,7 +973,12 @@ impl Gen<'_> {
                 };
                 let (name, visible) = (
                     format!("FX {chain:?} {at:?}"),
-                    format!("{} && {has} && {}", spots.fx.visible, state("fx", at)),
+                    format!(
+                        "{} && {} && {has} && {}",
+                        spots.fx.visible,
+                        spots.fx_wide,
+                        state("fx", at)
+                    ),
                 );
                 self.drawing(
                     3,
@@ -983,6 +999,32 @@ impl Gen<'_> {
                 );
                 // The pill is as wide as the strip lets it be.
                 self.patch_last_frame_width(&spots.fx.w);
+                // Too narrow for that, the compact pill.
+                if spots.fx_wide != "true" {
+                    let d = art::fx_pill_compact(chrome, crate::tcp::lit(p), chain, at);
+                    let (name, visible) = (
+                        format!("FX compact {chain:?} {at:?}"),
+                        format!(
+                            "{} && !{} && {has} && {}",
+                            spots.fx.visible,
+                            spots.fx_wide,
+                            state("fx", at)
+                        ),
+                    );
+                    self.drawing(
+                        3,
+                        &d,
+                        &Place {
+                            name: &name,
+                            x: &spots.fx.x,
+                            y: &spots.fx.y,
+                            visible: &visible,
+                            follow: Follow::Fixed,
+                            track: "",
+                            extra: "",
+                        },
+                    );
+                }
             }
         }
 
@@ -1984,9 +2026,9 @@ mod tests {
                         "the arm on the name at {width}: {arm:?} {fader:?} {name:?}"
                     );
                 }
-                if let Some(fx) = at("fx") {
-                    assert!(fx.y1 <= route.y0, "the chain at the head at {width}");
-                }
+                // The chain on every strip, at the head.
+                let fx = at("fx").expect("fx");
+                assert!(fx.y1 <= route.y0, "the chain at the head at {width}");
             }
             assert!(seen.windows(2).all(|w| w[0] == w[1]), "{seen:?}");
             assert_eq!(seen[0], (0.0, heights.0, 0.0, heights.1));

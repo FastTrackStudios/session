@@ -1793,6 +1793,57 @@ pub mod tcp {
         drawing
     }
 
+    /// The width of [`fx_pill_compact`].
+    pub const FX_COMPACT_W: f64 = 26.0;
+
+    /// [`fx_pill`] for a strip too narrow for its 36: one 26-wide pill, no
+    /// seam, the lamp a slimmer capsule (2 by 8) at the right end and
+    /// "FX" centred in what is left. Same plate, same lamp colours, same
+    /// print — the same control, folded up.
+    #[must_use]
+    pub fn fx_pill_compact(chrome: &Chrome, lit: Lit, chain: Chain, at: Interaction) -> Drawing {
+        let (w, h) = (FX_COMPACT_W, 22.0);
+        let plate = ink_in(chrome, None, at, true, 0.35);
+        let (body_y, body_h) = (h / 22.0, h * 20.0 / 22.0);
+        let radius = h * 0.12;
+
+        let mut drawing = Drawing::new(w, h);
+        drawing.fill(
+            rect(0.0, body_y, w, body_h, radius),
+            Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 89,
+            },
+        );
+        drawing.stroke(
+            rect(0.5, body_y + 0.5, w - 1.0, body_h - 1.0, radius),
+            plate.border,
+            Stroke::new(1.0),
+        );
+        let lamp = match chain {
+            Chain::Active => lit.volume,
+            Chain::Bypassed => lit.bypass,
+            Chain::Empty => chrome.hardware_mark.shade(-0.45),
+        };
+        drawing.fill(rect(w - 5.0, (h - 8.0) / 2.0, 2.0, 8.0, 1.0), lamp);
+        let (ink, ink_alpha) = match chain {
+            Chain::Empty => (chrome.hardware_mark.shade(0.33), 0.61),
+            Chain::Active => (chrome.hardware_mark.shade(0.78), 0.87),
+            Chain::Bypassed => (lit.bypass, 1.0),
+        };
+        drawing.text(
+            "FX",
+            (w - 8.0) / 2.0 + 0.5,
+            h / 2.0 + 3.5,
+            10.5,
+            alpha(ink, ink_alpha),
+            Align::Centre,
+        );
+        drawing
+    }
+
     /// The envelope button: the ramp it stands for.
     #[must_use]
     pub fn envelope(chrome: &Chrome, at: Interaction) -> Drawing {
