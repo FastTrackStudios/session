@@ -1,15 +1,21 @@
 //! The mixer drawn from a frame theme instead of the painters here.
 //!
-//! A theme is a frame document (`.fm`) whose `mcp.strip` page is one
-//! channel strip: its tokens are the colours, its bindings read the
-//! track ([`schema`]), its `@name` nodes are the controls a click lands
-//! on ([`control`]). See `docs/frame-themes.md`.
+//! A theme is frame documents (`.frame`, or the older `.fm`) whose
+//! `mcp.strip` page is one channel strip: its tokens are the colours, its
+//! bindings read the track ([`schema`]), its `@name` nodes are the
+//! controls a click lands on ([`control`]), and the controls it places are
+//! components. See `docs/frame-themes.md`.
 //!
-//! Loaded from `FTS_THEME` (a path to the `.fm`), in `FTS_THEME_MODE` or
-//! the document's first mode, and **hot-reloaded**: [`poll`] notices the
-//! file changing and recompiles it, and a widget that sees [`version`]
-//! move re-records. A theme that fails to compile leaves the last good
-//! one on screen and says why once.
+//! **Layered**: `FTS_THEME` is a list of paths (`:`-separated, the base
+//! first), each a file or a folder of them, every one over the ones before
+//! it — so a theme built on another is only the files it changes: one
+//! control, the strip, a colour (`theme_runtime::layer`).
+//!
+//! Compiled in `FTS_THEME_MODE` or the documents' first mode, and
+//! **hot-reloaded**: [`poll`] notices any of the files changing (or one
+//! added to or taken from a folder) and recompiles, and a widget that sees
+//! [`version`] move re-records. A theme that fails to compile leaves the
+//! last good one on screen and says why once.
 //!
 //! The Tone rack is still the painters' own — the theme draws the REAPER
 //! part of the strip, below it.
@@ -260,9 +266,11 @@ pub fn control(name: &str) -> Option<Control> {
 // ── the loaded theme ──────────────────────────────────────────────────
 
 struct Loaded {
-    path: PathBuf,
+    /// The layers as given, base first: files and folders.
+    paths: Vec<PathBuf>,
     mode: Option<String>,
-    modified: Option<SystemTime>,
+    /// Every file they came to and when it last changed.
+    stamp: Vec<(PathBuf, Option<SystemTime>)>,
     checked: Instant,
     /// The last error reported, so a broken file is reported once.
     reported: Option<String>,
@@ -278,7 +286,21 @@ thread_local! {
     static THEME: RwLock<Option<Arc<Theme>>> = const { RwLock::new(None) };
 }
 static VERSION: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(test))]
 static SOURCE: Mutex<Option<Loaded>> = Mutex::new(None);
+
+#[cfg(test)]
+thread_local! {
+    static SOURCE: Mutex<Option<Loaded>> = const { Mutex::new(None) };
+}
+
+/// The files being watched, for `f` to look at or change.
+fn with_source<R>(f: impl FnOnce(&mut Option<Loaded>) -> R) -> R {
+    #[cfg(not(test))]
+    return f(&mut SOURCE.lock().unwrap_or_else(PoisonError::into_inner));
+    #[cfg(test)]
+    SOURCE.with(|s| f(&mut s.lock().unwrap_or_else(PoisonError::into_inner)))
+}
 
 /// The theme the mixer draws with, when there is one with a strip.
 #[must_use]
@@ -311,20 +333,22 @@ pub fn set(theme: Option<Arc<Theme>>) {
     VERSION.fetch_add(1, Ordering::AcqRel);
 }
 
-/// Load the theme at `path` in `mode` and keep watching it.
+/// Load the theme layered from `paths` (base first; files, or folders of
+/// them) in `mode`, and keep watching them.
 ///
 /// # Errors
 /// Why it did not compile; the previous theme stays.
-pub fn load(path: PathBuf, mode: Option<String>) -> Result<(), String> {
-    let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-    let result = compile(&path, mode.as_deref());
-    *SOURCE.lock().unwrap_or_else(PoisonError::into_inner) = Some(Loaded {
-        path,
+pub fn load(paths: Vec<PathBuf>, mode: Option<String>) -> Result<(), String> {
+    let stamp = stamp(&paths);
+    let result = compile(&stamp, mode.as_deref());
+    let loaded = Loaded {
+        paths,
         mode,
-        modified,
+        stamp,
         checked: Instant::now(),
         reported: result.as_ref().err().cloned(),
-    });
+    };
+    with_source(|source| *source = Some(loaded));
     result.map(|theme| set(Some(Arc::new(theme))))
 }
 
@@ -332,54 +356,97 @@ pub fn load(path: PathBuf, mode: Option<String>) -> Result<(), String> {
 pub fn from_env() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let Some(path) = std::env::var_os("FTS_THEME").map(PathBuf::from) else {
+        let Some(paths) = std::env::var_os("FTS_THEME") else {
             return;
         };
         let mode = std::env::var("FTS_THEME_MODE").ok();
-        if let Err(why) = load(path, mode) {
+        if let Err(why) = load(std::env::split_paths(&paths).collect(), mode) {
             tracing::warn!(theme.error = %why, "theme did not load");
         }
     });
 }
 
-/// Recompile the theme if its file changed since the last look (looked
-/// at no more than every [`POLL`]). True when [`current`] changed.
+/// Recompile the theme if any of its files changed since the last look,
+/// or a folder gained or lost one (looked at no more than every
+/// [`POLL`]). True when [`current`] changed.
 pub fn poll() -> bool {
-    let mut source = SOURCE.lock().unwrap_or_else(PoisonError::into_inner);
-    let Some(loaded) = source.as_mut() else {
-        return false;
-    };
-    if loaded.checked.elapsed() < POLL {
-        return false;
-    }
-    loaded.checked = Instant::now();
-    let modified = std::fs::metadata(&loaded.path)
-        .and_then(|m| m.modified())
-        .ok();
-    if modified == loaded.modified {
-        return false;
-    }
-    loaded.modified = modified;
-    match compile(&loaded.path, loaded.mode.as_deref()) {
-        Ok(theme) => {
-            loaded.reported = None;
-            drop(source);
-            set(Some(Arc::new(theme)));
-            true
+    let fresh = with_source(|source| {
+        let loaded = source.as_mut()?;
+        if loaded.checked.elapsed() < POLL {
+            return None;
         }
-        Err(why) => {
-            if loaded.reported.as_deref() != Some(why.as_str()) {
-                tracing::warn!(theme.error = %why, "theme did not reload; keeping the last good one");
-                loaded.reported = Some(why);
+        loaded.checked = Instant::now();
+        let now = stamp(&loaded.paths);
+        if now == loaded.stamp {
+            return None;
+        }
+        loaded.stamp = now;
+        match compile(&loaded.stamp, loaded.mode.as_deref()) {
+            Ok(theme) => {
+                loaded.reported = None;
+                Some(theme)
             }
-            false
+            Err(why) => {
+                if loaded.reported.as_deref() != Some(why.as_str()) {
+                    tracing::warn!(theme.error = %why, "theme did not reload; keeping the last good one");
+                    loaded.reported = Some(why);
+                }
+                None
+            }
         }
-    }
+    });
+    fresh.map(|theme| set(Some(Arc::new(theme)))).is_some()
 }
 
-fn compile(path: &std::path::Path, mode: Option<&str>) -> Result<Theme, String> {
-    let src = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Theme::from_markup(&src, schema(), mode).map_err(|errors| {
+/// Whether `path` is a frame document: `.frame`, or the older `.fm`.
+fn is_theme_file(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e == "frame" || e == "fm")
+}
+
+/// The files `paths` come to, in layering order — a folder's by name — each
+/// with when it last changed.
+fn stamp(paths: &[PathBuf]) -> Vec<(PathBuf, Option<SystemTime>)> {
+    let mut files = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            let mut inside: Vec<PathBuf> = std::fs::read_dir(path)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| is_theme_file(p))
+                .collect();
+            inside.sort();
+            files.extend(inside);
+        } else {
+            files.push(path.clone());
+        }
+    }
+    files
+        .into_iter()
+        .map(|f| {
+            let modified = std::fs::metadata(&f).and_then(|m| m.modified()).ok();
+            (f, modified)
+        })
+        .collect()
+}
+
+fn compile(files: &[(PathBuf, Option<SystemTime>)], mode: Option<&str>) -> Result<Theme, String> {
+    if files.is_empty() {
+        return Err("no theme files".into());
+    }
+    let mut sources = Vec::new();
+    for (path, _) in files {
+        let src = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        sources.push((path.display().to_string(), src));
+    }
+    let sources: Vec<(&str, &str)> = sources
+        .iter()
+        .map(|(l, s)| (l.as_str(), s.as_str()))
+        .collect();
+    Theme::from_sources(&sources, schema(), mode).map_err(|errors| {
         errors
             .iter()
             .map(ToString::to_string)
@@ -409,7 +476,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("strip.fm");
         std::fs::write(&path, THEME).expect("write");
-        load(path.clone(), None).expect("loads");
+        load(vec![path.clone()], None).expect("loads");
         assert!(current().is_some_and(|t| t.token("ground").is_some()));
 
         let wait = || std::thread::sleep(POLL + Duration::from_millis(20));
@@ -451,6 +518,47 @@ mod tests {
             vello::kurbo::Point::new(60.0, 130.0),
         );
         assert_eq!(hit.as_deref().and_then(control), Some(Control::Mute));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A theme over another: the base's folder, then a folder of what it
+    /// changes. A file dropped into the second is taken up as it lands.
+    #[test]
+    fn a_layer_dropped_into_a_folder_is_taken_up() {
+        let dir = std::env::temp_dir().join(format!("fts-skin-layers-{}", std::process::id()));
+        let (base, mine) = (dir.join("base"), dir.join("mine"));
+        std::fs::create_dir_all(&base).expect("temp dir");
+        std::fs::create_dir_all(&mine).expect("temp dir");
+        std::fs::write(base.join("strip.frame"), THEME).expect("write");
+        // Not a theme file: ignored.
+        std::fs::write(base.join("notes.txt"), "not a theme").expect("write");
+        load(vec![base.clone(), mine.clone()], None).expect("loads");
+        let ground = || {
+            current()
+                .and_then(|t| t.token("ground").and_then(Value::color))
+                .map(Rgba::to_hex)
+        };
+        assert_eq!(ground().as_deref(), Some("#202020"));
+
+        std::thread::sleep(POLL + Duration::from_millis(20));
+        std::fs::write(
+            mine.join("colours.fm"),
+            r##"<Document><Variables modes="dark"><Var name="ground" value="#405060" /></Variables></Document>"##,
+        )
+        .expect("write");
+        assert!(poll(), "the new layer is taken up");
+        assert_eq!(
+            ground().as_deref(),
+            Some("#405060"),
+            "and it is over the base"
+        );
+        // The base's strip is still the strip.
+        assert!(current().is_some());
+
+        std::thread::sleep(POLL + Duration::from_millis(20));
+        std::fs::remove_file(mine.join("colours.fm")).expect("remove");
+        assert!(poll(), "a layer taken away is noticed");
+        assert_eq!(ground().as_deref(), Some("#202020"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
