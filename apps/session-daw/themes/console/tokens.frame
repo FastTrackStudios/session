@@ -18,5 +18,12 @@
     <Var name="surface" value="#09090b" />
     <Var name="surface.sunken" value="#0a0a0c" />
     <Var name="border" value="#27272a" />
+    <Var name="plate" value="#00000059" />
+    <Var name="sheen" value="#ffffff12" />
+    <Var name="pan" value="#eab308" />
+    <Var name="route.out" value="$accent" />
+    <Var name="route.send" value="$meter.warn" />
+    <Var name="route.recv" value="$meter.danger" />
+    <Var name="monitor.tape" value="#f08c2e" />
   </Variables>
 </Document>
