@@ -1125,6 +1125,24 @@ daw-scenes:
     export FTS_UPDATE_GOLDEN=1
     cargo test -p dynamic-template --test scene_rows
     cargo test -p session-daw --test golden_scenes
+    # The generated scenes' pictures (drum-mixing and its kin) are not
+    # compared — the negative control reads two of them, and the app's
+    # Mix view is checked against drum-mixing by eye — so the test above
+    # does not refresh them. Re-render each one committed, the same way,
+    # so they are of the template as it is now rather than as it was.
+    cargo build -q --release -p session-daw --bin bench
+    for png in "{{GOLDEN_DIR}}"/scenes/*.png; do
+        slug=$(basename "$png" .png)
+        case "$slug" in
+            *-tracking|*-tracking-overview|*-comping|*-editing|*-mixing) ;;
+            *) continue ;;
+        esac
+        project="{{GOLDEN_DIR}}/template.rpp"
+        [[ "$slug" == lead-vocal* ]] && project="{{GOLDEN_DIR}}/vocal-fx.rpp"
+        FTS_BENCH_SCENE="$slug" FTS_BENCH_MIXER="$png" FTS_BENCH_ROWS="{{GOLDEN_DIR}}/scenes/$slug.rows" \
+            FTS_BENCH_SIZE=2560x1440 ./target/release/bench "$project" >/dev/null
+        echo "rendered $slug"
+    done
 
 # Re-render the folder-item fixtures from the golden session's own peaks.
 #
