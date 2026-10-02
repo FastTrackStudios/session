@@ -49,42 +49,42 @@
         <Vector name="Pointer" x=12 y=12.08 w=1 h=1 geometry="M -0.9960000000000004 -5.5699999999999985 L 0.9960000000000004 -5.5699999999999985 L 0.9960000000000004 -4.3100000000000005 L -0.9960000000000004 -4.3100000000000005 Z" fill="#eab308" bind:rotation="clamp(track.pan, -1, 1) * 135" />
         <Vector w=24 h=25 geometry="M16.06,12.05 C16.06,14.292276084313022 14.242276084313021,16.11 12,16.11 C9.757723915686979,16.11 7.94,14.292276084313022 7.94,12.05 C7.94,9.80772391568698 9.757723915686977,7.990000000000002 12,7.990000000000001 C14.24227608431302,7.99 16.06,9.807723915686978 16.06,12.049999999999999" fill="#c3c3c9" />
       </Frame>
-      <Frame name="FX Empty Normal" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && true && track.fx == 0 && !(ui.pressed == \"fx\" || (ui.hover == \"fx\" && ui.pressed == \"\"))">
+      <Frame name="FX Empty Normal" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && track.fx == 0 && !(ui.pressed == \"fx\" || (ui.hover == \"fx\" && ui.pressed == \"\"))">
         <Rectangle x=0 y=1 w=72 h=20 radius=2.6399999999999997 fill="#00000059" bind:w="1 * pw + 0" />
         <Rectangle x=0.5 y=1.5 w=71 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=2.6399999999999997 bind:w="1 * pw + -1" />
         <Rectangle x=56 y=3 w=1 h=16 fill="#27272a" bind:x="1 * pw + -16" />
         <Rectangle x=62 y=6 w=4 h=10 radius=2 fill="#6b6b6f" bind:x="1 * pw + -10" />
         <Text x=-173 y=5.1 w=400 h=14.5 size=10.5 text-align="center" fill="#d7d7db9c" bind:x="0.5 * pw + -8 + -201">FX</Text>
       </Frame>
-      <Frame name="FX Empty Hover" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && true && track.fx == 0 && (ui.hover == \"fx\" && ui.pressed == \"\")">
+      <Frame name="FX Empty Hover" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && track.fx == 0 && (ui.hover == \"fx\" && ui.pressed == \"\")">
         <Rectangle x=0 y=1 w=72 h=20 radius=2.6399999999999997 fill="#00000059" bind:w="1 * pw + 0" />
         <Rectangle x=0.5 y=1.5 w=71 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=2.6399999999999997 bind:w="1 * pw + -1" />
         <Rectangle x=56 y=3 w=1 h=16 fill="#27272a" bind:x="1 * pw + -16" />
         <Rectangle x=62 y=6 w=4 h=10 radius=2 fill="#6b6b6f" bind:x="1 * pw + -10" />
         <Text x=-173 y=5.1 w=400 h=14.5 size=10.5 text-align="center" fill="#d7d7db9c" bind:x="0.5 * pw + -8 + -201">FX</Text>
       </Frame>
-      <Frame name="FX Empty Pressed" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && true && track.fx == 0 && ui.pressed == \"fx\"">
+      <Frame name="FX Empty Pressed" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && track.fx == 0 && ui.pressed == \"fx\"">
         <Rectangle x=0 y=1 w=72 h=20 radius=2.6399999999999997 fill="#00000059" bind:w="1 * pw + 0" />
         <Rectangle x=0.5 y=1.5 w=71 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=2.6399999999999997 bind:w="1 * pw + -1" />
         <Rectangle x=56 y=3 w=1 h=16 fill="#27272a" bind:x="1 * pw + -16" />
         <Rectangle x=62 y=6 w=4 h=10 radius=2 fill="#6b6b6f" bind:x="1 * pw + -10" />
         <Text x=-173 y=5.1 w=400 h=14.5 size=10.5 text-align="center" fill="#d7d7db9c" bind:x="0.5 * pw + -8 + -201">FX</Text>
       </Frame>
-      <Frame name="FX Active Normal" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && true && track.fx > 0 && !(ui.pressed == \"fx\" || (ui.hover == \"fx\" && ui.pressed == \"\"))">
+      <Frame name="FX Active Normal" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && track.fx > 0 && !(ui.pressed == \"fx\" || (ui.hover == \"fx\" && ui.pressed == \"\"))">
         <Rectangle x=0 y=1 w=72 h=20 radius=2.6399999999999997 fill="#00000059" bind:w="1 * pw + 0" />
         <Rectangle x=0.5 y=1.5 w=71 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=2.6399999999999997 bind:w="1 * pw + -1" />
         <Rectangle x=56 y=3 w=1 h=16 fill="#27272a" bind:x="1 * pw + -16" />
         <Rectangle x=62 y=6 w=4 h=10 radius=2 fill="#38bdf8" bind:x="1 * pw + -10" />
         <Text x=-173 y=5.1 w=400 h=14.5 size=10.5 text-align="center" fill="#f2f2f3de" bind:x="0.5 * pw + -8 + -201">FX</Text>
       </Frame>
-      <Frame name="FX Active Hover" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && true && track.fx > 0 && (ui.hover == \"fx\" && ui.pressed == \"\")">
+      <Frame name="FX Active Hover" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && track.fx > 0 && (ui.hover == \"fx\" && ui.pressed == \"\")">
         <Rectangle x=0 y=1 w=72 h=20 radius=2.6399999999999997 fill="#00000059" bind:w="1 * pw + 0" />
         <Rectangle x=0.5 y=1.5 w=71 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=2.6399999999999997 bind:w="1 * pw + -1" />
         <Rectangle x=56 y=3 w=1 h=16 fill="#27272a" bind:x="1 * pw + -16" />
         <Rectangle x=62 y=6 w=4 h=10 radius=2 fill="#38bdf8" bind:x="1 * pw + -10" />
         <Text x=-173 y=5.1 w=400 h=14.5 size=10.5 text-align="center" fill="#f2f2f3de" bind:x="0.5 * pw + -8 + -201">FX</Text>
       </Frame>
-      <Frame name="FX Active Pressed" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && true && track.fx > 0 && ui.pressed == \"fx\"">
+      <Frame name="FX Active Pressed" w=72 h=22 bind:x="7" bind:y="9" bind:w="max(w - 14, 36)" bind:visible="((w >= 172 ? 86 : w) >= 60) && track.fx > 0 && ui.pressed == \"fx\"">
         <Rectangle x=0 y=1 w=72 h=20 radius=2.6399999999999997 fill="#00000059" bind:w="1 * pw + 0" />
         <Rectangle x=0.5 y=1.5 w=71 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=2.6399999999999997 bind:w="1 * pw + -1" />
         <Rectangle x=56 y=3 w=1 h=16 fill="#27272a" bind:x="1 * pw + -16" />

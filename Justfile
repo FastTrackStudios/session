@@ -1539,16 +1539,27 @@ daw-animate PROJECT="" SIZE="2560x1440":
 #
 #   just mixer-golden                    at the pictures' 2560x1440
 #   SIMULATE=0 just mixer-golden         silent, as the engine has it
-#   THEME=console just mixer-golden      apps/session-daw/themes/fts-console.fm
+#   THEME=console just mixer-golden      apps/session-daw/themes/console/ (a folder of layers)
+#   THEME=console:~/my-layers just …     a theme over it: each path over the ones before
 mixer-golden SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --profile release-fast -p session-desktop
+    # A theme by name is themes/<name>/ or themes/fts-<name>.fm; anything
+    # else is a path. `:` layers them.
+    theme=""
+    IFS=: read -ra layers <<< "${THEME:-dark}"
+    for layer in "${layers[@]}"; do
+        if [ -d "apps/session-daw/themes/$layer" ]; then path="$PWD/apps/session-daw/themes/$layer"
+        elif [ -f "apps/session-daw/themes/fts-$layer.fm" ]; then path="$PWD/apps/session-daw/themes/fts-$layer.fm"
+        else path="${layer/#\~/$HOME}"; fi
+        theme="${theme:+$theme:}$path"
+    done
     FTS_SESSION_PREPARE=0 \
     FTS_SESSION_MODE=Mix \
     FTS_SESSION_VIEW=mixer \
     FTS_SIMULATE="${SIMULATE:-1}" \
-    FTS_THEME="$PWD/apps/session-daw/themes/fts-${THEME:-dark}.fm" \
+    FTS_THEME="$theme" \
     FTS_WINDOW_SIZE="{{SIZE}}" \
     FTS_SESSION_PROJECT="$PWD/{{GOLDEN_DIR}}/template.rpp" \
     ./target/release-fast/session-desktop

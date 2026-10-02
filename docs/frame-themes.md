@@ -1,7 +1,26 @@
 # Frame themes: the arrangement, TCP and mixer as runtime-swappable frame documents
 
-Status: proposal, 2026-10-01. Spans this repo and
+Status: the mixer strip is themed (2026-10-02). Spans this repo and
 [frame](https://github.com/FastTrackStudios/frame).
+
+## Where it stands
+
+- **Frame** (branch `theme-runtime`) has tokens with modes, host binding
+  (`bind:*` over `theme-expr`), compiled per-size plans with record and live
+  passes, **components** (`<Component arg:…>`, placed by
+  `<Instance of="…" arg:…>`, expanded when the theme compiles) and
+  **layers** (`Theme::from_sources`: pages, components and tokens each
+  replaced by name, so a theme on another is only the files it changes).
+- **The mixer strip** draws from a theme in the Mix and Record mixer views.
+  `FTS_THEME` is a `:`-list of files and folders, base first, hot-reloaded.
+  - `themes/console/` is the console layout as hand-edited files:
+    `tokens.frame`, `controls.frame` (each control a component) and
+    `strip.frame` (the strip placing them by name).
+  - `themes/fts-dark.fm` is REAPER's layout, still generated from the
+    painters (`skin::export`) because it is the reference the native strip
+    is held to, pixel for pixel.
+- **Still native:** the rails, the Tone rack, the strip's edge, selection and
+  folder steps, the Live-mode strips, the TCP and the arrangement.
 
 ## Goal
 
@@ -169,10 +188,9 @@ in parallel.
 
 ## Open questions
 
-- **Authoring format.** `.fm` markup (hand-written or AI-written, and
-  hot-reloadable) or Rust builders generating `.fm`? This doc assumes `.fm`
-  files on disk are the source of truth, since runtime swapping needs data
-  rather than code.
+- **Authoring format.** Settled: frame markup files on disk are the source
+  of truth (the console theme). Generated files are a starting point or a
+  reference, not where a theme is edited.
 - **Text.** frame-embed shapes text with its own font path; session has
   `text::Font`. One of them should own glyph caching for both.
 - **Web build.** The web build replays the same scene through vello_hybrid,

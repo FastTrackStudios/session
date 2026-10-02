@@ -1,0 +1,22 @@
+<Document>
+  <Variables modes="dark">
+    <Var name="text" value="#e4e4e7" />
+    <Var name="text.dim" value="#a1a1aa" />
+    <Var name="text.faint" value="#71717a" />
+    <Var name="accent" value="#38bdf8" />
+    <Var name="mute" value="#ef4444" />
+    <Var name="solo" value="#eab308" />
+    <Var name="rec" value="#ef4444" />
+    <Var name="meter.safe" value="#22c55e" />
+    <Var name="meter.warn" value="#f59e0b" />
+    <Var name="meter.danger" value="#ef4444" />
+    <Var name="field" value="#0a0a0c" />
+    <Var name="combo" value="#0a0a0c" />
+    <Var name="hardware" value="#18181b" />
+    <Var name="hardware.edge" value="#27272a" />
+    <Var name="hardware.mark" value="#c3c3c9" />
+    <Var name="surface" value="#09090b" />
+    <Var name="surface.sunken" value="#0a0a0c" />
+    <Var name="border" value="#27272a" />
+  </Variables>
+</Document>

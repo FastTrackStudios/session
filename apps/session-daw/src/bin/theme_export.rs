@@ -1,29 +1,21 @@
-//! Write the painters' mixer strip out as themes.
+//! Write the painters' mixer strip out as a theme: REAPER's layout to the
+//! pixel, the reference the native strip is checked against.
 //!
 //! ```sh
-//! cargo run -r -p session-daw --bin theme_export              # every layout, beside each other
-//! cargo run -r -p session-daw --bin theme_export -- out.fm    # REAPER's alone, to out.fm
+//! cargo run -r -p session-daw --bin theme_export              # to apps/session-daw/themes/fts-dark.fm
+//! cargo run -r -p session-daw --bin theme_export -- out.fm    # elsewhere
 //! ```
 //!
-//! `apps/session-daw/themes/fts-dark.fm` is REAPER's layout to the pixel;
-//! `fts-console.fm` the same controls laid out as a console strip. See
+//! The console theme (`apps/session-daw/themes/console/`) is not written
+//! here: it is its files, edited as they are. See
 //! `session_daw::skin::export`.
 
 fn main() {
     let palette = session_daw::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
-    let themes: Vec<(String, String)> = match std::env::args().nth(1) {
-        Some(out) => vec![(out, session_daw::skin::export::fts_dark(&palette))],
-        None => vec![
-            (
-                "apps/session-daw/themes/fts-dark.fm".to_owned(),
-                session_daw::skin::export::fts_dark(&palette),
-            ),
-            (
-                "apps/session-daw/themes/fts-console.fm".to_owned(),
-                session_daw::skin::export::fts_console(&palette),
-            ),
-        ],
-    };
+    let out = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "apps/session-daw/themes/fts-dark.fm".to_owned());
+    let themes = vec![(out, session_daw::skin::export::fts_dark(&palette))];
     for (out, markup) in themes {
         // Compiled before it is written: a theme the mixer would refuse is
         // not worth overwriting a good one with.

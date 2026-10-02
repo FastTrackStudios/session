@@ -29,6 +29,12 @@
 //! rules are written here once more as expressions over `w`, `h` and the
 //! layout field `mixer.h`; `Collapse`'s height tables are sampled into
 //! piecewise ones. The `parity` test holds the two to the same rects.
+//!
+//! # The console theme
+//!
+//! `themes/console/` began as this generator's output and is its own files
+//! now, edited as they are; its layout tests are here, run against those
+//! files.
 
 use std::fmt::Write as _;
 
@@ -59,43 +65,21 @@ const OWN_W: &str = "(w >= 172 ? 86 : w)";
 /// The theme, as markup: the painters' strip, REAPER's layout.
 #[must_use]
 pub fn fts_dark(palette: &Palette) -> String {
-    generate(palette, Layout::Reaper)
+    generate(palette)
 }
 
-/// The same controls, laid out as a console strip — an experiment in
-/// where things go: the chain at the head of the strip, what records
-/// together sitting together under it (input, monitoring and arm on one
-/// row), and pan, mute and solo right over the fader they set the level
-/// beside.
-#[must_use]
-pub fn fts_console(palette: &Palette) -> String {
-    generate(palette, Layout::Console)
-}
-
-fn generate(palette: &Palette, layout: Layout) -> String {
+fn generate(palette: &Palette) -> String {
     let mut x = Gen {
         out: String::new(),
         palette,
-        layout,
     };
     x.document();
     x.out
 }
 
-/// Where a strip's controls go.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Layout {
-    /// `strip::Strip`'s: REAPER's MCP, to the pixel.
-    Reaper,
-    /// Recording on top, the chain under it, pan, mute and solo over the
-    /// fader.
-    Console,
-}
-
 struct Gen<'a> {
     out: String,
     palette: &'a Palette,
-    layout: Layout,
 }
 
 /// Every control's place on the strip, as expressions over the box: the
@@ -106,19 +90,11 @@ struct Spots {
     input: Spot,
     pan: Spot,
     fx: Spot,
-    /// Whether the FX pill is the full one (an expression); where it is
-    /// not, the compact one (`art::fx_pill_compact`) stands in.
-    fx_wide: String,
     routing: Spot,
-    /// Routing across the head of the strip, as a row rather than a
-    /// column (`Axis::Horizontal`) — where a layout puts it first.
-    routing_head: Option<Spot>,
     /// The housing (on a full strip) and the ring.
     arm_mixer: Spot,
     arm_panel: Spot,
     monitor: Spot,
-    /// Which way the monitor glyph opens.
-    monitor_facing: art::Facing,
     mute: Spot,
     solo: Spot,
     fader_x: String,
@@ -444,13 +420,6 @@ impl Gen<'_> {
 
     /// Every control's place, for this layout.
     fn spots(&self) -> Spots {
-        match self.layout {
-            Layout::Reaper => self.reaper_spots(),
-            Layout::Console => self.console_spots(),
-        }
-    }
-
-    fn reaper_spots(&self) -> Spots {
         let (full, head) = (self.full(), self.head());
         let arm_top = self.arm_top();
         let col = self.column_x();
@@ -481,8 +450,6 @@ impl Gen<'_> {
                 format!("{head} && {} + {} > 26", self.pan_band(), self.input_band()),
             ),
             fx: Spot::new("7", "9", "max(w - 14, 36)", "24", head.clone()),
-            fx_wide: "true".into(),
-            routing_head: None,
             routing: Spot::new(
                 format!("{col} - {}", n(art::ROUTING_INSET_V)),
                 step(crate::mcp::Control::Routing),
@@ -504,7 +471,6 @@ impl Gen<'_> {
                 "20",
                 format!("!{full} && w >= 22"),
             ),
-            monitor_facing: art::Facing::Up,
             monitor: Spot::new(
                 col.clone(),
                 format!("{arm_top} + 3 - {}", n(f64::from(g::BUTTON_H))),
@@ -518,114 +484,6 @@ impl Gen<'_> {
             fader_top: self.fader_top(),
             scale_x: format!("max({} - 24, 1)", self.fader_x()),
             scale_visible: format!("{head} && {shown}"),
-            travel,
-        }
-    }
-
-    /// The console layout, every control centred on the strip.
-    ///
-    /// ```text
-    ///  [      FX      ]       the chain                  ┐
-    ///     [routing]           where it comes in and out  │ the track's
-    ///       [S]               alone,                     │ coloured band
-    ///       [M]               whether                    ┘
-    ///      (pan)              where,                     ┐ the mix,
-    ///  scale | fader          how loud                   ┘ together
-    ///  [   Input ▾    ]       recording (not mixing):    ┐ on the name
-    ///      [●] [◠]            armed, heard (once armed)  ┘ it records to
-    ///  ─── name ───
-    /// ```
-    ///
-    /// The band and the mix are the same in every mode: mute, solo and the
-    /// pan are at one height on every strip whatever the mode or width, on
-    /// the strip's centre line. The recording rows sit under the fader;
-    /// mixing, they are left out and the fader has their room. What gives
-    /// way on a narrow strip is what does not fit: the chain below 46, the
-    /// input and the monitor below a full strip.
-    fn console_spots(&self) -> Spots {
-        let full = format!("({OWN_W} >= 78)");
-        // Every control centred on the strip.
-        let centre = |width: f64| format!("(({OWN_W} - {}) / 2)", n(width));
-        let records = "!ui.mixing";
-        let name_top = self.name_top();
-        // The recording rows, right on the name: the arm (and the monitor
-        // beside it), and on a full strip the input over them. Their rows
-        // come out of the fader's travel when there are any.
-        // The arm right over the name: its box reaches four rows into the
-        // name plate's empty top, so the name's letters are just under
-        // the ring.
-        let row = format!("({name_top} - 16)");
-        let row_h = format!("({records} ? ({full} ? 37 : 19) : 0)");
-        // From the top: the chain, the routing, solo, mute, the band's
-        // foot, the pan and the fader, each a fixed step below the last.
-        let (solo_y, mute_y, band_bottom, pan_y, fader_top) = ("52", "74", "98", "101", "128");
-        let travel = format!("max({name_top} - 3 - {row_h} - {fader_top}, 0)");
-        let fader_x = centre(30.0);
-        let fx_wide = format!("({OWN_W} >= 46)");
-        let fx_w = format!("({fx_wide} ? max(w - 14, 36) : {})", n(art::FX_COMPACT_W));
-        Spots {
-            band: ("0".into(), band_bottom.into()),
-            // Across the strip where the full pill fits; the compact one,
-            // centred, where it does not.
-            fx: Spot::new(
-                format!("(w - {fx_w}) / 2"),
-                "4",
-                fx_w.clone(),
-                "22",
-                "w >= 26",
-            ),
-            fx_wide,
-            routing_head: Some(Spot::new(
-                format!("max({}, 1)", centre(28.0)),
-                "28",
-                "28",
-                "22",
-                "w >= 30",
-            )),
-            input: Spot::new(
-                "6",
-                format!("{row} - 19"),
-                format!("{OWN_W} - 12"),
-                "16",
-                format!("{records} && {full}"),
-            ),
-            // Opening away from the arm it sits right of.
-            monitor_facing: art::Facing::Right,
-            monitor: Spot::new(
-                // Right of the arm, boxes touching (the glyph's own margin
-                // is the gap), only while it is on, where the strip has
-                // room for the pair: the arm centred, the monitor's 21 and
-                // 2 to spare make 66.
-                format!("{} + 20", centre(20.0)),
-                row.clone(),
-                "21",
-                "20",
-                format!("{records} && {OWN_W} >= 66 && track.armed"),
-            ),
-            arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
-            arm_panel: Spot::new(
-                centre(20.0),
-                row,
-                "20",
-                "20",
-                format!("{records} && w >= 22"),
-            ),
-            // Over the fader's cap.
-            pan: Spot::new(centre(24.0), pan_y, "24", "25", "w >= 26"),
-            solo: Spot::new(centre(21.0), solo_y, "21", "20", ""),
-            mute: Spot::new(centre(21.0), mute_y, "21", "20", ""),
-            // Routing is in the band; the fader column keeps none.
-            routing: Spot::new(
-                "-100",
-                "0",
-                n(art::ROUTING_CELL_V.0),
-                n(art::ROUTING_CELL_V.1),
-                "false",
-            ),
-            scale_x: format!("max({fader_x} - 24, 1)"),
-            scale_visible: format!("({OWN_W} >= 46) && {travel} > 0"),
-            fader_x,
-            fader_top: fader_top.into(),
             travel,
         }
     }
@@ -953,24 +811,40 @@ impl Gen<'_> {
 
     /// What the painters draw every frame.
     fn live(&mut self) {
-        let p = self.palette;
-        let chrome = &p.chrome;
         let spots = self.spots();
+        self.pan(&spots.pan);
+        self.fx(&spots.fx);
+        self.routing(&spots.routing);
+        self.arm(&spots.arm_mixer, art::Arm::Mixer);
+        self.arm(&spots.arm_panel, art::Arm::Panel);
+        self.monitor(&spots.monitor);
+        self.button(crate::mcp::Control::Mute, &spots.mute);
+        self.button(crate::mcp::Control::Solo, &spots.solo);
+        self.name_plate();
+        self.fader();
+    }
 
-        // The pan knob.
+    // ── the controls, each where its spot puts it ──────────────────────
+
+    /// The pan knob.
+    fn pan(&mut self, spot: &Spot) {
         self.line(
             3,
             &format!(
                 "<Frame name=\"Pan\" x=5 y=35 w=24 h=25 bind:x={} bind:y={} bind:visible={}>",
-                q(&spots.pan.x),
-                q(&spots.pan.y),
-                q(&spots.pan.visible)
+                q(&spot.x),
+                q(&spot.y),
+                q(&spot.visible)
             ),
         );
         self.pan_knob(4);
         self.line(3, "</Frame>");
+    }
 
-        // The FX button, across the strip.
+    /// The FX button, across the strip.
+    fn fx(&mut self, spot: &Spot) {
+        let p = self.palette;
+        let chrome = &p.chrome;
         for chain in [art::Chain::Empty, art::Chain::Active] {
             for at in STATES {
                 let (w0, w1) = (72.0, 172.0);
@@ -983,20 +857,15 @@ impl Gen<'_> {
                 };
                 let (name, visible) = (
                     format!("FX {chain:?} {at:?}"),
-                    format!(
-                        "{} && {} && {has} && {}",
-                        spots.fx.visible,
-                        spots.fx_wide,
-                        state("fx", at)
-                    ),
+                    format!("{} && {has} && {}", spot.visible, state("fx", at)),
                 );
                 self.drawing(
                     3,
                     &d,
                     &Place {
                         name: &name,
-                        x: &spots.fx.x,
-                        y: &spots.fx.y,
+                        x: &spot.x,
+                        y: &spot.y,
                         visible: &visible,
                         follow: Follow::Width {
                             w0,
@@ -1008,38 +877,15 @@ impl Gen<'_> {
                     },
                 );
                 // The pill is as wide as the strip lets it be.
-                self.patch_last_frame_width(&spots.fx.w);
-                // Too narrow for that, the compact pill.
-                if spots.fx_wide != "true" {
-                    let d = art::fx_pill_compact(chrome, crate::tcp::lit(p), chain, at);
-                    let (name, visible) = (
-                        format!("FX compact {chain:?} {at:?}"),
-                        format!(
-                            "{} && !{} && {has} && {}",
-                            spots.fx.visible,
-                            spots.fx_wide,
-                            state("fx", at)
-                        ),
-                    );
-                    self.drawing(
-                        3,
-                        &d,
-                        &Place {
-                            name: &name,
-                            x: &spots.fx.x,
-                            y: &spots.fx.y,
-                            visible: &visible,
-                            follow: Follow::Fixed,
-                            track: "",
-                            extra: "",
-                        },
-                    );
-                }
+                self.patch_last_frame_width(&spot.w);
             }
         }
+    }
 
-        // Routing.
-        let (route_x, route_y) = (spots.routing.x.clone(), spots.routing.y.clone());
+    /// Routing: which of parent send, sends and receives the track has.
+    fn routing(&mut self, spot: &Spot) {
+        let p = self.palette;
+        let chrome = &p.chrome;
         for bits in 0..8_u8 {
             let routes = art::Routing {
                 parent_send: bits & 1 != 0,
@@ -1074,19 +920,15 @@ impl Gen<'_> {
                 );
                 let (name, visible) = (
                     format!("Routing {bits} {at:?}"),
-                    format!(
-                        "{} && {when} && {}",
-                        spots.routing.visible,
-                        state("routing", at)
-                    ),
+                    format!("{} && {when} && {}", spot.visible, state("routing", at)),
                 );
                 self.drawing(
                     3,
                     &d,
                     &Place {
                         name: &name,
-                        x: &route_x,
-                        y: &route_y,
+                        x: &spot.x,
+                        y: &spot.y,
                         visible: &visible,
                         follow: Follow::Fixed,
                         track: "",
@@ -1095,97 +937,48 @@ impl Gen<'_> {
                 );
             }
         }
+    }
 
-        // Routing across the head, where the layout puts it first.
-        if let Some(head) = &spots.routing_head {
-            for bits in 0..8_u8 {
-                let routes = art::Routing {
-                    parent_send: bits & 1 != 0,
-                    sends: bits & 2 != 0,
-                    receives: bits & 4 != 0,
-                };
-                let when = format!(
-                    "{} && {} && {}",
-                    if routes.parent_send {
-                        "track.parent_send"
-                    } else {
-                        "!track.parent_send"
-                    },
-                    if routes.sends {
-                        "track.sends > 0"
-                    } else {
-                        "track.sends == 0"
-                    },
-                    if routes.receives {
-                        "track.receives > 0"
-                    } else {
-                        "track.receives == 0"
-                    }
+    /// The record arm: the housing (`Mixer`) or the ring (`Panel`).
+    fn arm(&mut self, spot: &Spot, style: art::Arm) {
+        let p = self.palette;
+        for armed in [false, true] {
+            for at in STATES {
+                let d = art::record_arm(
+                    &p.chrome,
+                    crate::tcp::lit(p).rec,
+                    armed,
+                    at,
+                    style,
+                    SENTINEL,
                 );
-                for at in STATES {
-                    let d = art::routing(
-                        chrome,
-                        art::Axis::Horizontal,
-                        routes,
-                        crate::overlay::route_ink(p),
-                        at,
-                    );
-                    let (name, visible) = (
-                        format!("Routing head {bits} {at:?}"),
-                        format!("{} && {when} && {}", head.visible, state("routing", at)),
-                    );
-                    self.drawing(
-                        3,
-                        &d,
-                        &Place {
-                            name: &name,
-                            x: &head.x,
-                            y: &head.y,
-                            visible: &visible,
-                            follow: Follow::Fixed,
-                            track: "",
-                            extra: "",
-                        },
-                    );
-                }
+                let name = format!("Arm {style:?} {armed} {at:?}");
+                let visible = format!(
+                    "{} && {}track.armed && {}",
+                    spot.visible,
+                    if armed { "" } else { "!" },
+                    state("arm", at)
+                );
+                self.drawing(
+                    3,
+                    &d,
+                    &Place {
+                        name: &name,
+                        x: &spot.x,
+                        y: &spot.y,
+                        visible: &visible,
+                        follow: Follow::Fixed,
+                        track: "track.ground",
+                        extra: "",
+                    },
+                );
             }
         }
+    }
 
-        // The record arm: the housing on a full strip, the ring otherwise.
-        for (style, spot) in [
-            (art::Arm::Mixer, &spots.arm_mixer),
-            (art::Arm::Panel, &spots.arm_panel),
-        ] {
-            let (tier, x, arm_top) = (spot.visible.clone(), spot.x.clone(), spot.y.clone());
-            for armed in [false, true] {
-                for at in STATES {
-                    let d =
-                        art::record_arm(chrome, crate::tcp::lit(p).rec, armed, at, style, SENTINEL);
-                    let name = format!("Arm {style:?} {armed} {at:?}");
-                    let visible = format!(
-                        "{tier} && {}track.armed && {}",
-                        if armed { "" } else { "!" },
-                        state("arm", at)
-                    );
-                    self.drawing(
-                        3,
-                        &d,
-                        &Place {
-                            name: &name,
-                            x: &x,
-                            y: &arm_top,
-                            visible: &visible,
-                            follow: Follow::Fixed,
-                            track: "track.ground",
-                            extra: "",
-                        },
-                    );
-                }
-            }
-        }
-
-        // Input monitoring, beside the arm, on armed tracks.
-        let (monitor_x, monitor_y) = (spots.monitor.x.clone(), spots.monitor.y.clone());
+    /// Input monitoring: off, on, or not while playing.
+    fn monitor(&mut self, spot: &Spot) {
+        let p = self.palette;
         for (mode, value) in [
             (art::Monitoring::Off, 0),
             (art::Monitoring::Normal, 1),
@@ -1201,11 +994,11 @@ impl Gen<'_> {
                     },
                     _ => to_theme(p.text),
                 };
-                let d = art::monitor(chrome, mode, lit, at, spots.monitor_facing);
+                let d = art::monitor(&p.chrome, mode, lit, at, art::Facing::Up);
                 let name = format!("Monitor {mode:?} {at:?}");
                 let visible = format!(
                     "{} && track.monitor == {value} && {}",
-                    spots.monitor.visible,
+                    spot.visible,
                     state("monitor", at)
                 );
                 self.drawing(
@@ -1213,8 +1006,8 @@ impl Gen<'_> {
                     &d,
                     &Place {
                         name: &name,
-                        x: &monitor_x,
-                        y: &monitor_y,
+                        x: &spot.x,
+                        y: &spot.y,
                         visible: &visible,
                         follow: Follow::Fixed,
                         track: "",
@@ -1223,64 +1016,47 @@ impl Gen<'_> {
                 );
             }
         }
+    }
 
-        // Mute and solo.
-        for (control, label, field, lit) in [
-            (
-                crate::mcp::Control::Mute,
-                "M",
-                "track.mute",
-                crate::tcp::mute_lit(p),
-            ),
-            (
-                crate::mcp::Control::Solo,
-                "S",
-                "track.solo",
-                crate::tcp::solo_lit(p),
-            ),
-        ] {
-            let spot = if control == crate::mcp::Control::Mute {
-                &spots.mute
-            } else {
-                &spots.solo
-            };
-            let (x, y) = (spot.x.clone(), spot.y.clone());
-            for on in [false, true] {
-                for at in STATES {
-                    let d = art::gutter_button_sized(
-                        chrome,
-                        label,
-                        on,
-                        lit,
-                        at,
-                        (f64::from(g::BUTTON_W), f64::from(g::BUTTON_H)),
-                    );
-                    let name = super::name(control);
-                    let title = format!("{label} {on} {at:?}");
-                    let visible = format!(
-                        "{}{field} && {}",
-                        if on { "" } else { "!" },
-                        state(name, at)
-                    );
-                    self.drawing(
-                        3,
-                        &d,
-                        &Place {
-                            name: &title,
-                            x: &x,
-                            y: &y,
-                            visible: &visible,
-                            follow: Follow::Fixed,
-                            track: "",
-                            extra: "",
-                        },
-                    );
-                }
+    /// Mute or solo.
+    fn button(&mut self, control: crate::mcp::Control, spot: &Spot) {
+        let p = self.palette;
+        let (label, field, lit) = if control == crate::mcp::Control::Mute {
+            ("M", "track.mute", crate::tcp::mute_lit(p))
+        } else {
+            ("S", "track.solo", crate::tcp::solo_lit(p))
+        };
+        for on in [false, true] {
+            for at in STATES {
+                let d = art::gutter_button_sized(
+                    &p.chrome,
+                    label,
+                    on,
+                    lit,
+                    at,
+                    (f64::from(g::BUTTON_W), f64::from(g::BUTTON_H)),
+                );
+                let title = format!("{label} {on} {at:?}");
+                let visible = format!(
+                    "{}{field} && {}",
+                    if on { "" } else { "!" },
+                    state(super::name(control), at)
+                );
+                self.drawing(
+                    3,
+                    &d,
+                    &Place {
+                        name: &title,
+                        x: &spot.x,
+                        y: &spot.y,
+                        visible: &visible,
+                        follow: Follow::Fixed,
+                        track: "",
+                        extra: "",
+                    },
+                );
             }
         }
-
-        self.name_plate();
-        self.fader();
     }
 
     /// The last `<Frame …>` line written gets a width binding in place of
@@ -1710,10 +1486,6 @@ impl Gen<'_> {
             let (x, y, w, h, visible) = hit(spot);
             rows.push((name, x, y, w, h, visible));
         }
-        if let Some(head) = &spots.routing_head {
-            let (x, y, w, h, visible) = hit(head);
-            rows.push(("routing", x, y, w, h, visible));
-        }
         rows.push(("arm", arm_x, arm_y, arm_w, arm_h, arm_visible));
         for (name, x, y, w, h, visible) in rows {
             let mut a = format!(
@@ -1927,18 +1699,32 @@ mod tests {
         .collect()
     }
 
+    /// The console theme as it ships: its files, layered.
     fn console() -> (Theme, Palette) {
         let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
-        let theme = Theme::from_markup(&super::fts_console(&palette), super::super::schema(), None)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "{}",
-                    e.iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            });
+        let files = [
+            (
+                "tokens.frame",
+                include_str!("../../themes/console/tokens.frame"),
+            ),
+            (
+                "controls.frame",
+                include_str!("../../themes/console/controls.frame"),
+            ),
+            (
+                "strip.frame",
+                include_str!("../../themes/console/strip.frame"),
+            ),
+        ];
+        let theme = Theme::from_sources(&files, super::super::schema(), None).unwrap_or_else(|e| {
+            panic!(
+                "{}",
+                e.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        });
         (theme, palette)
     }
 
