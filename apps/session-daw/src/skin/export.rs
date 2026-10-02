@@ -515,65 +515,67 @@ impl Gen<'_> {
         }
     }
 
-    /// The console layout. Rows, top to bottom, on a full strip:
+    /// The console layout: one stack, read from the fader up.
     ///
     /// ```text
-    ///  [      FX      ]       the chain, at the head of the strip
-    ///  [Input ▾     ][◠] [●]   recording: what, whether you hear it, armed
-    ///  (pan)          [M]     the mix: where,
-    ///                 [S]     whether, alone
-    ///  scale | fader | route  the level
+    ///  [      FX      ]       the chain
+    ///             [routing]   where it comes in and goes out
+    ///  [Input ▾][◠]   [●]     recording (not while mixing)
+    ///                 (pan)   the mix: where,
+    ///                  [S]    alone,
+    ///                  [M]    whether
+    ///  scale | fader          the level
     /// ```
     ///
-    /// The mode decides what is first. Mixing, the chain heads the strip
-    /// and there is no recording row — nothing is armed in a mix — and the
-    /// column is mute, solo, then the pan right over the fader — on every
-    /// strip however narrow. Recording, the
-    /// routing heads it (where the take comes in and goes out), the chain
-    /// beside it where the strip is wide enough, the recording row under.
-    ///
-    /// Mute and solo are in the same place on every strip of a mode,
-    /// whatever its width: one column, its right edge four pixels in from
-    /// the strip's — so "which of these is muted" is one look along a
-    /// line, across a kit's 30-pixel mics and its 86-pixel buses alike.
-    /// The arm heads the same column. What gives way on a narrow strip is
-    /// everything else.
+    /// Mute sits right on the fader, then solo, the pan, the arm, the
+    /// routing and the chain at the head. Mixing, nothing is armed, so the
+    /// recording row is left out and the stack is that much shorter; the
+    /// order never changes. Everything is in the same place on every strip
+    /// of a mode, whatever its width — one column, its right edge four
+    /// pixels in from the strip's — so "which of these is muted" is one
+    /// look along a line, across a kit's 30-pixel mics and its 86-pixel
+    /// buses alike. What gives way on a narrow strip is what does not fit:
+    /// the chain below 46, the input and the monitor below a full strip.
     fn console_spots(&self) -> Spots {
         let full = format!("({OWN_W} >= 78)");
         let column = format!("({OWN_W} - 25)");
-        let (mixing, recording) = ("ui.mixing", "ui.recording");
+        let records = "!ui.mixing";
+        // From the top: the chain, the routing, then the recording row
+        // when there is one; from there down, the pan, solo, mute and the
+        // fader, each a fixed step below the one before.
+        let pan_y = format!("({records} ? 74 : 52)");
+        let solo_y = format!("({pan_y} + 27)");
+        let mute_y = format!("({solo_y} + 22)");
+        let fader_top = format!("({mute_y} + 24)");
         let name_top = self.name_top();
-        let fader_top = "106".to_owned();
         let travel = format!("max({name_top} - 3 - {fader_top}, 0)");
         let fader_x = format!("(({OWN_W} - 30) / 2)");
-        let records = format!("!{mixing}");
         Spots {
-            band: ("0".into(), "102".into()),
+            band: ("0".into(), format!("{fader_top} - 4")),
             fx: Spot::new(
-                format!("{recording} ? 39 : 7"),
-                "5",
-                format!("{recording} ? max(w - 46, 36) : max(w - 14, 36)"),
-                // The pill's own height: nothing under it is the chain's.
+                "7",
+                "4",
+                "max(w - 14, 36)",
                 "22",
-                format!("{recording} ? {OWN_W} >= 82 : {OWN_W} >= 46"),
+                format!("({OWN_W} >= 46)"),
             ),
             routing_head: Some(Spot::new(
-                format!("{full} ? 7 : ({OWN_W} - 28) / 2"),
-                "6",
+                format!("max({OWN_W} - 32, 1)"),
+                "28",
                 "28",
                 "22",
-                format!("{recording} && w >= 30"),
+                "w >= 30",
             )),
             input: Spot::new(
                 "6",
-                "32",
+                "54",
                 format!("{OWN_W} - 60"),
                 "16",
                 format!("{records} && {full} && track.armed"),
             ),
             monitor: Spot::new(
                 format!("{OWN_W} - 48"),
-                "30",
+                "52",
                 "21",
                 "20",
                 format!("{records} && {full} && track.armed"),
@@ -581,35 +583,21 @@ impl Gen<'_> {
             arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
             arm_panel: Spot::new(
                 format!("{column} + 0.5"),
-                "30",
+                "52",
                 "20",
                 "20",
                 format!("{records} && w >= 22"),
             ),
-            // Mixing, at the foot of the mute/solo column, right over the
-            // fader — centred on the column, so it fits every strip;
-            // otherwise to the left of the column, where there is room.
-            pan: Spot::new(
-                format!("{mixing} ? {column} - 1.5 : 5"),
-                format!("{mixing} ? 74.5 : 56"),
-                "24",
-                "25",
-                format!("{mixing} ? w >= 26 : ({OWN_W} >= 55)"),
-            ),
-            mute: Spot::new(
-                column.clone(),
-                format!("{mixing} ? 30 : 58"),
-                "21",
-                "20",
-                "",
-            ),
-            solo: Spot::new(column, format!("{mixing} ? 52 : 80"), "21", "20", ""),
+            pan: Spot::new(format!("{column} - 1.5"), pan_y, "24", "25", "w >= 26"),
+            solo: Spot::new(column.clone(), solo_y, "21", "20", ""),
+            mute: Spot::new(column, mute_y, "21", "20", ""),
+            // Routing is in the stack; the fader column keeps none.
             routing: Spot::new(
-                format!("{OWN_W} - 27"),
-                fader_top.clone(),
+                "-100",
+                "0",
                 n(art::ROUTING_CELL_V.0),
                 n(art::ROUTING_CELL_V.1),
-                format!("!{recording} && {full}"),
+                "false",
             ),
             scale_x: format!("max({fader_x} - 24, 1)"),
             scale_visible: format!("({OWN_W} >= 46) && {travel} > 0"),
@@ -1950,11 +1938,10 @@ mod tests {
     #[test]
     fn the_console_puts_mute_and_solo_in_one_place_at_every_width() {
         let (theme, palette) = console();
-        for ((mixing, recording), heights) in
-            MODES
-                .into_iter()
-                .zip([(58.0, 80.0), (30.0, 52.0), (58.0, 80.0)])
-        {
+        // (mute, solo) heights: recording and neither, the full stack;
+        // mixing, one row shorter.
+        let heights = [(123.0, 101.0), (101.0, 79.0), (123.0, 101.0)];
+        for ((mixing, recording), heights) in MODES.into_iter().zip(heights) {
             let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
             for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37] {
                 let rects =
@@ -1962,16 +1949,26 @@ mod tests {
                 let at = |name| rects.iter().find(|(n, _)| *n == name).map(|(_, r)| *r);
                 let (mute, solo) = (at("mute").expect("mute"), at("solo").expect("solo"));
                 seen.push((width - mute.x1, mute.y0, width - solo.x1, solo.y0));
+                // From the fader up: mute, solo, pan, the arm, the routing.
+                let (pan, route) = (at("pan").expect("pan"), at("routing").expect("routing"));
+                assert!(
+                    solo.y1 <= mute.y0 && pan.y1 <= solo.y0,
+                    "mute, solo, pan from the bottom at {width}"
+                );
+                assert!(route.y1 <= pan.y0, "the routing over the pan at {width}");
                 assert_eq!(
                     at("arm").is_some(),
                     !mixing,
                     "arm at {width} (mixing {mixing})"
                 );
-                if recording {
+                if let Some(arm) = at("arm") {
                     assert!(
-                        at("routing").is_some_and(|r| r.y0 < 10.0),
-                        "routing heads the strip at {width}"
+                        arm.y1 <= pan.y0 && route.y1 <= arm.y0,
+                        "the arm between pan and routing at {width}"
                     );
+                }
+                if let Some(fx) = at("fx") {
+                    assert!(fx.y1 <= route.y0, "the chain at the head at {width}");
                 }
             }
             assert!(seen.windows(2).all(|w| w[0] == w[1]), "{seen:?}");
