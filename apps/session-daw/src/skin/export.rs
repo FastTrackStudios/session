@@ -515,45 +515,43 @@ impl Gen<'_> {
         }
     }
 
-    /// The console layout: one stack, read from the fader up.
+    /// The console layout.
     ///
     /// ```text
     ///  [      FX      ]       the chain                  ┐
     ///             [routing]   where it comes in and out  │ the track's
-    ///  [Input ▾][◠]   [●]     recording (not mixing)     │ coloured
-    ///                  [S]    alone,                     │ band
+    ///                  [S]    alone,                     │ coloured band
     ///                  [M]    whether                    ┘
     ///        (pan)            where,                     ┐ the mix,
     ///  scale | fader          how loud                   ┘ together
+    ///  [Input ▾][◠]   [●]     recording (not mixing)
+    ///  ─── name ───
     /// ```
     ///
-    /// The pan sits on the fader, out of the band and centred over it, so
-    /// where a track is and how loud are one place. Above it in the band,
-    /// mute, solo, the arm, the routing and the chain at the head. Mixing, the
-    /// recording row is left out and the stack is that much shorter; the
-    /// order never changes. Everything is in the same place on every strip
-    /// of a mode, whatever its width — one column, its right edge four
-    /// pixels in from the strip's — so "which of these is muted" is one
-    /// look along a line, across a kit's 30-pixel mics and its 86-pixel
-    /// buses alike. What gives way on a narrow strip is what does not fit:
-    /// the chain below 46, the input and the monitor below a full strip.
+    /// The band and the mix are the same in every mode: mute, solo and the
+    /// pan are at one height on every strip whatever the mode or width. The
+    /// recording row sits under the fader, on the name it records to —
+    /// mixing, it is left out and the fader has its room. The arm heads
+    /// nothing now; it is in the mute/solo column's line, its right edge
+    /// four pixels in from the strip's. What gives way on a narrow strip
+    /// is what does not fit: the chain below 46, the input and the monitor
+    /// below a full strip.
     fn console_spots(&self) -> Spots {
         let full = format!("({OWN_W} >= 78)");
         let column = format!("({OWN_W} - 25)");
         let records = "!ui.mixing";
-        // From the top: the chain, the routing, then the recording row
-        // when there is one; from there down solo, mute, the band's foot,
-        // the pan and the fader, each a fixed step below the one before.
-        let solo_y = format!("({records} ? 74 : 52)");
-        let mute_y = format!("({solo_y} + 22)");
-        let band_bottom = format!("({mute_y} + 24)");
-        let pan_y = format!("({band_bottom} + 3)");
-        let fader_top = format!("({pan_y} + 27)");
         let name_top = self.name_top();
-        let travel = format!("max({name_top} - 3 - {fader_top}, 0)");
+        // The recording row, right on the name; its 26 rows come out of
+        // the fader's travel when there is one.
+        let row = format!("({name_top} - 23)");
+        let row_h = format!("({records} ? 26 : 0)");
+        // From the top: the chain, the routing, solo, mute, the band's
+        // foot, the pan and the fader, each a fixed step below the last.
+        let (solo_y, mute_y, band_bottom, pan_y, fader_top) = ("52", "74", "98", "101", "128");
+        let travel = format!("max({name_top} - 3 - {row_h} - {fader_top}, 0)");
         let fader_x = format!("(({OWN_W} - 30) / 2)");
         Spots {
-            band: ("0".into(), band_bottom),
+            band: ("0".into(), band_bottom.into()),
             fx: Spot::new(
                 "7",
                 "4",
@@ -570,14 +568,14 @@ impl Gen<'_> {
             )),
             input: Spot::new(
                 "6",
-                "54",
+                format!("{row} + 2"),
                 format!("{OWN_W} - 60"),
                 "16",
                 format!("{records} && {full} && track.armed"),
             ),
             monitor: Spot::new(
                 format!("{OWN_W} - 48"),
-                "52",
+                row.clone(),
                 "21",
                 "20",
                 format!("{records} && {full} && track.armed"),
@@ -585,7 +583,7 @@ impl Gen<'_> {
             arm_mixer: Spot::new("-100", "0", "36", "24", "false"),
             arm_panel: Spot::new(
                 format!("{column} + 0.5"),
-                "52",
+                row,
                 "20",
                 "20",
                 format!("{records} && w >= 22"),
@@ -594,7 +592,7 @@ impl Gen<'_> {
             pan: Spot::new(format!("{fader_x} + 3"), pan_y, "24", "25", "w >= 26"),
             solo: Spot::new(column.clone(), solo_y, "21", "20", ""),
             mute: Spot::new(column, mute_y, "21", "20", ""),
-            // Routing is in the stack; the fader column keeps none.
+            // Routing is in the band; the fader column keeps none.
             routing: Spot::new(
                 "-100",
                 "0",
@@ -605,7 +603,7 @@ impl Gen<'_> {
             scale_x: format!("max({fader_x} - 24, 1)"),
             scale_visible: format!("({OWN_W} >= 46) && {travel} > 0"),
             fader_x,
-            fader_top,
+            fader_top: fader_top.into(),
             travel,
         }
     }
@@ -1943,7 +1941,7 @@ mod tests {
         let (theme, palette) = console();
         // (mute, solo) heights: recording and neither, the full stack;
         // mixing, one row shorter.
-        let heights = [(96.0, 74.0), (74.0, 52.0), (96.0, 74.0)];
+        let heights = [(74.0, 52.0); 3];
         for ((mixing, recording), heights) in MODES.into_iter().zip(heights) {
             let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
             for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37] {
@@ -1970,10 +1968,12 @@ mod tests {
                     !mixing,
                     "arm at {width} (mixing {mixing})"
                 );
+                // The arm under the fader's travel, on the name.
                 if let Some(arm) = at("arm") {
+                    let name = at("name").expect("name");
                     assert!(
-                        arm.y1 <= solo.y0 && route.y1 <= arm.y0,
-                        "the arm between solo and routing at {width}"
+                        arm.y0 >= fader.y1 && arm.y1 <= name.y0,
+                        "the arm on the name at {width}: {arm:?} {fader:?} {name:?}"
                     );
                 }
                 if let Some(fx) = at("fx") {
