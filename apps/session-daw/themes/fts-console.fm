@@ -33,7 +33,7 @@
       <Text name="Number" x=-1 w=86 h=13 size=9 text-align="center" fill="#a1a1aa" bind:w="w" bind:y="h - 12 + 2.04 - 1" bind:text="fmt(track.number)">1</Text>
       <Vector name="Fold open" w=14 h=12 geometry="M 4 4.2 L 7 7.8 L 10 4.2 Z" fill="#a1a1aa" bind:y="h - 12" bind:visible="track.folder && !track.collapsed" />
       <Vector name="Fold shut" w=14 h=12 geometry="M 5.2 3 L 8.8 6 L 5.2 9 Z" fill="#a1a1aa" bind:y="h - 12" bind:visible="track.folder && track.collapsed" />
-      <Frame name="Pan" x=5 y=35 w=24 h=25 bind:x="ui.mixing ? ((w >= 172 ? 86 : w) - 25) - 1.5 : 5" bind:y="ui.mixing ? 27.5 : 56" bind:visible="ui.mixing ? w >= 26 : ((w >= 172 ? 86 : w) >= 55)">
+      <Frame name="Pan" x=5 y=35 w=24 h=25 bind:x="ui.mixing ? ((w >= 172 ? 86 : w) - 25) - 1.5 : 5" bind:y="ui.mixing ? 74.5 : 56" bind:visible="ui.mixing ? w >= 26 : ((w >= 172 ? 86 : w) >= 55)">
         <Vector w=24 h=25 geometry="M21.369999999999997,12.08 C21.369999999999997,17.254908105914534 17.174908105914533,21.45 12,21.45 C6.8250918940854675,21.45 2.6300000000000026,17.254908105914534 2.630000000000001,12.080000000000002 C2.629999999999999,6.9050918940854675 6.825091894085465,2.7100000000000026 11.999999999999998,2.710000000000001 C17.174908105914533,2.709999999999999 21.369999999999997,6.905091894085464 21.369999999999997,12.079999999999998" fill="#151517" />
         <Vector w=24 h=25 geometry="M6.470424971121197,17.6095750288788 C3.416525009626266,14.55567506738387 3.416525009626268,9.604324932616128 6.470424971121199,6.550424971121198 C9.52432493261613,3.496525009626268 14.475675067383872,3.496525009626268 17.529575028878803,6.550424971121199 C20.583474990373734,9.60432493261613 20.58347499037373,14.55567506738387 17.529575028878803,17.6095750288788" stroke-weight=2.4 stroke-join="round" stroke="#27272a" />
         <Vector name="Value" w=24 h=25 geometry="M 0 0" stroke="#eab308" stroke-weight=2.4 stroke-join="round" bind:geometry="arc(12, 12.08, 7.82, 0, clamp(track.pan, -1, 1) * 135)" bind:visible="abs(clamp(track.pan, -1, 1) * 135) > 0.5" />
@@ -580,62 +580,62 @@
         <Vector w=21 h=20 geometry="M5.932208753335284,9.470003960826874 C6.759991725658768,7.694817647999191 8.541298620381491,6.56 10.5,6.56 C12.458701379618509,6.56 14.240008274341232,7.694817647999191 15.067791246664715,9.470003960826874" stroke-weight=2 stroke-join="round" stroke="#f08c2e" />
         <Vector w=21 h=20 geometry="M3.45798849472523,8.316256106274764 C4.734153910390601,5.579510540665419 7.480335373088133,3.83 10.5,3.83 C13.519664626911867,3.83 16.265846089609397,5.57951054066542 17.542011505274772,8.316256106274766" stroke-weight=2.2 stroke-join="round" stroke="#b0b0b5" />
       </Frame>
-      <Frame name="M false Normal" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="58" bind:visible="!track.mute && !(ui.pressed == \"mute\" || (ui.hover == \"mute\" && ui.pressed == \"\"))">
+      <Frame name="M false Normal" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 30 : 58" bind:visible="!track.mute && !(ui.pressed == \"mute\" || (ui.hover == \"mute\" && ui.pressed == \"\"))">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#18181b" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">M</Text>
       </Frame>
-      <Frame name="M false Hover" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="58" bind:visible="!track.mute && (ui.hover == \"mute\" && ui.pressed == \"\")">
+      <Frame name="M false Hover" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 30 : 58" bind:visible="!track.mute && (ui.hover == \"mute\" && ui.pressed == \"\")">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#1e1e22" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">M</Text>
       </Frame>
-      <Frame name="M false Pressed" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="58" bind:visible="!track.mute && ui.pressed == \"mute\"">
+      <Frame name="M false Pressed" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 30 : 58" bind:visible="!track.mute && ui.pressed == \"mute\"">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#18181b" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">M</Text>
       </Frame>
-      <Frame name="M true Normal" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="58" bind:visible="track.mute && !(ui.pressed == \"mute\" || (ui.hover == \"mute\" && ui.pressed == \"\"))">
+      <Frame name="M true Normal" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 30 : 58" bind:visible="track.mute && !(ui.pressed == \"mute\" || (ui.hover == \"mute\" && ui.pressed == \"\"))">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#ef4444" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">M</Text>
       </Frame>
-      <Frame name="M true Hover" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="58" bind:visible="track.mute && (ui.hover == \"mute\" && ui.pressed == \"\")">
+      <Frame name="M true Hover" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 30 : 58" bind:visible="track.mute && (ui.hover == \"mute\" && ui.pressed == \"\")">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#ff5555" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">M</Text>
       </Frame>
-      <Frame name="M true Pressed" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="58" bind:visible="track.mute && ui.pressed == \"mute\"">
+      <Frame name="M true Pressed" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 30 : 58" bind:visible="track.mute && ui.pressed == \"mute\"">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#ef4444" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">M</Text>
       </Frame>
-      <Frame name="S false Normal" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="80" bind:visible="!track.solo && !(ui.pressed == \"solo\" || (ui.hover == \"solo\" && ui.pressed == \"\"))">
+      <Frame name="S false Normal" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 52 : 80" bind:visible="!track.solo && !(ui.pressed == \"solo\" || (ui.hover == \"solo\" && ui.pressed == \"\"))">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#18181b" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">S</Text>
       </Frame>
-      <Frame name="S false Hover" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="80" bind:visible="!track.solo && (ui.hover == \"solo\" && ui.pressed == \"\")">
+      <Frame name="S false Hover" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 52 : 80" bind:visible="!track.solo && (ui.hover == \"solo\" && ui.pressed == \"\")">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#1e1e22" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">S</Text>
       </Frame>
-      <Frame name="S false Pressed" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="80" bind:visible="!track.solo && ui.pressed == \"solo\"">
+      <Frame name="S false Pressed" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 52 : 80" bind:visible="!track.solo && ui.pressed == \"solo\"">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#18181b" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">S</Text>
       </Frame>
-      <Frame name="S true Normal" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="80" bind:visible="track.solo && !(ui.pressed == \"solo\" || (ui.hover == \"solo\" && ui.pressed == \"\"))">
+      <Frame name="S true Normal" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 52 : 80" bind:visible="track.solo && !(ui.pressed == \"solo\" || (ui.hover == \"solo\" && ui.pressed == \"\"))">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#eab308" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">S</Text>
       </Frame>
-      <Frame name="S true Hover" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="80" bind:visible="track.solo && (ui.hover == \"solo\" && ui.pressed == \"\")">
+      <Frame name="S true Hover" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 52 : 80" bind:visible="track.solo && (ui.hover == \"solo\" && ui.pressed == \"\")">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#ffe00a" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">S</Text>
       </Frame>
-      <Frame name="S true Pressed" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="80" bind:visible="track.solo && ui.pressed == \"solo\"">
+      <Frame name="S true Pressed" w=21 h=20 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 52 : 80" bind:visible="track.solo && ui.pressed == \"solo\"">
         <Rectangle x=0 y=0 w=21 h=20 radius=3 fill="#eab308" />
         <Rectangle x=0.5 y=0.5 w=20 h=19 stroke-weight=1 stroke-align="center" stroke-join="round" stroke="#27272a" radius=3 />
         <Text x=-190.5 y=4.5 w=400 h=14 size=10 text-align="center" fill="#d3d3d7">S</Text>
@@ -700,11 +700,11 @@
       <Frame name="@folder" w=10 h=10 bind:x="0" bind:y="h - 12" bind:w="14" bind:h="12" />
       <Frame name="@fader" w=10 h=10 bind:x="(((w >= 172 ? 86 : w) - 30) / 2)" bind:y="106" bind:w="30" bind:h="max((h - 12 - 26) - 3 - 106, 0)" />
       <Frame name="@clip" w=10 h=10 bind:x="(((w >= 172 ? 86 : w) - 30) / 2)" bind:y="106" bind:w="30" bind:h="5" bind:visible="max((h - 12 - 26) - 3 - 106, 0) > 0" />
-      <Frame name="@pan" w=10 h=10 bind:x="ui.mixing ? ((w >= 172 ? 86 : w) - 25) - 1.5 : 5" bind:y="ui.mixing ? 27.5 : 56" bind:w="24" bind:h="25" bind:visible="ui.mixing ? w >= 26 : ((w >= 172 ? 86 : w) >= 55)" />
+      <Frame name="@pan" w=10 h=10 bind:x="ui.mixing ? ((w >= 172 ? 86 : w) - 25) - 1.5 : 5" bind:y="ui.mixing ? 74.5 : 56" bind:w="24" bind:h="25" bind:visible="ui.mixing ? w >= 26 : ((w >= 172 ? 86 : w) >= 55)" />
       <Frame name="@fx" w=10 h=10 bind:x="ui.recording ? 39 : 7" bind:y="5" bind:w="ui.recording ? max(w - 46, 36) : max(w - 14, 36)" bind:h="22" bind:visible="ui.recording ? (w >= 172 ? 86 : w) >= 82 : (w >= 172 ? 86 : w) >= 46" />
       <Frame name="@routing" w=10 h=10 bind:x="(w >= 172 ? 86 : w) - 27" bind:y="106" bind:w="23" bind:h="32" bind:visible="!ui.recording && ((w >= 172 ? 86 : w) >= 78)" />
-      <Frame name="@solo" w=10 h=10 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="80" bind:w="21" bind:h="20" />
-      <Frame name="@mute" w=10 h=10 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="58" bind:w="21" bind:h="20" />
+      <Frame name="@solo" w=10 h=10 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 52 : 80" bind:w="21" bind:h="20" />
+      <Frame name="@mute" w=10 h=10 bind:x="((w >= 172 ? 86 : w) - 25)" bind:y="ui.mixing ? 30 : 58" bind:w="21" bind:h="20" />
       <Frame name="@monitor" w=10 h=10 bind:x="(w >= 172 ? 86 : w) - 48" bind:y="30" bind:w="21" bind:h="20" bind:visible="!ui.mixing && ((w >= 172 ? 86 : w) >= 78) && track.armed" />
       <Frame name="@routing" w=10 h=10 bind:x="((w >= 172 ? 86 : w) >= 78) ? 7 : ((w >= 172 ? 86 : w) - 28) / 2" bind:y="6" bind:w="28" bind:h="22" bind:visible="ui.recording && w >= 30" />
       <Frame name="@arm" w=10 h=10 bind:x="false ? -100 : ((w >= 172 ? 86 : w) - 25) + 0.5" bind:y="false ? 0 : 30" bind:w="false ? 36 : 20" bind:h="false ? 24 : 20" bind:visible="false || !ui.mixing && w >= 22" />

@@ -527,8 +527,8 @@ impl Gen<'_> {
     ///
     /// The mode decides what is first. Mixing, the chain heads the strip
     /// and there is no recording row — nothing is armed in a mix — and the
-    /// pan takes the arm's place at the head of the mute/solo column, so
-    /// it is on every strip however narrow. Recording, the
+    /// column is mute, solo, then the pan right over the fader — on every
+    /// strip however narrow. Recording, the
     /// routing heads it (where the take comes in and goes out), the chain
     /// beside it where the strip is wide enough, the recording row under.
     ///
@@ -586,19 +586,24 @@ impl Gen<'_> {
                 "20",
                 format!("{records} && w >= 22"),
             ),
-            // Mixing, at the head of the mute/solo column where the arm
-            // is when recording — centred over the column, so it fits
-            // every strip; otherwise to the left of the column, where
-            // there is room for it.
+            // Mixing, at the foot of the mute/solo column, right over the
+            // fader — centred on the column, so it fits every strip;
+            // otherwise to the left of the column, where there is room.
             pan: Spot::new(
                 format!("{mixing} ? {column} - 1.5 : 5"),
-                format!("{mixing} ? 27.5 : 56"),
+                format!("{mixing} ? 74.5 : 56"),
                 "24",
                 "25",
                 format!("{mixing} ? w >= 26 : ({OWN_W} >= 55)"),
             ),
-            mute: Spot::new(column.clone(), "58", "21", "20", ""),
-            solo: Spot::new(column, "80", "21", "20", ""),
+            mute: Spot::new(
+                column.clone(),
+                format!("{mixing} ? 30 : 58"),
+                "21",
+                "20",
+                "",
+            ),
+            solo: Spot::new(column, format!("{mixing} ? 52 : 80"), "21", "20", ""),
             routing: Spot::new(
                 format!("{OWN_W} - 27"),
                 fader_top.clone(),
@@ -1948,7 +1953,7 @@ mod tests {
         for ((mixing, recording), heights) in
             MODES
                 .into_iter()
-                .zip([(58.0, 80.0), (58.0, 80.0), (58.0, 80.0)])
+                .zip([(58.0, 80.0), (30.0, 52.0), (58.0, 80.0)])
         {
             let mut seen: Vec<(f64, f64, f64, f64)> = Vec::new();
             for width in [30.0, 46.0, 56.0, 77.9, 86.0, 133.37] {
