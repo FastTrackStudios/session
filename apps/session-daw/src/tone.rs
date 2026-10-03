@@ -115,6 +115,8 @@ pub struct Tone {
     /// The pitch shifter, in semitones, and how much of it is heard.
     pub pitch: i32,
     pub pitch_mix: f32,
+    /// The modulation: which of the six engines, how fast and how deep.
+    pub modulation: Wobble,
     /// What this track is FOR, which decides its chain — see [`Role`].
     pub role: Role,
     /// The presets this track keeps, brighter to darker, and which of
@@ -616,6 +618,30 @@ impl Bypass {
 /// What a suppressor is set to, in one short line.
 fn suppression(set: Suppress) -> String {
     format!("{:.0}dB · {:.0}%", set.threshold, set.depth * 100.0)
+}
+
+/// A modulation unit, as its display needs it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wobble {
+    /// Which machine: chorus, flanger, phaser, tremolo, vibrato, rotary.
+    pub engine: modulation_ui::viz::Engine,
+    /// How fast, in Hz.
+    pub rate: f32,
+    /// How deep, 0 to 1.
+    pub depth: f32,
+    /// How much of it is heard.
+    pub mix: f32,
+}
+
+impl Default for Wobble {
+    fn default() -> Self {
+        Self {
+            engine: modulation_ui::viz::Engine::Chorus,
+            rate: 0.8,
+            depth: 0.5,
+            mix: 0.5,
+        }
+    }
 }
 
 /// A gate, as its display needs it.
@@ -1913,6 +1939,8 @@ fn unit_body(scene: &mut Scene, pen: &Draw<'_>, which: Which, body: Panel) {
         Which::Knobs => knobs(scene, palette, font, tone, body, rack, lit),
         Which::Wide => wide(scene, palette, tone, body, rack, lit),
         Which::Pitch => pitch(scene, palette, font, tone, body, rack, lit),
+        // The modulation editor's own picture, at a strip's width.
+        Which::Mod => crate::faces::paint_mod_in(scene, tone, body),
         Which::Presets => {}
         Which::Gate => gate(scene, palette, tone.gate, body, rack, lit),
         Which::RescueComp => {
@@ -2139,6 +2167,9 @@ pub enum Which {
     Eq,
     Comp,
     Sat,
+    /// Movement and colour in time — a chorus, flanger or phaser, a
+    /// tremolo, vibrato or rotary: the modulation editor's six engines.
+    Mod,
 
     // ── Polish: take the ugly out ────────────────────────────────────
     /// Sibilance, dynamically.
@@ -2193,6 +2224,7 @@ impl Which {
             Self::Eq => "EQ",
             Self::Comp => "COMP",
             Self::Sat => "SAT",
+            Self::Mod => "MOD",
             Self::DeEss | Self::DeEssIn => "DE-ESS",
             Self::PolishEq => "POLISH EQ",
             Self::Space => "SPACE",
@@ -2218,7 +2250,7 @@ impl Which {
         use session::mix_phases::MixPhase as P;
         match self {
             Self::RescueEq | Self::Gate | Self::RescueComp => P::Rescue,
-            Self::Eq | Self::Comp | Self::Sat => P::Tone,
+            Self::Eq | Self::Comp | Self::Sat | Self::Mod => P::Tone,
             Self::DeEss | Self::PolishEq => P::Polish,
             Self::Space => P::Relational,
             // Every part of an FX return is Depth — the return is where
@@ -2324,6 +2356,10 @@ impl Which {
             // The even share is the number an engineer reads a
             // saturator by — it is what separates a valve from a rail
             // — and it is measured, not read off the knob.
+            Self::Mod => format!(
+                "{:?} · {:.1} Hz",
+                tone.modulation.engine, tone.modulation.rate
+            ),
             Self::Sat => {
                 let even = crate::live::ladder(&tone.sat).even_share() * 100.0;
                 format!("x{:.1} · 2nd {even:.0}%", tone.sat.drive)
@@ -2445,6 +2481,8 @@ impl Which {
             // adds beside it. The ladder wants the height the curve
             // has, no more.
             Self::Sat => 130.0 + SELECTOR + 2.0,
+            // Its face is the FX view's; in a rack it is a time picture.
+            Self::Mod => 74.0,
             // Time pictures, both. A delay needs width for its taps and
             // no height beyond telling them apart; a reverb's tail is a
             // single falling line.
@@ -5450,6 +5488,7 @@ fn minimal_body(
             );
         }
         // The interval: a mark above or below the line.
+        Which::Mod => crate::faces::paint_mod_in(scene, tone, at),
         Which::Pitch => {
             let shift = (f64::from(tone.pitch) / 24.0).clamp(-1.0, 1.0) * (at.height / 2.0 - 2.0);
             rule(
@@ -5947,6 +5986,14 @@ pub fn placeholder(index: usize) -> Tone {
         // Not all one zoom: a vocal worked at ±3 and a room mic at ±18
         // is the normal case, and a desk where every graph is drawn to
         // the same range hides the fact that the range is a choice.
+        // Every engine somewhere on the desk, so each picture is seen.
+        modulation: Wobble {
+            engine: modulation_ui::viz::Engine::ALL
+                .get(index % modulation_ui::viz::Engine::ALL.len())
+                .copied()
+                .unwrap_or_default(),
+            ..Wobble::default()
+        },
         eq_range: match index % 3 {
             0 => DEFAULT_EQ_RANGE,
             1 => DEFAULT_EQ_RANGE.saturating_sub(1),
@@ -8349,7 +8396,8 @@ pub fn grip_at(
                 let index = usize::from(y >= body.y + body.height / 2.0);
                 return Some(Grip::Knob(which, index));
             }
-            Which::Presets => {}
+            // Its controls are the FX view's face's.
+            Which::Presets | Which::Mod => {}
             // The ladder is the tilt; the curve's centre is the bias;
             // the rest of the curve is the drive.
             Which::Sat => {

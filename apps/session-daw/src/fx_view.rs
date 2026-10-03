@@ -221,6 +221,31 @@ impl Lane {
     }
 }
 
+/// The chain a track shows in the FX: its rack's, with saturation and
+/// modulation at the end of a channel's or a bus's Tone — devices the FX
+/// view has room for and the mixer's strips do not (yet).
+fn fx_chain(tone: &crate::tone::Tone) -> Vec<Which> {
+    let mut chain = tone
+        .panels(crate::tone::panels_for(MixPhase::Tone))
+        .to_vec();
+    if matches!(
+        tone.role,
+        crate::tone::Role::Channel | crate::tone::Role::Bus
+    ) {
+        for which in [Which::Sat, Which::Mod] {
+            if chain.contains(&which) {
+                continue;
+            }
+            let after = chain
+                .iter()
+                .rposition(|w| w.phase() == MixPhase::Tone)
+                .map_or(chain.len(), |at| at.saturating_add(1));
+            chain.insert(after, which);
+        }
+    }
+    chain
+}
+
 /// A chain grouped by phase: each phase in the rack's order and its
 /// devices — `tone::chain`'s rule for which empty phases still show.
 fn grouped(panels: &[Which]) -> Vec<(MixPhase, Vec<Which>)> {
@@ -795,7 +820,7 @@ impl DeviceRow {
         let Some(tone) = store.get(&track.guid) else {
             return x;
         };
-        for (phase, units) in grouped(tone.panels(crate::tone::panels_for(MixPhase::Tone))) {
+        for (phase, units) in grouped(&fx_chain(tone)) {
             let width = self.group_w(phase, &units);
             let x0 = x;
             x += width + GAP;
@@ -937,7 +962,7 @@ impl DeviceRow {
         let chain_w = {
             let store = self.tone.store.borrow();
             store.get(&track.guid).map_or(0.0, |tone| {
-                grouped(tone.panels(crate::tone::panels_for(MixPhase::Tone)))
+                grouped(&fx_chain(tone))
                     .iter()
                     .map(|(p, u)| self.group_w(*p, u) + GAP)
                     .sum()

@@ -21,6 +21,8 @@ use crate::tone::{Panel, Tone, Which};
 pub enum Picture {
     Reverb(reverb_ui::viz::ReverbView),
     Delay(delay_ui::viz::DelayView),
+    Mod(modulation_ui::viz::ModView),
+    Sat(saturate_ui::viz::SatView),
 }
 
 /// One device's face: what it is called, its picture, its controls.
@@ -104,6 +106,141 @@ const DELAY_KNOBS: [Macro; 5] = [
     },
 ];
 
+const MOD_KNOBS: [Macro; 4] = [
+    Macro {
+        name: "Type",
+        get: |t| {
+            let all = modulation_ui::viz::Engine::ALL;
+            let at = all
+                .iter()
+                .position(|e| *e == t.modulation.engine)
+                .unwrap_or(0);
+            crate::num::coord(at) / crate::num::coord(all.len().saturating_sub(1).max(1))
+        },
+        set: |t, f| {
+            let all = modulation_ui::viz::Engine::ALL;
+            let steps = crate::num::coord(all.len().saturating_sub(1));
+            let at = crate::num::index((f.clamp(0.0, 1.0) * steps).round());
+            if let Some(engine) = all.get(at) {
+                t.modulation.engine = *engine;
+            }
+        },
+        says: |t| format!("{:?}", t.modulation.engine),
+    },
+    Macro {
+        name: "Rate",
+        get: |t| frac(t.modulation.rate, 0.05, 10.0),
+        set: |t, f| t.modulation.rate = span(f, 0.05, 10.0),
+        says: |t| format!("{:.2} Hz", t.modulation.rate),
+    },
+    Macro {
+        name: "Depth",
+        get: |t| f64::from(t.modulation.depth.clamp(0.0, 1.0)),
+        set: |t, f| t.modulation.depth = span(f, 0.0, 1.0),
+        says: |t| format!("{:.0}%", t.modulation.depth * 100.0),
+    },
+    Macro {
+        name: "Mix",
+        get: |t| f64::from(t.modulation.mix.clamp(0.0, 1.0)),
+        set: |t, f| t.modulation.mix = span(f, 0.0, 1.0),
+        says: |t| format!("{:.0}%", t.modulation.mix * 100.0),
+    },
+];
+
+/// The saturator's drive as its knob, 0..1: the gain back through the
+/// profile's own drive scale (`Tone::set_sat_profile`'s rule).
+fn drive_knob(tone: &Tone) -> f32 {
+    let scale = saturate_profiles::PROFILES
+        .get(tone.sat_profile)
+        .map_or(1.0, |p| p.voicing.drive_scale)
+        .max(f32::EPSILON);
+    ((tone.sat.drive - 1.0) / (15.0 * scale)).clamp(0.0, 1.0)
+}
+
+const SAT_KNOBS: [Macro; 3] = [
+    Macro {
+        name: "Type",
+        get: |t| {
+            let last = saturate_profiles::PROFILES.len().saturating_sub(1).max(1);
+            crate::num::coord(t.sat_profile) / crate::num::coord(last)
+        },
+        set: |t, f| {
+            let last = crate::num::coord(saturate_profiles::PROFILES.len().saturating_sub(1));
+            let at = crate::num::index((f.clamp(0.0, 1.0) * last).round());
+            if at != t.sat_profile {
+                t.set_sat_profile(at);
+            }
+        },
+        says: |t| {
+            saturate_profiles::PROFILES
+                .get(t.sat_profile)
+                .map_or_else(String::new, |p| p.name.to_owned())
+        },
+    },
+    Macro {
+        name: "Drive",
+        get: |t| f64::from(drive_knob(t)),
+        set: |t, f| {
+            let scale = saturate_profiles::PROFILES
+                .get(t.sat_profile)
+                .map_or(1.0, |p| p.voicing.drive_scale);
+            t.sat.drive = (15.0 * scale).mul_add(span(f, 0.0, 1.0), 1.0);
+        },
+        says: |t| format!("{:.0}%", drive_knob(t) * 100.0),
+    },
+    Macro {
+        name: "Mix",
+        get: |t| f64::from(t.sat.mix.clamp(0.0, 1.0)),
+        set: |t, f| t.sat.mix = span(f, 0.0, 1.0),
+        says: |t| format!("{:.0}%", t.sat.mix * 100.0),
+    },
+];
+
+/// What the saturation editor's picture draws, for `tone`: its profile
+/// voiced at this drive and mix.
+fn sat_view(tone: &Tone) -> Option<saturate_ui::viz::SatView> {
+    let profile = *saturate_profiles::PROFILES.get(tone.sat_profile)?;
+    let controls = saturate_profiles::Controls {
+        drive: drive_knob(tone),
+        mix: tone.sat.mix,
+        ..saturate_profiles::Controls::default()
+    };
+    Some(saturate_ui::viz::SatView::of(profile, controls))
+}
+
+/// What the modulation editor's picture draws, for `tone`.
+#[must_use]
+pub const fn mod_view(tone: &Tone) -> modulation_ui::viz::ModView {
+    let wobble = tone.modulation;
+    modulation_ui::viz::ModView {
+        engine: wobble.engine,
+        rate: wobble.rate,
+        depth: wobble.depth,
+        mix: wobble.mix,
+        on: true,
+        // Modulation is cyan-led and motion pink-led, as its editor has it.
+        color: match wobble.engine.group() {
+            modulation_ui::viz::Group::Colouring => [34, 211, 238],
+            modulation_ui::viz::Group::Moving => [244, 114, 182],
+        },
+        time: 0.0,
+    }
+}
+
+/// The modulation's vector picture in `at` — the rack's, at a strip's
+/// width, where there is no GPU surface to hand it.
+pub fn paint_mod_in(scene: &mut Scene, tone: &Tone, at: Panel) {
+    if at.width < 2.0 || at.height < 2.0 {
+        return;
+    }
+    let mut picture = Scene::new();
+    modulation_ui::viz::paint_mod(&mut picture, &mod_view(tone), at.width, at.height);
+    let place = Affine::translate((at.x, at.y));
+    scene.push_clip_layer(place, &Rect::new(0.0, 0.0, at.width, at.height));
+    scene.append_scene(picture, place);
+    scene.pop_layer();
+}
+
 /// The repeats `tone`'s delay makes: every tap until it has faded under
 /// a fiftieth, alternating sides as wide as the delay is.
 fn taps(tone: &Tone) -> Vec<delay_ui::viz::Tap> {
@@ -168,6 +305,18 @@ pub fn of(which: Which, tone: &Tone) -> Option<Face> {
                 knobs: &DELAY_KNOBS,
             })
         }
+        Which::Sat => sat_view(tone).map(|view| Face {
+            name: saturate_profiles::PROFILES
+                .get(tone.sat_profile)
+                .map_or_else(String::new, |p| p.name.to_owned()),
+            picture: Picture::Sat(view),
+            knobs: &SAT_KNOBS,
+        }),
+        Which::Mod => Some(Face {
+            name: format!("{:?}", tone.modulation.engine),
+            picture: Picture::Mod(mod_view(tone)),
+            knobs: &MOD_KNOBS,
+        }),
         _ => None,
     }
 }
@@ -241,6 +390,13 @@ pub struct Painters {
             delay_ui::viz::DelayWidget,
         ),
     >,
+    mods: std::collections::HashMap<
+        String,
+        (
+            modulation_ui::viz::Shared<modulation_ui::viz::ModView>,
+            modulation_ui::viz::ModWidget,
+        ),
+    >,
 }
 
 impl Painters {
@@ -259,6 +415,8 @@ impl Painters {
             match picture {
                 Picture::Reverb(view) => reverb_ui::viz::paint_reverb(&mut scene, view, w, h),
                 Picture::Delay(view) => delay_ui::viz::paint_delay(&mut scene, view, w, h),
+                Picture::Mod(view) => modulation_ui::viz::paint_mod(&mut scene, view, w, h),
+                Picture::Sat(view) => saturate_ui::viz::paint_sat(&mut scene, view, w, h),
             }
             return scene;
         };
@@ -277,6 +435,25 @@ impl Painters {
                 let (shared, widget) = self.delays.entry(key.to_owned()).or_insert_with(|| {
                     let shared = std::rc::Rc::new(std::cell::RefCell::new(view.clone()));
                     let mut widget = delay_ui::viz::DelayWidget::new(std::rc::Rc::clone(&shared));
+                    widget.create_surfaces(ctx);
+                    (shared, widget)
+                });
+                shared.replace(view.clone());
+                widget.paint_frame(ctx, width, height, 1.0)
+            }
+            // No widget of its own: its picture is measured, not
+            // animated, so the vector painter is the whole of it.
+            Picture::Sat(view) => {
+                let mut scene = Scene::new();
+                let (w, h) = (f64::from(width), f64::from(height));
+                saturate_ui::viz::paint_sat(&mut scene, view, w, h);
+                scene
+            }
+            Picture::Mod(view) => {
+                let (shared, widget) = self.mods.entry(key.to_owned()).or_insert_with(|| {
+                    let shared = std::rc::Rc::new(std::cell::RefCell::new(view.clone()));
+                    let mut widget =
+                        modulation_ui::viz::ModWidget::new(std::rc::Rc::clone(&shared));
                     widget.create_surfaces(ctx);
                     (shared, widget)
                 });
