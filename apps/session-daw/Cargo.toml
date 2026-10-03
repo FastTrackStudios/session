@@ -219,7 +219,7 @@ reqwest = { workspace = true, optional = true }
 # Signing in to Task from another device (task_account): the protocol and
 # the kept session.
 auth-client = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true }
 
 # The browser's tokio: channels and `select!` for the live session's loop
 # (collab.rs), no runtime — tasks and timers there are the page's
@@ -281,7 +281,6 @@ native = [
     "dep:live-proto",
     "dep:task-dial",
     "dep:reqwest",
-    "dep:serde_json",
 ]
 # The browser: the same widgets, hosted in <canvas> elements under
 # dioxus-web and drawn with vello_hybrid's WebGL renderer (keyflow-ui's
@@ -299,7 +298,7 @@ web = [
     "dep:gloo-timers", "daw-standalone/stream-ogg", "dep:fts-sample", "dep:futures-util",
     # A shared song, streamed from its share link (song_stream::ShareSource),
     # opened from memory the one way songs open (open_core, folder).
-    "dep:reqwest", "dep:serde_json", "daw/standalone-session-file",
+    "dep:reqwest", "daw/standalone-session-file",
     # The live session (collab.rs): a set Task keeps, joined from the page.
     "session/collab", "dep:architect", "dep:crdt", "dep:uuid", "dep:daw-transport-sync",
     "dep:live-proto", "dep:task-dial", "dep:vox",

@@ -137,9 +137,15 @@ const BLANK_W: f64 = 80.0;
 /// fader and its name, however narrow it is in the mixer.
 const STRIP_W: u32 = 84;
 
+/// How wide a card is, for a block frame has no face for.
+const CARD_W: f64 = 120.0;
+
+/// How wide a folded rig section is: the list of its blocks.
+const SECTION_LIST_W: f64 = 150.0;
+
 /// How wide a phase's edge is: the separator before its devices, and
 /// what a press folds it by.
-const EDGE_W: f64 = 10.0;
+const EDGE_W: f64 = 14.0;
 
 /// How tall the phase's tint is along the top of its devices.
 const TINT_H: f64 = 3.0;
@@ -152,6 +158,33 @@ fn widened(track: &daw_proto::Track) -> daw_proto::Track {
     let mut track = track.clone();
     track.width = Some(track.width.unwrap_or(0).max(STRIP_W));
     track
+}
+
+/// What a frame face's edits go to: a rack unit's settings, or a block
+/// of the track's rig (which, and the face it wears).
+#[derive(Clone)]
+enum Target {
+    Unit(Which),
+    Rig(usize, crate::rig::FaceEntry),
+}
+
+/// What folds in a lane: a mix phase of a channel's chain, or a section
+/// of a guitar's rig.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Group {
+    Phase(MixPhase),
+    Rig(crate::rig::Section),
+}
+
+impl Group {
+    /// Shut until opened: a rig's Input and Pre, which are set once and
+    /// left; everything else is open.
+    const fn shut_by_default(self) -> bool {
+        matches!(
+            self,
+            Self::Rig(crate::rig::Section::Input | crate::rig::Section::Pre)
+        )
+    }
 }
 
 /// One device on screen: whose, which, where.
@@ -179,11 +212,13 @@ struct Hits {
     lanes: Vec<(String, f64, f64)>,
     devices: Vec<Placed>,
     knobs: Vec<Turned>,
-    /// Each phase's edge and tint: a press on one folds it.
-    bars: Vec<(MixPhase, Panel)>,
+    /// Each group's edge and tint, by track: a press on one folds it.
+    bars: Vec<(String, Group, Panel)>,
+    /// Each lane's groups, in order: what a Shift-click folds around.
+    groups: Vec<(String, Vec<Group>)>,
     /// The frame faces on screen: their device's key, whose and which,
     /// where — a press on one is the face's.
-    faces: Vec<(String, String, Which, Panel)>,
+    faces: Vec<(String, String, Target, Panel)>,
     /// The lane being drawn's clip: what scrolls stays right of its strip.
     clip: vello::kurbo::Rect,
     /// The faces' pictures, painted after the rest (`paint_scene`): the
@@ -297,17 +332,22 @@ struct DeviceRow {
     /// Each lane's strip, by track.
     strips: RefCell<std::collections::HashMap<String, Strip>>,
     hits: RefCell<Hits>,
-    /// The phases folded to their macros.
-    folded: std::collections::HashSet<MixPhase>,
+    /// What each track has folded or opened, against its default: per
+    /// track, so folding the kick's Tone leaves the snare's alone.
+    folds: std::collections::HashMap<(String, Group), bool>,
     hold: Option<(BlitzPointerId, Grip, Placed, (f64, f64))>,
     /// A frame face being played: its key, whose, which, and where.
-    playing: Option<(BlitzPointerId, String, String, Which, Panel)>,
+    playing: Option<(BlitzPointerId, String, String, Target, Panel)>,
     /// A macro being turned, and where the pointer was.
     turning: Option<(BlitzPointerId, Turned, f64)>,
     hover: Option<(String, Which, Grip)>,
     dirty: Cell<bool>,
     /// The effects' own painters, one per face.
     painters: crate::faces::Painters,
+    /// The rigs the guitar tracks play, by track: what their lanes are.
+    rigs: RefCell<std::collections::HashMap<String, crate::rig::Rig>>,
+    /// frame's rig faces manifest.
+    rig_faces: crate::rig::Faces,
     /// Whether a face is moving: its picture animates, so every frame
     /// is a new one.
     animating: Cell<bool>,
@@ -324,6 +364,19 @@ impl DeviceRow {
             .iter()
             .map(|(t, depth)| (t.guid.clone(), *depth))
             .collect();
+        // Each track's rig, by its name and its folder's.
+        let mut rigs = std::collections::HashMap::new();
+        let mut folders: Vec<(u32, String)> = Vec::new();
+        for (track, depth) in &rows {
+            folders.retain(|(at, _)| at < depth);
+            let parent = folders.last().map(|(_, name)| name.as_str());
+            if let Some(rig) = crate::rig::for_track(&track.name, parent) {
+                rigs.insert(track.guid.clone(), rig);
+            }
+            if track.is_folder {
+                folders.push((*depth, track.name.clone()));
+            }
+        }
         Self {
             tone,
             tracks: rows.into_iter().map(|(t, _)| t).collect(),
@@ -340,14 +393,44 @@ impl DeviceRow {
             scroll: std::collections::HashMap::new(),
             strips: RefCell::new(std::collections::HashMap::new()),
             hits: RefCell::new(Hits::default()),
-            folded: std::collections::HashSet::new(),
+            folds: std::collections::HashMap::new(),
             hold: None,
             playing: None,
             turning: None,
             hover: None,
             dirty: Cell::new(true),
             painters: crate::faces::Painters::default(),
+            rigs: RefCell::new(rigs),
+            rig_faces: crate::rig::Faces::load(),
             animating: Cell::new(false),
+        }
+    }
+
+    /// Whether `group` of track `guid` is folded.
+    fn shut(&self, guid: &str, group: Group) -> bool {
+        self.folds
+            .get(&(guid.to_owned(), group))
+            .copied()
+            .unwrap_or_else(|| group.shut_by_default())
+    }
+
+    /// A press on `group`'s edge on track `guid`: it folds or opens; with
+    /// Shift it stays open and the track's others fold; with Alt+Shift,
+    /// that on every lane in view.
+    fn fold(&mut self, guid: &str, group: Group, shift: bool, alt: bool) {
+        if !shift {
+            let now = self.shut(guid, group);
+            self.folds.insert((guid.to_owned(), group), !now);
+            return;
+        }
+        let lanes = self.hits.borrow().groups.clone();
+        for (lane, groups) in lanes {
+            if !alt && lane != guid {
+                continue;
+            }
+            for g in groups {
+                self.folds.insert((lane.clone(), g), g != group);
+            }
         }
     }
 
@@ -483,7 +566,7 @@ impl DeviceRow {
     }
 
     /// Hand what the face at `key` edited to its track's settings.
-    fn face_edits(&mut self, key: &str, guid: &str, which: Which) {
+    fn face_edits(&mut self, key: &str, guid: &str, target: &Target) {
         let Some(surface) = self.painters.frame_mut(key) else {
             return;
         };
@@ -491,12 +574,24 @@ impl DeviceRow {
         if edits.is_empty() {
             return;
         }
-        if let Some(tone) = self.tone.store.borrow_mut().edit(guid) {
-            for (addr, value) in &edits {
-                crate::faces::edit(which, tone, addr, *value);
+        match target {
+            Target::Unit(which) => {
+                if let Some(tone) = self.tone.store.borrow_mut().edit(guid) {
+                    for (addr, value) in &edits {
+                        crate::faces::edit(*which, tone, addr, *value);
+                    }
+                }
+                self.tone.edited();
+            }
+            Target::Rig(at, face) => {
+                if let Some(rig) = self.rigs.borrow_mut().get_mut(guid) {
+                    for (addr, value) in &edits {
+                        rig.edit(*at, &face.ns, addr, *value, face);
+                    }
+                }
+                self.dirty.set(true);
             }
         }
-        self.tone.edited();
     }
 
     fn press(&mut self, e: &BlitzPointerEvent) -> bool {
@@ -508,12 +603,12 @@ impl DeviceRow {
             .iter()
             .find(|(.., at)| at.contains(x, y))
             .cloned();
-        if let Some((key, guid, which, at)) = face {
+        if let Some((key, guid, target, at)) = face {
             if let Some(surface) = self.painters.frame_mut(&key) {
                 surface.pointer_down(x - at.x, y - at.y, face_mods(e));
             }
-            self.face_edits(&key, &guid, which);
-            self.playing = Some((e.id, key, guid, which, at));
+            self.face_edits(&key, &guid, &target);
+            self.playing = Some((e.id, key, guid, target, at));
             return true;
         }
         let (bar, knob) = {
@@ -521,19 +616,16 @@ impl DeviceRow {
             (
                 hits.bars
                     .iter()
-                    .find(|(_, bar)| bar.contains(x, y))
-                    .map(|(phase, _)| *phase),
+                    .find(|(.., bar)| bar.contains(x, y))
+                    .map(|(guid, group, _)| (guid.clone(), *group)),
                 hits.knobs
                     .iter()
                     .find(|knob| knob.cell.contains(x, y))
                     .cloned(),
             )
         };
-        if let Some(phase) = bar {
-            // An edge folds its phase to its macros, or opens it.
-            if !self.folded.remove(&phase) {
-                self.folded.insert(phase);
-            }
+        if let Some((guid, group)) = bar {
+            self.fold(&guid, group, e.mods.shift(), e.mods.alt());
             return true;
         }
         if let Some(knob) = knob {
@@ -558,13 +650,13 @@ impl DeviceRow {
 
     fn moved(&mut self, e: &BlitzPointerEvent) -> bool {
         let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
-        if let Some((id, key, guid, which, at)) = self.playing.clone()
+        if let Some((id, key, guid, target, at)) = self.playing.clone()
             && id == e.id
         {
             if let Some(surface) = self.painters.frame_mut(&key) {
                 surface.pointer_move(x - at.x, y - at.y, face_mods(e));
             }
-            self.face_edits(&key, &guid, which);
+            self.face_edits(&key, &guid, &target);
             return true;
         }
         if let Some((id, knob, last)) = self.turning.clone()
@@ -625,12 +717,13 @@ impl DeviceRow {
             UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => self.press(e),
             UiEvent::PointerMove(e) => self.moved(e),
             UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) => {
-                if let Some((_, key, guid, which, _)) = self.playing.take_if(|(id, ..)| *id == e.id)
+                if let Some((_, key, guid, target, _)) =
+                    self.playing.take_if(|(id, ..)| *id == e.id)
                 {
                     if let Some(surface) = self.painters.frame_mut(&key) {
                         surface.pointer_up();
                     }
-                    self.face_edits(&key, &guid, which);
+                    self.face_edits(&key, &guid, &target);
                 }
                 let turned = self.turning.take_if(|(id, ..)| *id == e.id).is_some();
                 self.hold.take_if(|(id, ..)| *id == e.id).is_some() || turned
@@ -716,10 +809,10 @@ impl DeviceRow {
     }
 
     /// How wide `phase`'s group is, with `units` in it.
-    fn group_w(&self, phase: MixPhase, units: &[Which]) -> f64 {
+    fn group_w(&self, guid: &str, phase: MixPhase, units: &[Which]) -> f64 {
         if units.is_empty() {
             BLANK_W
-        } else if self.folded.contains(&phase) {
+        } else if self.shut(guid, Group::Phase(phase)) {
             EDGE_W + FOLDED_W
         } else {
             // The macros stay, open or folded: the devices follow them.
@@ -826,7 +919,7 @@ impl DeviceRow {
             // A frame face is the whole device, and plays its own
             // controls: the pointer goes to it.
             hits.faces
-                .push((key.clone(), guid.to_owned(), which, panel));
+                .push((key.clone(), guid.to_owned(), Target::Unit(which), panel));
             hits.pictures.push((key, face.picture, panel, hits.clip));
             return true;
         }
@@ -895,14 +988,23 @@ impl DeviceRow {
         let Some(tone) = store.get(&track.guid) else {
             return x;
         };
-        for (phase, units) in grouped(&fx_chain(tone)) {
-            let width = self.group_w(phase, &units);
+        let groups = grouped(&fx_chain(tone));
+        hits.groups.push((
+            track.guid.clone(),
+            groups
+                .iter()
+                .filter(|(_, units)| !units.is_empty())
+                .map(|(phase, _)| Group::Phase(*phase))
+                .collect(),
+        ));
+        for (phase, units) in groups {
+            let width = self.group_w(&track.guid, phase, &units);
             let x0 = x;
             x += width + GAP;
             if !lane.sees(x0, width) {
                 continue;
             }
-            let shut = self.folded.contains(&phase);
+            let shut = self.shut(&track.guid, Group::Phase(phase));
             let group = Panel {
                 x: x0,
                 y: lane.top + INSET,
@@ -913,7 +1015,7 @@ impl DeviceRow {
                 scene,
                 &self.palette,
                 &self.font,
-                phase,
+                (phase.display_name(), crate::tone::phase_tint(phase)),
                 group,
                 (!units.is_empty()).then_some(shut),
             );
@@ -922,14 +1024,16 @@ impl DeviceRow {
             }
             // The edge folds it, and so does its tint.
             hits.bars.push((
-                phase,
+                track.guid.clone(),
+                Group::Phase(phase),
                 Panel {
                     width: EDGE_W,
                     ..group
                 },
             ));
             hits.bars.push((
-                phase,
+                track.guid.clone(),
+                Group::Phase(phase),
                 Panel {
                     height: TINT_H + 4.0,
                     ..group
@@ -968,6 +1072,273 @@ impl DeviceRow {
             }
         }
         x
+    }
+
+    /// How wide block `at` of `rig` is: its face as wide as its design is
+    /// at the lane's height, a card where frame has none.
+    fn block_w(&self, rig: &crate::rig::Rig, at: usize, body_h: f64) -> f64 {
+        rig.blocks
+            .get(at)
+            .and_then(|block| self.rig_faces.of(rig, block))
+            .map_or(CARD_W, |face| {
+                (body_h * face.size.0 / face.size.1.max(1.0)).clamp(CARD_W, DEVICE_W * 5.0)
+            })
+    }
+
+    /// Each section of `rig` with blocks, and those blocks' indices.
+    fn sections(rig: &crate::rig::Rig) -> Vec<(crate::rig::Section, Vec<usize>)> {
+        crate::rig::Section::ALL
+            .iter()
+            .map(|section| {
+                let blocks = rig
+                    .blocks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| crate::rig::section_of(b) == Some(*section))
+                    .map(|(i, _)| i)
+                    .collect::<Vec<_>>();
+                (*section, blocks)
+            })
+            .filter(|(_, blocks)| !blocks.is_empty())
+            .collect()
+    }
+
+    /// How wide `section` of `guid`'s rig is.
+    fn section_w(
+        &self,
+        guid: &str,
+        rig: &crate::rig::Rig,
+        section: crate::rig::Section,
+        blocks: &[usize],
+        body_h: f64,
+    ) -> f64 {
+        if self.shut(guid, Group::Rig(section)) {
+            return EDGE_W + SECTION_LIST_W;
+        }
+        EDGE_W
+            + blocks
+                .iter()
+                .map(|at| self.block_w(rig, *at, body_h) + GAP)
+                .sum::<f64>()
+            - GAP
+    }
+
+    /// How wide `guid`'s rig is, laid out.
+    fn rig_w(&self, guid: &str, body_h: f64) -> f64 {
+        let rigs = self.rigs.borrow();
+        let Some(rig) = rigs.get(guid) else {
+            return 0.0;
+        };
+        Self::sections(rig)
+            .iter()
+            .map(|(section, blocks)| self.section_w(guid, rig, *section, blocks, body_h) + GAP)
+            .sum()
+    }
+
+    /// A folded section: a list of what is in it, lit where it is on.
+    fn section_list(
+        &self,
+        scene: &mut Scene,
+        rig: &crate::rig::Rig,
+        section: crate::rig::Section,
+        blocks: &[usize],
+        (x0, lane): (f64, Lane),
+    ) {
+        let mut y = lane.body_top + 22.0;
+        for at in blocks {
+            let Some(block) = rig.blocks.get(*at) else {
+                continue;
+            };
+            if y > lane.body_top + lane.body_h - 4.0 {
+                break;
+            }
+            let dot = vello::kurbo::Circle::new((x0 + EDGE_W + 6.0, y - 3.0), 2.5);
+            anyrender::PaintScene::fill(
+                scene,
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                if block.bypassed {
+                    self.palette.text_faint
+                } else {
+                    section.tint()
+                },
+                None,
+                &dot,
+            );
+            crate::tcp::glyphs(
+                scene,
+                &self.font,
+                if block.bypassed {
+                    self.palette.text_faint
+                } else {
+                    self.palette.text_dim
+                },
+                &self.font.elide(&block.name, 9.0, SECTION_LIST_W - 16.0),
+                x0 + EDGE_W + 12.0,
+                y,
+                9.0,
+            );
+            y += 14.0;
+        }
+    }
+
+    /// `track`'s rig, section by section, from `x`: each block wearing
+    /// its frame face, a folded section a list of what is in it. Where it
+    /// ends.
+    fn draw_rig(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        track: &daw_proto::Track,
+        lane: Lane,
+        mut x: f64,
+    ) -> f64 {
+        let rigs = self.rigs.borrow();
+        let Some(rig) = rigs.get(&track.guid) else {
+            return x;
+        };
+        let sections = Self::sections(rig);
+        hits.groups.push((
+            track.guid.clone(),
+            sections.iter().map(|(s, _)| Group::Rig(*s)).collect(),
+        ));
+        for (section, blocks) in sections {
+            let width = self.section_w(&track.guid, rig, section, &blocks, lane.body_h);
+            let x0 = x;
+            x += width + GAP;
+            if !lane.sees(x0, width) {
+                continue;
+            }
+            let shut = self.shut(&track.guid, Group::Rig(section));
+            let group = Panel {
+                x: x0,
+                y: lane.top + INSET,
+                width,
+                height: INSET.mul_add(-2.0, lane.height),
+            };
+            phase_edge(
+                scene,
+                &self.palette,
+                &self.font,
+                (section.name(), section.tint()),
+                group,
+                Some(shut),
+            );
+            hits.bars.push((
+                track.guid.clone(),
+                Group::Rig(section),
+                Panel {
+                    width: EDGE_W,
+                    ..group
+                },
+            ));
+            hits.bars.push((
+                track.guid.clone(),
+                Group::Rig(section),
+                Panel {
+                    height: TINT_H + 4.0,
+                    ..group
+                },
+            ));
+            if shut {
+                self.section_list(scene, rig, section, &blocks, (x0, lane));
+                continue;
+            }
+            let mut at_x = x0 + EDGE_W;
+            // The second of a kind in Time is drawn dark under the first.
+            let mut seen_kinds: Vec<&str> = Vec::new();
+            for at in &blocks {
+                let Some(block) = rig.blocks.get(*at) else {
+                    continue;
+                };
+                let w = self.block_w(rig, *at, lane.body_h);
+                let here = at_x;
+                at_x += w + GAP;
+                let dark = section == crate::rig::Section::Time
+                    && seen_kinds.contains(&block.kind.as_str());
+                seen_kinds.push(block.kind.as_str());
+                if !lane.sees(here, w) {
+                    continue;
+                }
+                let panel = lane.device(here, w);
+                match self.rig_faces.of(rig, block) {
+                    Some(face) => {
+                        let key = format!("{}/rig/{at}", track.guid);
+                        hits.faces.push((
+                            key.clone(),
+                            track.guid.clone(),
+                            Target::Rig(*at, face.clone()),
+                            panel,
+                        ));
+                        hits.pictures.push((
+                            key,
+                            crate::faces::Picture::Frame(crate::rig::face_of(
+                                rig, block, face, dark,
+                            )),
+                            panel,
+                            hits.clip,
+                        ));
+                    }
+                    None => self.block_card(scene, block, section, panel),
+                }
+            }
+        }
+        x
+    }
+
+    /// A block frame has no face for: a card with its name, what is
+    /// loaded and whether it is on.
+    fn block_card(
+        &self,
+        scene: &mut Scene,
+        block: &crate::rig::Block,
+        section: crate::rig::Section,
+        at: Panel,
+    ) {
+        anyrender::PaintScene::fill(
+            scene,
+            vello::peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            self.palette.row_a,
+            None,
+            &vello::kurbo::RoundedRect::new(at.x, at.y, at.x + at.width, at.y + at.height, 4.0),
+        );
+        let ink = if block.bypassed {
+            self.palette.text_faint
+        } else {
+            self.palette.text
+        };
+        crate::tcp::glyphs(
+            scene,
+            &self.font,
+            ink,
+            &self.font.elide(&block.name, 10.0, at.width - 12.0),
+            at.x + 6.0,
+            at.y + 16.0,
+            10.0,
+        );
+        crate::tcp::glyphs(
+            scene,
+            &self.font,
+            self.palette.text_faint,
+            &self.font.elide(&block.preset, 8.0, at.width - 12.0),
+            at.x + 6.0,
+            at.y + 30.0,
+            8.0,
+        );
+        let dot = vello::kurbo::Circle::new((at.x + at.width - 10.0, at.y + 11.0), 3.0);
+        anyrender::PaintScene::fill(
+            scene,
+            vello::peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            if block.bypassed {
+                self.palette.text_faint
+            } else {
+                section.tint()
+            },
+            None,
+            &dot,
+        );
     }
 
     /// The returns `returns`, each its strip and its effect, from `x`.
@@ -1028,12 +1399,14 @@ impl DeviceRow {
             body_h: (INSET.mul_add(-2.0, height) - TINT_H - 2.0).max(0.0),
         };
         let returns = self.returns(at);
-        let chain_w = {
+        let chain_w = if self.rigs.borrow().contains_key(&track.guid) {
+            self.rig_w(&track.guid, lane.body_h)
+        } else {
             let store = self.tone.store.borrow();
             store.get(&track.guid).map_or(0.0, |tone| {
                 grouped(&fx_chain(tone))
                     .iter()
-                    .map(|(p, u)| self.group_w(*p, u) + GAP)
+                    .map(|(p, u)| self.group_w(&track.guid, *p, u) + GAP)
                     .sum()
             })
         };
@@ -1049,7 +1422,11 @@ impl DeviceRow {
         // What scrolls is clipped to the right of the strip.
         hits.clip = vello::kurbo::Rect::new(start, top, right, top + height);
         let mut moving = Scene::new();
-        let end = self.draw_chain(&mut moving, hits, &track, lane, start - scroll);
+        let end = if self.rigs.borrow().contains_key(&track.guid) {
+            self.draw_rig(&mut moving, hits, &track, lane, start - scroll)
+        } else {
+            self.draw_chain(&mut moving, hits, &track, lane, start - scroll)
+        };
         // The returns it feeds, after a breath.
         self.draw_returns(&mut moving, hits, &returns, lane, end - GAP + RETURNS_GAP);
         let clip = hits.clip;
@@ -1134,19 +1511,15 @@ fn phase_edge(
     scene: &mut Scene,
     palette: &crate::arrangement::Palette,
     font: &crate::text::Font,
-    phase: MixPhase,
+    (name, tint): (&str, vello::peniko::Color),
     group: Panel,
     open: Option<bool>,
 ) {
-    let tint = crate::tone::phase_tint(phase);
     let theme = crate::skin::loaded();
     if let Some(theme) = theme.as_deref().filter(|t| t.has_role("fx.phase")) {
         let [r, g, b, a] = tint.to_rgba8().to_u8_array();
         let fields = crate::skin::values(&[
-            (
-                "phase.name",
-                theme_runtime::Value::text(phase.display_name()),
-            ),
+            ("phase.name", theme_runtime::Value::text(name)),
             (
                 "phase.tint",
                 theme_runtime::Value::Color(theme_runtime::Rgba::from_rgba8(r, g, b, a)),
@@ -1180,7 +1553,12 @@ fn phase_edge(
     fill(
         scene,
         palette.divider,
-        vello::kurbo::Rect::new(line_x, group.y, line_x + 1.0, group.y + group.height),
+        vello::kurbo::Rect::new(
+            line_x,
+            group.y + TINT_H + 18.0,
+            line_x + 1.0,
+            group.y + group.height,
+        ),
     );
     // The tint, along the top of what it holds.
     let tint = if faint {
@@ -1204,12 +1582,57 @@ fn phase_edge(
             scene,
             font,
             palette.text_faint,
-            phase.display_name(),
+            name,
+            group.x + EDGE_W + 4.0,
+            group.y + TINT_H + 12.0,
+            9.0,
+        );
+        return;
+    }
+    edge_chevron(scene, palette, group, open == Some(true));
+    if open == Some(true) {
+        // Shut, it says which it is beside its chevron.
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text_dim,
+            name,
             group.x + EDGE_W + 4.0,
             group.y + TINT_H + 12.0,
             9.0,
         );
     }
+}
+
+/// The chevron that folds a group, at the top of its edge: down open,
+/// right shut.
+fn edge_chevron(
+    scene: &mut Scene,
+    palette: &crate::arrangement::Palette,
+    group: Panel,
+    shut: bool,
+) {
+    let (cx, cy) = (group.x + EDGE_W / 2.0, group.y + TINT_H + 9.0);
+    let mut chevron = vello::kurbo::BezPath::new();
+    if shut {
+        chevron.move_to((cx - 2.0, cy - 4.0));
+        chevron.line_to((cx + 2.0, cy));
+        chevron.line_to((cx - 2.0, cy + 4.0));
+    } else {
+        chevron.move_to((cx - 4.0, cy - 2.0));
+        chevron.line_to((cx, cy + 2.0));
+        chevron.line_to((cx + 4.0, cy - 2.0));
+    }
+    anyrender::PaintScene::stroke(
+        scene,
+        &vello::kurbo::Stroke::new(1.4)
+            .with_caps(vello::kurbo::Cap::Round)
+            .with_join(vello::kurbo::Join::Round),
+        Affine::IDENTITY,
+        palette.text_dim,
+        None,
+        &chevron,
+    );
 }
 
 /// A frame face's modifiers: Shift fine, Ctrl/Cmd the alternate, as
@@ -1267,7 +1690,12 @@ pub fn shot(
     *tone.store.borrow_mut() = store;
     let mut row = DeviceRow::new(tone, rows, lanes.max(1), font);
     row.watch = None;
-    row.folded.extend(folded.iter().copied());
+    let guids: Vec<String> = row.tracks.iter().map(|t| t.guid.clone()).collect();
+    for guid in guids {
+        for phase in folded {
+            row.folds.insert((guid.clone(), Group::Phase(*phase)), true);
+        }
+    }
     row.paint_scene(None, width, height, 1.0)
 }
 

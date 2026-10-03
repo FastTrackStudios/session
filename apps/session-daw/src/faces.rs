@@ -39,7 +39,7 @@ pub struct FrameFace {
 
 /// Where frame's faces are: `FTS_FRAME_DIR`, else frame's generated
 /// faces in the frame checkout beside this one — as signal finds them.
-fn design_dir() -> std::path::PathBuf {
+pub(crate) fn design_dir() -> std::path::PathBuf {
     std::env::var_os("FTS_FRAME_DIR").map_or_else(
         || {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

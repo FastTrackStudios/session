@@ -59,6 +59,7 @@ pub mod open_core;
 pub mod options;
 #[cfg(feature = "native")]
 pub mod organize;
+pub mod rig;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod song_modes;
 pub mod song_stream;
