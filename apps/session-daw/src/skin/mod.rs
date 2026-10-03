@@ -95,6 +95,19 @@ pub fn schema() -> Schema {
         .field("phase.blank")
         .field("phase.shut")
         .field("phase.held")
+        .field("row.indent")
+        .field("row.number")
+        .field("row.number_size")
+        .field("row.number_x")
+        .field("row.number_baseline")
+        .field("row.has_number")
+        .field("row.icon")
+        .field("row.icon_x")
+        .field("row.icon_y")
+        .field("row.icon_size")
+        .field("row.name")
+        .field("row.name_size")
+        .field("row.input")
         .layout("mixer.h")
         .layout("ui.mixing")
         .layout("ui.recording")
@@ -168,6 +181,114 @@ pub fn step_fields(tint: vello::peniko::Color, level: usize) -> StripFields {
         ("folder.tint", Value::Color(Rgba::from_rgba8(r, g, b, a))),
         ("folder.level", Value::Num(crate::num::coord(level))),
     ])
+}
+
+/// The role a theme draws one track panel row as.
+pub const ROW: &str = export::tcp::ROW;
+
+/// What a track panel row shows beyond its track.
+#[derive(Clone, Copy, Default)]
+pub struct RowShown<'a> {
+    /// How deep in folders the track is.
+    pub depth: i32,
+    /// The row's height, less the divider under it.
+    pub height: f64,
+    /// The face its text is measured in.
+    pub font: Option<&'a crate::text::Font>,
+    /// The control the pointer is over, and the one it is pressing.
+    pub hover: Option<crate::row::Control>,
+    pub pressed: Option<crate::row::Control>,
+}
+
+/// A row control's name in a theme: its `@name`, its `ui.hover`.
+#[must_use]
+pub const fn row_name(control: crate::row::Control) -> &'static str {
+    use crate::row::Control as C;
+    match control {
+        C::Mute => "mute",
+        C::Solo => "solo",
+        C::RecArm => "arm",
+        C::Volume => "volume",
+        C::Pan => "pan",
+        C::Routing => "routing",
+        C::Fx => "fx",
+        C::Name => "name",
+        C::Folder => "folder",
+        C::Phase => "phase",
+    }
+}
+
+/// The row control a theme's `@name` is.
+#[must_use]
+pub fn row_control(name: &str) -> Option<crate::row::Control> {
+    use crate::row::Control as C;
+    [
+        C::Mute,
+        C::Solo,
+        C::RecArm,
+        C::Volume,
+        C::Pan,
+        C::Routing,
+        C::Fx,
+        C::Name,
+        C::Folder,
+        C::Phase,
+    ]
+    .into_iter()
+    .find(|c| row_name(*c) == name)
+}
+
+/// `track`'s values for a track panel row: the strip's, and what the row
+/// shows beyond them — the indent, the number and icon as the rail fits
+/// them, the name as the field elides it, the record input.
+#[must_use]
+pub fn row_fields(palette: &Palette, track: &Track, shown: RowShown<'_>) -> StripFields {
+    let tcp = crate::tcp::Tcp::FULL;
+    let indent = (f64::from(shown.depth.max(0)) * tcp.indent()).min(tcp.max_indent());
+    let mut out = fields(palette, track, Shown::default());
+    let mut set = |name: &str, v: Value| {
+        if let Some(at) = SCHEMA
+            .slot(name)
+            .and_then(|s| usize::try_from(s).ok())
+            .and_then(|s| out.0.get_mut(s))
+        {
+            *at = v;
+        }
+    };
+    set("row.indent", Value::Num(indent));
+    let named = |c: Option<crate::row::Control>| Value::text(c.map_or("", row_name));
+    set("ui.hover", named(shown.hover));
+    set("ui.pressed", named(shown.pressed));
+    let Some(font) = shown.font else {
+        return out;
+    };
+    let rail = crate::tcp::rail_layout(font, track, indent, 0.0, shown.height);
+    set("row.has_number", Value::Bool(rail.number.is_some()));
+    if let Some(number) = rail.number {
+        set("row.number", Value::text(&number.text));
+        set("row.number_size", Value::Num(f64::from(number.size)));
+        set("row.number_x", Value::Num(number.x));
+        set("row.number_baseline", Value::Num(number.baseline));
+    }
+    set("row.icon", Value::Bool(rail.icon.is_some()));
+    if let Some(icon) = rail.icon {
+        set("row.icon_x", Value::Num(icon.x0));
+        set("row.icon_y", Value::Num(icon.y0));
+        set("row.icon_size", Value::Num(icon.width()));
+    }
+    let (_, field_h) = crate::tcp::band(0.0, shown.height, crate::tcp::Density::at(shown.height));
+    let size = tcp.name_size(field_h);
+    let name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
+    set(
+        "row.name",
+        Value::text(&font.elide(&track.name, size, name_w)),
+    );
+    set("row.name_size", Value::Num(f64::from(size)));
+    set(
+        "row.input",
+        Value::text(&font.elide(&crate::tcp::record_input(track), 11.0, 180.0)),
+    );
+    out
 }
 
 /// `track`'s values for a strip theme.

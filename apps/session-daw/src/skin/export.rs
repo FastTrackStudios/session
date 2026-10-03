@@ -50,6 +50,8 @@ use crate::tcp::to_theme;
 
 use super::canvas::BASELINE;
 
+pub mod tcp;
+
 /// A colour no control is drawn in, standing for one the track supplies.
 const SENTINEL: Tc = Tc {
     r: 1,
@@ -261,6 +263,7 @@ impl Gen<'_> {
         self.hits();
         self.line(2, "</Frame>");
         self.line(1, "</Page>");
+        self.tcp();
         self.line(0, "</Document>");
     }
 

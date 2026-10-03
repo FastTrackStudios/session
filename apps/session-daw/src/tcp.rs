@@ -437,7 +437,7 @@ pub fn draw_row(
     // it lines up with the controls beside it, which is what makes a
     // folder readable while scanning a collapsed session rather than
     // something you find by looking down.
-    let mark_h = if track.is_folder {
+    if track.is_folder {
         // In the rail, which has already moved with the indent.
         let mark_scale = (h / 18.0).clamp(0.4, 1.0);
         crate::art::scaled(
@@ -448,64 +448,30 @@ pub fn draw_row(
             2.0_f64.mul_add(mark_scale, y),
             mark_scale,
         );
-        (7.0 + 2.0) * mark_scale
-    } else {
-        0.0
-    };
+    }
 
-    // The track number, under whatever the rail already holds. It gets
-    // the space that is left, and gives way entirely when a folder's
-    // mark has taken the rail — the mark is the fact worth keeping when
-    // only one of the two fits.
-    // And under the number, the track's icon: what it is, at a glance —
-    // the folder's mark, the number, then the instrument, down the rail.
-    // Only where the row has the height for both; otherwise the number.
-    let icon = (rail - 6.0).min(16.0);
-    let with_icon = h - mark_h >= 11.0 + ICON_GAP + icon + 6.0;
-    let group = if with_icon {
-        11.0 + ICON_GAP + icon
-    } else {
-        0.0
-    };
-    if h - mark_h >= 11.0 {
-        // Sized and centred to sit INSIDE the rail.
-        //
-        // It was left-aligned at a fixed offset and a fixed 11 points,
-        // so a two-digit number ran past the rule closing the rail —
-        // the number of one track crossing the line into the body of
-        // its own row. The rail is the width it gets; if the digits do
-        // not fit, they get smaller.
-        let number = track.index.saturating_add(1).to_string();
-        let (number, size) = font.fit(&number, 11.0, 6.0, rail - 3.0);
-        let width = font.width(&number, size);
-        // With the icon under it, the two are centred together.
-        let middle = y + mark_h + (h - mark_h - group) / 2.0;
-        let baseline = if with_icon {
-            middle + 9.0
-        } else {
-            middle + f64::from(size) / 3.0
-        };
+    // The track number and its icon, as `rail` places them.
+    let at = rail_layout(font, track, indent, y, h);
+    if let Some(number) = &at.number {
         glyphs(
             scene,
             font,
             ink_on(folder_band(palette, track)),
-            &number,
-            indent + (rail - width) / 2.0,
-            baseline,
-            size,
+            &number.text,
+            number.x,
+            number.baseline,
+            number.size,
         );
-        if with_icon {
-            // In the number's ink: on the rail's own colour, a lifted
-            // track colour would all but vanish.
-            let top = middle + 11.0 + ICON_GAP;
-            let left = indent + (rail - icon) / 2.0;
-            crate::track_icon::paint(
-                scene,
-                crate::track_icon::Icon::of(&track.name, track.is_folder),
-                vello::kurbo::Rect::new(left, top, left + icon, top + icon),
-                ink_on(folder_band(palette, track)),
-            );
-        }
+    }
+    if let Some(icon) = at.icon {
+        // In the number's ink: on the rail's own colour, a lifted track
+        // colour would all but vanish.
+        crate::track_icon::paint(
+            scene,
+            crate::track_icon::Icon::of(&track.name, track.is_folder),
+            icon,
+            ink_on(folder_band(palette, track)),
+        );
     }
 
     match density {
@@ -525,6 +491,77 @@ pub fn draw_row(
             row_one(scene, palette, font, track, indent, band_top, band_h, tcp);
         }
         Density::Bar => {}
+    }
+}
+
+/// A row's track number, as fitted into its rail.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Number {
+    pub text: String,
+    pub size: f32,
+    /// The glyphs' left edge and baseline.
+    pub x: f64,
+    pub baseline: f64,
+}
+
+/// What the rail holds under the folder mark: the number, and under it
+/// the track's icon where the row has the height for both.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rail {
+    pub number: Option<Number>,
+    pub icon: Option<Rect>,
+}
+
+/// Where the rail's number and icon go on a row at `y`, `h` tall, its rail
+/// at `indent` — for the painters and for a theme alike, since only the
+/// host measures text.
+///
+/// The number gets the space the folder mark leaves, and gives way
+/// entirely when the mark has taken the rail — the mark is the fact worth
+/// keeping when only one of the two fits. Sized and centred to sit INSIDE
+/// the rail: a two-digit number left-aligned at eleven points ran past
+/// the rule closing it. The icon goes under it only where the row has the
+/// height for both, the two centred together.
+#[must_use]
+pub fn rail_layout(font: &Font, track: &Track, indent: f64, y: f64, h: f64) -> Rail {
+    let rail = f64::from(g::COLUMN_RULE_X);
+    let mark_h = if track.is_folder {
+        (7.0 + 2.0) * (h / 18.0).clamp(0.4, 1.0)
+    } else {
+        0.0
+    };
+    let icon = (rail - 6.0).min(16.0);
+    let with_icon = h - mark_h >= 11.0 + ICON_GAP + icon + 6.0;
+    let group = if with_icon {
+        11.0 + ICON_GAP + icon
+    } else {
+        0.0
+    };
+    if h - mark_h < 11.0 {
+        return Rail {
+            number: None,
+            icon: None,
+        };
+    }
+    let number = track.index.saturating_add(1).to_string();
+    let (text, size) = font.fit(&number, 11.0, 6.0, rail - 3.0);
+    let width = font.width(&text, size);
+    let middle = y + mark_h + (h - mark_h - group) / 2.0;
+    let baseline = if with_icon {
+        middle + 9.0
+    } else {
+        middle + f64::from(size) / 3.0
+    };
+    let top = middle + 11.0 + ICON_GAP;
+    let left = indent + (rail - icon) / 2.0;
+    Rail {
+        number: Some(Number {
+            x: indent + (rail - width) / 2.0,
+            text,
+            size,
+            baseline,
+        }),
+        icon: with_icon.then(|| Rect::new(left, top, left + icon, top + icon)),
     }
 }
 
