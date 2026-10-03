@@ -31,6 +31,7 @@ pub mod folder;
 pub mod folder_item;
 pub mod folds;
 pub mod fps;
+pub mod fx_view;
 pub mod gesture;
 pub mod ghosts;
 pub mod guide_instrument;

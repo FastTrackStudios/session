@@ -902,6 +902,7 @@ fn SongViews(
                 View::Mixer => rsx! {
                     crate::mixer_panel::WebDawPanels { engine: engine.clone(), mixer_only: true }
                 },
+                View::Fx => rsx! { crate::fx_view::FxPanel {} },
                 View::Overview => rsx! {
                     OverviewLayout {
                         progress: rsx! { crate::progress::ProgressBar {} },

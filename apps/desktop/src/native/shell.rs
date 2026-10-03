@@ -47,6 +47,7 @@ pub fn Shell() -> Element {
         Ok("chart") => View::Chart,
         Ok("lyrics") => View::Lyrics,
         Ok("mixer") => View::Mixer,
+        Ok("fx") => View::Fx,
         _ => View::Daw,
     });
     // The Mixer button, `x` and the toolbar's mixer: one toggle.
@@ -449,10 +450,19 @@ fn SongViews(
     use_context_provider(|| session);
     let mode: Signal<session::modes::Mode> = use_context();
     let record_mode = move || mode() == session::modes::Mode::Record;
+    // The FX, pinned under the arrangement or the mixer: the view gives
+    // up its bottom to it.
+    let fx = try_use_context::<session_daw::shell::FxToggle>();
+    let fx_docked = fx.is_some_and(|f| {
+        (f.docked)() && (f.open)() && f.hosts.contains(&view())
+    });
+    let view_bottom = if fx_docked { format!("{FX_DOCK_H}px") } else { "0px".to_owned() };
     rsx! {
         session_daw::shell::PinnedProgress { view: view() }
         div {
             style: "position:relative; flex:1; min-height:0;",
+            div {
+            style: "position:absolute; left:0; right:0; top:0; bottom:{view_bottom};",
             match view() {
                 View::Setup => rsx! { session_daw::setup::SetupView {} },
                 View::Daw => rsx! { Arrangement {} },
@@ -469,6 +479,7 @@ fn SongViews(
                 View::Mixer => rsx! {
                     session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
                 },
+                View::Fx => rsx! { session_daw::fx_view::FxPanel {} },
                 View::Overview => rsx! {
                     OverviewLayout {
                         progress: rsx! { session_daw::progress::ProgressBar {} },
@@ -480,10 +491,21 @@ fn SongViews(
                     }
                 },
             }
+            }
+            if fx_docked {
+                div {
+                    style: "position:absolute; left:0; right:0; bottom:0; height:{FX_DOCK_H}px; \
+                            border-top:1px solid #000;",
+                    session_daw::fx_view::FxPanel {}
+                }
+            }
         }
         session_daw::shell::PinnedTransport { view: view() }
     }
 }
+
+/// How tall the FX is, pinned under the arrangement or the mixer.
+const FX_DOCK_H: f64 = 300.0;
 
 /// Live mode runs the set: when the song playing reaches its end, the next
 /// one is picked and plays from its count-in. Checked each frame — the

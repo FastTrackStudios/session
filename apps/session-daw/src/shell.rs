@@ -81,19 +81,23 @@ pub enum View {
     Lyrics,
     /// The mixer alone, the whole window.
     Mixer,
+    /// The selected track's effects as devices, the whole window
+    /// (`crate::fx_view`).
+    Fx,
     /// The audio and MIDI editor (the expression editor, brought in
     /// next): a place held for it.
     Editor,
 }
 
 impl View {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Performance,
         Self::Overview,
         Self::Chart,
         Self::Lyrics,
         Self::Daw,
         Self::Mixer,
+        Self::Fx,
         Self::Editor,
         Self::Setup,
     ];
@@ -108,6 +112,7 @@ impl View {
             Self::Chart => "Chart",
             Self::Lyrics => "Lyrics",
             Self::Mixer => "Mixer",
+            Self::Fx => "FX",
             Self::Editor => "Editor",
         }
     }
@@ -173,62 +178,117 @@ pub struct Pins {
     pub navigator: Signal<bool>,
 }
 
-/// The one way the mixer opens: the bottom bar's Mixer button, `x`, the
-/// arrangement's toolbar — all three are this.
+/// A pane that is either a view of its own or pinned under others — the
+/// mixer, the FX. One way in for each: its bottom-bar button, its key,
+/// its toolbar switch, all [`Pane::press`].
 ///
-/// Not docked (the default), it is the Mixer view: the mixer alone, the
-/// whole window, and pressed again the view it came from. Docked — a
-/// right-click on the Mixer button, on a screen wide enough for both — it
-/// is the mixer pinned under the arrangement, opened and closed there.
+/// Not docked (the default), pressing it is its view, the whole window,
+/// and pressing it again is the view it came from. Docked — a right-click
+/// on its button, on a screen wide enough — it is pinned under the views
+/// it docks in (`hosts`), opened and closed there.
 #[derive(Clone, Copy, PartialEq)]
-pub struct MixerToggle {
+pub struct Pane {
     pub view: Signal<View>,
-    /// Pinned under the arrangement rather than a view of its own.
+    /// Its own view.
+    pub own: View,
+    /// The views it is pinned under, docked; the first is where pressing it
+    /// from anywhere else goes.
+    pub hosts: &'static [View],
+    /// Pinned under the hosts rather than a view of its own.
     pub docked: Signal<bool>,
-    /// Whether the pinned mixer is showing.
+    /// Whether the pinned pane is showing.
     pub open: Signal<bool>,
-    /// The view the Mixer view was opened from, to go back to.
+    /// The view its own view was opened from, to go back to.
     back: Signal<View>,
 }
 
-impl MixerToggle {
-    /// Open the mixer, or close it.
-    pub fn press(self) {
-        let (mut view, mut open, mut back) = (self.view, self.open, self.back);
-        if *self.docked.peek() {
-            if *view.peek() == View::Daw {
-                open.toggle();
-            } else {
-                view.set(View::Daw);
-                open.set(true);
-            }
-        } else if *view.peek() == View::Mixer {
-            view.set(*back.peek());
-        } else {
-            back.set(*view.peek());
-            view.set(View::Mixer);
+impl Pane {
+    fn new(view: Signal<View>, own: View, hosts: &'static [View]) -> Self {
+        Self {
+            view,
+            own,
+            hosts,
+            docked: Signal::new(false),
+            open: Signal::new(false),
+            back: Signal::new(View::Daw),
         }
     }
 
-    /// Whether the mixer is showing, however it is shown.
+    /// Open it, or close it.
+    pub fn press(self) {
+        let (mut view, mut open, mut back) = (self.view, self.open, self.back);
+        let now = *view.peek();
+        if *self.docked.peek() {
+            if self.hosts.contains(&now) {
+                open.toggle();
+            } else {
+                view.set(self.hosts.first().copied().unwrap_or(View::Daw));
+                open.set(true);
+            }
+        } else if now == self.own {
+            view.set(*back.peek());
+        } else {
+            back.set(now);
+            view.set(self.own);
+        }
+    }
+
+    /// Whether it is showing, however it is shown.
     #[must_use]
     pub fn showing(self) -> bool {
         if (self.docked)() {
-            (self.view)() == View::Daw && (self.open)()
+            self.hosts.contains(&(self.view)()) && (self.open)()
         } else {
-            (self.view)() == View::Mixer
+            (self.view)() == self.own
+        }
+    }
+
+    /// Pinned or a view of its own, keeping it showing where it moves to.
+    pub fn set_docked(self, on: bool) {
+        let (mut docked, mut view, mut open) = (self.docked, self.view, self.open);
+        if *docked.peek() == on {
+            return;
+        }
+        let showing = self.showing();
+        docked.set(on);
+        if showing {
+            if on {
+                view.set(self.hosts.first().copied().unwrap_or(View::Daw));
+                open.set(true);
+            } else {
+                view.set(self.own);
+            }
         }
     }
 }
 
-/// Provide the window's [`MixerToggle`] over `view`, for a shell.
+/// The mixer's [`Pane`]: pinned under the arrangement.
+#[derive(Clone, Copy, PartialEq)]
+pub struct MixerToggle(pub Pane);
+
+impl std::ops::Deref for MixerToggle {
+    type Target = Pane;
+    fn deref(&self) -> &Pane {
+        &self.0
+    }
+}
+
+/// The FX's [`Pane`]: pinned under the arrangement or the mixer, either.
+#[derive(Clone, Copy, PartialEq)]
+pub struct FxToggle(pub Pane);
+
+impl std::ops::Deref for FxToggle {
+    type Target = Pane;
+    fn deref(&self) -> &Pane {
+        &self.0
+    }
+}
+
+/// Provide the window's [`MixerToggle`] and [`FxToggle`] over `view`, for
+/// a shell.
 pub fn use_mixer_toggle(view: Signal<View>) -> MixerToggle {
-    use_context_provider(|| MixerToggle {
-        view,
-        docked: Signal::new(false),
-        open: Signal::new(false),
-        back: Signal::new(View::Daw),
-    })
+    use_context_provider(|| FxToggle(Pane::new(view, View::Fx, &[View::Daw, View::Mixer])));
+    use_context_provider(|| MixerToggle(Pane::new(view, View::Mixer, &[View::Daw])))
 }
 
 /// How wide a window must be for the mixer to be pinned under the
@@ -378,30 +438,36 @@ pub fn BottomBar(
             shared.set(density);
         }
     }));
-    let mixer = try_use_context::<MixerToggle>();
-    // The Mixer button's right-click menu: pinned or a view of its own, on
-    // a screen wide enough to pin it.
-    let mut menu = use_signal(|| false);
+    let mixer = try_use_context::<MixerToggle>().map(|m| m.0);
+    let fx = try_use_context::<FxToggle>().map(|f| f.0);
+    // The pane a view's button is, when it is one.
+    let pane = move |each: View| match each {
+        View::Mixer => mixer,
+        View::Fx => fx,
+        _ => None,
+    };
+    // A pane's right-click menu: pinned or a view of its own, on a screen
+    // wide enough to pin it.
+    let mut menu = use_signal(|| None::<View>);
     let can_dock = !touch && width.is_none_or(|w| w >= DOCK_W);
     let button = move |each: View| {
-        let lit = match (each, mixer) {
-            (View::Mixer, Some(m)) => m.showing(),
-            (View::Daw, Some(m)) => view() == each && !(m.showing() && (m.docked)()),
-            _ => view() == each,
+        let lit = match pane(each) {
+            Some(p) => p.showing(),
+            None => view() == each,
         };
         rsx! {
             button {
                 key: "{each.name()}",
                 title: each.name(),
                 style: bottom_button(lit, true),
-                onclick: move |_| match (each, mixer) {
-                    (View::Mixer, Some(m)) => m.press(),
-                    _ => view.set(each),
+                onclick: move |_| match pane(each) {
+                    Some(p) => p.press(),
+                    None => view.set(each),
                 },
                 oncontextmenu: move |e| {
-                    if each == View::Mixer && mixer.is_some() && can_dock {
+                    if pane(each).is_some() && can_dock {
                         e.prevent_default();
-                        menu.set(true);
+                        menu.set(Some(each));
                     }
                 },
                 ViewIcon { view: each, color: ink(lit) }
@@ -447,11 +513,11 @@ pub fn BottomBar(
             for each in views {
                 {button(each)}
             }
-            if let (true, Some(m)) = (menu(), mixer) {
+            if let Some(m) = menu().and_then(pane) {
                 // A press outside closes it.
                 div {
                     style: "{SCRIM} z-index:40;",
-                    onclick: move |_| menu.set(false),
+                    onclick: move |_| menu.set(None),
                 }
                 div {
                     style: "position:absolute; left:0; bottom:{BOTTOM_H}px; z-index:41; \
@@ -462,22 +528,9 @@ pub fn BottomBar(
                         title: "Pin the mixer under the arrangement, rather than a view of its own",
                         style: mode_option((m.docked)()),
                         onclick: move |_| {
-                            let mut docked = m.docked;
-                            let was = *docked.peek();
-                            // The mixer stays where it was showing: open in
-                            // the view it moves to.
-                            let showing = m.showing();
-                            docked.set(!was);
-                            if showing {
-                                let (mut view, mut open) = (m.view, m.open);
-                                if was {
-                                    view.set(View::Mixer);
-                                } else {
-                                    view.set(View::Daw);
-                                    open.set(true);
-                                }
-                            }
-                            menu.set(false);
+                            // It stays showing, in the place it moves to.
+                            m.set_docked(!*m.docked.peek());
+                            menu.set(None);
                         },
                         "Docked"
                     }
@@ -757,6 +810,7 @@ fn ViewIcon(view: View, color: &'static str) -> Element {
         View::Editor => rsx! { lucide_dioxus::AudioWaveform { size, color } },
         View::Daw => rsx! { ChartNoAxesGantt { size, color } },
         View::Mixer => rsx! { SlidersVertical { size, color } },
+        View::Fx => rsx! { lucide_dioxus::AudioLines { size, color } },
         View::Setup => rsx! { Settings { size, color } },
     }
 }
