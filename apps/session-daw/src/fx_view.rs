@@ -117,7 +117,7 @@ pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
 
 use session::mix_phases::MixPhase;
 
-/// How wide a folded phase is: its macro knobs, two across.
+/// How wide a phase's macros are, open or folded: two knobs across.
 const FOLDED_W: f64 = 2.0 * crate::macros::CELL_W + 8.0;
 
 /// How wide a phase with no devices is: a faint edge holding its place.
@@ -620,7 +620,8 @@ impl DeviceRow {
         } else if self.folded.contains(&phase) {
             EDGE_W + FOLDED_W
         } else {
-            EDGE_W + units.iter().map(|w| device_w(*w) + GAP).sum::<f64>() - GAP
+            // The macros stay, open or folded: the devices follow them.
+            EDGE_W + FOLDED_W + units.iter().map(|w| GAP + device_w(*w)).sum::<f64>()
         }
     }
 
@@ -758,17 +759,21 @@ impl DeviceRow {
                 },
             ));
             let mut at = x0 + EDGE_W;
-            if shut {
-                // Folded, the phase is its macros.
-                let well = Panel {
-                    x: at,
-                    y: lane.body_top + 4.0,
-                    width: width - EDGE_W,
-                    height: lane.body_h - 4.0,
-                };
+            // The phase's macros, folded or open, in the same place: a
+            // hand on the phase whatever is showing.
+            let well = Panel {
+                x: at,
+                y: lane.body_top + 4.0,
+                width: FOLDED_W,
+                height: lane.body_h - 4.0,
+            };
+            if lane.sees(well.x, well.width) {
                 self.draw_macros(scene, hits, track, tone, phase, well);
+            }
+            if shut {
                 continue;
             }
+            at += FOLDED_W + GAP;
             for which in units {
                 let width = device_w(which);
                 let here = at;

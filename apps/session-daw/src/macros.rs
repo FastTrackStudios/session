@@ -275,7 +275,8 @@ fn painted(
 ) {
     use std::f64::consts::PI;
     let cell = knob.cell;
-    let (cx, cy, r) = (cell.x + cell.width / 2.0, cell.y + 22.0, 15.0);
+    // The name over the knob, its value under: neither on the ring.
+    let (cx, cy, r) = (cell.x + cell.width / 2.0, cell.y + 28.0, 13.0);
     let (start, sweep) = (PI * 0.75, PI * 1.5);
     let stroke = Stroke::new(3.0);
     let arc = Arc::new((cx, cy), (r, r), start, sweep, 0.0);
@@ -288,15 +289,15 @@ fn painted(
         palette.text_dim
     };
     let left = |text: &str, size: f32| cx - font.width(text, size) / 2.0;
+    let name = knob.knob.name;
+    crate::tcp::glyphs(scene, font, ink, name, left(name, 9.0), cell.y + 9.0, 9.0);
     crate::tcp::glyphs(
         scene,
         font,
-        palette.text_dim,
+        palette.text_faint,
         says,
         left(says, 8.0),
-        cy + 4.0,
+        cell.y + 56.0,
         8.0,
     );
-    let name = knob.knob.name;
-    crate::tcp::glyphs(scene, font, ink, name, left(name, 9.0), cell.y + 52.0, 9.0);
 }
