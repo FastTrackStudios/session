@@ -235,9 +235,12 @@ pub fn load_in(
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let began = std::time::Instant::now();
     let summary = load_rpp_text(&daw, &name, &path.to_string_lossy(), &text)
         .map_err(|e| eyre::eyre!("{name} did not parse: {e}"))?;
+    let parsed = began.elapsed();
     daw::standalone::project_loader::anchor_media(&daw, &summary.project_guid, &media_dir);
+    let anchored = began.elapsed();
 
     if media == Media::All {
         let audio = daw::standalone::audio_engine::materialize::materialize_via_bay(
@@ -254,11 +257,22 @@ pub fn load_in(
         }
     }
 
+    let materialized = began.elapsed();
     let track_count = daw::service::Tracks::all(
         &daw,
         daw::service::ProjectContext::Project(summary.project_guid.clone()),
     )
     .len();
+    // One line per load: where it went.
+    tracing::info!(
+        load.name = %name,
+        load.tracks = track_count,
+        load.parse_ms = parsed.as_millis(),
+        load.anchor_ms = (anchored - parsed).as_millis(),
+        load.media_ms = (materialized - anchored).as_millis(),
+        load.count_ms = (began.elapsed() - materialized).as_millis(),
+        "project loaded"
+    );
     Ok(Opened {
         daw,
         name,

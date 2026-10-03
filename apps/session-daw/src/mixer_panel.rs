@@ -2232,9 +2232,11 @@ impl MixerWidget {
         self.scroll.set(screen_scroll);
         let scroll = screen_scroll / zoom;
         let levels = match &mut self.simulated {
+            // On screen only: what is not drawn is not fed.
             Some((since, feed)) => feed.feed(
                 since.elapsed().as_secs_f64(),
                 &self.rows,
+                mixer.visible(scroll, w),
                 &store,
                 &mut self.levels,
                 &mut self.spectra,

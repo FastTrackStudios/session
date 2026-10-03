@@ -130,6 +130,13 @@ fn main() {
                     .unwrap_or_else(|_| LOG_DEFAULT.into()),
             )
             .with(tracing_subscriber::fmt::layer())
+            // And every run's log in a file of its own, to read afterwards:
+            // `/tmp/fts-session/latest.log` (or `FTS_LOG_DIR`).
+            .with(run_log().map(|file| {
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(std::sync::Mutex::new(file))
+            }))
             .with(log_ring::RingLayer::new())
             .with(architect_telemetry::tracing_layer());
         match architect_telemetry::otel::init("session", LOG_DEFAULT) {
@@ -1485,4 +1492,27 @@ fn Placeholder(title: &'static str, body: &'static str) -> Element {
             span { style: "font-size: 13px; color: #a1a1aa;", "{body}" }
         }
     }
+}
+
+/// This run's log file: `session-<unix seconds>-<pid>.log` in
+/// `FTS_LOG_DIR` (`/tmp/fts-session` by default), with `latest.log` beside
+/// it pointing at the newest. `None` when the folder cannot be written —
+/// the console log is still there.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_log() -> Option<std::fs::File> {
+    let dir = std::env::var_os("FTS_LOG_DIR").map_or_else(
+        || std::path::PathBuf::from("/tmp/fts-session"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&dir).ok()?;
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let name = format!("session-{started}-{}.log", std::process::id());
+    let file = std::fs::File::create(dir.join(&name)).ok()?;
+    let latest = dir.join("latest.log");
+    let _ = std::fs::remove_file(&latest);
+    #[cfg(unix)]
+    let _ = std::os::unix::fs::symlink(&name, &latest);
+    Some(file)
 }

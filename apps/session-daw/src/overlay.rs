@@ -964,8 +964,14 @@ fn draw_strip_controls(
     // than composites. A spectrum moves with the audio and a grip moves
     // with the hand; either makes the recording stale, and both are
     // rare enough that the rest of the mixer stays in the cheap path.
+    //
+    // Only where the rack shows something that moves at this size: a
+    // panel wide enough for its analyser. A rail-row or curves-only rack
+    // stays its recording — redrawn on every publish it cost a whole rack
+    // per strip per frame, and a mixer of narrow strips a hundred racks a
+    // frame for nothing anyone could see change.
     if let (Some(box_), Some(tone)) = (strip.rack_rect(), settings)
-        && (spectrum.is_some() || lit.is_some())
+        && (lit.is_some() || (spectrum.is_some() && crate::tone::Rack::at(box_.width()).detailed()))
     {
         // Clipped to the box, because the chain is longer than the box
         // and scrolls inside it: without this the panels above the

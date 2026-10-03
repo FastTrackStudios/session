@@ -100,10 +100,20 @@ pub fn open_silent(path: &Path) -> eyre::Result<Opened> {
 
 fn open_with_audio(path: &Path, audio: bool, media: Media) -> eyre::Result<Opened> {
     refuse_unless_local(path)?;
+    let began = std::time::Instant::now();
     let opened = load_into_with(engine(), path, media)?;
+    let loaded = began.elapsed();
     bootstrap(&opened.daw)?;
+    let booted = began.elapsed();
     AUDIBLE.store(audio, std::sync::atomic::Ordering::Relaxed);
     switch_to(&opened.daw, &opened.project_guid, audio);
+    tracing::info!(
+        start.engine_ms = loaded.as_millis(),
+        start.bootstrap_ms = (booted - loaded).as_millis(),
+        start.switch_ms = (began.elapsed() - booted).as_millis(),
+        start.audio = audio,
+        "engine started"
+    );
     Ok(opened)
 }
 
@@ -535,7 +545,31 @@ pub fn runtime() -> Option<&'static tokio::runtime::Runtime> {
 static AUDIO: std::sync::Mutex<Option<(String, daw::standalone::audio_engine::AudioEngine)>> =
     std::sync::Mutex::new(None);
 
+/// Bumped by every [`attach_audio`]: the one that ends up playing is the
+/// last one asked for, whichever thread gets there first.
+static AUDIO_ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Put `project_guid` on the audio device — on a thread of its own.
+///
+/// Opening the device is the sound server's time, not the window's: on a
+/// busy machine finding PipeWire and opening its input took the better
+/// part of a minute and a half, and the song sat behind its loading
+/// screen for all of it with nothing to wait for. The song opens and
+/// draws now; the transport plays once the device is there (and runs
+/// silent if it never is, as before). Songs switched faster than the
+/// device opens leave only the last one attached.
 fn attach_audio(daw: &Standalone, project_guid: &str) {
+    let asked = AUDIO_ASKED.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+    let (daw, project_guid) = (daw.clone(), project_guid.to_owned());
+    let spawned = std::thread::Builder::new()
+        .name("audio-attach".into())
+        .spawn(move || attach_audio_now(&daw, &project_guid, asked));
+    if let Err(e) = spawned {
+        tracing::warn!(error = %e, "no thread to open the audio device on; the transport will run silent");
+    }
+}
+
+fn attach_audio_now(daw: &Standalone, project_guid: &str, asked: u64) {
     let Some(rt) = RUNTIME.get() else {
         return;
     };
@@ -543,6 +577,10 @@ fn attach_audio(daw: &Standalone, project_guid: &str) {
     let mut slot = AUDIO
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Another song asked since: it is the one to play.
+    if AUDIO_ASKED.load(std::sync::atomic::Ordering::Acquire) != asked {
+        return;
+    }
     // Playing this song already: nothing to move. Opening the device again
     // for the same song (a song opened, then picked) closed a stream and
     // opened another within a few milliseconds — on iOS, a suspect in an
@@ -556,8 +594,14 @@ fn attach_audio(daw: &Standalone, project_guid: &str) {
     }
     // Close the old stream before opening the device again.
     drop(slot.take());
+    let began = std::time::Instant::now();
     match daw.attach_audio_engine(project_guid) {
         Ok(engine) => {
+            tracing::info!(
+                audio.attach_ms = began.elapsed().as_millis(),
+                song.project = project_guid,
+                "audio device attached"
+            );
             if let Some(stats) = engine.stats() {
                 log_audio_health(stats, engine.sample_rate());
             }

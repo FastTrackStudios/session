@@ -252,6 +252,7 @@ impl StudioSession {
         first: Option<bool>,
         media: crate::open::Media,
     ) -> eyre::Result<(Self, String)> {
+        let began = std::time::Instant::now();
         let plan = crate::open::song_plan(path, prepare);
         let opened = if let Some(audio) = first {
             crate::open::open_first_with(&plan.open, audio, media)?
@@ -260,8 +261,20 @@ impl StudioSession {
             crate::open::switch_to(&opened.daw, &opened.project_guid, false);
             opened
         };
+        let engine = began.elapsed();
         crate::open::prepare_and_save(crate::folder::disk(), &opened, &plan, prepare);
+        let prepared = began.elapsed();
         let session = Self::read_current(Some(plan.open.as_path()), prepare.chart.clone())?;
+        // One line per song: where its opening went.
+        tracing::info!(
+            song.name = %opened.name,
+            song.tracks = session.project.0.tracks.len(),
+            open.engine_ms = engine.as_millis(),
+            open.prepare_ms = (prepared - engine).as_millis(),
+            open.read_ms = (began.elapsed() - prepared).as_millis(),
+            open.total_ms = began.elapsed().as_millis(),
+            "song opened"
+        );
         Ok((session, opened.project_guid))
     }
 
@@ -300,8 +313,15 @@ impl StudioSession {
                     .unwrap_or_default(),
             ),
         };
+        let planning = std::time::Instant::now();
         let (project, rows) = planner.plan(&planner.raw);
+        let planned = planning.elapsed();
         let previews = previews_of(&project);
+        tracing::info!(
+            read.plan_ms = planned.as_millis(),
+            read.previews_ms = (planning.elapsed() - planned).as_millis(),
+            "song laid out"
+        );
         let parsed = chart.as_deref().and_then(|chart_path| {
             let text = std::fs::read_to_string(chart_path)
                 .inspect_err(|e| tracing::error!(error = %e, path = %chart_path.display(), "chart: could not read"))

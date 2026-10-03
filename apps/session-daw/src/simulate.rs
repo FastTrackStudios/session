@@ -577,8 +577,9 @@ mod tests {
 /// seconds it is given, so the same second is the same picture.
 #[derive(Debug, Default)]
 pub struct Feed {
-    /// How many publishes have been fed so far.
-    published: usize,
+    /// The last publish fed to each track's rack, by guid: a strip fed
+    /// only while it is on screen catches up from here when it comes back.
+    published: std::collections::HashMap<String, usize>,
 }
 
 impl Feed {
@@ -587,14 +588,17 @@ impl Feed {
         Self::default()
     }
 
-    /// Everything up to `seconds`: the rack history gets every publish
-    /// since the last call (a first call fills it whole, ending at
-    /// `seconds`), the spectra and the returned meter levels — indexed
-    /// by project track index — are the signal at `seconds`.
+    /// Everything up to `seconds`, for the rows in `shown` — the strips on
+    /// screen; nothing else is drawn, so nothing else is fed. Each rack's
+    /// history gets every publish since it was last fed (a first feed, or
+    /// one after more than a history's worth off screen, fills it whole,
+    /// ending at `seconds`); its spectrum and the returned meter levels —
+    /// indexed by project track index — are the signal at `seconds`.
     pub fn feed(
         &mut self,
         seconds: f64,
         rows: &[(daw_proto::Track, u32)],
+        shown: std::ops::Range<usize>,
         settings: &crate::tone::Store,
         history: &mut std::collections::HashMap<String, crate::tone::Levels>,
         spectra: &mut std::collections::HashMap<String, crate::tone::Analyser>,
@@ -602,16 +606,16 @@ impl Feed {
         let hz = f64::from(crate::tone::PUBLISH_HZ);
         // Publishes are whole frames of the clock: the n-th at n / hz.
         let now = crate::num::index(seconds.max(0.0) * hz);
-        let from = if self.published == 0 {
-            now.saturating_sub(crate::tone::HISTORY - 1)
-        } else {
-            self.published + 1
-        };
+        let oldest = now.saturating_sub(crate::tone::HISTORY - 1);
         let mut levels = Vec::new();
-        for (i, (track, _)) in rows.iter().enumerate() {
+        let start = shown.start;
+        for (i, (track, _)) in rows.iter().enumerate().skip(start).take(shown.len()) {
             let Some(tone) = settings.get(&track.guid) else {
                 continue;
             };
+            let last = self.published.get(&track.guid).copied();
+            let from = last.map_or(oldest, |last| (last + 1).max(oldest));
+            self.published.insert(track.guid.clone(), now);
             let entry = history.entry(track.guid.clone()).or_default();
             for n in from..=now {
                 let meters = meters(i, crate::num::coord(n) / hz, tone);
@@ -632,9 +636,13 @@ impl Feed {
                     hold_right: peak,
                 };
             }
-            spectra.entry(track.guid.clone()).or_default().set(meters);
+            // A new spectrum only with a new publish, as the engine sends
+            // one: setting it is what makes the rack draw again, and a
+            // frame between two publishes has nothing new to show.
+            if last != Some(now) {
+                spectra.entry(track.guid.clone()).or_default().set(meters);
+            }
         }
-        self.published = now.max(self.published);
         levels
     }
 }
@@ -667,7 +675,14 @@ mod feed_tests {
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
         );
-        let levels = Feed::new().feed(seconds, &rows, &store, &mut history, &mut spectra);
+        let levels = Feed::new().feed(
+            seconds,
+            &rows,
+            0..rows.len(),
+            &store,
+            &mut history,
+            &mut spectra,
+        );
         assert_eq!(spectra.len(), rows.len(), "every rack gets a spectrum");
         assert_eq!(history.len(), rows.len(), "and a history");
         levels
