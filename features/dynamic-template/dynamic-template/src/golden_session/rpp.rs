@@ -57,6 +57,8 @@ pub struct Flat {
     pub guid: String,
     /// Where the audio goes.
     pub routing: Routing,
+    /// The paths of the returns this track aux-sends to.
+    pub aux: Vec<String>,
     /// No items at all — a lane that is real and waiting.
     pub no_items: bool,
     /// The items hold notes rather than audio.
@@ -222,6 +224,7 @@ fn flatten_node(
         is_folder: node.is_folder(),
         piece,
         routing: node.routing,
+        aux: node.aux.clone(),
         no_items: node.no_items,
         midi: node.midi,
         group: node.group,
@@ -456,7 +459,8 @@ struct TrackContext<'a> {
     closes: u32,
     /// Whether the session opens with this track selected.
     selected: bool,
-    /// The indices of the tracks that send here.
+    /// The indices of the tracks that send here, bus sends first and
+    /// aux sends after.
     receives: &'a [i32],
     /// Seconds per bar at the fixture's tempo.
     secs_per_bar: f64,
@@ -749,14 +753,17 @@ pub fn build(shape: &Shape) -> Built {
     let layout = shape.layout;
 
     // Who receives from whom: a send is written on the RECEIVING track,
-    // as the index of the track it comes from.
+    // as the index of the track it comes from. A bus send names its bus;
+    // an aux send names its return's path, because return names repeat.
     let mut receives: BTreeMap<&str, Vec<i32>> = BTreeMap::new();
+    let mut aux_receives: BTreeMap<&str, Vec<i32>> = BTreeMap::new();
     for (i, track) in tracks.iter().enumerate() {
+        let from = i32::try_from(i).unwrap_or(i32::MAX);
         if let Some(to) = track.routing.send() {
-            receives
-                .entry(to)
-                .or_default()
-                .push(i32::try_from(i).unwrap_or(i32::MAX));
+            receives.entry(to).or_default().push(from);
+        }
+        for to in &track.aux {
+            aux_receives.entry(to.as_str()).or_default().push(from);
         }
     }
     let selected = tracks.iter().position(|t| t.name == shape.selected);
@@ -769,13 +776,20 @@ pub fn build(shape: &Shape) -> Built {
 
     for (i, track) in tracks.iter().enumerate() {
         let next_depth = tracks.get(i.saturating_add(1)).map_or(0, |t| t.depth);
+        let sources: Vec<i32> = [
+            receives.get(track.name.as_str()),
+            aux_receives.get(track.path.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .flatten()
+        .copied()
+        .collect();
         let context = TrackContext {
             index: u32::try_from(i).unwrap_or(u32::MAX),
             closes: track.depth.saturating_sub(next_depth),
             selected: selected == Some(i),
-            receives: receives
-                .get(track.name.as_str())
-                .map_or(&[][..], Vec::as_slice),
+            receives: &sources,
             secs_per_bar,
             bars: shape.bars,
             layout,
@@ -888,7 +902,44 @@ mod tests {
         // engine has always stamped and this had no track for.
         // 278 with Lyrics beside LINES: the song's words, one item a
         // line, where LINES is the chart's melodies.
-        assert_eq!(tracks.len(), 278);
+        // 294 with the vocal template's returns folded in: Vox FX, its
+        // Delay (4), Verb (5) and Pitch (2) folders and Wide — sixteen.
+        assert_eq!(tracks.len(), 294);
+    }
+
+    fn clear_aux(nodes: &mut [Node]) {
+        for node in nodes {
+            node.aux.clear();
+            clear_aux(&mut node.children);
+        }
+    }
+
+    #[test]
+    fn every_aux_send_reaches_a_return_and_is_written_on_it() {
+        for shape in [maximal(), vocal_fx()] {
+            let built = build(&shape);
+            for track in &built.tracks {
+                for to in &track.aux {
+                    assert!(
+                        built.tracks.iter().any(|t| t.path == *to && !t.is_folder),
+                        "{} sends to {to}, which is not a track",
+                        track.path
+                    );
+                }
+            }
+        }
+        // Three leads into twelve returns: one AUXRECV per lead on each,
+        // over what the same session writes with no aux sends at all.
+        let auxrecvs = |shape: &Shape| {
+            build(shape)
+                .rpp
+                .lines()
+                .filter(|l| l.trim_start().starts_with("AUXRECV "))
+                .count()
+        };
+        let mut dry = maximal();
+        clear_aux(&mut dry.roots);
+        assert_eq!(auxrecvs(&maximal()), auxrecvs(&dry) + 3 * 12);
     }
 
     #[test]

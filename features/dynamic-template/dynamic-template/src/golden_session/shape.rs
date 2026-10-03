@@ -97,6 +97,14 @@ pub struct Node {
     pub children: Vec<Self>,
     /// Where the audio goes.
     pub routing: Routing,
+    /// Aux sends, beside the routing: the `/`-joined paths of the
+    /// returns this track feeds, post-fader.
+    ///
+    /// By PATH rather than by name, unlike [`Routing::Send`]: a bus name
+    /// is unique in the session, a return's is not — the vocal Delay and
+    /// Verb both have a `Short` and a `Long`, and the snare's Verb has
+    /// a `Short` too.
+    pub aux: Vec<String>,
     /// REAPER track grouping.
     pub group: Option<GroupRole>,
     /// A stereo pair: one two-channel track on a stereo input.
@@ -125,6 +133,7 @@ impl Node {
             template: None,
             children: Vec::new(),
             routing: Routing::Parent,
+            aux: Vec::new(),
             group: None,
             stereo: false,
             fx: Vec::new(),
@@ -151,6 +160,13 @@ impl Node {
     #[must_use]
     pub const fn send(mut self, to: &'static str) -> Self {
         self.routing = Routing::Send(to);
+        self
+    }
+
+    /// Aux sends to the returns at these paths, beside the routing.
+    #[must_use]
+    pub fn aux(mut self, returns: Vec<String>) -> Self {
+        self.aux = returns;
         self
     }
 
@@ -822,20 +838,66 @@ fn layer(name: &str, languages: &[&str]) -> Node {
 /// A performer who does not sing a language simply has no source track
 /// in it — Aline sings only the Portuguese version. Absence is the
 /// representation; there is no empty placeholder to mistake for one.
-fn lead(name: &str, languages: &[&str]) -> Node {
+///
+/// The mix track sends to every vocal return (`flow.vocals.leads`: the
+/// performer's mix track carries the chain and the sends), so whichever
+/// language is up, it is the same vocal into the same delays and verbs.
+fn lead(name: &str, languages: &[&str], returns: &[String]) -> Node {
     Node::new(name, VOX, Kind::Group)
         .template(&["Vocals", "Lead"])
+        .aux(returns.to_vec())
         .children(vec![layer("Main", languages), layer("DBL", languages)])
 }
 
+/// The vocal returns: delays slap to throw, verbs room to throw, a
+/// widener and the octaves — the vocal template's `Vox FX`, one
+/// definition for both fixtures.
+fn vox_fx() -> Node {
+    Node::new("Vox FX", VOX_FX, Kind::Fx).children(vec![
+        returns(
+            "Delay",
+            DELAY,
+            Kind::Return,
+            &["Slap", "Short", "Long", "Throw"],
+        ),
+        returns(
+            "Verb",
+            VERB,
+            Kind::Verb,
+            &["Room", "Short", "Long", "Moment", "Throw"],
+        ),
+        Node::new("Wide", WIDE, Kind::Return),
+        returns("Pitch", PITCH, Kind::Return, &["Oct+", "Oct-"]),
+    ])
+}
+
+/// The paths of every return under `node` — its leaves — with `node`
+/// itself at `at`.
+fn return_paths(node: &Node, at: &str) -> Vec<String> {
+    if node.children.is_empty() {
+        return vec![at.to_owned()];
+    }
+    node.children
+        .iter()
+        .flat_map(|child| return_paths(child, &format!("{at}/{}", child.name)))
+        .collect()
+}
+
 fn vocals() -> Node {
+    let fx = vox_fx();
+    let returns = return_paths(&fx, &format!("Vocals/{}", fx.name));
     Node::new("Vocals", VOX, Kind::Group)
         .template(&["Vocals"])
         .send("LEAD VOX BUS")
         .children(vec![
-            lead("Ron", &LANGUAGES),
-            lead("Belen", &["EN", "ES"]),
-            lead("Aline", &["PT"]),
+            lead("Ron", &LANGUAGES, &returns),
+            lead("Belen", &["EN", "ES"], &returns),
+            lead("Aline", &["PT"], &returns),
+            // The vocal template's returns, folded in beside the leads
+            // that feed them — the way a kit piece's Verb sits beside
+            // its Sum. Into the folder, so to LEAD VOX BUS with the
+            // dry vocal.
+            fx,
             // Background vocals are arranged by PART, and a part may
             // carry as many layers as it needs — nothing in the scenes,
             // the comp or the edit assumes a count, which is why one of
@@ -1050,22 +1112,7 @@ pub fn vocal_fx() -> Shape {
         .children(vec![
             Node::new("Chase Vox", VOX, Kind::Piece)
                 .children(vec![part("Lead Vox", VOX), part("Vox Dbl", VOX)]),
-            Node::new("Vox FX", VOX_FX, Kind::Fx).children(vec![
-                returns(
-                    "Delay",
-                    DELAY,
-                    Kind::Return,
-                    &["Slap", "Short", "Long", "Throw"],
-                ),
-                returns(
-                    "Verb",
-                    VERB,
-                    Kind::Verb,
-                    &["Room", "Short", "Long", "Moment", "Throw"],
-                ),
-                Node::new("Wide", WIDE, Kind::Return),
-                returns("Pitch", PITCH, Kind::Return, &["Oct+", "Oct-"]),
-            ]),
+            vox_fx(),
         ]);
     Shape {
         name: "vocal-fx",
