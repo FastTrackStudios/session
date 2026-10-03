@@ -290,6 +290,12 @@ saturate-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v
 # analysis probe rather than an exponential drawn from the decay knob.
 delay-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
 reverb-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+# The effects' own painted pictures — every reverb family, every delay
+# family, and the six modulation engines — which the FX view's devices
+# draw (`paint_reverb`, `paint_delay`, `paint_mod`, behind `viz`).
+reverb-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false, features = ["viz"] }
+delay-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false, features = ["viz"] }
+modulation-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false, features = ["viz"] }
 # The saturator's five circuits and their profiles — what its selector
 # picks from, applied through the plugin's own `apply`.
 saturate-profiles = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
@@ -1296,6 +1302,9 @@ eq-ui = { path = "../processor/features/fx/eq/eq-ui" }
 saturate-dsp = { path = "../processor/features/fx/saturate/saturate-dsp" }
 delay-dsp = { path = "../processor/features/fx/delay/delay-dsp" }
 reverb-dsp = { path = "../processor/features/fx/reverb/reverb-dsp" }
+reverb-ui = { path = "../processor/features/fx/reverb/reverb-ui" }
+delay-ui = { path = "../processor/features/fx/delay/delay-ui" }
+modulation-ui = { path = "../processor/features/fx/modulation/modulation-ui" }
 saturate-profiles = { path = "../processor/features/fx/saturate/saturate-profiles" }
 spectrum-analyzer = { path = "../processor/features/fx/eq/spectrum-analyzer/spectrum-analyzer" }
 spectrum-analyzer-dsp = { path = "../processor/features/fx/eq/spectrum-analyzer/spectrum-analyzer-dsp" }

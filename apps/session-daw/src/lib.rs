@@ -27,6 +27,7 @@ pub mod compact;
 pub mod cursor;
 pub mod engine;
 pub mod expression;
+pub mod faces;
 pub mod folder;
 pub mod folder_item;
 pub mod folds;

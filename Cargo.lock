@@ -2146,6 +2146,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "chorus-dsp"
+version = "0.1.0"
+dependencies = [
+ "audiocore-dsp",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3836,6 +3843,32 @@ dependencies = [
  "audiocore-dsp",
  "dsp-core",
  "pitch-dsp",
+]
+
+[[package]]
+name = "delay-profiles"
+version = "0.1.0"
+dependencies = [
+ "delay-dsp",
+]
+
+[[package]]
+name = "delay-ui"
+version = "0.1.0"
+dependencies = [
+ "anyrender",
+ "blitz-dom",
+ "bytemuck",
+ "crossbeam-channel",
+ "delay-dsp",
+ "delay-profiles",
+ "dioxus",
+ "dioxus-native-dom",
+ "fts-audio-ui",
+ "musical-time",
+ "musical-time-ui",
+ "vello",
+ "web-time",
 ]
 
 [[package]]
@@ -9520,6 +9553,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "modulation"
+version = "0.1.0"
+dependencies = [
+ "chorus-dsp",
+ "trem-dsp",
+ "wah-dsp",
+]
+
+[[package]]
+name = "modulation-profiles"
+version = "0.1.0"
+dependencies = [
+ "modulation",
+]
+
+[[package]]
+name = "modulation-ui"
+version = "0.1.0"
+dependencies = [
+ "anyrender",
+ "blitz-dom",
+ "dioxus",
+ "dioxus-native-dom",
+ "fts-audio-ui",
+ "modulation-profiles",
+ "vello",
+ "web-time",
+]
+
+[[package]]
 name = "moka"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9642,6 +9705,19 @@ version = "0.1.0"
 source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3#159958f933deac3619fa476fb047f8c32b761455"
 dependencies = [
  "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3)",
+]
+
+[[package]]
+name = "musical-time"
+version = "0.1.0"
+
+[[package]]
+name = "musical-time-ui"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "fts-audio-ui",
+ "musical-time",
 ]
 
 [[package]]
@@ -12975,6 +13051,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "reverb-profiles"
+version = "0.1.0"
+dependencies = [
+ "reverb-dsp",
+]
+
+[[package]]
+name = "reverb-ui"
+version = "0.1.0"
+dependencies = [
+ "anyrender",
+ "blitz-dom",
+ "bytemuck",
+ "crossbeam-channel",
+ "dioxus",
+ "dioxus-native-dom",
+ "fts-audio-ui",
+ "musical-time",
+ "musical-time-ui",
+ "reverb-dsp",
+ "reverb-profiles",
+ "vello",
+ "web-time",
+]
+
+[[package]]
 name = "rfd"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13804,6 +13906,7 @@ dependencies = [
  "daw-ui",
  "dawfile-reaper",
  "delay-dsp",
+ "delay-ui",
  "dioxus",
  "dioxus-native",
  "dioxus-native-dom",
@@ -13833,12 +13936,14 @@ dependencies = [
  "keyflow",
  "live-proto",
  "lucide-dioxus",
+ "modulation-ui",
  "patch-list",
  "pollster",
  "pprof",
  "razor",
  "reqwest 0.12.28",
  "reverb-dsp",
+ "reverb-ui",
  "rustc-hash 2.1.3",
  "saturate-dsp",
  "saturate-profiles",
@@ -16326,6 +16431,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
+name = "trem-dsp"
+version = "0.1.0"
+dependencies = [
+ "audiocore-dsp",
+ "fts-modulation",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17115,6 +17228,14 @@ dependencies = [
  "log",
  "num-traits",
  "num_enum 0.5.11",
+]
+
+[[package]]
+name = "wah-dsp"
+version = "0.1.0"
+dependencies = [
+ "audiocore-dsp",
+ "fts-modulation",
 ]
 
 [[package]]
@@ -19072,10 +19193,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "dsp-golden"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -19177,4 +19294,8 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "dsp-golden"
 version = "0.1.0"

@@ -28,12 +28,12 @@ pub struct Macro {
 }
 
 /// `v` across `lo..hi`, as 0..1.
-fn frac(v: f32, lo: f32, hi: f32) -> f64 {
+pub(crate) fn frac(v: f32, lo: f32, hi: f32) -> f64 {
     f64::from(((v - lo) / (hi - lo)).clamp(0.0, 1.0))
 }
 
 /// 0..1 back across `lo..hi`.
-fn span(f: f64, lo: f32, hi: f32) -> f32 {
+pub(crate) fn span(f: f64, lo: f32, hi: f32) -> f32 {
     let f = crate::num::narrow(f.clamp(0.0, 1.0));
     (hi - lo).mul_add(f, lo)
 }

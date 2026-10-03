@@ -70,7 +70,12 @@ pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
     };
     // The session's rows: every track a rack has settings for, seeded
     // here as the mixer seeds them, so the FX is whole without it.
-    let rows = session.rows.as_slice().to_vec();
+    // Every track, not the arrangement's rows: a scene or a fold that
+    // hides a track's returns from the timeline must not hide them here,
+    // where they are the point.
+    let (visible, depths) =
+        daw_ui::components::folders::FolderState::default().visible(&session.project.tracks);
+    let rows: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
     closeups.tone.store.borrow_mut().seed(&rows);
     let tracks = rows;
     let lanes = lanes.max(1);
@@ -152,11 +157,12 @@ struct Placed {
     panel: Panel,
 }
 
-/// One macro knob on screen.
+/// One knob on screen: a phase's macro, or a face's control.
 #[derive(Clone)]
 struct Turned {
     guid: String,
-    phase: MixPhase,
+    /// Which knobs it is one of, and which.
+    list: &'static [crate::macros::Macro],
     index: usize,
     cell: Panel,
 }
@@ -170,6 +176,11 @@ struct Hits {
     knobs: Vec<Turned>,
     /// Each phase's edge and tint: a press on one folds it.
     bars: Vec<(MixPhase, Panel)>,
+    /// The lane being drawn's clip: what scrolls stays right of its strip.
+    clip: vello::kurbo::Rect,
+    /// The faces' pictures, painted after the rest (`paint_scene`): the
+    /// device's key, what to paint, where, and the lane's clip.
+    pictures: Vec<(String, crate::faces::Picture, Panel, vello::kurbo::Rect)>,
 }
 
 /// A lane's strip, recorded once for its track and height.
@@ -260,6 +271,11 @@ struct DeviceRow {
     turning: Option<(BlitzPointerId, Turned, f64)>,
     hover: Option<(String, Which, Grip)>,
     dirty: Cell<bool>,
+    /// The effects' own painters, one per face.
+    painters: crate::faces::Painters,
+    /// Whether a face is moving: its picture animates, so every frame
+    /// is a new one.
+    animating: Cell<bool>,
 }
 
 impl DeviceRow {
@@ -294,6 +310,8 @@ impl DeviceRow {
             turning: None,
             hover: None,
             dirty: Cell::new(true),
+            painters: crate::faces::Painters::default(),
+            animating: Cell::new(false),
         }
     }
 
@@ -483,7 +501,7 @@ impl DeviceRow {
                 200.0
             };
             if let Some(tone) = self.tone.store.borrow_mut().edit(&knob.guid)
-                && let Some(m) = crate::macros::of(knob.phase).get(knob.index)
+                && let Some(m) = knob.list.get(knob.index)
             {
                 (m.set)(tone, (m.get)(tone) + (last - y) / per);
             }
@@ -638,7 +656,44 @@ impl DeviceRow {
                 .sum::<f64>()
     }
 
-    /// A folded phase's macro knobs, in `well`.
+    /// `list`'s knobs for `guid` (named `name`), in `cells`, tinted by
+    /// `phase`.
+    fn draw_knobs(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        (guid, name): (&str, &str),
+        tone: &crate::tone::Tone,
+        (phase, list): (MixPhase, &'static [crate::macros::Macro]),
+        cells: Vec<Panel>,
+    ) {
+        for (index, (knob, cell)) in list.iter().zip(cells).enumerate() {
+            let held = self.turning.as_ref().is_some_and(|(_, t, _)| {
+                t.guid == guid && std::ptr::eq(t.list, list) && t.index == index
+            });
+            crate::macros::draw(
+                scene,
+                &self.palette,
+                &self.font,
+                &crate::macros::Knob {
+                    tone,
+                    phase,
+                    track: name,
+                    knob,
+                    cell,
+                    held,
+                },
+            );
+            hits.knobs.push(Turned {
+                guid: guid.to_owned(),
+                list,
+                index,
+                cell,
+            });
+        }
+    }
+
+    /// A phase's macro knobs, in `well`.
     fn draw_macros(
         &self,
         scene: &mut Scene,
@@ -648,32 +703,51 @@ impl DeviceRow {
         phase: MixPhase,
         well: Panel,
     ) {
-        let macros = crate::macros::of(phase);
-        let cells = crate::macros::cells(macros.len(), well);
-        for (index, (knob, cell)) in macros.iter().zip(cells).enumerate() {
-            let held = self.turning.as_ref().is_some_and(|(_, t, _)| {
-                t.guid == track.guid && t.phase == phase && t.index == index
-            });
-            crate::macros::draw(
-                scene,
-                &self.palette,
-                &self.font,
-                &crate::macros::Knob {
-                    tone,
-                    phase,
-                    track: &track.name,
-                    knob,
-                    cell,
-                    held,
-                },
-            );
-            hits.knobs.push(Turned {
-                guid: track.guid.clone(),
-                phase,
-                index,
-                cell,
-            });
-        }
+        let list = crate::macros::of(phase);
+        let cells = crate::macros::cells(list.len(), well);
+        self.draw_knobs(
+            scene,
+            hits,
+            (&track.guid, &track.name),
+            tone,
+            (phase, list),
+            cells,
+        );
+    }
+
+    /// A device with a face of its own — the effect's painted picture
+    /// over a row of its controls — or `false` for one drawn as the
+    /// rack draws it.
+    fn draw_face(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        guid: &str,
+        tone: &crate::tone::Tone,
+        which: Which,
+        panel: Panel,
+    ) -> bool {
+        let Some(face) = crate::faces::of(which, tone) else {
+            return false;
+        };
+        crate::faces::chrome(scene, &self.palette, &self.font, &face, panel);
+        hits.pictures.push((
+            format!("{guid}/{which:?}"),
+            face.picture,
+            crate::faces::picture_at(panel),
+            hits.clip,
+        ));
+        let row = crate::faces::controls(panel);
+        let cells = crate::macros::cells(face.knobs.len(), row);
+        self.draw_knobs(
+            scene,
+            hits,
+            (guid, ""),
+            tone,
+            (which.phase(), face.knobs),
+            cells,
+        );
+        true
     }
 
     /// One device: `which` of `guid`'s settings, in `panel`.
@@ -686,6 +760,9 @@ impl DeviceRow {
         which: Which,
         panel: Panel,
     ) {
+        if self.draw_face(scene, hits, guid, tone, which, panel) {
+            return;
+        }
         crate::tone::draw(
             scene,
             &self.palette,
@@ -875,17 +952,24 @@ impl DeviceRow {
             .min(most);
         self.scroll.insert(track.guid.clone(), scroll);
         // What scrolls is clipped to the right of the strip.
+        hits.clip = vello::kurbo::Rect::new(start, top, right, top + height);
         let mut moving = Scene::new();
         let end = self.draw_chain(&mut moving, hits, &track, lane, start - scroll);
         // The returns it feeds, after a breath.
         self.draw_returns(&mut moving, hits, &returns, lane, end - GAP + RETURNS_GAP);
-        let clip = vello::kurbo::Rect::new(start, top, right, top + height);
+        let clip = hits.clip;
         anyrender::PaintScene::push_clip_layer(scene, Affine::IDENTITY, &clip);
         anyrender::PaintScene::append_scene(scene, moving, Affine::IDENTITY);
         anyrender::PaintScene::pop_layer(scene);
     }
 
-    fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+    fn paint_scene(
+        &mut self,
+        mut ctx: Option<&mut dyn anyrender::RenderContext>,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Scene {
         self.follow();
         self.dirty.set(false);
         let scale = scale.max(f64::EPSILON);
@@ -912,6 +996,33 @@ impl DeviceRow {
                 lane_h,
                 w,
             );
+        }
+        // The faces' pictures: each its widget's, at device pixels, so a
+        // shader is not drawn small and scaled up.
+        let pictures = std::mem::take(&mut hits.pictures);
+        self.animating.set(ctx.is_some() && !pictures.is_empty());
+        for (key, picture, at, clip) in pictures {
+            let size = (
+                crate::num::index(at.width * scale)
+                    .try_into()
+                    .unwrap_or(0_u32),
+                crate::num::index(at.height * scale)
+                    .try_into()
+                    .unwrap_or(0_u32),
+            );
+            if size.0 < 2 || size.1 < 2 {
+                continue;
+            }
+            let painted = self.painters.paint(
+                ctx.as_mut().map(|c| reborrow(&mut **c)),
+                &key,
+                &picture,
+                size,
+            );
+            let place = Affine::scale(1.0 / scale).then_translate((at.x, at.y).into());
+            anyrender::PaintScene::push_clip_layer(&mut drawn, Affine::IDENTITY, &clip);
+            anyrender::PaintScene::append_scene(&mut drawn, painted, place);
+            anyrender::PaintScene::pop_layer(&mut drawn);
         }
         *self.hits.borrow_mut() = hits;
         let mut out = Scene::new();
@@ -1005,6 +1116,12 @@ fn phase_edge(
     }
 }
 
+/// `ctx` for as long as it is borrowed here: the shorter-lived trait
+/// object a painter takes.
+fn reborrow(ctx: &mut dyn anyrender::RenderContext) -> &mut dyn anyrender::RenderContext {
+    ctx
+}
+
 /// A return's one effect, by what it is for — `None` for a channel.
 const fn main_unit(role: crate::tone::Role) -> Option<Which> {
     use crate::tone::Role;
@@ -1036,7 +1153,7 @@ pub fn shot(
     let mut row = DeviceRow::new(tone, rows, lanes.max(1), font);
     row.watch = None;
     row.folded.extend(folded.iter().copied());
-    row.paint_scene(width, height, 1.0)
+    row.paint_scene(None, width, height, 1.0)
 }
 
 #[cfg(feature = "native")]
@@ -1046,25 +1163,25 @@ impl blitz_dom::node::Widget for DeviceRow {
     }
 
     fn needs_redraw(&self) -> bool {
-        self.dirty.get() || self.heard()
+        self.dirty.get() || self.animating.get() || self.heard()
     }
 
     fn paint(
         &mut self,
-        _render_ctx: &mut dyn anyrender::RenderContext,
+        render_ctx: &mut dyn anyrender::RenderContext,
         _styles: &blitz_dom::node::ComputedStyles,
         width: u32,
         height: u32,
         scale: f64,
     ) -> Scene {
-        self.paint_scene(width, height, scale)
+        self.paint_scene(Some(render_ctx), width, height, scale)
     }
 }
 
 #[cfg(feature = "web")]
 impl crate::web_host::Hosted for DeviceRow {
     fn paint(&mut self, width: u32, height: u32, scale: f64) -> Scene {
-        self.paint_scene(width, height, scale)
+        self.paint_scene(None, width, height, scale)
     }
     fn event(&mut self, event: &UiEvent) {
         DeviceRow::event(self, event);
