@@ -824,15 +824,20 @@ impl ArrangementPanel {
         if let Some(links) = &self.mixer {
             // `x`, from either widget.
             if links.toggle.take() {
-                let mut open = links.open;
-                let was = *open.peek();
-                open.set(!was);
-                // Closing it: the keyboard comes back here, not to a panel
-                // that is no longer on screen.
-                if was && let Some(node) = self.focus_node.borrow().clone() {
-                    spawn(async move {
-                        let _ = node.set_focus(true).await;
-                    });
+                if let Some(switch) = links.switch {
+                    // The same as the Mixer button.
+                    switch.press();
+                } else {
+                    let mut open = links.open;
+                    let was = *open.peek();
+                    open.set(!was);
+                    // Closing it: the keyboard comes back here, not to a
+                    // panel that is no longer on screen.
+                    if was && let Some(node) = self.focus_node.borrow().clone() {
+                        spawn(async move {
+                            let _ = node.set_focus(true).await;
+                        });
+                    }
                 }
             }
             // Each widget's edits to the other one, never back to the one

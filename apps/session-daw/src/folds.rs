@@ -26,13 +26,13 @@ struct State {
 }
 
 impl Default for State {
-    /// Every top-level folder folded: a session opens as its families,
-    /// one row and one strip each, opened one by one. Not under test,
-    /// where rows are what they are planned as.
+    /// Every folder open: a session opens as every track it has — the
+    /// whole kit, every guitar — and the Folder switch folds them into
+    /// their families, one row and one strip each.
     fn default() -> Self {
         Self {
             chosen: HashMap::new(),
-            tops: !cfg!(test),
+            tops: false,
         }
     }
 }

@@ -191,13 +191,15 @@ pub fn MainToolbar(
     });
     let mut metronome = use_signal(|| !click_muted);
     let pins = try_use_context::<crate::shell::Pins>();
+    // The window's one way to open the mixer, when it has one.
+    let switch = try_use_context::<crate::shell::MixerToggle>();
     let mut following = use_signal(|| follow.get());
     let mut open = use_signal(|| false);
     let is_on = move |t: Toggle| match t {
         Toggle::Metronome => metronome(),
         Toggle::Compact => shape(),
         Toggle::Follow => following(),
-        Toggle::Mixer => mixer.is_some_and(|open| open()),
+        Toggle::Mixer => switch.map_or_else(|| mixer.is_some_and(|open| open()), |s| s.showing()),
         // The lock is shown in the bottom bar too: its signal, when the
         // shell has one, is the one both re-render on.
         Toggle::Lock if pins.is_some() => pins.is_some_and(|p| (p.lock)()),
@@ -206,7 +208,9 @@ pub fn MainToolbar(
     // What a toggle does, whether pressed in the row or in the menu.
     let press = use_callback(move |toggle: Toggle| match toggle {
         Toggle::Mixer => {
-            if let Some(mut open) = mixer {
+            if let Some(switch) = switch {
+                switch.press();
+            } else if let Some(mut open) = mixer {
                 open.toggle();
             }
         }

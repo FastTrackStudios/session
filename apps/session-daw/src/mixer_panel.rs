@@ -86,6 +86,9 @@ pub struct Links {
     /// Asked for by a widget's key (`x`), carried out by the arrangement
     /// panel once a frame, since a widget cannot set a signal.
     pub toggle: Rc<Cell<bool>>,
+    /// The window's one way to open the mixer, when the shell has one:
+    /// what `x` presses (`crate::shell::MixerToggle`).
+    pub switch: Option<crate::shell::MixerToggle>,
     /// The arrangement's rows, with a generation that goes up on every
     /// change, so the mixer knows to re-record.
     pub rows: Rc<RefCell<(u64, Rows)>>,
@@ -129,9 +132,12 @@ pub struct Links {
     /// the scene renders (`tests/golden_scenes.rs`). Set every render, as
     /// the mode changes.
     pub mix: Rc<Cell<bool>>,
-    /// The mixer alone in Record mode: full strips, laid out for
-    /// recording. Set every render, as the mode changes.
+    /// Record mode, docked or alone: full strips, laid out for recording.
+    /// Set every render, as the mode changes.
     pub recording: Rc<Cell<bool>>,
+    /// Mix mode, docked or alone: full strips, laid out for mixing (the
+    /// rails and the scene are the mixer alone's — `mix`).
+    pub mixing: Rc<Cell<bool>>,
 }
 
 /// The phase rails' state, mixing — see [`MixerWidget`]'s `rails`.
@@ -172,6 +178,7 @@ impl Links {
             open: Signal::new(false),
             docked: false,
             toggle: Rc::new(Cell::new(false)),
+            switch: None,
             rows: Rc::new(RefCell::new((0, rows))),
             planner: None,
             from_mixer: Queue::default(),
@@ -186,6 +193,7 @@ impl Links {
             strips: Rc::new(Cell::new(1)),
             mix: Rc::new(Cell::new(false)),
             recording: Rc::new(Cell::new(false)),
+            mixing: Rc::new(Cell::new(false)),
         }
     }
 
@@ -263,20 +271,32 @@ pub fn DawPanels(
 ) -> Element {
     let session: StudioSession = use_context();
     let memory = try_use_context::<MixerMemory>();
+    // The arrangement's own (not the Overview's pair, not the mixer
+    // alone): the window's mixer toggle is what opens it.
+    let switch = try_use_context::<crate::shell::MixerToggle>().filter(|_| !docked && !mixer_only);
     let links = use_context_provider(|| {
         let mut links = Links::new(session.rows.as_slice().to_vec());
-        links.open = Signal::new(MixerMemory::wanted(memory, docked, mode));
+        links.open = switch.map_or_else(
+            || Signal::new(MixerMemory::wanted(memory, docked, mode)),
+            |s| s.open,
+        );
         links.docked = docked;
         links.alone = mixer_only;
+        links.switch = switch;
         links.planner = Some(session.planner.clone());
         links
     });
+    // Under the window's toggle the mixer is pinned only when it is
+    // docked; otherwise it is the Mixer view, and this pane is the
+    // arrangement alone.
+    let memory = memory.filter(|_| switch.is_none());
     links
         .mix
         .set(mixer_only && mode == Some(session::modes::Mode::Mix));
     links
         .recording
-        .set(mixer_only && mode == Some(session::modes::Mode::Record));
+        .set(mode == Some(session::modes::Mode::Record));
+    links.mixing.set(mode == Some(session::modes::Mode::Mix));
     // Into another mode: the mixer as that mode last had it.
     let mut open_sig = links.open;
     let mut shown_in = use_signal(|| mode);
@@ -296,7 +316,7 @@ pub fn DawPanels(
             memory.remember(docked, mode, open);
         }
     });
-    let open = (links.open)() || mixer_only;
+    let open = ((links.open)() && switch.is_none_or(|s| (s.docked)())) || mixer_only;
     let touch = crate::touch::use_touch();
     let (arrange_bottom, mixer_height) = split(open, mixer_only, docked, touch);
     let mixer_display = if open { "block" } else { "none" };
@@ -2072,6 +2092,7 @@ impl MixerWidget {
         // size — the frame the scene renders in (`rails::Frame`).
         let mix = self.links.mix.get();
         let recording = self.links.recording.get();
+        let mixing = self.links.mixing.get();
         let band = if mix { 0.0 } else { band };
         self.band.set(band);
         let frame = crate::rails::Frame::new(css_w, full_h);
@@ -2126,8 +2147,9 @@ impl MixerWidget {
             (m.height - h).abs() > 0.5
                 || m.touch != self.touch.get()
                 || m.skin_version != crate::skin::version()
-                || m.live == (mix || recording)
+                || m.live == (mixing || recording)
                 || m.recording != recording
+                || m.mixing != mixing
         }) || open != self.built_open;
         if stale {
             self.built_open.clone_from(&open);
@@ -2181,8 +2203,8 @@ impl MixerWidget {
                 crate::settings::Settings {
                     touch_strips: self.touch.get(),
                     // Mixing or recording, the full strip.
-                    live_strips: !(mix || recording),
-                    mixing: mix,
+                    live_strips: !(mixing || recording),
+                    mixing,
                     recording,
                     focus_selected: self.rails.settings.focus_selected,
                     take_focus_width: self.rails.settings.take_focus_width,
@@ -2344,6 +2366,7 @@ mod rail_tests {
         let rows: Rows = (0..6).map(|n| (track(n), 0)).collect();
         let links = Links::new(rows);
         links.mix.set(true);
+        links.mixing.set(true);
         let mut widget = MixerWidget::new(links, Rc::default(), Rc::default(), Rc::default());
         let _ = widget.paint_scene(2560, 1440, 1.0);
         widget

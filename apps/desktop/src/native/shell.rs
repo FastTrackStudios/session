@@ -49,6 +49,8 @@ pub fn Shell() -> Element {
         Ok("mixer") => View::Mixer,
         _ => View::Daw,
     });
+    // The Mixer button, `x` and the toolbar's mixer: one toggle.
+    session_daw::shell::use_mixer_toggle(view);
     // Live unless `FTS_SESSION_MODE` names another (`organize`, …): the
     // docked mixer's compact strips are the Live ones.
     let mode = use_signal(|| {
