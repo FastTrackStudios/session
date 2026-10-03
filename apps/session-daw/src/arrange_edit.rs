@@ -1357,7 +1357,9 @@ impl Editor {
             Action::ToggleRecord => tracing::info!("record is not wired to the transport yet"),
             // The view's, not the session's: the widget sends these to
             // the panel before the editor is asked.
-            Action::View(_) | Action::Visibility(_) | Action::ToggleMixer => return false,
+            Action::View(_) | Action::Visibility(_) | Action::ToggleMixer | Action::ToggleFx => {
+                return false;
+            }
             Action::Unbound(id) => {
                 tracing::info!(ui.action = %id, "bound in the profile, not built here yet");
                 return false;

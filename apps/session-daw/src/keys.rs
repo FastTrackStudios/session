@@ -59,6 +59,8 @@ pub enum Action {
     Visibility(Visibility),
     /// Show or hide the docked mixer.
     ToggleMixer,
+    /// Show or hide the FX (`f`): the selected track's effects as devices.
+    ToggleFx,
     /// A binding the window does not do yet, by its REAPER id.
     Unbound(String),
 }
@@ -109,6 +111,7 @@ pub fn action_of(id: &str) -> Action {
         "40173" => Action::Marker(1),
         "1013" => Action::ToggleRecord,
         "40078" => Action::ToggleMixer,
+        "FTS_TOGGLE_FX" => Action::ToggleFx,
         "FTS_VISIBILITY_MANAGER_SHOW_ALL" => Action::Visibility(Visibility::ShowAll),
         "FTS_VISIBILITY_MANAGER_HIDE_ALL" => Action::Visibility(Visibility::HideAll),
         other => {
@@ -584,6 +587,11 @@ pub fn use_window_transport_keys() {
         WINDOW_TRANSPORT.store(true, std::sync::atomic::Ordering::Relaxed);
         Rc::new(RefCell::new(Keys::load()))
     });
+    // The window's panes, when the shell has them: `x` and `f` press them
+    // here, whatever has the focus — the mixer alone has no arrangement
+    // to hand its keys to.
+    let mixer = dioxus::prelude::try_use_context::<crate::shell::MixerToggle>();
+    let fx = dioxus::prelude::try_use_context::<crate::shell::FxToggle>();
     let held = dioxus::prelude::use_hook(|| Rc::new(Cell::new(Modifiers::NONE)));
     dioxus_native::use_window_event(move |event, _| match event {
         WindowEvent::ModifiersChanged(modifiers) => {
@@ -619,6 +627,16 @@ pub fn use_window_transport_keys() {
                     // moves its edit cursor home too) does no harm. Record
                     // is not on a key yet — see `ArrangeEditor`.
                     Action::GoToStart => transport(Move::Home, 0.0),
+                    Action::ToggleMixer => {
+                        if let Some(mixer) = mixer {
+                            mixer.press();
+                        }
+                    }
+                    Action::ToggleFx => {
+                        if let Some(fx) = fx {
+                            fx.press();
+                        }
+                    }
                     _ => {}
                 }
             }

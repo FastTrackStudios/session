@@ -824,9 +824,9 @@ impl ArrangementPanel {
         if let Some(links) = &self.mixer {
             // `x`, from either widget.
             if links.toggle.take() {
-                if let Some(switch) = links.switch {
-                    // The same as the Mixer button.
-                    switch.press();
+                if links.switch.is_some() {
+                    // The window's keys pressed the mixer's pane already
+                    // (`keys::use_window_transport_keys`).
                 } else {
                     let mut open = links.open;
                     let was = *open.peek();

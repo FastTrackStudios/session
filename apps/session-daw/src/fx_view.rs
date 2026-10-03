@@ -33,9 +33,12 @@ const GAP: f64 = 6.0;
 /// How far the row stands in from the pane's edges.
 const INSET: f64 = 8.0;
 
-/// The FX panel: the selected track's devices, filling where it is put.
+/// The FX panel: the selected track's devices, filling where it is put —
+/// or, with `lanes` above one (the FX view of its own), that many tracks'
+/// chains stacked, from the selected one down, the stack scrolling through
+/// the rest.
 #[component]
-pub fn FxPanel() -> Element {
+pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
     // Over a song, with the racks' settings: a host without them (a page
     // with no song yet) shows an empty row rather than failing.
     let (Some(closeups), Some(session)) = (
@@ -49,12 +52,14 @@ pub fn FxPanel() -> Element {
     let rows = session.rows.as_slice().to_vec();
     closeups.tone.store.borrow_mut().seed(&rows);
     let tracks: Vec<daw_proto::Track> = rows.into_iter().map(|(t, _)| t).collect();
+    let lanes = lanes.max(1);
     #[cfg(feature = "native")]
     {
         let widget = use_hook(|| {
             dioxus_native_dom::CustomWidgetAttr::new(DeviceRow::new(
                 Rc::clone(&closeups.tone),
                 tracks,
+                lanes,
             ))
         });
         rsx! {
@@ -70,6 +75,7 @@ pub fn FxPanel() -> Element {
             crate::web_host::HostedRef(Rc::new(RefCell::new(DeviceRow::new(
                 Rc::clone(&closeups.tone),
                 tracks,
+                lanes,
             ))))
         });
         rsx! {
@@ -78,33 +84,50 @@ pub fn FxPanel() -> Element {
     }
     #[cfg(not(any(feature = "native", feature = "web")))]
     {
-        let _ = (closeups, tracks);
+        let _ = (closeups, tracks, lanes);
         rsx! {}
     }
 }
 
-/// The selected track's processors, side by side.
+/// How wide a lane's name is, when there is more than one lane.
+const HEAD_W: f64 = 140.0;
+
+/// One device on screen: whose, which, where.
+#[derive(Clone)]
+struct Placed {
+    guid: String,
+    which: Which,
+    panel: Panel,
+}
+
+/// Tracks' processors, side by side: one lane, or several stacked.
 struct DeviceRow {
     tone: Rc<Shared>,
     /// The session's tracks, kept up with the engine's changes — which is
-    /// selected is what the row shows.
+    /// selected is where the lanes start.
     tracks: Vec<daw_proto::Track>,
     watch: Option<crate::engine::Watch>,
     /// Changes taken off the watch to ask for a frame, applied in it.
     pending: RefCell<Vec<daw_proto::track::TrackEvent>>,
     palette: crate::arrangement::Palette,
     font: crate::text::Font,
-    /// How far the row is scrolled, in its own units.
-    scroll: f64,
-    /// Each device's box where it was last drawn, and what it is.
-    devices: RefCell<Vec<(Which, Panel)>>,
-    hold: Option<(BlitzPointerId, Grip, Which, (f64, f64))>,
-    hover: Option<(Which, Grip)>,
+    /// How many lanes show at once.
+    lanes: usize,
+    /// How many tracks past the selected one the first lane is.
+    down: usize,
+    /// How far each lane is scrolled sideways, by track.
+    scroll: std::collections::HashMap<String, f64>,
+    /// Each lane where it was last drawn: whose, its top and height.
+    shown: RefCell<Vec<(String, f64, f64)>>,
+    /// Each device where it was last drawn.
+    devices: RefCell<Vec<Placed>>,
+    hold: Option<(BlitzPointerId, Grip, Placed, (f64, f64))>,
+    hover: Option<(String, Which, Grip)>,
     dirty: Cell<bool>,
 }
 
 impl DeviceRow {
-    fn new(tone: Rc<Shared>, tracks: Vec<daw_proto::Track>) -> Self {
+    fn new(tone: Rc<Shared>, tracks: Vec<daw_proto::Track>, lanes: usize) -> Self {
         Self {
             tone,
             tracks,
@@ -114,7 +137,10 @@ impl DeviceRow {
                 &daw_ui::theming::Theme::dark(),
             )),
             font: crate::text::Font::embedded().expect("the embedded font"),
-            scroll: 0.0,
+            lanes,
+            down: 0,
+            scroll: std::collections::HashMap::new(),
+            shown: RefCell::new(Vec::new()),
             devices: RefCell::new(Vec::new()),
             hold: None,
             hover: None,
@@ -122,15 +148,17 @@ impl DeviceRow {
         }
     }
 
-    /// The track the row is of: the selected one, or the first.
-    fn track(&self) -> Option<&daw_proto::Track> {
+    /// The tracks the lanes are of: from the selected one (or the first)
+    /// down, past `down` of them, as many as there are lanes.
+    fn lane_tracks(&self) -> Vec<&daw_proto::Track> {
+        let from = self.tracks.iter().position(|t| t.selected).unwrap_or(0);
         self.tracks
             .iter()
-            .find(|t| t.selected)
-            .or_else(|| self.tracks.first())
+            .skip(from + self.down)
+            .take(self.lanes)
+            .collect()
     }
 
-    /// Take the engine's changes; true if anything did.
     fn follow(&mut self) {
         let mut events = std::mem::take(&mut *self.pending.borrow_mut());
         if let Some(watch) = &self.watch {
@@ -151,17 +179,25 @@ impl DeviceRow {
         !pending.is_empty()
     }
 
-    fn grip_at(&self, x: f64, y: f64) -> Option<(Which, Grip)> {
-        let guid = self.track()?.guid.clone();
+    fn device_at(&self, x: f64, y: f64) -> Option<(Placed, Grip)> {
         let store = self.tone.store.borrow();
-        let tone = store.get(&guid)?;
-        self.devices.borrow().iter().find_map(|(which, panel)| {
-            panel
-                .contains(x, y)
-                .then(|| crate::tone::grip_at(&[*which], tone, *panel, Folded::zoomed(), x, y))
-                .flatten()
-                .map(|grip| (*which, grip))
+        self.devices.borrow().iter().find_map(|placed| {
+            if !placed.panel.contains(x, y) {
+                return None;
+            }
+            let tone = store.get(&placed.guid)?;
+            crate::tone::grip_at(&[placed.which], tone, placed.panel, Folded::zoomed(), x, y)
+                .map(|grip| (placed.clone(), grip))
         })
+    }
+
+    /// The lane under `y`, by its track.
+    fn lane_at(&self, y: f64) -> Option<String> {
+        self.shown
+            .borrow()
+            .iter()
+            .find(|(_, top, h)| y >= *top && y < top + h)
+            .map(|(guid, ..)| guid.clone())
     }
 
     fn event(&mut self, event: &UiEvent) {
@@ -173,27 +209,34 @@ impl DeviceRow {
                     BlitzWheelDelta::Lines(x, y) => (x * 40.0, y * 40.0),
                     BlitzWheelDelta::Pixels(x, y) => (x, y),
                 };
-                // Sideways, or a plain wheel turned sideways: the row only
-                // goes one way.
-                let by = if dx.abs() > dy.abs() { dx } else { dy };
-                self.scroll = (self.scroll - by).max(0.0);
+                let sideways = dx.abs() > dy.abs() || e.mods.shift() || self.lanes == 1;
+                if sideways {
+                    // The lane under the pointer, along its chain.
+                    let by = if dx.abs() > dy.abs() { dx } else { dy };
+                    if let Some(guid) = self.lane_at(f64::from(e.coords.client_y)) {
+                        let scroll = self.scroll.entry(guid).or_default();
+                        *scroll = (*scroll - by).max(0.0);
+                    }
+                } else if dy < 0.0 {
+                    // Down through the tracks, a lane at a time.
+                    self.down += 1;
+                } else {
+                    self.down = self.down.saturating_sub(1);
+                }
                 true
             }
             UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => {
                 let (x, y) = at(e);
-                match self.grip_at(x, y) {
-                    Some((which, grip)) if grip.is_switch() => {
-                        if let Some(guid) = self.track().map(|t| t.guid.clone())
-                            && let Some(tone) = self.tone.store.borrow_mut().edit(&guid)
-                        {
+                match self.device_at(x, y) {
+                    Some((placed, grip)) if grip.is_switch() => {
+                        if let Some(tone) = self.tone.store.borrow_mut().edit(&placed.guid) {
                             crate::tone::toggle(tone, grip);
                         }
                         self.tone.edited();
-                        let _ = which;
                         true
                     }
-                    Some((which, grip)) => {
-                        self.hold = Some((e.id, grip, which, (x, y)));
+                    Some((placed, grip)) => {
+                        self.hold = Some((e.id, grip, placed, (x, y)));
                         true
                     }
                     None => false,
@@ -201,34 +244,28 @@ impl DeviceRow {
             }
             UiEvent::PointerMove(e) => {
                 let (x, y) = at(e);
-                if let Some((id, grip, which, last)) = self.hold
+                if let Some((id, grip, placed, last)) = self.hold.clone()
                     && id == e.id
                 {
-                    self.hold = Some((id, grip, which, (x, y)));
-                    let panel = self
-                        .devices
-                        .borrow()
-                        .iter()
-                        .find(|(w, _)| *w == which)
-                        .map(|(_, p)| *p);
-                    if let (Some(panel), Some(guid)) = (panel, self.track().map(|t| t.guid.clone()))
-                        && let Some(tone) = self.tone.store.borrow_mut().edit(&guid)
-                    {
+                    if let Some(tone) = self.tone.store.borrow_mut().edit(&placed.guid) {
                         crate::tone::drag(
                             tone,
                             grip,
-                            &[which],
-                            panel,
+                            &[placed.which],
+                            placed.panel,
                             Folded::zoomed(),
                             crate::closeup::mods_of(e),
                             x - last.0,
                             y - last.1,
                         );
                     }
+                    self.hold = Some((id, grip, placed, (x, y)));
                     self.tone.edited();
                     true
                 } else if !e.is_finger() {
-                    let over = self.grip_at(x, y);
+                    let over = self
+                        .device_at(x, y)
+                        .map(|(placed, grip)| (placed.guid, placed.which, grip));
                     let lit = over != self.hover;
                     self.hover = over;
                     lit
@@ -251,51 +288,101 @@ impl DeviceRow {
         self.dirty.set(false);
         let scale = scale.max(f64::EPSILON);
         let (w, h) = (f64::from(width) / scale, f64::from(height) / scale);
+        // Never past the last track: the stack stops at the end.
+        let from = self.tracks.iter().position(|t| t.selected).unwrap_or(0);
+        let left = self.tracks.len().saturating_sub(from);
+        self.down = self.down.min(left.saturating_sub(self.lanes.min(left)));
+        let named = self.lanes > 1;
+        let lane_h = h / crate::num::coord(self.lanes);
+        let start = if named { HEAD_W } else { INSET };
         let mut drawn = Scene::new();
         let mut devices = Vec::new();
-        if let Some(track) = self.track() {
+        let mut shown = Vec::new();
+        let lanes: Vec<daw_proto::Track> = self.lane_tracks().into_iter().cloned().collect();
+        for (n, track) in lanes.iter().enumerate() {
+            let top = crate::num::coord(n) * lane_h;
+            shown.push((track.guid.clone(), top, lane_h));
+            if named {
+                // The lane's name, in the track's colour, down its left.
+                anyrender::PaintScene::fill(
+                    &mut drawn,
+                    vello::peniko::Fill::NonZero,
+                    Affine::IDENTITY,
+                    crate::tcp::track_color(&self.palette, track),
+                    None,
+                    &vello::kurbo::Rect::new(0.0, top + INSET, 3.0, top + lane_h - INSET),
+                );
+                crate::tcp::glyphs(
+                    &mut drawn,
+                    &self.font,
+                    if track.selected {
+                        self.palette.text
+                    } else {
+                        self.palette.text_dim
+                    },
+                    &self.font.elide(&track.name, 13.0, HEAD_W - 18.0),
+                    10.0,
+                    top + INSET + 16.0,
+                    13.0,
+                );
+            }
             let store = self.tone.store.borrow();
-            if let Some(tone) = store.get(&track.guid) {
-                let panels =
-                    tone.panels(crate::tone::panels_for(session::mix_phases::MixPhase::Tone));
-                // Only what is on screen is drawn: the rest of the row is
-                // where it would be, and nothing more.
-                let most =
-                    (crate::num::coord(panels.len()) * (DEVICE_W + GAP) - w + INSET * 2.0).max(0.0);
-                self.scroll = self.scroll.min(most);
-                for (i, which) in panels.iter().enumerate() {
-                    let x = INSET + crate::num::coord(i) * (DEVICE_W + GAP) - self.scroll;
-                    if x + DEVICE_W < 0.0 || x > w {
-                        continue;
-                    }
-                    let panel = Panel {
-                        x,
-                        y: INSET,
-                        width: DEVICE_W,
-                        height: (h - INSET * 2.0).max(0.0),
-                    };
-                    let lit = self
-                        .hold
-                        .filter(|(_, _, held, _)| held == which)
-                        .map(|(_, grip, ..)| grip)
-                        .or(self.hover.filter(|(on, _)| on == which).map(|(_, g)| g));
-                    crate::tone::draw(
-                        &mut drawn,
-                        &self.palette,
-                        &self.font,
-                        tone,
-                        &crate::live::Meters::default(),
-                        &[*which],
-                        panel,
-                        Folded::zoomed(),
-                        lit,
-                        None,
-                    );
-                    devices.push((*which, panel));
+            let Some(tone) = store.get(&track.guid) else {
+                continue;
+            };
+            let panels = tone.panels(crate::tone::panels_for(session::mix_phases::MixPhase::Tone));
+            let most =
+                (crate::num::coord(panels.len()) * (DEVICE_W + GAP) - (w - start) + INSET).max(0.0);
+            let scroll = self
+                .scroll
+                .get(&track.guid)
+                .copied()
+                .unwrap_or(0.0)
+                .min(most);
+            self.scroll.insert(track.guid.clone(), scroll);
+            for (i, which) in panels.iter().enumerate() {
+                let x = start + crate::num::coord(i) * (DEVICE_W + GAP) - scroll;
+                // Only what is on screen is drawn.
+                if x + DEVICE_W < start || x > w {
+                    continue;
                 }
+                let panel = Panel {
+                    x,
+                    y: top + INSET,
+                    width: DEVICE_W,
+                    height: (lane_h - INSET * 2.0).max(0.0),
+                };
+                let lit = self
+                    .hold
+                    .as_ref()
+                    .filter(|(_, _, held, _)| held.guid == track.guid && held.which == *which)
+                    .map(|(_, grip, ..)| *grip)
+                    .or(self
+                        .hover
+                        .as_ref()
+                        .filter(|(g, on, _)| *g == track.guid && on == which)
+                        .map(|(.., grip)| *grip));
+                crate::tone::draw(
+                    &mut drawn,
+                    &self.palette,
+                    &self.font,
+                    tone,
+                    &crate::live::Meters::default(),
+                    &[*which],
+                    panel,
+                    Folded::zoomed(),
+                    lit,
+                    None,
+                );
+                devices.push(Placed {
+                    guid: track.guid.clone(),
+                    which: *which,
+                    panel,
+                });
             }
         }
         *self.devices.borrow_mut() = devices;
+        *self.shown.borrow_mut() = shown;
         let mut out = Scene::new();
         anyrender::PaintScene::append_scene(&mut out, drawn, Affine::scale(scale));
         out

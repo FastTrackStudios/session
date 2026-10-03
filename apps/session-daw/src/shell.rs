@@ -287,7 +287,14 @@ impl std::ops::Deref for FxToggle {
 /// Provide the window's [`MixerToggle`] and [`FxToggle`] over `view`, for
 /// a shell.
 pub fn use_mixer_toggle(view: Signal<View>) -> MixerToggle {
-    use_context_provider(|| FxToggle(Pane::new(view, View::Fx, &[View::Daw, View::Mixer])));
+    // The FX starts docked: on a desktop it is a strip under whatever you
+    // are working in, and a view of its own when you ask (right-click).
+    use_context_provider(|| {
+        let pane = Pane::new(view, View::Fx, &[View::Daw, View::Mixer]);
+        let mut docked = pane.docked;
+        docked.set(true);
+        FxToggle(pane)
+    });
     use_context_provider(|| MixerToggle(Pane::new(view, View::Mixer, &[View::Daw])))
 }
 

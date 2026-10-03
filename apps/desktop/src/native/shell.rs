@@ -479,7 +479,8 @@ fn SongViews(
                 View::Mixer => rsx! {
                     session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
                 },
-                View::Fx => rsx! { session_daw::fx_view::FxPanel {} },
+                // Its own view: four tracks' chains at once.
+                View::Fx => rsx! { session_daw::fx_view::FxPanel { lanes: 4 } },
                 View::Overview => rsx! {
                     OverviewLayout {
                         progress: rsx! { session_daw::progress::ProgressBar {} },
