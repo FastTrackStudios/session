@@ -226,7 +226,6 @@ pub fn draw(
     right: &[Item<'_>],
     top: &[Item<'_>],
 ) {
-    let Frame { width, height, .. } = frame;
     let theme = crate::skin::loaded();
     let theme = theme.as_deref();
 

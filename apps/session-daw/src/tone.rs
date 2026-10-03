@@ -1541,25 +1541,20 @@ pub fn draw(
                 );
                 continue;
             };
-            minimal(
+            rail_unit(
                 scene,
-                palette,
-                font,
-                tone,
-                meters,
+                &Draw {
+                    palette,
+                    font,
+                    tone,
+                    meters,
+                    rack,
+                    folded,
+                    lit,
+                },
                 which,
-                at.inset(1.0),
-                rack,
+                at,
             );
-            if tone.bypass.is(which) {
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    palette.tcp_meter_well.multiply_alpha(0.78),
-                    None,
-                    &at.rect(),
-                );
-            }
         }
         return;
     }
@@ -1568,9 +1563,15 @@ pub fn draw(
         let Row::Unit(which) = row else {
             match row {
                 Row::Head(phase) => {
-                    container(scene, palette, font, phase, at, folded.is(phase), lit)
+                    if !phase_themed(scene, font, phase, at, Some((folded.is(phase), lit))) {
+                        container(scene, palette, font, phase, at, folded.is(phase), lit);
+                    }
                 }
-                Row::Blank(phase) => blank(scene, palette, font, phase, at),
+                Row::Blank(phase) => {
+                    if !phase_themed(scene, font, phase, at, None) {
+                        blank(scene, palette, font, phase, at);
+                    }
+                }
                 Row::Unit(_) => {}
             }
             continue;
@@ -1579,161 +1580,386 @@ pub fn draw(
             presets(scene, palette, font, tone, at, lit);
             continue;
         }
-        ground(scene, palette, at);
-        let inner = at.inset(2.0);
-        // The header is taken at EVERY tier the row is tall enough for,
-        // and says only the name where the value will not fit. It was
-        // skipped at `Curves`, which moved the display up by its height
-        // on a strip a few pixels narrower than its neighbour — and
-        // the compressors across the mixer stopped sitting on one line.
-        let body = body_of(at, rack);
-        let head = (body.y > inner.y).then(|| inner.split_top(HEAD).0);
-        if body.width > 0.0 && body.height > 0.0 {
-            match which {
-                // The three EQs are one drawing over three band sets.
-                // What differs is what the bands are FOR, which is the
-                // panel's name and not its picture.
-                Which::RescueEq
-                | Which::Eq
-                | Which::Space
-                | Which::PreEq
-                | Which::PostEq
-                | Which::PolishEq => {
-                    eq(
-                        scene,
-                        palette,
-                        font,
-                        tone,
-                        which,
-                        tone.bands_ref(which),
-                        &meters.spectrum,
-                        body,
-                        rack,
-                        lit,
-                        None,
-                    );
-                }
-                // Blue, because the vertical axis is not gain: it is
-                // how long each band rings, and a graph that looked
-                // like the EQ above it would be read as one.
-                Which::DecayEq => {
-                    eq(
-                        scene,
-                        palette,
-                        font,
-                        tone,
-                        which,
-                        &tone.decay_eq,
-                        &[],
-                        body,
-                        rack,
-                        lit,
-                        Some(DECAY_INK),
-                    );
-                }
-                Which::Knobs => knobs(scene, palette, font, tone, body, rack, lit),
-                Which::Wide => wide(scene, palette, tone, body, rack, lit),
-                Which::Pitch => pitch(scene, palette, font, tone, body, rack, lit),
-                Which::Presets => {}
-                Which::Gate => gate(scene, palette, tone.gate, body, rack, lit),
-                Which::RescueComp => {
-                    comp(scene, palette, font, tone.rescue_comp, body, rack, lit);
-                }
-                Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
-                Which::Sat => {
-                    sat(
-                        scene,
-                        palette,
-                        tone,
-                        meters,
-                        display_of(body, which, rack),
-                        rack,
-                        lit,
-                    );
-                }
-                Which::DeEss | Which::DeEssIn => {
-                    suppress(scene, palette, which, tone.de_ess, meters, body, rack, lit);
-                }
-                Which::Delay => {
-                    echo(
-                        scene,
-                        palette,
-                        tone.delay,
-                        meters,
-                        display_of(body, which, rack),
-                        rack,
-                        lit,
-                    );
-                }
-                Which::Reverb => {
-                    room(
-                        scene,
-                        palette,
-                        tone.reverb,
-                        meters,
-                        display_of(body, which, rack),
-                        rack,
-                        lit,
-                    );
-                }
-            }
-            if let Some(strip) = lane_of(body, which, rack)
-                && matches!(which, Which::Sat | Which::Delay | Which::Reverb)
-            {
-                selector(scene, palette, font, tone, which, strip, lit);
-            }
-            // The bypass, over everything the panel just drew.
-            //
-            // A scrim rather than a badge, and over the WHOLE panel
-            // rather than beside it: what you need to know at a glance
-            // across a mixer is that this processing is not happening,
-            // and a small mark in a corner is exactly the thing a
-            // glance misses. Greying the curve out says it once, in the
-            // place you are already looking.
-            if tone.bypass.is(which) {
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    palette.tcp_meter_well.multiply_alpha(0.78),
-                    None,
-                    &at.rect(),
-                );
-            }
-            if let Some(head) = head {
-                // The way into a close-up, at the header's right end;
-                // the value moves over for it.
-                let expands = rack.detailed() && !folded.is_zoomed();
-                let text = if expands {
-                    Panel {
-                        width: (head.width - EXPAND_W).max(0.0),
-                        ..head
-                    }
-                } else {
-                    head
-                };
-                header(
-                    scene,
+        let pen = Draw {
+            palette,
+            font,
+            tone,
+            meters,
+            rack,
+            folded,
+            lit,
+        };
+        unit(scene, &pen, which, at);
+    }
+}
+
+/// What every panel of a rack is drawn from: the palette and face, the
+/// track's processing and what its meters say, the tier, which phases
+/// are folded, and the grip the pointer has lit.
+struct Draw<'a> {
+    palette: &'a Palette,
+    font: &'a Font,
+    tone: &'a Tone,
+    meters: &'a Meters,
+    rack: Rack,
+    folded: Folded,
+    lit: Option<Grip>,
+}
+
+/// The role a theme draws a processor's panel as: its well, the `%body`
+/// where the processor's own display goes, the bypass scrim over that,
+/// and the header (the `%glyph`, the name, the value, the way into a
+/// close-up) over the scrim.
+pub const UNIT: &str = "rack.unit";
+
+/// The role a theme draws a processor's row as on a rail — a strip too
+/// narrow for its panel: a faint well, the name where it fits, the
+/// `%body` where the host draws its indicator, the bypass scrim over all
+/// of it.
+pub const RAIL_ROW: &str = "rack.rail";
+
+/// One processor's row on a rail at `at`: the theme's, or the painters'.
+fn rail_unit(scene: &mut Scene, pen: &Draw<'_>, which: Which, at: Panel) {
+    let Draw {
+        palette,
+        font,
+        tone,
+        meters,
+        rack,
+        ..
+    } = *pen;
+    let theme = crate::skin::loaded();
+    let Some(theme) = theme.as_deref().filter(|t| t.has_role(RAIL_ROW)) else {
+        minimal(
+            scene,
+            palette,
+            font,
+            tone,
+            meters,
+            which,
+            at.inset(1.0),
+            rack,
+        );
+        if tone.bypass.is(which) {
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                palette.tcp_meter_well.multiply_alpha(0.78),
+                None,
+                &at.rect(),
+            );
+        }
+        return;
+    };
+    // The name where it fits the header — the painters' rule.
+    let name = which.name();
+    let fits = font.width(name, 7.0) <= at.width - 6.0;
+    let fields = crate::skin::values(&[
+        (
+            "unit.name",
+            theme_runtime::Value::text(if fits { name } else { "" }),
+        ),
+        (
+            "unit.bypassed",
+            theme_runtime::Value::Bool(tone.bypass.is(which)),
+        ),
+    ]);
+    theme.record_with(
+        RAIL_ROW,
+        (at.width, at.height),
+        &fields,
+        &mut crate::skin::canvas::Host { scene, font },
+        Affine::translate((at.x, at.y)),
+        &mut |host, slot, rect| {
+            if slot == "body" {
+                let rect = rect + vello::kurbo::Vec2::new(at.x, at.y);
+                minimal_body(
+                    host.scene,
                     palette,
                     font,
-                    which.name(),
-                    which.glyph(tone),
-                    &which.summary(tone, rack),
-                    tone.bypass.is(which),
-                    text,
+                    tone,
+                    meters,
+                    which,
+                    Panel {
+                        x: rect.x0,
+                        y: rect.y0,
+                        width: rect.width(),
+                        height: rect.height(),
+                    },
                 );
-                if expands {
-                    expand_mark(
-                        scene,
-                        if lit == Some(Grip::Zoom(which)) {
-                            palette.text
-                        } else {
-                            palette.text_faint
-                        },
-                        head,
-                    );
+            }
+        },
+    );
+}
+
+/// One processor's panel at `at`: the theme's, or the painters'.
+fn unit(scene: &mut Scene, pen: &Draw<'_>, which: Which, at: Panel) {
+    // What the header says is fitted here, because only the host measures
+    // text: the name where it fits after the glyph, the value where both
+    // do — the painters' header's rule.
+    const SIZE: f32 = 7.0;
+    let Draw {
+        palette,
+        font,
+        tone,
+        rack,
+        folded,
+        lit,
+        ..
+    } = *pen;
+    let theme = crate::skin::loaded();
+    let Some(theme) = theme.as_deref().filter(|t| t.has_role(UNIT)) else {
+        unit_painted(scene, pen, which, at);
+        return;
+    };
+    let bypassed = tone.bypass.is(which);
+    let mark = which.glyph(tone);
+    let expands = rack.detailed() && !folded.is_zoomed();
+    let room = at.width - 4.0;
+    let left = if mark.is_some() { GLYPH_W } else { 0.0 };
+    let name = which.name();
+    let name_w = left + font.width(name, SIZE);
+    let summary = which.summary(tone, rack);
+    let value = if bypassed { "BYPASS" } else { summary.as_str() };
+    let name_fits = name_w <= room;
+    let value_fits = name_fits
+        && name_w + font.width(value, SIZE) + 6.0 <= room - if expands { EXPAND_W } else { 0.0 };
+    let fields = crate::skin::values(&[
+        (
+            "unit.name",
+            theme_runtime::Value::text(if name_fits { name } else { "" }),
+        ),
+        (
+            "unit.value",
+            theme_runtime::Value::text(if value_fits { value } else { "" }),
+        ),
+        ("unit.bypassed", theme_runtime::Value::Bool(bypassed)),
+        ("unit.glyph", theme_runtime::Value::Bool(mark.is_some())),
+        ("unit.expands", theme_runtime::Value::Bool(expands)),
+        (
+            "unit.zoom_lit",
+            theme_runtime::Value::Bool(lit == Some(Grip::Zoom(which))),
+        ),
+    ]);
+    let (name_ink, _) = header_inks(palette, bypassed);
+    theme.record_with(
+        UNIT,
+        (at.width, at.height),
+        &fields,
+        &mut crate::skin::canvas::Host { scene, font },
+        Affine::translate((at.x, at.y)),
+        &mut |host, slot, rect| {
+            let rect = rect + vello::kurbo::Vec2::new(at.x, at.y);
+            match slot {
+                "body" => unit_body(
+                    host.scene,
+                    pen,
+                    which,
+                    Panel {
+                        x: rect.x0,
+                        y: rect.y0,
+                        width: rect.width(),
+                        height: rect.height(),
+                    },
+                ),
+                "glyph" => {
+                    if let Some(mark) = mark {
+                        glyph(
+                            host.scene,
+                            name_ink,
+                            mark,
+                            rect.x0,
+                            rect.y0 + f64::from(SIZE) - 0.5,
+                        );
+                    }
                 }
+                _ => {}
+            }
+        },
+    );
+}
+
+/// The painters' panel: what a theme without one gets.
+fn unit_painted(scene: &mut Scene, pen: &Draw<'_>, which: Which, at: Panel) {
+    let Draw {
+        palette,
+        font,
+        tone,
+        rack,
+        folded,
+        lit,
+        ..
+    } = *pen;
+    ground(scene, palette, at);
+    let inner = at.inset(2.0);
+    // The header is taken at EVERY tier the row is tall enough for,
+    // and says only the name where the value will not fit. It was
+    // skipped at `Curves`, which moved the display up by its height
+    // on a strip a few pixels narrower than its neighbour — and
+    // the compressors across the mixer stopped sitting on one line.
+    let body = body_of(at, rack);
+    let head = (body.y > inner.y).then(|| inner.split_top(HEAD).0);
+    if body.width > 0.0 && body.height > 0.0 {
+        unit_body(scene, pen, which, body);
+        // The bypass, over everything the panel just drew.
+        //
+        // A scrim rather than a badge, and over the WHOLE panel
+        // rather than beside it: what you need to know at a glance
+        // across a mixer is that this processing is not happening,
+        // and a small mark in a corner is exactly the thing a
+        // glance misses. Greying the curve out says it once, in the
+        // place you are already looking.
+        if tone.bypass.is(which) {
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                palette.tcp_meter_well.multiply_alpha(0.78),
+                None,
+                &at.rect(),
+            );
+        }
+        if let Some(head) = head {
+            // The way into a close-up, at the header's right end;
+            // the value moves over for it.
+            let expands = rack.detailed() && !folded.is_zoomed();
+            let text = if expands {
+                Panel {
+                    width: (head.width - EXPAND_W).max(0.0),
+                    ..head
+                }
+            } else {
+                head
+            };
+            header(
+                scene,
+                palette,
+                font,
+                which.name(),
+                which.glyph(tone),
+                &which.summary(tone, rack),
+                tone.bypass.is(which),
+                text,
+            );
+            if expands {
+                expand_mark(
+                    scene,
+                    if lit == Some(Grip::Zoom(which)) {
+                        palette.text
+                    } else {
+                        palette.text_faint
+                    },
+                    head,
+                );
             }
         }
+    }
+}
+
+/// A processor's own display in `body`: its curve, its knobs, its lane
+/// of choices — what the panel is FOR, and what a theme leaves to the
+/// host (its `%body` slot).
+fn unit_body(scene: &mut Scene, pen: &Draw<'_>, which: Which, body: Panel) {
+    let Draw {
+        palette,
+        font,
+        tone,
+        meters,
+        rack,
+        lit,
+        ..
+    } = *pen;
+    match which {
+        // The three EQs are one drawing over three band sets.
+        // What differs is what the bands are FOR, which is the
+        // panel's name and not its picture.
+        Which::RescueEq
+        | Which::Eq
+        | Which::Space
+        | Which::PreEq
+        | Which::PostEq
+        | Which::PolishEq => {
+            eq(
+                scene,
+                palette,
+                font,
+                tone,
+                which,
+                tone.bands_ref(which),
+                &meters.spectrum,
+                body,
+                rack,
+                lit,
+                None,
+            );
+        }
+        // Blue, because the vertical axis is not gain: it is
+        // how long each band rings, and a graph that looked
+        // like the EQ above it would be read as one.
+        Which::DecayEq => {
+            eq(
+                scene,
+                palette,
+                font,
+                tone,
+                which,
+                &tone.decay_eq,
+                &[],
+                body,
+                rack,
+                lit,
+                Some(DECAY_INK),
+            );
+        }
+        Which::Knobs => knobs(scene, palette, font, tone, body, rack, lit),
+        Which::Wide => wide(scene, palette, tone, body, rack, lit),
+        Which::Pitch => pitch(scene, palette, font, tone, body, rack, lit),
+        Which::Presets => {}
+        Which::Gate => gate(scene, palette, tone.gate, body, rack, lit),
+        Which::RescueComp => {
+            comp(scene, palette, font, tone.rescue_comp, body, rack, lit);
+        }
+        Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
+        Which::Sat => {
+            sat(
+                scene,
+                palette,
+                tone,
+                meters,
+                display_of(body, which, rack),
+                rack,
+                lit,
+            );
+        }
+        Which::DeEss | Which::DeEssIn => {
+            suppress(scene, palette, which, tone.de_ess, meters, body, rack, lit);
+        }
+        Which::Delay => {
+            echo(
+                scene,
+                palette,
+                tone.delay,
+                meters,
+                display_of(body, which, rack),
+                rack,
+                lit,
+            );
+        }
+        Which::Reverb => {
+            room(
+                scene,
+                palette,
+                tone.reverb,
+                meters,
+                display_of(body, which, rack),
+                rack,
+                lit,
+            );
+        }
+    }
+    if let Some(strip) = lane_of(body, which, rack)
+        && matches!(which, Which::Sat | Which::Delay | Which::Reverb)
+    {
+        selector(scene, palette, font, tone, which, strip, lit);
     }
 }
 
@@ -2247,6 +2473,56 @@ fn phase_tint(phase: session::mix_phases::MixPhase) -> Color {
         P::Creative => "#EC4899",
         P::Overview => "#6366F1",
     })
+}
+
+/// The role a theme draws a phase's bar as: its name and colour, and the
+/// chevron that folds it — or, for a phase this chain has nothing in,
+/// the same bar faint and with nothing to fold (`phase.blank`).
+pub const PHASE: &str = "rack.phase";
+
+/// A phase's bar drawn by the theme, when it has one: false, and the
+/// painters draw it. `open` is the fold and the lit grip of a real
+/// phase; `None` is a blank one.
+fn phase_themed(
+    scene: &mut Scene,
+    font: &Font,
+    phase: session::mix_phases::MixPhase,
+    at: Panel,
+    open: Option<(bool, Option<Grip>)>,
+) -> bool {
+    let theme = crate::skin::loaded();
+    let Some(theme) = theme.as_deref().filter(|t| t.has_role(PHASE)) else {
+        return false;
+    };
+    let [r, g, b, a] = phase_tint(phase).to_rgba8().to_u8_array();
+    let fields = crate::skin::values(&[
+        (
+            "phase.name",
+            theme_runtime::Value::text(phase.display_name()),
+        ),
+        (
+            "phase.tint",
+            theme_runtime::Value::Color(theme_runtime::Rgba::from_rgba8(r, g, b, a)),
+        ),
+        ("phase.blank", theme_runtime::Value::Bool(open.is_none())),
+        (
+            "phase.shut",
+            theme_runtime::Value::Bool(open.is_some_and(|(shut, _)| shut)),
+        ),
+        (
+            "phase.held",
+            theme_runtime::Value::Bool(
+                open.is_some_and(|(_, lit)| lit == Some(Grip::Phase(phase))),
+            ),
+        ),
+    ]);
+    theme.record(
+        PHASE,
+        (at.width, at.height),
+        &fields,
+        &mut crate::skin::canvas::Host { scene, font },
+        Affine::translate((at.x, at.y)),
+    )
 }
 
 /// A phase's container bar: its name, and the chevron that folds it.
@@ -4969,6 +5245,20 @@ fn minimal(
             row.inset(2.0).split_top(HEAD).0,
         );
     }
+    minimal_body(scene, palette, font, tone, meters, which, at);
+}
+
+/// A rail row's indicator in `at` (its body): what a theme's `rack.rail`
+/// leaves to the host.
+fn minimal_body(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    meters: &Meters,
+    which: Which,
+    at: Panel,
+) {
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let mid = at.y + at.height / 2.0;
@@ -5438,14 +5728,7 @@ fn header(
 ) {
     const SIZE: f32 = 7.0;
     let baseline = at.y + f64::from(SIZE);
-    // The header stays ABOVE the scrim, because it is the one thing on
-    // a bypassed panel you still need: which processor this is, and
-    // that it is off. Its own ink dims instead.
-    let (name_ink, value_ink) = if bypassed {
-        (palette.text_faint.multiply_alpha(0.55), palette.text_faint)
-    } else {
-        (palette.text_faint, palette.text_dim)
-    };
+    let (name_ink, value_ink) = header_inks(palette, bypassed);
     let mut left = at.x;
     if let Some(mark) = mark {
         glyph(scene, name_ink, mark, left, baseline - 0.5);
@@ -5477,6 +5760,19 @@ fn header(
         baseline,
         SIZE,
     );
+}
+
+/// A header's inks: its name's and its value's.
+///
+/// The header stays ABOVE the scrim, because it is the one thing on a
+/// bypassed panel you still need: which processor this is, and that it
+/// is off. Its own ink dims instead.
+fn header_inks(palette: &Palette, bypassed: bool) -> (Color, Color) {
+    if bypassed {
+        (palette.text_faint.multiply_alpha(0.55), palette.text_faint)
+    } else {
+        (palette.text_faint, palette.text_dim)
+    }
 }
 
 /// A colour the plugin states, as a colour this window can paint.
@@ -12659,5 +12955,70 @@ mod face_tests {
         }
         assert!(Grip::Family(Which::Delay).is_switch());
         assert!(!Grip::Time.is_switch());
+    }
+}
+
+#[cfg(test)]
+mod themed_tests {
+    use super::*;
+
+    /// Counts the fills of one colour.
+    fn fills_of(scene: &Scene, rgb: [u8; 3]) -> usize {
+        scene
+            .commands
+            .iter()
+            .filter(|c| match c {
+                anyrender::recording::RenderCommand::Fill(f) => match &f.brush {
+                    anyrender::Paint::Solid(c) => c.to_rgba8().to_u8_array()[..3] == rgb,
+                    _ => false,
+                },
+                _ => false,
+            })
+            .count()
+    }
+
+    /// Every tier of the rack, the rail's included, is the theme's when
+    /// it has the roles: a theme with a red well puts red in each.
+    #[test]
+    fn every_tier_of_the_rack_is_drawn_by_the_theme() {
+        let src = include_str!("../themes/console/rack.frame");
+        let tokens = include_str!("../themes/console/tokens.frame").replace(
+            r##"<Var name="rack.well" value="#0a0a0c" />"##,
+            r##"<Var name="rack.well" value="#ff0000" />"##,
+        );
+        let theme = theme_runtime::Theme::from_sources(
+            &[("tokens", &tokens), ("rack", src)],
+            crate::skin::schema(),
+            None,
+        )
+        .unwrap();
+        crate::skin::set(Some(std::sync::Arc::new(theme)));
+        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = Font::embedded().expect("the embedded face");
+        let tone = placeholder(0);
+        for width in [60.0, 80.0, 130.0, 300.0] {
+            let mut scene = Scene::new();
+            record(
+                &mut scene,
+                &palette,
+                &font,
+                &tone,
+                &[Which::Eq, Which::Comp],
+                Panel {
+                    x: 0.0,
+                    y: 0.0,
+                    width,
+                    height: 400.0,
+                },
+                Folded::rest(),
+                None,
+            );
+            assert!(
+                fills_of(&scene, [255, 0, 0]) > 0,
+                "no theme well at {width} ({:?})",
+                Rack::at(width)
+            );
+        }
+        crate::skin::set(None);
     }
 }

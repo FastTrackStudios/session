@@ -28,5 +28,6 @@
     <Var name="rail.ground" value="$surface" />
     <Var name="rail.rule" value="$border" />
     <Var name="rail.button" value="$surface" />
+    <Var name="rack.well" value="#0a0a0c" />
   </Variables>
 </Document>
