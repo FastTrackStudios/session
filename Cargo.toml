@@ -881,15 +881,23 @@ pipewire-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git"
 # Rebased branches are parked on the fork at fts-focus-2026-08 (onto
 # main) and fts-focus-2026-08b (onto db12391a, the last commit with
 # the `incremental` feature) so the rebase does not have to be redone.
-# Branch `session-stale-mousedown` on the fork (db4318a9 plus the fix for a
-# drag whose pressed node was removed — it panicked Blitz on every press
-# that re-rendered), pinned by rev.
-blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "ee0a9d3f86dfc188576849edb4b7bfb22623ff23" }
-blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "ee0a9d3f86dfc188576849edb4b7bfb22623ff23" }
-blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "ee0a9d3f86dfc188576849edb4b7bfb22623ff23" }
-blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "ee0a9d3f86dfc188576849edb4b7bfb22623ff23" }
-blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "ee0a9d3f86dfc188576849edb4b7bfb22623ff23" }
-blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "ee0a9d3f86dfc188576849edb4b7bfb22623ff23" }
+# Tag `fts-focus-2026-10` on the fork — the stale-mousedown fix (the
+# old `session-stale-mousedown` rev) and 21 commits on: composited
+# texture widgets over a kept page, redraws only for DOM changes or
+# widgets with something to draw, idle frames that skip layout, a
+# pressed widget holding the pointer. The processor's painted
+# visualisers need it (`Widget::composite_texture`). The same tag as
+# processor's own pin, so the two never disagree about blitz.
+blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", tag = "fts-focus-2026-10" }
+blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", tag = "fts-focus-2026-10" }
+blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", tag = "fts-focus-2026-10" }
+blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", tag = "fts-focus-2026-10" }
+blitz-net = { git = "https://github.com/FastTrackStudios/blitz", tag = "fts-focus-2026-10" }
+blitz-html = { git = "https://github.com/FastTrackStudios/blitz", tag = "fts-focus-2026-10" }
+# The fork's anyrender, carried in the blitz repo at the same tag: the
+# compositor's `composite` module and `RenderContext::render`, which the
+# processor's painted visualisers and the vendored anyrender_vello use.
+anyrender = { git = "https://github.com/FastTrackStudios/blitz", tag = "fts-focus-2026-10" }
 # Vendored in-tree rather than patched to a sibling checkout, because a
 # path outside this repo builds on one machine and nowhere else. Three
 # measured changes to the present path — the GPU barrier removed, frame

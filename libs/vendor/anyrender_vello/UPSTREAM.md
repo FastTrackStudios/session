@@ -1,5 +1,11 @@
 Source: crates.io `anyrender_vello` 0.12.0 (dioxuslabs/anyrender), the
-published tarball with the registry's own bookkeeping files dropped.
+published tarball with the registry's own bookkeeping files dropped —
+merged (2026-10-03) with the copy the FastTrackStudios blitz fork carries
+at tag `fts-focus-2026-10` (`vendor/anyrender_vello`): its `compositor.rs`
+and `rasterizer.rs`, which composite texture widgets over a kept page and
+rasterise a scene for one (`anyrender_vello::Rasterizer`, which the
+processor's painted visualisers use). A three-way merge against the
+registry original; the fork's own poll change and ours agreed.
 License: MIT OR Apache-2.0 — theirs, not ours, and it stays that way.
 
 Vendored for three changes to `window_renderer.rs`, all found by
@@ -39,34 +45,16 @@ these numbers:
   in or out by measurement. Under `AutoVsync` a slow frame and a frame
   that is merely WAITING are the same number from outside.
 
-- **`FTS_DIRECT_SURFACE=1` renders straight into the swapchain.**
-  Vello's compute path needs `STORAGE_BINDING` on whatever it renders
-  into, and a surface is normally only a `RENDER_ATTACHMENT` — so the
-  default is to render to an intermediate texture and then BLIT it to
-  the surface, a full-screen copy every frame. At 5120x1440 that is
-  7.4 Mpx of apparent overhead on the critical path.
-
-  **Measured, and the copy is not where the time goes.** Asking for a
-  storage-capable surface and dropping the intermediate works on this
-  driver (the one-shot line reports `blit no`), and `present` stays at
-  1.30 ms p50 either way — identical totals, 4.10 ms. What `present`
-  actually costs is the swapchain ACQUIRE, not the copy. The thread
-  worth pulling is `wgpu_context`'s own TODO on
-  `blit_from_intermediate_texture_to_surface`, which asks whether
-  acquiring AFTER the render improves throughput; that is upstream's to
-  answer, and it would help the acquire rather than the blit.
-
-  Off by default deliberately. It is a driver capability, not a
-  preference: a surface that cannot be a storage texture refuses the
-  configuration rather than falling back, and the blit is what makes
-  this work everywhere. On a GPU with less bandwidth to spare than an
-  RTX 4080 the copy may well show up, which is why the knob stays.
+- **`FTS_DIRECT_SURFACE` is gone.** It rendered straight into the
+  swapchain, dropping the intermediate texture and its blit; measured at
+  5120x1440 it bought nothing (`present` 1.30 ms p50 either way — the
+  cost is the swapchain acquire, not the copy). The fork's compositor
+  draws the window's frame into that intermediate, so with it the
+  direct path has nothing to render into, and it went.
 
 Plus a one-shot surface-configuration line behind the crate's existing
 opt-in `log_frame_times` feature, which is `println`-based upstream —
-extended to say which of the two present paths the run is on, because
-otherwise a direct-surface measurement and a blitting one are two
-numbers with nothing to tell them apart. `--features frame-times` on
+extended with the present path (always the intermediate now). `--features frame-times` on
 `session-daw` turns it on.
 
 Drop the vendor if upstream takes the barrier and latency changes. See

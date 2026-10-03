@@ -82,6 +82,7 @@ impl ImageRenderer for VelloImageRenderer {
             renderer: Some(&mut self.vello_renderer),
             device_handle: None,
             texture_handles: Some(&mut self.texture_handles),
+            texture_views: None,
         });
 
         let size = self.buffer_renderer.size();
