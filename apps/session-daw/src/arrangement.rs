@@ -483,13 +483,20 @@ impl Arrangement {
         let index = self.row_at_screen(y, view)?;
         let (top, height) = self.row_band(index, view)?;
         let (track, depth) = rows.get(index)?;
-        let row = crate::row::Row::new(
-            top,
-            height,
-            i32::try_from(*depth).unwrap_or(0),
-            track.is_folder,
-            self.tcp,
-        );
+        let depth = i32::try_from(*depth).unwrap_or(0);
+        if let Some(theme) = crate::skin::loaded()
+            .as_deref()
+            .filter(|t| t.has_role(crate::skin::ROW) && !self.tcp.compact)
+        {
+            let hit = theme.hit(
+                crate::skin::ROW,
+                (self.tcp.width(), height),
+                &crate::skin::row_hit_fields(depth),
+                vello::kurbo::Point::new(x, y - top),
+            )?;
+            return Some((index, crate::skin::row_control(&hit)?));
+        }
+        let row = crate::row::Row::new(top, height, depth, track.is_folder, self.tcp);
         // In the band's own frame, which is what `Row` measures from.
         Some((index, row.control_at(x, y)?))
     }
@@ -580,6 +587,9 @@ fn record_panel(
     zoom: f64,
     tcp: crate::tcp::Tcp,
 ) -> Panels {
+    // The theme's row, when it draws one — the full panel's; the compact
+    // panel's second line is still the painters'.
+    let theme = crate::skin::loaded().filter(|t| t.has_role(crate::skin::ROW) && !tcp.compact);
     let mut panel = Scene::new();
     let mut bar = Scene::new();
     let mut spans = Vec::with_capacity(rows.len());
@@ -597,17 +607,43 @@ fn record_panel(
         let h = layout.height_of(track.height) * zoom;
         let body = (h - DIVIDER).max(0.5);
 
-        crate::tcp::draw_row(
-            &mut panel,
-            palette,
-            font,
-            track,
-            i32::try_from(*depth).unwrap_or(0),
-            y,
-            body,
-            &ancestors,
-            tcp,
-        );
+        let depth = i32::try_from(*depth).unwrap_or(0);
+        if let Some(theme) = theme.as_deref() {
+            let fields = crate::skin::row_fields(
+                palette,
+                track,
+                crate::skin::RowShown {
+                    depth,
+                    height: body,
+                    font: Some(font),
+                    ..crate::skin::RowShown::default()
+                },
+            );
+            theme.record_with(
+                crate::skin::ROW,
+                (tcp.width(), body),
+                &fields,
+                &mut crate::skin::canvas::Host {
+                    scene: &mut panel,
+                    font,
+                },
+                Affine::translate((0.0, y)),
+                &mut |host, slot, at| match slot {
+                    "steps" => crate::tcp::folder_steps(host.scene, &ancestors, y, body),
+                    "icon" => crate::track_icon::paint(
+                        host.scene,
+                        crate::track_icon::Icon::of(&track.name, track.is_folder),
+                        at + vello::kurbo::Vec2::new(0.0, y),
+                        crate::tcp::ink_on(crate::tcp::folder_band(palette, track)),
+                    ),
+                    _ => {}
+                },
+            );
+        } else {
+            crate::tcp::draw_row(
+                &mut panel, palette, font, track, depth, y, body, &ancestors, tcp,
+            );
+        }
         panel.fill(
             Fill::NonZero,
             Affine::IDENTITY,

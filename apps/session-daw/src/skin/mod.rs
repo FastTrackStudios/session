@@ -238,6 +238,17 @@ pub fn row_control(name: &str) -> Option<crate::row::Control> {
     .find(|c| row_name(*c) == name)
 }
 
+/// The values a row's targets are laid out from — its indent, at
+/// `depth` — for hit testing, which needs nothing else.
+#[must_use]
+pub fn row_hit_fields(depth: i32) -> StripFields {
+    let tcp = crate::tcp::Tcp::FULL;
+    values(&[(
+        "row.indent",
+        Value::Num((f64::from(depth.max(0)) * tcp.indent()).min(tcp.max_indent())),
+    )])
+}
+
 /// `track`'s values for a track panel row: the strip's, and what the row
 /// shows beyond them — the indent, the number and icon as the rail fits
 /// them, the name as the field elides it, the record input.

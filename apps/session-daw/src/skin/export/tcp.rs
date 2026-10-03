@@ -17,8 +17,8 @@ use std::fmt::Write as _;
 
 use daw_theme_art::geometry::tcp as gt;
 use daw_theme_art::mixer_controls::Interaction;
-use daw_theme_art::paint::Drawing;
 use daw_theme_art::paint::tcp as art;
+use daw_theme_art::paint::{Align, Drawing, Op};
 
 use super::{Follow, Gen, Place, STATES, hex, n, q, state};
 use crate::tcp::to_theme;
@@ -231,33 +231,87 @@ impl Gen<'_> {
     /// Mute and solo in the gutter, squashed on a row too short for them.
     fn tcp_buttons(&mut self) {
         let p = self.palette;
+        let font = crate::text::Font::embedded().expect("the embedded face");
         let tint_w = f64::from(gt::TINT_W);
         let h = format!("min({FH}, 20)");
+        let k = format!("({h} / 20)");
         for (name, label, field, lit, dx) in [
             ("mute", "M", "track.mute", crate::tcp::mute_lit(p), 0.0),
             ("solo", "S", "track.solo", crate::tcp::solo_lit(p), 22.0),
         ] {
             for on in [false, true] {
                 for at in STATES {
-                    let d = art::gutter_button(&p.chrome, label, on, lit, at);
+                    let full = art::gutter_button(&p.chrome, label, on, lit, at);
                     let visible = format!(
                         "{}{field} && {}",
                         if on { "" } else { "!" },
                         state(name, at)
                     );
+                    let (x, y) = (n(tint_w + 2.0 + dx), format!("{FT} + ({FH} - {h}) / 2"));
+                    // The button squashed to the row; its letter shrunk
+                    // instead, from where its left edge was at full size —
+                    // as `art::squashed` sets it, so a short row's M is
+                    // smaller rather than flattened.
+                    let d = Drawing {
+                        w: full.w,
+                        h: full.h,
+                        ops: full
+                            .ops
+                            .iter()
+                            .filter(|o| !matches!(o, Op::Text { .. }))
+                            .cloned()
+                            .collect(),
+                    };
                     self.drawing(
                         4,
                         &d,
                         &Place {
                             name: &format!("{label} {on} {at:?}"),
-                            x: &n(tint_w + 2.0 + dx),
-                            y: &format!("{FT} + ({FH} - {h}) / 2"),
+                            x: &x,
+                            y: &y,
                             visible: &visible,
                             follow: Follow::Fixed,
                             track: "",
-                            extra: &format!("bind:scale-y={}", q(&format!("{h} / 20"))),
+                            extra: &format!("bind:scale-y={}", q(&k)),
                         },
                     );
+                    for op in &full.ops {
+                        let Op::Text {
+                            body,
+                            x: tx,
+                            baseline,
+                            size,
+                            color,
+                            align,
+                        } = op
+                        else {
+                            continue;
+                        };
+                        let left = match align {
+                            Align::Left => *tx,
+                            Align::Centre => *tx - font.width(body, *size) / 2.0,
+                        };
+                        let size = f64::from(*size);
+                        let ink = self.color(*color, "");
+                        self.line(
+                            4,
+                            &format!(
+                                "<Text name=\"{label} letter\" w=400 h={} size={} bind:x={} bind:y={} bind:size={} {ink} bind:visible={}>{}</Text>",
+                                n(size + 4.0),
+                                n(size),
+                                q(&format!("{x} + {} - 1", n(left))),
+                                q(&format!(
+                                    "{y} + {} * {k} - {} * {} * {k} - 1",
+                                    n(*baseline),
+                                    n(super::BASELINE),
+                                    n(size)
+                                )),
+                                q(&format!("{} * {k}", n(size))),
+                                q(&visible),
+                                super::xml(body)
+                            ),
+                        );
+                    }
                 }
             }
         }

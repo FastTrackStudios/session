@@ -378,20 +378,7 @@ pub fn draw_row(
     // so the line starts on the folder's row rather than on its first
     // child. That is what makes it read as the folder reaching down
     // rather than as a mark its children happen to share.
-    for (level, tint) in ancestors.iter().enumerate() {
-        let left = crate::num::coord(level) * INDENT;
-        if left >= MAX_INDENT {
-            break;
-        }
-        rect(
-            scene,
-            *tint,
-            left,
-            y,
-            (left + INDENT).min(MAX_INDENT),
-            y + h,
-        );
-    }
+    folder_steps(scene, ancestors, y, h);
     // The rail carries the row's OWN colour, at the same strength.
     //
     // It used to be flat `tcp_column`, which is nearly black — so the
@@ -491,6 +478,25 @@ pub fn draw_row(
             row_one(scene, palette, font, track, indent, band_top, band_h, tcp);
         }
         Density::Bar => {}
+    }
+}
+
+/// The folders a row sits inside, one [`INDENT`] of its colour each down
+/// the left edge — see `draw_row`. Shared with a theme's `%steps`.
+pub fn folder_steps(scene: &mut anyrender::Scene, ancestors: &[Color], y: f64, h: f64) {
+    for (level, tint) in ancestors.iter().enumerate() {
+        let left = crate::num::coord(level) * INDENT;
+        if left >= MAX_INDENT {
+            break;
+        }
+        rect(
+            scene,
+            *tint,
+            left,
+            y,
+            (left + INDENT).min(MAX_INDENT),
+            y + h,
+        );
     }
 }
 

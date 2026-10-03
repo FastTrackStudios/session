@@ -1763,6 +1763,45 @@ fn control_row(
         })
     };
 
+    // A theme's row draws its own live part — every value and the
+    // pointer's state — over the recording it made.
+    if let Some(theme) = crate::skin::loaded()
+        .as_deref()
+        .filter(|t| t.has_role(crate::skin::ROW) && !row.tcp.compact)
+    {
+        let all = [
+            C::Phase,
+            C::Mute,
+            C::Solo,
+            C::RecArm,
+            C::Volume,
+            C::Pan,
+            C::Routing,
+            C::Fx,
+            C::Folder,
+            C::Name,
+        ];
+        let fields = crate::skin::row_fields(
+            palette,
+            live,
+            crate::skin::RowShown {
+                depth: i32::try_from(*depth).unwrap_or(0),
+                height,
+                font: Some(font),
+                hover: all.into_iter().find(|c| look(*c) == Interaction::Hover),
+                pressed: all.into_iter().find(|c| look(*c) == Interaction::Pressed),
+            },
+        );
+        theme.live(
+            crate::skin::ROW,
+            (scene.tcp.width(), height),
+            &fields,
+            &mut crate::skin::canvas::Host { scene: out, font },
+            Affine::translate((0.0, top)),
+        );
+        return;
+    }
+
     // Mute and solo.
     for (control, label, on, lit) in [
         (C::Mute, "M", live.muted, crate::tcp::mute_lit(palette)),

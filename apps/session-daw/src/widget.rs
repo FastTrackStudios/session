@@ -317,6 +317,9 @@ pub struct ArrangementWidget {
     mixer: Option<MixerLinks>,
     scene: Arrangement,
     palette: Palette,
+    /// `skin::version()` when the panel was cut and the palette taken: a
+    /// different one is a theme changed under it.
+    skin_seen: u64,
     font: crate::text::Font,
     bars: Bars,
     grid: adaptive_grid::Adaptive,
@@ -543,6 +546,7 @@ impl ArrangementWidget {
             )),
             scene,
             palette,
+            skin_seen: crate::skin::version(),
             font,
             bars: Bars::at(bpm),
             grid: adaptive_grid::Adaptive::default(),
@@ -604,7 +608,9 @@ impl ArrangementWidget {
         view: Shared,
         readout: bool,
     ) -> Self {
-        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        // In the theme's colours, where it names them.
+        crate::skin::from_env();
+        let palette = crate::skin::palette(&Palette::from_theme(&daw_ui::theming::Theme::dark()));
         let font = crate::text::Font::embedded().expect("the embedded font");
         let layout = crate::layout::Layout::from_env();
         crate::tcp::fit_names(&font, rows.as_slice(), layout);
@@ -2165,8 +2171,15 @@ impl ArrangementWidget {
             }
         }
         // The panel's shape, if the toolbar has changed it: the rows are
-        // RECORDED to it, so this re-cuts rather than re-scales.
-        if self.scene.tcp.compact != self.compact.get() {
+        // RECORDED to it, so this re-cuts rather than re-scales. A theme
+        // saved or swapped is the same: new colours, new rows.
+        crate::skin::poll();
+        if crate::skin::version() != self.skin_seen {
+            self.skin_seen = crate::skin::version();
+            self.palette =
+                crate::skin::palette(&Palette::from_theme(&daw_ui::theming::Theme::dark()));
+            self.recut();
+        } else if self.scene.tcp.compact != self.compact.get() {
             self.recut();
         }
         let began = web_time::Instant::now();
