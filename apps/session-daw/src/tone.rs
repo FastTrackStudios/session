@@ -2525,6 +2525,27 @@ fn phase_themed(
     )
 }
 
+/// A phase's bar at `at` — the theme's (`rack.phase`), or the painters':
+/// `open` is the fold and the lit grip of a phase with units, `None` a
+/// blank phase's faint bar. What the rack draws over each phase, for
+/// anything else that groups a chain by phase (the FX view's devices).
+pub fn phase_bar(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    phase: session::mix_phases::MixPhase,
+    at: Panel,
+    open: Option<(bool, Option<Grip>)>,
+) {
+    if phase_themed(scene, font, phase, at, open) {
+        return;
+    }
+    match open {
+        Some((shut, lit)) => container(scene, palette, font, phase, at, shut, lit),
+        None => blank(scene, palette, font, phase, at),
+    }
+}
+
 /// A phase's container bar: its name, and the chevron that folds it.
 ///
 /// The chain is eleven units long and a strip shows about half of it,

@@ -144,6 +144,13 @@ fn main() {
         depths();
         return;
     }
+    // `FTS_BENCH_FX=out.png`: the FX — `FTS_BENCH_FX_LANES` tracks of
+    // it (one, docked), from the selected one; `FTS_BENCH_FX_FOLD` the
+    // phases folded, by name (`rescue,polish`).
+    if let Ok(out) = std::env::var("FTS_BENCH_FX") {
+        fx_shot(&palette, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
     if let Ok(out) = std::env::var("FTS_BENCH_MIXER") {
         mixer_shot(
             &palette,
@@ -681,6 +688,64 @@ fn expression_shot(palette: &Palette, out: &std::path::Path, width: u32, height:
 ///
 /// `FTS_BENCH_MIXER=/tmp/mixer.png`, with `FTS_BENCH_SCROLL=x,y` to move
 /// along the strips.
+fn fx_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let Some(project) = rt.block_on(daw_ui::studio::project::fetch()) else {
+        tracing::error!("could not read the project back");
+        return;
+    };
+    let (visible, depths) =
+        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
+    let mut rows: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
+    // The first track with a rack to show, selected: the FX starts there.
+    let mut store = session_daw::tone::Store::default();
+    store.seed(&rows);
+    let first = rows
+        .iter()
+        .position(|(t, _)| store.get(&t.guid).is_some())
+        .unwrap_or(0);
+    for (i, (track, _)) in rows.iter_mut().enumerate() {
+        track.selected = i == first;
+    }
+    let lanes = std::env::var("FTS_BENCH_FX_LANES")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(1);
+    let folded: Vec<session::mix_phases::MixPhase> = std::env::var("FTS_BENCH_FX_FOLD")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|name| {
+            session_daw::tone::RACK_PHASES
+                .iter()
+                .copied()
+                .find(|p| format!("{p:?}").eq_ignore_ascii_case(name.trim()))
+        })
+        .collect();
+    let tracks = rows.into_iter().map(|(t, _)| t).collect();
+    let scene = session_daw::fx_view::shot(tracks, store, lanes, &folded, width, height);
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    image.render_to_vec(
+        |painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+            );
+            painter.append_scene(scene, Affine::IDENTITY);
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+}
+
 fn mixer_shot(
     palette: &Palette,
     font: &session_daw::text::Font,

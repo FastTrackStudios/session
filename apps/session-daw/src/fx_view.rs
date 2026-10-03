@@ -24,8 +24,24 @@ use vello::kurbo::Affine;
 
 use crate::tone::{Folded, Grip, Panel, Shared, Which};
 
-/// How wide one device is, laid out.
+/// How wide one device is, laid out: an EQ (and the saturation beside
+/// it, a frequency picture too) twice what a compressor needs.
 const DEVICE_W: f64 = 300.0;
+
+/// How wide `which` is as a device.
+fn device_w(which: Which) -> f64 {
+    match which {
+        Which::RescueEq
+        | Which::Eq
+        | Which::Space
+        | Which::PreEq
+        | Which::PostEq
+        | Which::DecayEq
+        | Which::PolishEq
+        | Which::Sat => DEVICE_W * 2.0,
+        _ => DEVICE_W,
+    }
+}
 
 /// The gap between two devices.
 const GAP: f64 = 6.0;
@@ -89,6 +105,12 @@ pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
     }
 }
 
+/// How wide a folded phase is: its bar, and the column under it.
+const FOLDED_W: f64 = 120.0;
+
+/// How wide a phase with no devices is: a faint bar holding its place.
+const BLANK_W: f64 = 80.0;
+
 /// How wide a lane's name is, when there is more than one lane.
 const HEAD_W: f64 = 140.0;
 
@@ -121,6 +143,10 @@ struct DeviceRow {
     shown: RefCell<Vec<(String, f64, f64)>>,
     /// Each device where it was last drawn.
     devices: RefCell<Vec<Placed>>,
+    /// Each phase's bar where it was last drawn: a press on one folds it.
+    bars: RefCell<Vec<(session::mix_phases::MixPhase, Panel)>>,
+    /// The phases folded, as the mixer's racks fold them.
+    folded: std::collections::HashSet<session::mix_phases::MixPhase>,
     hold: Option<(BlitzPointerId, Grip, Placed, (f64, f64))>,
     hover: Option<(String, Which, Grip)>,
     dirty: Cell<bool>,
@@ -142,6 +168,8 @@ impl DeviceRow {
             scroll: std::collections::HashMap::new(),
             shown: RefCell::new(Vec::new()),
             devices: RefCell::new(Vec::new()),
+            bars: RefCell::new(Vec::new()),
+            folded: std::collections::HashSet::new(),
             hold: None,
             hover: None,
             dirty: Cell::new(true),
@@ -227,6 +255,20 @@ impl DeviceRow {
             }
             UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => {
                 let (x, y) = at(e);
+                let on_bar = self
+                    .bars
+                    .borrow()
+                    .iter()
+                    .find(|(_, bar)| bar.contains(x, y))
+                    .map(|(phase, _)| *phase);
+                if let Some(phase) = on_bar {
+                    // A bar folds its phase, or opens it.
+                    if !self.folded.remove(&phase) {
+                        self.folded.insert(phase);
+                    }
+                    self.dirty.set(true);
+                    return;
+                }
                 match self.device_at(x, y) {
                     Some((placed, grip)) if grip.is_switch() => {
                         if let Some(tone) = self.tone.store.borrow_mut().edit(&placed.guid) {
@@ -298,6 +340,7 @@ impl DeviceRow {
         let mut drawn = Scene::new();
         let mut devices = Vec::new();
         let mut shown = Vec::new();
+        let mut bars = Vec::new();
         let lanes: Vec<daw_proto::Track> = self.lane_tracks().into_iter().cloned().collect();
         for (n, track) in lanes.iter().enumerate() {
             let top = crate::num::coord(n) * lane_h;
@@ -331,8 +374,39 @@ impl DeviceRow {
                 continue;
             };
             let panels = tone.panels(crate::tone::panels_for(session::mix_phases::MixPhase::Tone));
-            let most =
-                (crate::num::coord(panels.len()) * (DEVICE_W + GAP) - (w - start) + INSET).max(0.0);
+            // The chain by phase, as the rack groups it: a bar over each
+            // phase's devices, folding them to a narrow column; a phase
+            // with none is a faint bar, on a chain a channel's would
+            // line up with (`tone::chain`'s rule).
+            let level = panels.iter().any(|which| {
+                matches!(
+                    which.phase(),
+                    session::mix_phases::MixPhase::Rescue | session::mix_phases::MixPhase::Tone
+                )
+            });
+            let groups: Vec<(session::mix_phases::MixPhase, Vec<Which>)> = crate::tone::RACK_PHASES
+                .iter()
+                .map(|phase| {
+                    let units: Vec<Which> = panels
+                        .iter()
+                        .copied()
+                        .filter(|which| which.phase() == *phase)
+                        .collect();
+                    (*phase, units)
+                })
+                .filter(|(_, units)| level || !units.is_empty())
+                .collect();
+            let group_w = |phase: session::mix_phases::MixPhase, units: &[Which]| {
+                if units.is_empty() {
+                    BLANK_W
+                } else if self.folded.contains(&phase) {
+                    FOLDED_W
+                } else {
+                    units.iter().map(|w| device_w(*w) + GAP).sum::<f64>() - GAP
+                }
+            };
+            let total: f64 = groups.iter().map(|(p, u)| group_w(*p, u) + GAP).sum();
+            let most = (total - (w - start) + INSET).max(0.0);
             let scroll = self
                 .scroll
                 .get(&track.guid)
@@ -340,53 +414,109 @@ impl DeviceRow {
                 .unwrap_or(0.0)
                 .min(most);
             self.scroll.insert(track.guid.clone(), scroll);
-            for (i, which) in panels.iter().enumerate() {
-                let x = start + crate::num::coord(i) * (DEVICE_W + GAP) - scroll;
+            let body_top = top + INSET + crate::tone::HEAD_H + 3.0;
+            let body_h = (lane_h - INSET * 2.0 - crate::tone::HEAD_H - 3.0).max(0.0);
+            let mut next = start - scroll;
+            for (phase, units) in &groups {
+                let width = group_w(*phase, units);
+                let x0 = next;
+                next += width + GAP;
                 // Only what is on screen is drawn.
-                if x + DEVICE_W < start || x > w {
+                if x0 + width < start || x0 > w {
                     continue;
                 }
-                let panel = Panel {
-                    x,
+                let bar = Panel {
+                    x: x0,
                     y: top + INSET,
-                    width: DEVICE_W,
-                    height: (lane_h - INSET * 2.0).max(0.0),
+                    width,
+                    height: crate::tone::HEAD_H,
                 };
-                let lit = self
-                    .hold
-                    .as_ref()
-                    .filter(|(_, _, held, _)| held.guid == track.guid && held.which == *which)
-                    .map(|(_, grip, ..)| *grip)
-                    .or(self
-                        .hover
-                        .as_ref()
-                        .filter(|(g, on, _)| *g == track.guid && on == which)
-                        .map(|(.., grip)| *grip));
-                crate::tone::draw(
+                let shut = self.folded.contains(phase);
+                crate::tone::phase_bar(
                     &mut drawn,
                     &self.palette,
                     &self.font,
-                    tone,
-                    &crate::live::Meters::default(),
-                    &[*which],
-                    panel,
-                    Folded::zoomed(),
-                    lit,
-                    None,
+                    *phase,
+                    bar,
+                    (!units.is_empty()).then_some((shut, None)),
                 );
-                devices.push(Placed {
-                    guid: track.guid.clone(),
-                    which: *which,
-                    panel,
-                });
+                if !units.is_empty() {
+                    bars.push((*phase, bar));
+                }
+                if shut {
+                    continue;
+                }
+                let mut x = x0;
+                for which in units {
+                    let width = device_w(*which);
+                    let here = x;
+                    x += width + GAP;
+                    if here + width < start || here > w {
+                        continue;
+                    }
+                    let panel = Panel {
+                        x: here,
+                        y: body_top,
+                        width,
+                        height: body_h,
+                    };
+                    let lit = self
+                        .hold
+                        .as_ref()
+                        .filter(|(_, _, held, _)| held.guid == track.guid && held.which == *which)
+                        .map(|(_, grip, ..)| *grip)
+                        .or(self
+                            .hover
+                            .as_ref()
+                            .filter(|(g, on, _)| *g == track.guid && on == which)
+                            .map(|(.., grip)| *grip));
+                    crate::tone::draw(
+                        &mut drawn,
+                        &self.palette,
+                        &self.font,
+                        tone,
+                        &crate::live::Meters::default(),
+                        &[*which],
+                        panel,
+                        Folded::zoomed(),
+                        lit,
+                        None,
+                    );
+                    devices.push(Placed {
+                        guid: track.guid.clone(),
+                        which: *which,
+                        panel,
+                    });
+                }
             }
         }
+        *self.bars.borrow_mut() = bars;
         *self.devices.borrow_mut() = devices;
         *self.shown.borrow_mut() = shown;
         let mut out = Scene::new();
         anyrender::PaintScene::append_scene(&mut out, drawn, Affine::scale(scale));
         out
     }
+}
+
+/// The FX as it draws for `tracks` with `store`'s settings, `lanes` of
+/// them, `width` × `height` at 1:1 — for the bench's shot. `folded` are
+/// the phases folded, as a press on their bars would leave them.
+#[must_use]
+pub fn shot(
+    tracks: Vec<daw_proto::Track>,
+    store: crate::tone::Store,
+    lanes: usize,
+    folded: &[session::mix_phases::MixPhase],
+    width: u32,
+    height: u32,
+) -> Scene {
+    let tone = Rc::new(Shared::default());
+    *tone.store.borrow_mut() = store;
+    let mut row = DeviceRow::new(tone, tracks, lanes.max(1));
+    row.watch = None;
+    row.folded.extend(folded.iter().copied());
+    row.paint_scene(width, height, 1.0)
 }
 
 #[cfg(feature = "native")]
