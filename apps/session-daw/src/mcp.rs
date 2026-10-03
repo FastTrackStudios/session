@@ -502,7 +502,18 @@ impl Mixer {
             )
             .layout()
                 == crate::strip::Layout::Stacked;
-            match skin.as_ref().filter(|_| stacked && !live && !touch) {
+            // A live or a touch strip is a different strip; a theme draws
+            // one only when it says it does (`$strip.live`, `$strip.touch`)
+            // — REAPER's layout has neither.
+            let says = |theme: &theme_runtime::Theme, token: &str| {
+                theme
+                    .token(token)
+                    .and_then(theme_runtime::Value::truthy)
+                    .unwrap_or(false)
+            };
+            match skin.as_ref().filter(|t| {
+                stacked && (!live || says(t, "strip.live")) && (!touch || says(t, "strip.touch"))
+            }) {
                 Some(theme) => {
                     let shown = crate::skin::Shown {
                         label: labels.last().map(|(l, size)| (l.as_str(), *size)),

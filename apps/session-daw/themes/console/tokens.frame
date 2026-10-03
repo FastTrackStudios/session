@@ -1,5 +1,7 @@
 <Document>
   <Variables modes="dark">
+    <Var name="strip.live" value="true" />
+    <Var name="strip.touch" value="true" />
     <Var name="text" value="#e4e4e7" />
     <Var name="text.dim" value="#a1a1aa" />
     <Var name="text.faint" value="#71717a" />
