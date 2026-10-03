@@ -135,6 +135,10 @@ input-keybinds = { path = "../daw/crates/input/input-keybinds" }
 # github.com/FastTrackStudios/frame while the theme runtime is built out;
 # becomes a tagged git dep once frame cuts one.
 theme-runtime = { path = "../../frame/features/theme/theme-runtime", features = ["anyrender-0-11"] }
+# A frame face running live: a control surface designed in frame (the
+# rig's pedals, amps and Time blocks, a reverb's machine), painted into
+# the host's scene and played by its pointer — the FX view's devices.
+frame-live = { path = "../../frame/crates/frame-live", features = ["anyrender-0-11"] }
 
 # ── daw domain (wave 2) ───────────────────────────────────────────────
 # Facade crate — the only public API surface for the daw domain.

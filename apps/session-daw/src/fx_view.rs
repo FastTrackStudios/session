@@ -48,6 +48,11 @@ fn device_w(which: Which) -> f64 {
     }
 }
 
+/// How tall one lane is, wherever it is: docked, the pane is one lane;
+/// full size, as many lanes as fit. One height, so a track's chain is
+/// the same picture in both.
+pub const LANE_H: f64 = 340.0;
+
 /// The gap between two devices.
 const GAP: f64 = 6.0;
 
@@ -176,6 +181,9 @@ struct Hits {
     knobs: Vec<Turned>,
     /// Each phase's edge and tint: a press on one folds it.
     bars: Vec<(MixPhase, Panel)>,
+    /// The frame faces on screen: their device's key, whose and which,
+    /// where — a press on one is the face's.
+    faces: Vec<(String, String, Which, Panel)>,
     /// The lane being drawn's clip: what scrolls stays right of its strip.
     clip: vello::kurbo::Rect,
     /// The faces' pictures, painted after the rest (`paint_scene`): the
@@ -292,6 +300,8 @@ struct DeviceRow {
     /// The phases folded to their macros.
     folded: std::collections::HashSet<MixPhase>,
     hold: Option<(BlitzPointerId, Grip, Placed, (f64, f64))>,
+    /// A frame face being played: its key, whose, which, and where.
+    playing: Option<(BlitzPointerId, String, String, Which, Panel)>,
     /// A macro being turned, and where the pointer was.
     turning: Option<(BlitzPointerId, Turned, f64)>,
     hover: Option<(String, Which, Grip)>,
@@ -332,6 +342,7 @@ impl DeviceRow {
             hits: RefCell::new(Hits::default()),
             folded: std::collections::HashSet::new(),
             hold: None,
+            playing: None,
             turning: None,
             hover: None,
             dirty: Cell::new(true),
@@ -471,8 +482,40 @@ impl DeviceRow {
         }
     }
 
+    /// Hand what the face at `key` edited to its track's settings.
+    fn face_edits(&mut self, key: &str, guid: &str, which: Which) {
+        let Some(surface) = self.painters.frame_mut(key) else {
+            return;
+        };
+        let edits = surface.take_edits();
+        if edits.is_empty() {
+            return;
+        }
+        if let Some(tone) = self.tone.store.borrow_mut().edit(guid) {
+            for (addr, value) in &edits {
+                crate::faces::edit(which, tone, addr, *value);
+            }
+        }
+        self.tone.edited();
+    }
+
     fn press(&mut self, e: &BlitzPointerEvent) -> bool {
         let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        let face = self
+            .hits
+            .borrow()
+            .faces
+            .iter()
+            .find(|(.., at)| at.contains(x, y))
+            .cloned();
+        if let Some((key, guid, which, at)) = face {
+            if let Some(surface) = self.painters.frame_mut(&key) {
+                surface.pointer_down(x - at.x, y - at.y, face_mods(e));
+            }
+            self.face_edits(&key, &guid, which);
+            self.playing = Some((e.id, key, guid, which, at));
+            return true;
+        }
         let (bar, knob) = {
             let hits = self.hits.borrow();
             (
@@ -515,6 +558,15 @@ impl DeviceRow {
 
     fn moved(&mut self, e: &BlitzPointerEvent) -> bool {
         let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        if let Some((id, key, guid, which, at)) = self.playing.clone()
+            && id == e.id
+        {
+            if let Some(surface) = self.painters.frame_mut(&key) {
+                surface.pointer_move(x - at.x, y - at.y, face_mods(e));
+            }
+            self.face_edits(&key, &guid, which);
+            return true;
+        }
         if let Some((id, knob, last)) = self.turning.clone()
             && id == e.id
         {
@@ -573,6 +625,13 @@ impl DeviceRow {
             UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => self.press(e),
             UiEvent::PointerMove(e) => self.moved(e),
             UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) => {
+                if let Some((_, key, guid, which, _)) = self.playing.take_if(|(id, ..)| *id == e.id)
+                {
+                    if let Some(surface) = self.painters.frame_mut(&key) {
+                        surface.pointer_up();
+                    }
+                    self.face_edits(&key, &guid, which);
+                }
                 let turned = self.turning.take_if(|(id, ..)| *id == e.id).is_some();
                 self.hold.take_if(|(id, ..)| *id == e.id).is_some() || turned
             }
@@ -669,15 +728,22 @@ impl DeviceRow {
     }
 
     /// How wide `returns` are, laid out after the chain.
-    fn returns_w(&self, returns: &[usize]) -> f64 {
+    fn returns_w(&self, returns: &[usize], body_h: f64) -> f64 {
         if returns.is_empty() {
             return 0.0;
         }
+        let store = self.tone.store.borrow();
         RETURNS_GAP
             + returns
                 .iter()
                 .filter_map(|r| self.tracks.get(*r))
-                .map(|r| self.layout.width_of(widened(r).width) + GAP + DEVICE_W + GAP)
+                .map(|r| {
+                    let device = store
+                        .get(&r.guid)
+                        .and_then(|t| main_unit(t.role).map(|w| ret_device_w(t, w, body_h)))
+                        .unwrap_or(DEVICE_W);
+                    self.layout.width_of(widened(r).width) + GAP + device + GAP
+                })
                 .sum::<f64>()
     }
 
@@ -755,9 +821,18 @@ impl DeviceRow {
         let Some(face) = crate::faces::of(which, tone) else {
             return false;
         };
+        let key = format!("{guid}/{which:?}");
+        if let crate::faces::Picture::Frame(_) = face.picture {
+            // A frame face is the whole device, and plays its own
+            // controls: the pointer goes to it.
+            hits.faces
+                .push((key.clone(), guid.to_owned(), which, panel));
+            hits.pictures.push((key, face.picture, panel, hits.clip));
+            return true;
+        }
         crate::faces::chrome(scene, &self.palette, &self.font, &face, panel);
         hits.pictures.push((
-            format!("{guid}/{which:?}"),
+            key,
             face.picture,
             crate::faces::picture_at(panel),
             hits.clip,
@@ -917,17 +992,11 @@ impl DeviceRow {
                 self.strip(scene, ret, x, lane.top, lane.height);
             }
             x += strip_w + GAP;
-            if lane.sees(x, DEVICE_W) {
-                self.draw_device(
-                    scene,
-                    hits,
-                    &ret.guid,
-                    tone,
-                    which,
-                    lane.device(x, DEVICE_W),
-                );
+            let width = ret_device_w(tone, which, lane.body_h);
+            if lane.sees(x, width) {
+                self.draw_device(scene, hits, &ret.guid, tone, which, lane.device(x, width));
             }
-            x += DEVICE_W + GAP;
+            x += width + GAP;
         }
     }
 
@@ -968,7 +1037,8 @@ impl DeviceRow {
                     .sum()
             })
         };
-        let most = (chain_w + self.returns_w(&returns) - (right - start) + INSET).max(0.0);
+        let most =
+            (chain_w + self.returns_w(&returns, lane.body_h) - (right - start) + INSET).max(0.0);
         let scroll = self
             .scroll
             .get(&track.guid)
@@ -1000,19 +1070,20 @@ impl DeviceRow {
         let scale = scale.max(f64::EPSILON);
         let (w, h) = (f64::from(width) / scale, f64::from(height) / scale);
         let family = self.family();
+        // Docked, the one lane is the pane; full size, every lane is
+        // `LANE_H`, as many as the view has room for.
+        let (lanes, lane_h) = if self.lanes > 1 {
+            (crate::num::index(h / LANE_H).max(1), LANE_H)
+        } else {
+            (1, h)
+        };
         // Never past the last of them: the stack stops at the end.
         self.down = self
             .down
-            .min(family.len().saturating_sub(self.lanes.min(family.len())));
-        let lane_h = h / crate::num::coord(self.lanes);
+            .min(family.len().saturating_sub(lanes.min(family.len())));
         let mut drawn = Scene::new();
         let mut hits = Hits::default();
-        for (n, at) in family
-            .into_iter()
-            .skip(self.down)
-            .take(self.lanes)
-            .enumerate()
-        {
+        for (n, at) in family.into_iter().skip(self.down).take(lanes).enumerate() {
             self.draw_lane(
                 &mut drawn,
                 &mut hits,
@@ -1042,7 +1113,7 @@ impl DeviceRow {
                 ctx.as_mut().map(|c| reborrow(&mut **c)),
                 &key,
                 &picture,
-                size,
+                (size.0, size.1, scale),
             );
             let place = Affine::scale(1.0 / scale).then_translate((at.x, at.y).into());
             anyrender::PaintScene::push_clip_layer(&mut drawn, Affine::IDENTITY, &clip);
@@ -1141,10 +1212,29 @@ fn phase_edge(
     }
 }
 
+/// A frame face's modifiers: Shift fine, Ctrl/Cmd the alternate, as
+/// frame's own player has them.
+fn face_mods(e: &BlitzPointerEvent) -> frame_live::Modifiers {
+    frame_live::Modifiers {
+        fine: e.mods.shift(),
+        alt: e.mods.ctrl() || e.mods.meta(),
+        option: e.mods.alt(),
+    }
+}
+
 /// `ctx` for as long as it is borrowed here: the shorter-lived trait
 /// object a painter takes.
 fn reborrow(ctx: &mut dyn anyrender::RenderContext) -> &mut dyn anyrender::RenderContext {
     ctx
+}
+
+/// How wide a return's effect is: a frame face as wide as its design is
+/// at the lane's height (a 960 × 164 panel is a long one), anything else
+/// a device.
+fn ret_device_w(tone: &crate::tone::Tone, which: Which, body_h: f64) -> f64 {
+    crate::faces::aspect(which, tone).map_or(DEVICE_W, |aspect| {
+        (body_h * aspect).clamp(DEVICE_W, DEVICE_W * 4.0)
+    })
 }
 
 /// A return's one effect, by what it is for — `None` for a channel.

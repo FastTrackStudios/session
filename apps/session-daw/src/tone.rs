@@ -7474,6 +7474,19 @@ fn reverb_presets(name: &str) -> Vec<Preset> {
             ),
         ],
         "Long" => vec![
+            // A cloud first: the long one is a wash, not a building.
+            space(
+                "Cloud 4.0",
+                A::Cloud,
+                4.0,
+                50.0,
+                0.85,
+                0.6,
+                0.9,
+                0.2,
+                vec![shelf(-5.0)],
+                dark(-8.0, -8.0),
+            ),
             space(
                 "Hall 2.6",
                 A::Hall,

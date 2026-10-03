@@ -23,6 +23,93 @@ pub enum Picture {
     Delay(delay_ui::viz::DelayView),
     Mod(modulation_ui::viz::ModView),
     Sat(saturate_ui::viz::SatView),
+    /// A face designed in frame, running live: its controls are its own.
+    Frame(FrameFace),
+}
+
+/// A frame face: which design (its path under the faces directory,
+/// without the extension), and what it shows — values by address in
+/// their own units, and its text.
+#[derive(Clone, PartialEq)]
+pub struct FrameFace {
+    pub design: String,
+    pub values: Vec<(String, f64)>,
+    pub texts: Vec<(String, String)>,
+}
+
+/// Where frame's faces are: `FTS_FRAME_DIR`, else frame's generated
+/// faces in the frame checkout beside this one — as signal finds them.
+fn design_dir() -> std::path::PathBuf {
+    std::env::var_os("FTS_FRAME_DIR").map_or_else(
+        || {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../../frame/examples/plugins")
+        },
+        Into::into,
+    )
+}
+
+/// A reverb's decay as the Time knob: log seconds over 0.3–20 s.
+fn time_knob(seconds: f32) -> f64 {
+    (f64::from(seconds.max(0.3)) / 0.3).log(20.0_f64 / 0.3)
+}
+
+/// …and back.
+fn seconds_of(knob: f64) -> f32 {
+    crate::num::narrow(0.3 * (20.0_f64 / 0.3).powf(knob.clamp(0.0, 1.0)))
+}
+
+/// The Cloud reverb's face (`rig-faces/84-verb-cloud`), from `tone`.
+fn cloud_face(tone: &Tone) -> FrameFace {
+    let room = &tone.reverb;
+    let preset = tone
+        .preset
+        .and_then(|at| tone.presets.get(at))
+        .map_or_else(|| "Cloud".to_owned(), |p| p.name.clone());
+    FrameFace {
+        design: "rig-faces/84-verb-cloud".to_owned(),
+        values: vec![
+            ("verb/time_knob".to_owned(), time_knob(room.decay)),
+            ("verb/predelay".to_owned(), f64::from(room.predelay)),
+            ("verb/size".to_owned(), f64::from(room.size)),
+            ("verb/damping".to_owned(), f64::from(room.damping)),
+            (
+                "verb/level".to_owned(),
+                20.0 * f64::from(room.mix.max(0.001)).log10(),
+            ),
+            ("verb/on".to_owned(), 1.0),
+        ],
+        texts: vec![
+            ("verb/preset".to_owned(), preset),
+            ("verb/time_text".to_owned(), format!("{:.1} s", room.decay)),
+        ],
+    }
+}
+
+/// Width over height of `which`'s frame face over `tone`, if it has one.
+#[must_use]
+pub fn aspect(which: Which, tone: &Tone) -> Option<f64> {
+    (which == Which::Reverb && tone.reverb.algorithm == reverb_dsp::algorithm::AlgorithmType::Cloud)
+        .then_some(960.0 / 164.0)
+}
+
+/// Apply an edit a frame face made on `which` to `tone`; whether it
+/// was one of `tone`'s.
+pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
+    if which != Which::Reverb {
+        return false;
+    }
+    let room = &mut tone.reverb;
+    let v = crate::num::narrow(value);
+    match addr {
+        "verb/time_knob" => room.decay = seconds_of(value),
+        "verb/predelay" => room.predelay = v.clamp(0.0, 200.0),
+        "verb/size" => room.size = v.clamp(0.0, 1.0),
+        "verb/damping" => room.damping = v.clamp(0.0, 1.0),
+        "verb/level" => room.mix = crate::num::narrow(10.0_f64.powf(value / 20.0)).clamp(0.0, 1.0),
+        _ => return false,
+    }
+    true
 }
 
 /// One device's face: what it is called, its picture, its controls.
@@ -263,6 +350,14 @@ fn taps(tone: &Tone) -> Vec<delay_ui::viz::Tap> {
 #[must_use]
 pub fn of(which: Which, tone: &Tone) -> Option<Face> {
     match which {
+        // A machine with a face of its own in frame draws that.
+        Which::Reverb if tone.reverb.algorithm == reverb_dsp::algorithm::AlgorithmType::Cloud => {
+            Some(Face {
+                name: "Cloud".to_owned(),
+                picture: Picture::Frame(cloud_face(tone)),
+                knobs: &[],
+            })
+        }
         Which::Reverb => {
             let room = &tone.reverb;
             let family = room.algorithm.family();
@@ -390,6 +485,7 @@ pub struct Painters {
             delay_ui::viz::DelayWidget,
         ),
     >,
+    frames: std::collections::HashMap<String, Live>,
     mods: std::collections::HashMap<
         String,
         (
@@ -399,7 +495,70 @@ pub struct Painters {
     >,
 }
 
+/// One frame face, open: what it was last shown, so a value it is being
+/// dragged through is not pushed back at it every frame.
+pub struct Live {
+    pub surface: frame_live::LiveSurface,
+    shown: Option<FrameFace>,
+}
+
 impl Painters {
+    /// Device `key`'s frame face, open, for the pointer.
+    pub fn frame_mut(&mut self, key: &str) -> Option<&mut frame_live::LiveSurface> {
+        self.frames.get_mut(key).map(|live| &mut live.surface)
+    }
+
+    /// `face`, `width` × `height` device pixels at `scale`, as device
+    /// `key`'s live surface paints it — opened the first time.
+    fn paint_frame(
+        &mut self,
+        key: &str,
+        face: &FrameFace,
+        (width, height): (u32, u32),
+        scale: f64,
+    ) -> Scene {
+        let mut scene = Scene::new();
+        if !self.frames.contains_key(key) {
+            let path = design_dir().join(&face.design);
+            let dir = path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_default();
+            let stem = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let (markup, catalog) = frame_live::face_paths(&dir, &stem);
+            match frame_live::LiveSurface::open(&markup, catalog) {
+                Ok(mut surface) => {
+                    surface.set_animate(true);
+                    self.frames.insert(
+                        key.to_owned(),
+                        Live {
+                            surface,
+                            shown: None,
+                        },
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(target: "frame", face = %face.design, %error, "frame face did not open");
+                    return scene;
+                }
+            }
+        }
+        let Some(live) = self.frames.get_mut(key) else {
+            return scene;
+        };
+        if live.shown.as_ref() != Some(face) {
+            live.surface.apply_real(face.values.clone());
+            live.surface.apply_texts(face.texts.clone());
+            live.shown = Some(face.clone());
+        }
+        live.surface.poll_reload();
+        live.surface.paint_vectors(&mut scene, width, height, scale);
+        scene
+    }
+
     /// `picture`, `width` × `height` device pixels, as device `key`'s
     /// widget paints it — the vector painter when there is no `ctx`.
     pub fn paint(
@@ -407,8 +566,11 @@ impl Painters {
         ctx: Option<&mut dyn anyrender::RenderContext>,
         key: &str,
         picture: &Picture,
-        (width, height): (u32, u32),
+        (width, height, scale): (u32, u32, f64),
     ) -> Scene {
+        if let Picture::Frame(face) = picture {
+            return self.paint_frame(key, face, (width, height), scale);
+        }
         let Some(ctx) = ctx else {
             let mut scene = Scene::new();
             let (w, h) = (f64::from(width), f64::from(height));
@@ -417,6 +579,7 @@ impl Painters {
                 Picture::Delay(view) => delay_ui::viz::paint_delay(&mut scene, view, w, h),
                 Picture::Mod(view) => modulation_ui::viz::paint_mod(&mut scene, view, w, h),
                 Picture::Sat(view) => saturate_ui::viz::paint_sat(&mut scene, view, w, h),
+                Picture::Frame(_) => {}
             }
             return scene;
         };
@@ -443,6 +606,7 @@ impl Painters {
             }
             // No widget of its own: its picture is measured, not
             // animated, so the vector painter is the whole of it.
+            Picture::Frame(_) => Scene::new(),
             Picture::Sat(view) => {
                 let mut scene = Scene::new();
                 let (w, h) = (f64::from(width), f64::from(height));

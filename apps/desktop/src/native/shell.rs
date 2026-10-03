@@ -505,8 +505,9 @@ fn SongViews(
     }
 }
 
-/// How tall the FX is, pinned under the arrangement or the mixer.
-const FX_DOCK_H: f64 = 300.0;
+/// How tall the FX is, pinned under the arrangement or the mixer: one
+/// lane of its full-size view, so a track's chain is the same in both.
+const FX_DOCK_H: f64 = session_daw::fx_view::LANE_H;
 
 /// Live mode runs the set: when the song playing reaches its end, the next
 /// one is picked and plays from its count-in. Checked each frame — the
