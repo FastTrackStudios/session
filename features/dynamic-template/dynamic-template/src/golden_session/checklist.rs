@@ -483,13 +483,53 @@ fn vocals(g: &Golden) -> bool {
         g,
         "Vocals",
         &[
-            "Ron", "Belen", "Aline", "BGVs", "Choir", "VOX EN", "VOX ES", "VOX PT",
+            "Ron", "Belen", "Aline", "Vox FX", "BGVs", "Choir", "VOX EN", "VOX ES", "VOX PT",
         ],
     ) && names_eq(g, "Vocals/Ron", &["Main", "DBL"])
         && names_eq(g, "Vocals/Ron/Main", &["EN", "ES", "PT"])
         && names_eq(g, "Vocals/Belen/Main", &["EN", "ES"])
         && names_eq(g, "Vocals/Aline/Main", &["PT"])
         && sends_to(g, "Vocals", "LEAD VOX BUS")
+}
+
+/// The BGVs to their own bus, and the vocal template's returns folded
+/// in: `Vox FX` beside the leads with the same Delay, Verb, Wide and
+/// Pitch as `vocal-fx.rpp`, and every lead's mix track sending to every
+/// one of them.
+fn bgvs_and_vocal_fx(g: &Golden) -> bool {
+    const FX: &str = "Vocals/Vox FX";
+    let returns: Vec<String> = g
+        .built
+        .tracks
+        .iter()
+        .filter(|t| t.path.starts_with(&format!("{FX}/")) && !t.is_folder)
+        .map(|t| t.path.clone())
+        .collect();
+    let kinds = |path: &str, kind: Kind| g.children(path).iter().all(|t| t.kind == kind);
+    sends_to(g, "Vocals/BGVs", "BGV BUS")
+        && g.track(FX).is_some_and(|t| t.kind == Kind::Fx)
+        && names_eq(g, FX, &["Delay", "Verb", "Wide", "Pitch"])
+        && names_eq(
+            g,
+            &format!("{FX}/Delay"),
+            &["Slap", "Short", "Long", "Throw"],
+        )
+        && names_eq(
+            g,
+            &format!("{FX}/Verb"),
+            &["Room", "Short", "Long", "Moment", "Throw"],
+        )
+        && names_eq(g, &format!("{FX}/Pitch"), &["Oct+", "Oct-"])
+        && kinds(&format!("{FX}/Delay"), Kind::Return)
+        && kinds(&format!("{FX}/Verb"), Kind::Verb)
+        && kinds(&format!("{FX}/Pitch"), Kind::Return)
+        && g.track(&format!("{FX}/Wide"))
+            .is_some_and(|t| t.kind == Kind::Return)
+        && returns.len() == 12
+        && ["Ron", "Belen", "Aline"].iter().all(|lead| {
+            g.track(&format!("Vocals/{lead}"))
+                .is_some_and(|t| t.aux == returns)
+        })
 }
 
 fn bus_tree(g: &Golden) -> bool {
@@ -774,7 +814,7 @@ pub const ITEMS: &[Item] = &[
     Item {
         section: VOCALS,
         text: "BGVs folder → **BGV BUS**; the vocal FX template (`vocal-fx.rpp`)\nfolded in.",
-        check: None,
+        check: Some(bgvs_and_vocal_fx),
     },
     Item {
         section: VOCALS,
