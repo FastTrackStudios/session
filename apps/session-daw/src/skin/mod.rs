@@ -73,6 +73,12 @@ pub fn schema() -> Schema {
         .field("ui.rack")
         .field("folder.tint")
         .field("folder.level")
+        .field("button.label")
+        .field("button.label_size")
+        .field("button.on")
+        .field("button.hover")
+        .field("button.pressed")
+        .field("button.has_icon")
         .layout("mixer.h")
         .layout("ui.mixing")
         .layout("ui.recording")
@@ -141,21 +147,11 @@ static SCHEMA: std::sync::LazyLock<Schema> = std::sync::LazyLock::new(schema);
 /// stands for and how many folders out it is (1, the strip's own).
 #[must_use]
 pub fn step_fields(tint: vello::peniko::Color, level: usize) -> StripFields {
-    let mut values = vec![Value::Missing; SCHEMA.names().count()];
     let [r, g, b, a] = tint.to_rgba8().to_u8_array();
-    for (name, v) in [
+    values(&[
         ("folder.tint", Value::Color(Rgba::from_rgba8(r, g, b, a))),
         ("folder.level", Value::Num(crate::num::coord(level))),
-    ] {
-        if let Some(at) = SCHEMA
-            .slot(name)
-            .and_then(|s| usize::try_from(s).ok())
-            .and_then(|s| values.get_mut(s))
-        {
-            *at = v;
-        }
-    }
-    StripFields(values)
+    ])
 }
 
 /// `track`'s values for a strip theme.
@@ -333,14 +329,34 @@ fn with_source<R>(f: impl FnOnce(&mut Option<Loaded>) -> R) -> R {
 /// The theme the mixer draws with, when there is one with a strip.
 #[must_use]
 pub fn current() -> Option<Arc<Theme>> {
+    loaded().filter(|t| t.has_role(STRIP))
+}
+
+/// The theme loaded, whatever it draws — for a view that asks the theme
+/// for its own role (the rails) and draws itself when there is none.
+#[must_use]
+pub fn loaded() -> Option<Arc<Theme>> {
     #[cfg(not(test))]
-    let theme = THEME
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone()?;
+    return THEME.read().unwrap_or_else(PoisonError::into_inner).clone();
     #[cfg(test)]
-    let theme = THEME.with(|t| t.read().unwrap_or_else(PoisonError::into_inner).clone())?;
-    theme.has_role(STRIP).then_some(theme)
+    THEME.with(|t| t.read().unwrap_or_else(PoisonError::into_inner).clone())
+}
+
+/// Values for a view's own fields (`name`, value), every other field
+/// missing — for the roles that are not a strip.
+#[must_use]
+pub fn values(set: &[(&str, Value)]) -> StripFields {
+    let mut values = vec![Value::Missing; SCHEMA.names().count()];
+    for (name, v) in set {
+        if let Some(at) = SCHEMA
+            .slot(name)
+            .and_then(|s| usize::try_from(s).ok())
+            .and_then(|s| values.get_mut(s))
+        {
+            *at = v.clone();
+        }
+    }
+    StripFields(values)
 }
 
 /// Bumped whenever [`current`] changes: what a recording compares to

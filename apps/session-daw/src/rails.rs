@@ -197,6 +197,14 @@ pub const ITEM_H: f64 = 40.0;
 /// the modes are named things and "Organize" abbreviates badly.
 pub const TOP_ITEM_W: f64 = 74.0;
 
+/// The role a theme draws the rails' frame as: the grounds and rules, at
+/// the window's size, the panel left showing between them.
+pub const RAILS: &str = "rails";
+
+/// The role a theme draws one rail button as, at its slot's size; its
+/// `%icon` slot is where an installed toolbar icon goes.
+pub const BUTTON: &str = "rail.button";
+
 /// Draw the three rails and their contents.
 ///
 /// `left` and `right` are the buttons; the top rail is drawn empty for
@@ -219,7 +227,65 @@ pub fn draw(
     top: &[Item<'_>],
 ) {
     let Frame { width, height, .. } = frame;
+    let theme = crate::skin::loaded();
+    let theme = theme.as_deref();
 
+    ground(painter, palette, font, theme, frame);
+    let mut pen = Pen {
+        painter,
+        palette,
+        font,
+        icons,
+        theme,
+        at,
+    };
+    for (i, item) in top.iter().enumerate() {
+        let Some(slot) = frame.top_slot(i) else { break };
+        pen.button(slot, *item);
+    }
+    for (side, items) in [(false, left), (true, right)] {
+        for (i, item) in items.iter().enumerate() {
+            let Some(slot) = frame.slot(i, side) else {
+                break;
+            };
+            pen.button(slot, *item);
+        }
+    }
+}
+
+/// What every button is drawn with: where to, in what, and what the
+/// pointer is on (hovered, pressed).
+struct Pen<'a, P: PaintScene> {
+    painter: &'a mut P,
+    palette: &'a Palette,
+    font: &'a Font,
+    icons: &'a mut crate::icons::Icons,
+    theme: Option<&'a theme_runtime::Theme>,
+    at: (Option<Action>, Option<Action>),
+}
+
+/// The rails' frame: the theme's, or the painters'.
+fn ground(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    theme: Option<&theme_runtime::Theme>,
+    frame: Frame,
+) {
+    let Frame { width, height, .. } = frame;
+    if let Some(theme) = theme.filter(|t| t.has_role(RAILS)) {
+        theme.record(
+            RAILS,
+            (width, height),
+            &crate::skin::values(&[]),
+            &mut crate::skin::canvas::Host {
+                scene: painter,
+                font,
+            },
+            Affine::IDENTITY,
+        );
+        return;
+    }
     // The rails' ground, drawn over the panel rather than under it: the
     // panel is a recorded scene that does not know where the rails are,
     // so the frame has to be painted last to cover what scrolled under
@@ -252,105 +318,136 @@ pub fn draw(
         palette.tcp_rule,
         Rect::new(width - SIDE - 1.0, TOP, width - SIDE, height),
     );
-
-    for (i, item) in top.iter().enumerate() {
-        let Some(slot) = frame.top_slot(i) else { break };
-        button(painter, palette, font, icons, at, slot, *item);
-    }
-
-    for (side, items) in [(false, left), (true, right)] {
-        for (i, item) in items.iter().enumerate() {
-            let Some(slot) = frame.slot(i, side) else {
-                break;
-            };
-            button(painter, palette, font, icons, at, slot, *item);
-        }
-    }
 }
 
-/// One rail button: a plate, and its label wrapped to the rail.
-fn button(
-    painter: &mut impl PaintScene,
-    palette: &Palette,
-    font: &Font,
-    icons: &mut crate::icons::Icons,
-    at: (Option<Action>, Option<Action>),
-    slot: Rect,
-    item: Item<'_>,
-) {
-    // Pressed beats hovered beats on, the same order every control in
-    // this window uses. `on` is last because "this is the current
-    // phase" is a weaker claim than "your finger is on this one".
-    let (hovered, pressed) = at;
-    let state = if pressed == Some(item.act) {
-        Interaction::Pressed
-    } else if hovered == Some(item.act) && pressed.is_none() {
-        Interaction::Hover
-    } else {
-        Interaction::Normal
-    };
-    // An installed icon replaces both the plate and the label: the cell
-    // already IS a toolbar button, drawn in the three states this
-    // window uses, and painting our plate behind it would put a REAPER
-    // pill inside an FTS one.
-    if let Some(name) = item.icon
-        && let Some(cell) = icons.cell(
-            name,
-            // A lit phase takes the clicked cell, which in REAPER's own
-            // art is the one that carries the accent — so "current" and
-            // "being pressed" look the same, which they do on a toolbar
-            // too.
-            if item.on || state == Interaction::Pressed {
-                Interaction::Pressed
-            } else {
-                state
+impl<P: PaintScene> Pen<'_, P> {
+    /// One rail button: a plate, and its label wrapped to the rail.
+    fn button(&mut self, slot: Rect, item: Item<'_>) {
+        let Self {
+            painter,
+            palette,
+            font,
+            icons,
+            theme,
+            at,
+        } = self;
+        let (palette, font, theme, at) = (*palette, *font, *theme, *at);
+        // Pressed beats hovered beats on, the same order every control in
+        // this window uses. `on` is last because "this is the current
+        // phase" is a weaker claim than "your finger is on this one".
+        let (hovered, pressed) = at;
+        let state = if pressed == Some(item.act) {
+            Interaction::Pressed
+        } else if hovered == Some(item.act) && pressed.is_none() {
+            Interaction::Hover
+        } else {
+            Interaction::Normal
+        };
+        // An installed icon replaces both the plate and the label: the cell
+        // already IS a toolbar button, drawn in the three states this
+        // window uses, and painting our plate behind it would put a REAPER
+        // pill inside an FTS one.
+        //
+        // A lit phase takes the clicked cell, which in REAPER's own art is the
+        // one that carries the accent — so "current" and "being pressed" look
+        // the same, which they do on a toolbar too.
+        let cell_state = if item.on || state == Interaction::Pressed {
+            Interaction::Pressed
+        } else {
+            state
+        };
+        let cell = item.icon.and_then(|name| icons.cell(name, cell_state));
+        // The label, fitted to the button — or none, when the rail is too
+        // narrow for the word: a clipped word in a 38-pixel button is a smear,
+        // and the plate's lit state already says which one is current.
+        let (label, size) = font.fit(item.label, 10.0, 6.0, slot.width() - 4.0);
+        let label = if label.contains('…') {
+            String::new()
+        } else {
+            label
+        };
+        if let Some(theme) = theme.filter(|t| t.has_role(BUTTON)) {
+            let size_box = (slot.width(), slot.height());
+            let fields = crate::skin::values(&[
+                ("button.label", theme_runtime::Value::text(&label)),
+                (
+                    "button.label_size",
+                    theme_runtime::Value::Num(f64::from(size)),
+                ),
+                ("button.on", theme_runtime::Value::Bool(item.on)),
+                (
+                    "button.hover",
+                    theme_runtime::Value::Bool(state == Interaction::Hover),
+                ),
+                (
+                    "button.pressed",
+                    theme_runtime::Value::Bool(state == Interaction::Pressed),
+                ),
+                (
+                    "button.has_icon",
+                    theme_runtime::Value::Bool(cell.is_some()),
+                ),
+            ]);
+            let place = Affine::translate((slot.x0, slot.y0));
+            theme.record(
+                BUTTON,
+                size_box,
+                &fields,
+                &mut crate::skin::canvas::Host {
+                    scene: &mut **painter,
+                    font,
+                },
+                place,
+            );
+            if let Some(cell) = cell {
+                for (name, at) in theme.slots(BUTTON, size_box, &fields) {
+                    if name == "icon" {
+                        icon(&mut **painter, cell, place.transform_rect_bbox(at));
+                    }
+                }
+            }
+            return;
+        }
+        if let Some(cell) = cell {
+            icon(&mut **painter, cell, slot);
+            return;
+        }
+        fill(
+            &mut **painter,
+            match (item.on, state) {
+                (true, _) => palette.accent,
+                (false, Interaction::Normal) => palette.tcp_button,
+                // No second art for an unlit rail plate, so it lifts toward
+                // the accent rather than to a colour invented here.
+                (false, _) => palette.tcp_button.lerp(
+                    palette.accent,
+                    0.25,
+                    vello::peniko::color::HueDirection::Shorter,
+                ),
             },
-        )
-    {
-        icon(painter, cell, slot);
-        return;
+            slot,
+        );
+        // The label is the fallback until the toolbar icons are ported:
+        // `MixPhase::icon` names the file REAPER ships for each phase, and
+        // a rail of words is legible where a rail of nothing is not.
+        if label.is_empty() {
+            return;
+        }
+        let ink = if item.on {
+            crate::tcp::ink_on(palette.accent)
+        } else {
+            palette.text_dim
+        };
+        crate::tcp::glyphs(
+            &mut **painter,
+            font,
+            ink,
+            &label,
+            slot.x0 + (slot.width() - font.width(&label, size)) / 2.0,
+            slot.y0 + slot.height() / 2.0 + f64::from(size) / 3.0,
+            size,
+        );
     }
-    fill(
-        painter,
-        match (item.on, state) {
-            (true, _) => palette.accent,
-            (false, Interaction::Normal) => palette.tcp_button,
-            // No second art for an unlit rail plate, so it lifts toward
-            // the accent rather than to a colour invented here.
-            (false, _) => palette.tcp_button.lerp(
-                palette.accent,
-                0.25,
-                vello::peniko::color::HueDirection::Shorter,
-            ),
-        },
-        slot,
-    );
-    // The label is the fallback until the toolbar icons are ported:
-    // `MixPhase::icon` names the file REAPER ships for each phase, and
-    // a rail of words is legible where a rail of nothing is not.
-    //
-    // Short enough for the rail or it is not drawn at all — a clipped
-    // word in a 38-pixel button is a smear, and the plate's lit state
-    // already says which one is current.
-    let room = slot.width() - 4.0;
-    let (label, size) = font.fit(item.label, 10.0, 6.0, room);
-    if label.contains('…') {
-        return;
-    }
-    let ink = if item.on {
-        crate::tcp::ink_on(palette.accent)
-    } else {
-        palette.text_dim
-    };
-    crate::tcp::glyphs(
-        painter,
-        font,
-        ink,
-        &label,
-        slot.x0 + (slot.width() - font.width(&label, size)) / 2.0,
-        slot.y0 + slot.height() / 2.0 + f64::from(size) / 3.0,
-        size,
-    );
 }
 
 /// What the mixer's rails hold.
@@ -531,15 +628,19 @@ pub fn main_toolbar(
     );
     fill(painter, palette.tcp_gutter, corner);
     let each = corner.width() / crate::num::coord(modes.len());
+    let theme = crate::skin::loaded();
+    let mut pen = Pen {
+        painter,
+        palette,
+        font,
+        icons,
+        theme: theme.as_deref(),
+        at,
+    };
     for (i, mode) in modes.iter().enumerate() {
         let x = corner.x0 + crate::num::coord(i) * each;
         let slot = Rect::new(x + 1.0, corner.y0 + 2.0, x + each - 1.0, corner.y1 - 2.0);
-        button(
-            painter,
-            palette,
-            font,
-            icons,
-            at,
+        pen.button(
             slot,
             Item {
                 label: abbreviate(mode.display_name()),
