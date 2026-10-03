@@ -94,7 +94,9 @@ fn main() {
         .unwrap_or(DEFAULT_SIZE);
 
     let theme = daw_ui::theming::Theme::dark();
-    let palette = Palette::from_theme(&theme);
+    // In the theme's colours, where it names them (FTS_THEME).
+    session_daw::skin::from_env();
+    let palette = session_daw::skin::palette(&Palette::from_theme(&theme));
     let font = session_daw::text::Font::embedded().expect("the embedded font");
     let layout = session_daw::layout::Layout::from_env();
 

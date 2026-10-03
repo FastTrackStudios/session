@@ -353,6 +353,68 @@ pub fn loaded() -> Option<Arc<Theme>> {
     THEME.with(|t| t.read().unwrap_or_else(PoisonError::into_inner).clone())
 }
 
+/// `base` recoloured by the loaded theme: every colour the painters draw
+/// with that the theme names as a token is the theme's.
+///
+/// So what is still painted rather than themed — the rack's curves and
+/// knobs, the live strips — wears the theme's colours as soon as it has
+/// them: a theme that sets `$mute` reddens every mute the painters draw
+/// too, not only the ones it draws itself.
+#[must_use]
+pub fn palette(base: &Palette) -> Palette {
+    let mut p = base.clone();
+    let Some(theme) = loaded() else {
+        return p;
+    };
+    let colour = |name: &str| {
+        theme.token(name).and_then(Value::color).map(|c| {
+            let [r, g, b, a] = c.to_rgba8();
+            vello::peniko::Color::from_rgba8(r, g, b, a)
+        })
+    };
+    for (name, field) in [
+        ("text", &mut p.text),
+        ("text.dim", &mut p.text_dim),
+        ("text.faint", &mut p.text_faint),
+        ("accent", &mut p.accent),
+        ("mute", &mut p.mute),
+        ("solo", &mut p.solo),
+        ("rec", &mut p.rec),
+        ("pan", &mut p.pan),
+        ("meter.safe", &mut p.meter_safe),
+        ("meter.warn", &mut p.meter_warn),
+        ("meter.danger", &mut p.meter_danger),
+        ("field", &mut p.tcp_field),
+        ("combo", &mut p.tcp_combo),
+        ("rack.well", &mut p.tcp_meter_well),
+        ("rail.ground", &mut p.tcp_gutter),
+        ("rail.rule", &mut p.tcp_rule),
+        ("rail.button", &mut p.tcp_button),
+    ] {
+        if let Some(c) = colour(name) {
+            *field = c;
+        }
+    }
+    let chrome = &mut p.chrome;
+    for (name, field) in [
+        ("hardware", &mut chrome.hardware),
+        ("hardware.edge", &mut chrome.hardware_edge),
+        ("hardware.mark", &mut chrome.hardware_mark),
+        ("surface", &mut chrome.surface),
+        ("surface.sunken", &mut chrome.surface_sunken),
+        ("border", &mut chrome.border),
+        ("text", &mut chrome.text),
+        ("text.dim", &mut chrome.text_dim),
+        ("text.faint", &mut chrome.text_faint),
+        ("accent", &mut chrome.accent),
+    ] {
+        if let Some(c) = colour(name) {
+            *field = crate::tcp::to_theme(c);
+        }
+    }
+    p
+}
+
 /// Values for a view's own fields (`name`, value), every other field
 /// missing — for the roles that are not a strip.
 #[must_use]

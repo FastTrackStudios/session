@@ -2131,6 +2131,11 @@ impl MixerWidget {
         }) || open != self.built_open;
         if stale {
             self.built_open.clone_from(&open);
+            // The theme may have changed, and with it the colours the
+            // painters draw what it does not.
+            self.palette = crate::skin::palette(&crate::arrangement::Palette::from_theme(
+                &daw_ui::theming::Theme::dark(),
+            ));
             for analyser in self.spectra.values_mut() {
                 analyser.invalidate();
             }
