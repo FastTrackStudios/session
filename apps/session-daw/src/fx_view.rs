@@ -8,9 +8,14 @@
 //!
 //! The devices are the rack's own panels, drawn by the rack's painters
 //! and edited through its grips — the settings every rack view shares
-//! (`tone::Shared`), so an edit here is an edit on the strip. Still to
-//! come, from the design: the selected track's lineage as strips on the
-//! left, collapsing a device, each device's face as a frame of its own.
+//! (`tone::Shared`), so an edit here is an edit on the strip.
+//!
+//! A lane reads left to right: the track's own mixer strip, its chain
+//! grouped by phase (a folded phase is its macro knobs — `macros`), and
+//! then, after a gap, the returns it feeds — the reverbs and delays in
+//! its folder — each as its strip and its effect. Several lanes are the
+//! selected track and the tracks beside it in its folder: Kick, Snare,
+//! Toms, Cymbals.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -67,8 +72,11 @@ pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
     // here as the mixer seeds them, so the FX is whole without it.
     let rows = session.rows.as_slice().to_vec();
     closeups.tone.store.borrow_mut().seed(&rows);
-    let tracks: Vec<daw_proto::Track> = rows.into_iter().map(|(t, _)| t).collect();
+    let tracks = rows;
     let lanes = lanes.max(1);
+    let Ok(font) = crate::text::Font::embedded() else {
+        return rsx! {};
+    };
     #[cfg(feature = "native")]
     {
         let widget = use_hook(|| {
@@ -76,6 +84,7 @@ pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
                 Rc::clone(&closeups.tone),
                 tracks,
                 lanes,
+                font,
             ))
         });
         rsx! {
@@ -92,6 +101,7 @@ pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
                 Rc::clone(&closeups.tone),
                 tracks,
                 lanes,
+                font,
             ))))
         });
         rsx! {
@@ -100,19 +110,39 @@ pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
     }
     #[cfg(not(any(feature = "native", feature = "web")))]
     {
-        let _ = (closeups, tracks, lanes);
+        let _ = (closeups, tracks, lanes, font);
         rsx! {}
     }
 }
 
-/// How wide a folded phase is: its bar, and the column under it.
-const FOLDED_W: f64 = 120.0;
+use session::mix_phases::MixPhase;
 
-/// How wide a phase with no devices is: a faint bar holding its place.
+/// How wide a folded phase is: its macro knobs, two across.
+const FOLDED_W: f64 = 2.0 * crate::macros::CELL_W + 8.0;
+
+/// How wide a phase with no devices is: a faint edge holding its place.
 const BLANK_W: f64 = 80.0;
 
-/// How wide a lane's name is, when there is more than one lane.
-const HEAD_W: f64 = 140.0;
+/// How wide a strip is in the FX at least: a working strip, with its
+/// fader and its name, however narrow it is in the mixer.
+const STRIP_W: u32 = 84;
+
+/// How wide a phase's edge is: the separator before its devices, and
+/// what a press folds it by.
+const EDGE_W: f64 = 10.0;
+
+/// How tall the phase's tint is along the top of its devices.
+const TINT_H: f64 = 3.0;
+
+/// The space between a track's own chain and the returns it feeds.
+const RETURNS_GAP: f64 = 48.0;
+
+/// `track` as its FX strip draws it: at least [`STRIP_W`] wide.
+fn widened(track: &daw_proto::Track) -> daw_proto::Track {
+    let mut track = track.clone();
+    track.width = Some(track.width.unwrap_or(0).max(STRIP_W));
+    track
+}
 
 /// One device on screen: whose, which, where.
 #[derive(Clone)]
@@ -122,68 +152,203 @@ struct Placed {
     panel: Panel,
 }
 
+/// One macro knob on screen.
+#[derive(Clone)]
+struct Turned {
+    guid: String,
+    phase: MixPhase,
+    index: usize,
+    cell: Panel,
+}
+
+/// What the last frame put where, for the pointer to find.
+#[derive(Default)]
+struct Hits {
+    /// Each lane: whose, its top and its height.
+    lanes: Vec<(String, f64, f64)>,
+    devices: Vec<Placed>,
+    knobs: Vec<Turned>,
+    /// Each phase's edge and tint: a press on one folds it.
+    bars: Vec<(MixPhase, Panel)>,
+}
+
+/// A lane's strip, recorded once for its track and height.
+struct Strip {
+    height_bits: u64,
+    skin: u64,
+    mixer: crate::mcp::Mixer,
+}
+
+/// Where one lane is drawn.
+#[derive(Clone, Copy)]
+struct Lane {
+    /// Where what scrolls starts: just right of the track's strip.
+    start: f64,
+    /// The pane's right edge.
+    right: f64,
+    top: f64,
+    height: f64,
+    /// The devices' box, under the tints.
+    body_top: f64,
+    body_h: f64,
+}
+
+impl Lane {
+    /// Whether `x`..`x + width` is on screen.
+    fn sees(self, x: f64, width: f64) -> bool {
+        x + width >= self.start && x <= self.right
+    }
+
+    /// A device's panel at `x`.
+    const fn device(self, x: f64, width: f64) -> Panel {
+        Panel {
+            x,
+            y: self.body_top,
+            width,
+            height: self.body_h,
+        }
+    }
+}
+
+/// A chain grouped by phase: each phase in the rack's order and its
+/// devices — `tone::chain`'s rule for which empty phases still show.
+fn grouped(panels: &[Which]) -> Vec<(MixPhase, Vec<Which>)> {
+    let level = panels
+        .iter()
+        .any(|which| matches!(which.phase(), MixPhase::Rescue | MixPhase::Tone));
+    crate::tone::RACK_PHASES
+        .iter()
+        .map(|phase| {
+            let units = panels
+                .iter()
+                .copied()
+                .filter(|which| which.phase() == *phase)
+                .collect::<Vec<_>>();
+            (*phase, units)
+        })
+        .filter(|(_, units)| level || !units.is_empty())
+        .collect()
+}
+
 /// Tracks' processors, side by side: one lane, or several stacked.
 struct DeviceRow {
     tone: Rc<Shared>,
     /// The session's tracks, kept up with the engine's changes — which is
     /// selected is where the lanes start.
     tracks: Vec<daw_proto::Track>,
+    /// How deep each track sits, by guid: who is beside whom.
+    depths: std::collections::HashMap<String, u32>,
     watch: Option<crate::engine::Watch>,
     /// Changes taken off the watch to ask for a frame, applied in it.
     pending: RefCell<Vec<daw_proto::track::TrackEvent>>,
     palette: crate::arrangement::Palette,
     font: crate::text::Font,
+    layout: crate::layout::Layout,
     /// How many lanes show at once.
     lanes: usize,
-    /// How many tracks past the selected one the first lane is.
+    /// How many tracks past the first the lanes start.
     down: usize,
     /// How far each lane is scrolled sideways, by track.
     scroll: std::collections::HashMap<String, f64>,
-    /// Each lane where it was last drawn: whose, its top and height.
-    shown: RefCell<Vec<(String, f64, f64)>>,
-    /// Each device where it was last drawn.
-    devices: RefCell<Vec<Placed>>,
-    /// Each phase's bar where it was last drawn: a press on one folds it.
-    bars: RefCell<Vec<(session::mix_phases::MixPhase, Panel)>>,
-    /// The phases folded, as the mixer's racks fold them.
-    folded: std::collections::HashSet<session::mix_phases::MixPhase>,
+    /// Each lane's strip, by track.
+    strips: RefCell<std::collections::HashMap<String, Strip>>,
+    hits: RefCell<Hits>,
+    /// The phases folded to their macros.
+    folded: std::collections::HashSet<MixPhase>,
     hold: Option<(BlitzPointerId, Grip, Placed, (f64, f64))>,
+    /// A macro being turned, and where the pointer was.
+    turning: Option<(BlitzPointerId, Turned, f64)>,
     hover: Option<(String, Which, Grip)>,
     dirty: Cell<bool>,
 }
 
 impl DeviceRow {
-    fn new(tone: Rc<Shared>, tracks: Vec<daw_proto::Track>, lanes: usize) -> Self {
+    fn new(
+        tone: Rc<Shared>,
+        rows: Vec<(daw_proto::Track, u32)>,
+        lanes: usize,
+        font: crate::text::Font,
+    ) -> Self {
+        let depths = rows
+            .iter()
+            .map(|(t, depth)| (t.guid.clone(), *depth))
+            .collect();
         Self {
             tone,
-            tracks,
+            tracks: rows.into_iter().map(|(t, _)| t).collect(),
+            depths,
             watch: crate::engine::Watch::start(),
             pending: RefCell::new(Vec::new()),
             palette: crate::skin::palette(&crate::arrangement::Palette::from_theme(
                 &daw_ui::theming::Theme::dark(),
             )),
-            font: crate::text::Font::embedded().expect("the embedded font"),
+            font,
+            layout: crate::layout::Layout::from_env(),
             lanes,
             down: 0,
             scroll: std::collections::HashMap::new(),
-            shown: RefCell::new(Vec::new()),
-            devices: RefCell::new(Vec::new()),
-            bars: RefCell::new(Vec::new()),
+            strips: RefCell::new(std::collections::HashMap::new()),
+            hits: RefCell::new(Hits::default()),
             folded: std::collections::HashSet::new(),
             hold: None,
+            turning: None,
             hover: None,
             dirty: Cell::new(true),
         }
     }
 
-    /// The tracks the lanes are of: from the selected one (or the first)
-    /// down, past `down` of them, as many as there are lanes.
-    fn lane_tracks(&self) -> Vec<&daw_proto::Track> {
+    fn depth(&self, track: &daw_proto::Track) -> u32 {
+        self.depths.get(&track.guid).copied().unwrap_or(0)
+    }
+
+    /// The tracks the lanes can be of: the selected one (or the first)
+    /// and those beside it in its folder, in order.
+    fn family(&self) -> Vec<usize> {
         let from = self.tracks.iter().position(|t| t.selected).unwrap_or(0);
-        self.tracks
+        let Some(first) = self.tracks.get(from) else {
+            return Vec::new();
+        };
+        let depth = self.depth(first);
+        let beside = self
+            .tracks
             .iter()
-            .skip(from + self.down)
-            .take(self.lanes)
+            .enumerate()
+            .skip(from)
+            .skip(1)
+            .take_while(|(_, t)| self.depth(t) >= depth)
+            .filter(|(_, t)| self.depth(t) == depth)
+            .map(|(i, _)| i);
+        std::iter::once(from).chain(beside).collect()
+    }
+
+    /// The returns `at` feeds: the reverbs, delays, wideners and shifters
+    /// in its folder — the last of each line, not the folders over them.
+    fn returns(&self, at: usize) -> Vec<usize> {
+        let Some(track) = self.tracks.get(at) else {
+            return Vec::new();
+        };
+        let depth = self.depth(track);
+        let store = self.tone.store.borrow();
+        let inside = self.tracks.iter().enumerate().skip(at).skip(1);
+        let after = self
+            .tracks
+            .iter()
+            .skip(at)
+            .skip(2)
+            .map(Some)
+            .chain(std::iter::once(None));
+        inside
+            .zip(after)
+            .take_while(|((_, t), _)| self.depth(t) > depth)
+            .filter(|((_, t), next)| {
+                let d = self.depth(t);
+                let leaf = next.is_none_or(|next| self.depth(next) <= d);
+                leaf && store
+                    .get(&t.guid)
+                    .and_then(|tone| main_unit(tone.role))
+                    .is_some()
+            })
+            .map(|((i, _), _)| i)
             .collect()
     }
 
@@ -209,7 +374,7 @@ impl DeviceRow {
 
     fn device_at(&self, x: f64, y: f64) -> Option<(Placed, Grip)> {
         let store = self.tone.store.borrow();
-        self.devices.borrow().iter().find_map(|placed| {
+        self.hits.borrow().devices.iter().find_map(|placed| {
             if !placed.panel.contains(x, y) {
                 return None;
             }
@@ -221,102 +386,152 @@ impl DeviceRow {
 
     /// The lane under `y`, by its track.
     fn lane_at(&self, y: f64) -> Option<String> {
-        self.shown
+        self.hits
             .borrow()
+            .lanes
             .iter()
             .find(|(_, top, h)| y >= *top && y < top + h)
             .map(|(guid, ..)| guid.clone())
     }
 
-    fn event(&mut self, event: &UiEvent) {
-        let at =
-            |e: &BlitzPointerEvent| (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
-        let changed = match event {
-            UiEvent::Wheel(e) => {
-                let (dx, dy) = match e.delta {
-                    BlitzWheelDelta::Lines(x, y) => (x * 40.0, y * 40.0),
-                    BlitzWheelDelta::Pixels(x, y) => (x, y),
-                };
-                let sideways = dx.abs() > dy.abs() || e.mods.shift() || self.lanes == 1;
-                if sideways {
-                    // The lane under the pointer, along its chain.
-                    let by = if dx.abs() > dy.abs() { dx } else { dy };
-                    if let Some(guid) = self.lane_at(f64::from(e.coords.client_y)) {
-                        let scroll = self.scroll.entry(guid).or_default();
-                        *scroll = (*scroll - by).max(0.0);
-                    }
-                } else if dy < 0.0 {
-                    // Down through the tracks, a lane at a time.
-                    self.down += 1;
-                } else {
-                    self.down = self.down.saturating_sub(1);
-                }
-                true
+    /// The grip lit on `which` of `guid`: held, or under the pointer.
+    fn lit(&self, guid: &str, which: Which) -> Option<Grip> {
+        self.hold
+            .as_ref()
+            .filter(|(_, _, held, _)| held.guid == guid && held.which == which)
+            .map(|(_, grip, ..)| *grip)
+            .or_else(|| {
+                self.hover
+                    .as_ref()
+                    .filter(|(g, on, _)| g == guid && *on == which)
+                    .map(|(.., grip)| *grip)
+            })
+    }
+
+    fn wheel(&mut self, e: &blitz_traits::events::BlitzWheelEvent) {
+        let (dx, dy) = match e.delta {
+            BlitzWheelDelta::Lines(x, y) => (x * 40.0, y * 40.0),
+            BlitzWheelDelta::Pixels(x, y) => (x, y),
+        };
+        if dx.abs() > dy.abs() || e.mods.shift() || self.lanes == 1 {
+            // The lane under the pointer, along its chain.
+            let by = if dx.abs() > dy.abs() { dx } else { dy };
+            if let Some(guid) = self.lane_at(f64::from(e.coords.client_y)) {
+                let scroll = self.scroll.entry(guid).or_default();
+                *scroll = (*scroll - by).max(0.0);
             }
-            UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => {
-                let (x, y) = at(e);
-                let on_bar = self
-                    .bars
-                    .borrow()
+        } else if dy < 0.0 {
+            // Down through the tracks, a lane at a time.
+            self.down = self.down.saturating_add(1);
+        } else {
+            self.down = self.down.saturating_sub(1);
+        }
+    }
+
+    fn press(&mut self, e: &BlitzPointerEvent) -> bool {
+        let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        let (bar, knob) = {
+            let hits = self.hits.borrow();
+            (
+                hits.bars
                     .iter()
                     .find(|(_, bar)| bar.contains(x, y))
-                    .map(|(phase, _)| *phase);
-                if let Some(phase) = on_bar {
-                    // A bar folds its phase, or opens it.
-                    if !self.folded.remove(&phase) {
-                        self.folded.insert(phase);
-                    }
-                    self.dirty.set(true);
-                    return;
-                }
-                match self.device_at(x, y) {
-                    Some((placed, grip)) if grip.is_switch() => {
-                        if let Some(tone) = self.tone.store.borrow_mut().edit(&placed.guid) {
-                            crate::tone::toggle(tone, grip);
-                        }
-                        self.tone.edited();
-                        true
-                    }
-                    Some((placed, grip)) => {
-                        self.hold = Some((e.id, grip, placed, (x, y)));
-                        true
-                    }
-                    None => false,
-                }
+                    .map(|(phase, _)| *phase),
+                hits.knobs
+                    .iter()
+                    .find(|knob| knob.cell.contains(x, y))
+                    .cloned(),
+            )
+        };
+        if let Some(phase) = bar {
+            // An edge folds its phase to its macros, or opens it.
+            if !self.folded.remove(&phase) {
+                self.folded.insert(phase);
             }
-            UiEvent::PointerMove(e) => {
-                let (x, y) = at(e);
-                if let Some((id, grip, placed, last)) = self.hold.clone()
-                    && id == e.id
-                {
-                    if let Some(tone) = self.tone.store.borrow_mut().edit(&placed.guid) {
-                        crate::tone::drag(
-                            tone,
-                            grip,
-                            &[placed.which],
-                            placed.panel,
-                            Folded::zoomed(),
-                            crate::closeup::mods_of(e),
-                            x - last.0,
-                            y - last.1,
-                        );
-                    }
-                    self.hold = Some((id, grip, placed, (x, y)));
-                    self.tone.edited();
-                    true
-                } else if !e.is_finger() {
-                    let over = self
-                        .device_at(x, y)
-                        .map(|(placed, grip)| (placed.guid, placed.which, grip));
-                    let lit = over != self.hover;
-                    self.hover = over;
-                    lit
-                } else {
-                    false
+            return true;
+        }
+        if let Some(knob) = knob {
+            self.turning = Some((e.id, knob, y));
+            return true;
+        }
+        match self.device_at(x, y) {
+            Some((placed, grip)) if grip.is_switch() => {
+                if let Some(tone) = self.tone.store.borrow_mut().edit(&placed.guid) {
+                    crate::tone::toggle(tone, grip);
                 }
+                self.tone.edited();
+                true
             }
+            Some((placed, grip)) => {
+                self.hold = Some((e.id, grip, placed, (x, y)));
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn moved(&mut self, e: &BlitzPointerEvent) -> bool {
+        let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        if let Some((id, knob, last)) = self.turning.clone()
+            && id == e.id
+        {
+            // Up turns it up: a pixel is a two-hundredth of its travel,
+            // with Shift a tenth of that.
+            let per = if crate::closeup::mods_of(e).shift {
+                2000.0
+            } else {
+                200.0
+            };
+            if let Some(tone) = self.tone.store.borrow_mut().edit(&knob.guid)
+                && let Some(m) = crate::macros::of(knob.phase).get(knob.index)
+            {
+                (m.set)(tone, (m.get)(tone) + (last - y) / per);
+            }
+            self.turning = Some((id, knob, y));
+            self.tone.edited();
+            return true;
+        }
+        if let Some((id, grip, placed, last)) = self.hold.clone()
+            && id == e.id
+        {
+            if let Some(tone) = self.tone.store.borrow_mut().edit(&placed.guid) {
+                crate::tone::drag(
+                    tone,
+                    grip,
+                    &[placed.which],
+                    placed.panel,
+                    Folded::zoomed(),
+                    crate::closeup::mods_of(e),
+                    x - last.0,
+                    y - last.1,
+                );
+            }
+            self.hold = Some((id, grip, placed, (x, y)));
+            self.tone.edited();
+            return true;
+        }
+        if e.is_finger() {
+            return false;
+        }
+        let over = self
+            .device_at(x, y)
+            .map(|(placed, grip)| (placed.guid, placed.which, grip));
+        let lit = over != self.hover;
+        self.hover = over;
+        lit
+    }
+
+    fn event(&mut self, event: &UiEvent) {
+        let changed = match event {
+            UiEvent::Wheel(e) => {
+                self.wheel(e);
+                true
+            }
+            UiEvent::PointerDown(e) if e.button == MouseEventButton::Main => self.press(e),
+            UiEvent::PointerMove(e) => self.moved(e),
             UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) => {
-                self.hold.take_if(|(id, ..)| *id == e.id).is_some()
+                let turned = self.turning.take_if(|(id, ..)| *id == e.id).is_some();
+                self.hold.take_if(|(id, ..)| *id == e.id).is_some() || turned
             }
             _ => false,
         };
@@ -325,195 +540,495 @@ impl DeviceRow {
         }
     }
 
+    /// Draw `track`'s mixer strip at `x`, `top`, `height` tall — the
+    /// mixer's own, recorded once, its live controls over it. Its width.
+    fn strip(
+        &self,
+        scene: &mut Scene,
+        track: &daw_proto::Track,
+        x: f64,
+        top: f64,
+        height: f64,
+    ) -> f64 {
+        let track = &widened(track);
+        let rows = vec![(track.clone(), 0)];
+        let mut strips = self.strips.borrow_mut();
+        let skin = crate::skin::version();
+        let stale = strips
+            .get(&track.guid)
+            .is_none_or(|s| s.height_bits != height.to_bits() || s.skin != skin);
+        if stale {
+            let settings = crate::settings::Settings {
+                mixing: true,
+                ..crate::settings::Settings::default()
+            };
+            let mixer = crate::mcp::Mixer::build(
+                &self.palette,
+                &self.font,
+                &daw_ui::studio::ProjectRef(std::sync::Arc::new(
+                    daw_ui::studio::project::Project::default(),
+                )),
+                &daw_ui::studio::RowsRef(std::sync::Arc::new(rows.clone())),
+                height,
+                self.layout,
+                // The strip without its rack: the devices are its rack.
+                &[],
+                false,
+                settings,
+                &self.tone.store.borrow(),
+            );
+            strips.insert(
+                track.guid.clone(),
+                Strip {
+                    height_bits: height.to_bits(),
+                    skin,
+                    mixer,
+                },
+            );
+        }
+        let Some(strip) = strips.get(&track.guid) else {
+            return 0.0;
+        };
+        let mixer = &strip.mixer;
+        let width = mixer.content_width();
+        let at = Affine::translate((x, top));
+        mixer.replay(scene, 0.0, width, at);
+        let tracks = [track.clone()];
+        crate::overlay::controls(
+            scene,
+            &self.palette,
+            &self.font,
+            mixer,
+            &tracks,
+            &crate::plan::Rows::of(&rows, &tracks),
+            &crate::pointer::Pointer::default(),
+            &[],
+            &crate::overlay::Clips::default(),
+            0.0,
+            &mut crate::overlay::Racks::none(),
+            0.0,
+            width,
+            at,
+        );
+        width
+    }
+
+    /// How wide `phase`'s group is, with `units` in it.
+    fn group_w(&self, phase: MixPhase, units: &[Which]) -> f64 {
+        if units.is_empty() {
+            BLANK_W
+        } else if self.folded.contains(&phase) {
+            EDGE_W + FOLDED_W
+        } else {
+            EDGE_W + units.iter().map(|w| device_w(*w) + GAP).sum::<f64>() - GAP
+        }
+    }
+
+    /// How wide `returns` are, laid out after the chain.
+    fn returns_w(&self, returns: &[usize]) -> f64 {
+        if returns.is_empty() {
+            return 0.0;
+        }
+        RETURNS_GAP
+            + returns
+                .iter()
+                .filter_map(|r| self.tracks.get(*r))
+                .map(|r| self.layout.width_of(widened(r).width) + GAP + DEVICE_W + GAP)
+                .sum::<f64>()
+    }
+
+    /// A folded phase's macro knobs, in `well`.
+    fn draw_macros(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        track: &daw_proto::Track,
+        tone: &crate::tone::Tone,
+        phase: MixPhase,
+        well: Panel,
+    ) {
+        let macros = crate::macros::of(phase);
+        let cells = crate::macros::cells(macros.len(), well);
+        for (index, (knob, cell)) in macros.iter().zip(cells).enumerate() {
+            let held = self.turning.as_ref().is_some_and(|(_, t, _)| {
+                t.guid == track.guid && t.phase == phase && t.index == index
+            });
+            crate::macros::draw(
+                scene,
+                &self.palette,
+                &self.font,
+                &crate::macros::Knob {
+                    tone,
+                    phase,
+                    track: &track.name,
+                    knob,
+                    cell,
+                    held,
+                },
+            );
+            hits.knobs.push(Turned {
+                guid: track.guid.clone(),
+                phase,
+                index,
+                cell,
+            });
+        }
+    }
+
+    /// One device: `which` of `guid`'s settings, in `panel`.
+    fn draw_device(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        guid: &str,
+        tone: &crate::tone::Tone,
+        which: Which,
+        panel: Panel,
+    ) {
+        crate::tone::draw(
+            scene,
+            &self.palette,
+            &self.font,
+            tone,
+            &crate::live::Meters::default(),
+            &[which],
+            panel,
+            Folded::zoomed(),
+            self.lit(guid, which),
+            None,
+        );
+        hits.devices.push(Placed {
+            guid: guid.to_owned(),
+            which,
+            panel,
+        });
+    }
+
+    /// `track`'s chain, phase by phase, from `x`. Where it ends.
+    fn draw_chain(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        track: &daw_proto::Track,
+        lane: Lane,
+        mut x: f64,
+    ) -> f64 {
+        let store = self.tone.store.borrow();
+        let Some(tone) = store.get(&track.guid) else {
+            return x;
+        };
+        for (phase, units) in grouped(tone.panels(crate::tone::panels_for(MixPhase::Tone))) {
+            let width = self.group_w(phase, &units);
+            let x0 = x;
+            x += width + GAP;
+            if !lane.sees(x0, width) {
+                continue;
+            }
+            let shut = self.folded.contains(&phase);
+            let group = Panel {
+                x: x0,
+                y: lane.top + INSET,
+                width,
+                height: INSET.mul_add(-2.0, lane.height),
+            };
+            phase_edge(
+                scene,
+                &self.palette,
+                &self.font,
+                phase,
+                group,
+                (!units.is_empty()).then_some(shut),
+            );
+            if units.is_empty() {
+                continue;
+            }
+            // The edge folds it, and so does its tint.
+            hits.bars.push((
+                phase,
+                Panel {
+                    width: EDGE_W,
+                    ..group
+                },
+            ));
+            hits.bars.push((
+                phase,
+                Panel {
+                    height: TINT_H + 4.0,
+                    ..group
+                },
+            ));
+            let mut at = x0 + EDGE_W;
+            if shut {
+                // Folded, the phase is its macros.
+                let well = Panel {
+                    x: at,
+                    y: lane.body_top + 4.0,
+                    width: width - EDGE_W,
+                    height: lane.body_h - 4.0,
+                };
+                self.draw_macros(scene, hits, track, tone, phase, well);
+                continue;
+            }
+            for which in units {
+                let width = device_w(which);
+                let here = at;
+                at += width + GAP;
+                if lane.sees(here, width) {
+                    self.draw_device(
+                        scene,
+                        hits,
+                        &track.guid,
+                        tone,
+                        which,
+                        lane.device(here, width),
+                    );
+                }
+            }
+        }
+        x
+    }
+
+    /// The returns `returns`, each its strip and its effect, from `x`.
+    fn draw_returns(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        returns: &[usize],
+        lane: Lane,
+        mut x: f64,
+    ) {
+        let store = self.tone.store.borrow();
+        for ret in returns.iter().filter_map(|r| self.tracks.get(*r)) {
+            let Some((tone, which)) = store
+                .get(&ret.guid)
+                .and_then(|t| main_unit(t.role).map(|which| (t, which)))
+            else {
+                continue;
+            };
+            let strip_w = self.layout.width_of(widened(ret).width);
+            if lane.sees(x, strip_w) {
+                self.strip(scene, ret, x, lane.top, lane.height);
+            }
+            x += strip_w + GAP;
+            if lane.sees(x, DEVICE_W) {
+                self.draw_device(
+                    scene,
+                    hits,
+                    &ret.guid,
+                    tone,
+                    which,
+                    lane.device(x, DEVICE_W),
+                );
+            }
+            x += DEVICE_W + GAP;
+        }
+    }
+
+    /// One lane: `at`'s strip, its chain, and the returns it feeds.
+    fn draw_lane(
+        &mut self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        at: usize,
+        top: f64,
+        height: f64,
+        right: f64,
+    ) {
+        let Some(track) = self.tracks.get(at).cloned() else {
+            return;
+        };
+        hits.lanes.push((track.guid.clone(), top, height));
+        // The track's own strip, standing still while its chain
+        // scrolls past it.
+        let start = self.strip(scene, &track, 0.0, top, height) + GAP;
+        // A phase is an edge and a tint, not a bar over it: the devices
+        // get the height.
+        let lane = Lane {
+            start,
+            right,
+            top,
+            height,
+            body_top: top + INSET + TINT_H + 2.0,
+            body_h: (INSET.mul_add(-2.0, height) - TINT_H - 2.0).max(0.0),
+        };
+        let returns = self.returns(at);
+        let chain_w = {
+            let store = self.tone.store.borrow();
+            store.get(&track.guid).map_or(0.0, |tone| {
+                grouped(tone.panels(crate::tone::panels_for(MixPhase::Tone)))
+                    .iter()
+                    .map(|(p, u)| self.group_w(*p, u) + GAP)
+                    .sum()
+            })
+        };
+        let most = (chain_w + self.returns_w(&returns) - (right - start) + INSET).max(0.0);
+        let scroll = self
+            .scroll
+            .get(&track.guid)
+            .copied()
+            .unwrap_or(0.0)
+            .min(most);
+        self.scroll.insert(track.guid.clone(), scroll);
+        // What scrolls is clipped to the right of the strip.
+        let mut moving = Scene::new();
+        let end = self.draw_chain(&mut moving, hits, &track, lane, start - scroll);
+        // The returns it feeds, after a breath.
+        self.draw_returns(&mut moving, hits, &returns, lane, end - GAP + RETURNS_GAP);
+        let clip = vello::kurbo::Rect::new(start, top, right, top + height);
+        anyrender::PaintScene::push_clip_layer(scene, Affine::IDENTITY, &clip);
+        anyrender::PaintScene::append_scene(scene, moving, Affine::IDENTITY);
+        anyrender::PaintScene::pop_layer(scene);
+    }
+
     fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         self.follow();
         self.dirty.set(false);
         let scale = scale.max(f64::EPSILON);
         let (w, h) = (f64::from(width) / scale, f64::from(height) / scale);
-        // Never past the last track: the stack stops at the end.
-        let from = self.tracks.iter().position(|t| t.selected).unwrap_or(0);
-        let left = self.tracks.len().saturating_sub(from);
-        self.down = self.down.min(left.saturating_sub(self.lanes.min(left)));
-        let named = self.lanes > 1;
+        let family = self.family();
+        // Never past the last of them: the stack stops at the end.
+        self.down = self
+            .down
+            .min(family.len().saturating_sub(self.lanes.min(family.len())));
         let lane_h = h / crate::num::coord(self.lanes);
-        let start = if named { HEAD_W } else { INSET };
         let mut drawn = Scene::new();
-        let mut devices = Vec::new();
-        let mut shown = Vec::new();
-        let mut bars = Vec::new();
-        let lanes: Vec<daw_proto::Track> = self.lane_tracks().into_iter().cloned().collect();
-        for (n, track) in lanes.iter().enumerate() {
-            let top = crate::num::coord(n) * lane_h;
-            shown.push((track.guid.clone(), top, lane_h));
-            if named {
-                // The lane's name, in the track's colour, down its left.
-                anyrender::PaintScene::fill(
-                    &mut drawn,
-                    vello::peniko::Fill::NonZero,
-                    Affine::IDENTITY,
-                    crate::tcp::track_color(&self.palette, track),
-                    None,
-                    &vello::kurbo::Rect::new(0.0, top + INSET, 3.0, top + lane_h - INSET),
-                );
-                crate::tcp::glyphs(
-                    &mut drawn,
-                    &self.font,
-                    if track.selected {
-                        self.palette.text
-                    } else {
-                        self.palette.text_dim
-                    },
-                    &self.font.elide(&track.name, 13.0, HEAD_W - 18.0),
-                    10.0,
-                    top + INSET + 16.0,
-                    13.0,
-                );
-            }
-            let store = self.tone.store.borrow();
-            let Some(tone) = store.get(&track.guid) else {
-                continue;
-            };
-            let panels = tone.panels(crate::tone::panels_for(session::mix_phases::MixPhase::Tone));
-            // The chain by phase, as the rack groups it: a bar over each
-            // phase's devices, folding them to a narrow column; a phase
-            // with none is a faint bar, on a chain a channel's would
-            // line up with (`tone::chain`'s rule).
-            let level = panels.iter().any(|which| {
-                matches!(
-                    which.phase(),
-                    session::mix_phases::MixPhase::Rescue | session::mix_phases::MixPhase::Tone
-                )
-            });
-            let groups: Vec<(session::mix_phases::MixPhase, Vec<Which>)> = crate::tone::RACK_PHASES
-                .iter()
-                .map(|phase| {
-                    let units: Vec<Which> = panels
-                        .iter()
-                        .copied()
-                        .filter(|which| which.phase() == *phase)
-                        .collect();
-                    (*phase, units)
-                })
-                .filter(|(_, units)| level || !units.is_empty())
-                .collect();
-            let group_w = |phase: session::mix_phases::MixPhase, units: &[Which]| {
-                if units.is_empty() {
-                    BLANK_W
-                } else if self.folded.contains(&phase) {
-                    FOLDED_W
-                } else {
-                    units.iter().map(|w| device_w(*w) + GAP).sum::<f64>() - GAP
-                }
-            };
-            let total: f64 = groups.iter().map(|(p, u)| group_w(*p, u) + GAP).sum();
-            let most = (total - (w - start) + INSET).max(0.0);
-            let scroll = self
-                .scroll
-                .get(&track.guid)
-                .copied()
-                .unwrap_or(0.0)
-                .min(most);
-            self.scroll.insert(track.guid.clone(), scroll);
-            let body_top = top + INSET + crate::tone::HEAD_H + 3.0;
-            let body_h = (lane_h - INSET * 2.0 - crate::tone::HEAD_H - 3.0).max(0.0);
-            let mut next = start - scroll;
-            for (phase, units) in &groups {
-                let width = group_w(*phase, units);
-                let x0 = next;
-                next += width + GAP;
-                // Only what is on screen is drawn.
-                if x0 + width < start || x0 > w {
-                    continue;
-                }
-                let bar = Panel {
-                    x: x0,
-                    y: top + INSET,
-                    width,
-                    height: crate::tone::HEAD_H,
-                };
-                let shut = self.folded.contains(phase);
-                crate::tone::phase_bar(
-                    &mut drawn,
-                    &self.palette,
-                    &self.font,
-                    *phase,
-                    bar,
-                    (!units.is_empty()).then_some((shut, None)),
-                );
-                if !units.is_empty() {
-                    bars.push((*phase, bar));
-                }
-                if shut {
-                    continue;
-                }
-                let mut x = x0;
-                for which in units {
-                    let width = device_w(*which);
-                    let here = x;
-                    x += width + GAP;
-                    if here + width < start || here > w {
-                        continue;
-                    }
-                    let panel = Panel {
-                        x: here,
-                        y: body_top,
-                        width,
-                        height: body_h,
-                    };
-                    let lit = self
-                        .hold
-                        .as_ref()
-                        .filter(|(_, _, held, _)| held.guid == track.guid && held.which == *which)
-                        .map(|(_, grip, ..)| *grip)
-                        .or(self
-                            .hover
-                            .as_ref()
-                            .filter(|(g, on, _)| *g == track.guid && on == which)
-                            .map(|(.., grip)| *grip));
-                    crate::tone::draw(
-                        &mut drawn,
-                        &self.palette,
-                        &self.font,
-                        tone,
-                        &crate::live::Meters::default(),
-                        &[*which],
-                        panel,
-                        Folded::zoomed(),
-                        lit,
-                        None,
-                    );
-                    devices.push(Placed {
-                        guid: track.guid.clone(),
-                        which: *which,
-                        panel,
-                    });
-                }
-            }
+        let mut hits = Hits::default();
+        for (n, at) in family
+            .into_iter()
+            .skip(self.down)
+            .take(self.lanes)
+            .enumerate()
+        {
+            self.draw_lane(
+                &mut drawn,
+                &mut hits,
+                at,
+                crate::num::coord(n) * lane_h,
+                lane_h,
+                w,
+            );
         }
-        *self.bars.borrow_mut() = bars;
-        *self.devices.borrow_mut() = devices;
-        *self.shown.borrow_mut() = shown;
+        *self.hits.borrow_mut() = hits;
         let mut out = Scene::new();
         anyrender::PaintScene::append_scene(&mut out, drawn, Affine::scale(scale));
         out
     }
 }
 
-/// The FX as it draws for `tracks` with `store`'s settings, `lanes` of
+/// A phase's edge over `group`: the separator down its left and its
+/// tint along the top — the theme's `fx.phase` if it has one. `open` is
+/// whether it is folded, `None` for a phase with nothing in it.
+fn phase_edge(
+    scene: &mut Scene,
+    palette: &crate::arrangement::Palette,
+    font: &crate::text::Font,
+    phase: MixPhase,
+    group: Panel,
+    open: Option<bool>,
+) {
+    let tint = crate::tone::phase_tint(phase);
+    let theme = crate::skin::loaded();
+    if let Some(theme) = theme.as_deref().filter(|t| t.has_role("fx.phase")) {
+        let [r, g, b, a] = tint.to_rgba8().to_u8_array();
+        let fields = crate::skin::values(&[
+            (
+                "phase.name",
+                theme_runtime::Value::text(phase.display_name()),
+            ),
+            (
+                "phase.tint",
+                theme_runtime::Value::Color(theme_runtime::Rgba::from_rgba8(r, g, b, a)),
+            ),
+            ("phase.blank", theme_runtime::Value::Bool(open.is_none())),
+            ("phase.shut", theme_runtime::Value::Bool(open == Some(true))),
+        ]);
+        if theme.record(
+            "fx.phase",
+            (group.width, group.height),
+            &fields,
+            &mut crate::skin::canvas::Host { scene, font },
+            Affine::translate((group.x, group.y)),
+        ) {
+            return;
+        }
+    }
+    let faint = open.is_none();
+    let fill = |scene: &mut Scene, color: vello::peniko::Color, rect: vello::kurbo::Rect| {
+        anyrender::PaintScene::fill(
+            scene,
+            vello::peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            color,
+            None,
+            &rect,
+        );
+    };
+    // The separator: a hairline down the middle of the edge.
+    let line_x = group.x + EDGE_W / 2.0 - 0.5;
+    fill(
+        scene,
+        palette.divider,
+        vello::kurbo::Rect::new(line_x, group.y, line_x + 1.0, group.y + group.height),
+    );
+    // The tint, along the top of what it holds.
+    let tint = if faint {
+        tint.multiply_alpha(0.3)
+    } else {
+        tint
+    };
+    fill(
+        scene,
+        tint,
+        vello::kurbo::Rect::new(
+            group.x + EDGE_W,
+            group.y,
+            group.x + group.width,
+            group.y + TINT_H,
+        ),
+    );
+    if faint {
+        // An empty phase says which it is, faintly, under its tint.
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text_faint,
+            phase.display_name(),
+            group.x + EDGE_W + 4.0,
+            group.y + TINT_H + 12.0,
+            9.0,
+        );
+    }
+}
+
+/// A return's one effect, by what it is for — `None` for a channel.
+const fn main_unit(role: crate::tone::Role) -> Option<Which> {
+    use crate::tone::Role;
+    match role {
+        Role::Reverb => Some(Which::Reverb),
+        Role::Delay => Some(Which::Delay),
+        Role::Wide => Some(Which::Wide),
+        Role::Pitch => Some(Which::Pitch),
+        _ => None,
+    }
+}
+
+/// The FX as it draws for `rows` with `store`'s settings, `lanes` of
 /// them, `width` × `height` at 1:1 — for the bench's shot. `folded` are
-/// the phases folded, as a press on their bars would leave them.
+/// the phases folded, as a press on their edges would leave them.
 #[must_use]
 pub fn shot(
-    tracks: Vec<daw_proto::Track>,
+    rows: Vec<(daw_proto::Track, u32)>,
     store: crate::tone::Store,
     lanes: usize,
-    folded: &[session::mix_phases::MixPhase],
-    width: u32,
-    height: u32,
+    folded: &[MixPhase],
+    font: crate::text::Font,
+    (width, height): (u32, u32),
 ) -> Scene {
+    // The reverbs' tails, rendered before the shot rather than after.
+    store.prerender_tails();
     let tone = Rc::new(Shared::default());
     *tone.store.borrow_mut() = store;
-    let mut row = DeviceRow::new(tone, tracks, lanes.max(1));
+    let mut row = DeviceRow::new(tone, rows, lanes.max(1), font);
     row.watch = None;
     row.folded.extend(folded.iter().copied());
     row.paint_scene(width, height, 1.0)

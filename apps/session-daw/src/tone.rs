@@ -2461,7 +2461,7 @@ impl Which {
 /// states its own. Taken from there rather than chosen again so the
 /// container, the rail button and the REAPER toolbar all agree about
 /// what colour Tone is.
-fn phase_tint(phase: session::mix_phases::MixPhase) -> Color {
+pub fn phase_tint(phase: session::mix_phases::MixPhase) -> Color {
     use session::mix_phases::MixPhase as P;
     hex(match phase {
         P::Rescue => "#EF4444",

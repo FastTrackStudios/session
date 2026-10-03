@@ -44,6 +44,7 @@ pub mod layout;
 pub mod live;
 pub mod loading;
 pub mod lyrics_panel;
+pub mod macros;
 pub mod mcp;
 pub mod midi;
 pub mod mixer_panel;

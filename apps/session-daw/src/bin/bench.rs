@@ -700,12 +700,15 @@ fn fx_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
     let (visible, depths) =
         daw_ui::components::folders::FolderState::default().visible(&project.tracks);
     let mut rows: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
-    // The first track with a rack to show, selected: the FX starts there.
+    // `FTS_BENCH_FX_TRACK` selected (Kick unless named), or the first
+    // track with a rack to show: the FX starts there.
     let mut store = session_daw::tone::Store::default();
     store.seed(&rows);
+    let named = std::env::var("FTS_BENCH_FX_TRACK").unwrap_or_else(|_| "Kick".to_owned());
     let first = rows
         .iter()
-        .position(|(t, _)| store.get(&t.guid).is_some())
+        .position(|(t, _)| t.name == named)
+        .or_else(|| rows.iter().position(|(t, _)| store.get(&t.guid).is_some()))
         .unwrap_or(0);
     for (i, (track, _)) in rows.iter_mut().enumerate() {
         track.selected = i == first;
@@ -724,8 +727,11 @@ fn fx_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
                 .find(|p| format!("{p:?}").eq_ignore_ascii_case(name.trim()))
         })
         .collect();
-    let tracks = rows.into_iter().map(|(t, _)| t).collect();
-    let scene = session_daw::fx_view::shot(tracks, store, lanes, &folded, width, height);
+    let Ok(font) = session_daw::text::Font::embedded() else {
+        tracing::error!("no embedded font");
+        return;
+    };
+    let scene = session_daw::fx_view::shot(rows, store, lanes, &folded, font, (width, height));
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
     image.render_to_vec(

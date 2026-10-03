@@ -233,6 +233,19 @@ impl Pane {
         }
     }
 
+    /// Its own view, full size, whether or not it is docked — or, from
+    /// there, back to where it was opened from.
+    pub fn press_full(self) {
+        let (mut view, mut back) = (self.view, self.back);
+        let now = *view.peek();
+        if now == self.own {
+            view.set(*back.peek());
+        } else {
+            back.set(now);
+            view.set(self.own);
+        }
+    }
+
     /// Whether it is showing, however it is shown.
     #[must_use]
     pub fn showing(self) -> bool {

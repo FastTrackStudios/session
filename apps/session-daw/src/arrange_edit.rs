@@ -1357,7 +1357,11 @@ impl Editor {
             Action::ToggleRecord => tracing::info!("record is not wired to the transport yet"),
             // The view's, not the session's: the widget sends these to
             // the panel before the editor is asked.
-            Action::View(_) | Action::Visibility(_) | Action::ToggleMixer | Action::ToggleFx => {
+            Action::View(_)
+            | Action::Visibility(_)
+            | Action::ToggleMixer
+            | Action::ToggleFx
+            | Action::FxFull => {
                 return false;
             }
             Action::Unbound(id) => {

@@ -61,6 +61,8 @@ pub enum Action {
     ToggleMixer,
     /// Show or hide the FX (`f`): the selected track's effects as devices.
     ToggleFx,
+    /// The FX's own view, full size (`F`): several tracks' chains.
+    FxFull,
     /// A binding the window does not do yet, by its REAPER id.
     Unbound(String),
 }
@@ -112,6 +114,7 @@ pub fn action_of(id: &str) -> Action {
         "1013" => Action::ToggleRecord,
         "40078" => Action::ToggleMixer,
         "FTS_TOGGLE_FX" => Action::ToggleFx,
+        "FTS_FX_FULL" => Action::FxFull,
         "FTS_VISIBILITY_MANAGER_SHOW_ALL" => Action::Visibility(Visibility::ShowAll),
         "FTS_VISIBILITY_MANAGER_HIDE_ALL" => Action::Visibility(Visibility::HideAll),
         other => {
@@ -635,6 +638,11 @@ pub fn use_window_transport_keys() {
                     Action::ToggleFx => {
                         if let Some(fx) = fx {
                             fx.press();
+                        }
+                    }
+                    Action::FxFull => {
+                        if let Some(fx) = fx {
+                            fx.press_full();
                         }
                     }
                     _ => {}
