@@ -37,6 +37,11 @@ pub mod export;
 /// The role a theme draws a mixer strip as.
 pub const STRIP: &str = "mcp.strip";
 
+/// The role a theme draws behind a strip's rack as, the rack's height
+/// tall: the strip's ground, its edge, the selection rule at the top. The
+/// strip's own fields.
+pub const RACKBACK: &str = "mcp.rackback";
+
 /// The role a theme draws one folder step as: the band under a nested
 /// strip for each folder it is inside, `INDENT_STEP` tall. Drawn by the
 /// painters when a theme has none.

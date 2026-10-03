@@ -83,6 +83,13 @@
       </Frame>
     </Frame>
   </Page>
+  <Page name="mcp.rackback">
+    <Frame name="Back" w=86 h=300>
+      <Rectangle name="Ground" w=86 h=300 bind:w="w" bind:h="h" bind:fill="track.ground" />
+      <Rectangle name="Edge" w=1 h=300 bind:h="h" bind:fill="track.edge" bind:visible="track.has_edge" />
+      <Rectangle name="Selected" w=86 h=2 bind:w="w" bind:fill="$accent" bind:visible="track.selected" />
+    </Frame>
+  </Page>
   <Page name="mcp.step">
     <Frame name="Step" w=86 h=12>
       <Rectangle name="Band" w=86 h=12 bind:w="w" bind:h="h" bind:fill="folder.tint" />

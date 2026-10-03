@@ -752,8 +752,18 @@ fn themed(
     )
     .touched(slot.touch);
     // Over the rack, what `strip` draws there: the ground, the edge, the
-    // selection rule (the theme draws its own when there is no rack).
-    if slot.rack_h > 0.0 {
+    // selection rule (the theme draws its own when there is no rack) —
+    // the theme's `mcp.rackback`, when it has one.
+    let fields = crate::skin::fields(palette, track, shown);
+    if slot.rack_h > 0.0 && theme.has_role(crate::skin::RACKBACK) {
+        theme.record(
+            crate::skin::RACKBACK,
+            (slot.width, slot.rack_h),
+            &fields,
+            &mut crate::skin::canvas::Host { scene, font },
+            Affine::translate((slot.x, 0.0)),
+        );
+    } else if slot.rack_h > 0.0 {
         fill(
             scene,
             strip_ground(palette, track),
@@ -803,7 +813,6 @@ fn themed(
             );
         }
     }
-    let fields = crate::skin::fields(palette, track, shown);
     theme.record(
         crate::skin::STRIP,
         (slot.width, slot.height - slot.rack_h),
