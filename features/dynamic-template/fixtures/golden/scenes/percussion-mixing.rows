@@ -8,6 +8,7 @@
 3	Trig	30
 2	Sub	30
 2	Verb	30
+3	Room	30
 1	Snare	30
 2	Sum	30
 3	Top	30
@@ -15,8 +16,8 @@
 3	Trig	30
 3	Fund	30
 2	Verb	30
-3	Short	30
-3	Long	30
+3	Plate	30
+3	Hall	30
 3	Nonlin	30
 1	Toms	30
 2	Tom 1	30
@@ -36,6 +37,8 @@
 3	T4 Trig	30
 3	Fund	30
 2	Verb	30
+3	Room	30
+3	Nonlin	30
 1	Cymbals	30
 2	OH	30
 2	Hi-Hat	30
@@ -62,9 +65,8 @@
 3	Brick Wall	30
 0	Bass	30
 1	Guitar	30
-2	Sum	30
-3	DI	30
-3	Amp	30
+2	DI	30
+2	Amp	30
 1	Synth	30
 2	Sub	30
 2	Synth	30

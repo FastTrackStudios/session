@@ -28,9 +28,9 @@ fixed tree.
       rose → wine).
 - [x] Each piece's close mics under a **Sum**; the piece's sends beside
       the Sum, not inside it.
-- [x] **Kick**: In, Out, Trig; Sub; Verb.
-- [x] **Snare**: Top, Bottom, Trig, Fund; **Verb/** Short, Long, Nonlin.
-- [x] **Toms**: per tom T*n*, Trig, Fund; one shared Verb.
+- [x] **Kick**: In, Out, Trig; Sub; **Verb/** Room.
+- [x] **Snare**: Top, Bottom, Trig, Fund; **Verb/** Plate, Hall, Nonlin.
+- [x] **Toms**: per tom T*n*, Trig, Fund; one shared **Verb/** Room, Nonlin.
 - [x] **Cymbals**: OH, Hi-Hat, Ride. **Rooms**: two stereo pairs, Rooms
       and Rooms Far.
 - [x] One-note tracks (Fund, Sub) get Gate → band-pass at the fundamental
@@ -59,7 +59,7 @@ fixed tree.
 
 ### Bass — `Bass/`
 
-- [x] **Guitar/** DI, Amp (summed).
+- [x] **Guitar/** DI, Amp — directly under the piece, no Sum.
 - [x] **Synth/** Sub, Synth.
 - [x] To **BASS BUS** by send.
 - [ ] Upright / DI-only variants when a song has them.
@@ -108,7 +108,8 @@ fixed tree.
       Chords** — with two general synth tracks beside them
       (`flow.synths.families`, `flow.synths.golden`).
 - [x] Colours, in session order and hue order: electrics blue,
-      acoustics seafoam, keys green, synths lime.
+      acoustics seafoam, keys green; synths purple, the synth bass
+      included.
 - [ ] Clav, strings and pads as the song has them.
 
 ### Orchestra — `Orchestra/` (expanded in a later spec)

@@ -8,6 +8,7 @@
 3	Trig	86
 2	Sub	86
 2	Verb	86
+3	Room	86
 1	Snare	86
 2	Sum	86
 3	Top	86
@@ -15,8 +16,8 @@
 3	Trig	86
 3	Fund	86
 2	Verb	86
-3	Short	86
-3	Long	86
+3	Plate	86
+3	Hall	86
 3	Nonlin	86
 1	Toms	86
 2	Tom 1	86
@@ -36,6 +37,8 @@
 3	T4 Trig	86
 3	Fund	86
 2	Verb	86
+3	Room	86
+3	Nonlin	86
 1	Cymbals	86
 2	OH	86
 2	Hi-Hat	86
@@ -49,9 +52,8 @@
 1	Claps	86
 0	Bass	86
 1	Guitar	86
-2	Sum	86
-3	DI	86
-3	Amp	86
+2	DI	86
+2	Amp	86
 1	Synth	86
 2	Sub	86
 2	Synth	86

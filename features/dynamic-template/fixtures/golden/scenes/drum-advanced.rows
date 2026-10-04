@@ -7,7 +7,8 @@
 3	Out	30
 3	Trig	133
 2	Sub	133
-2	Verb	133
+2	Verb	86
+3	Room	133
 1	Snare	86
 2	Sum	86
 3	Top	30
@@ -15,8 +16,8 @@
 3	Trig	133
 3	Fund	133
 2	Verb	86
-3	Short	133
-3	Long	133
+3	Plate	133
+3	Hall	133
 3	Nonlin	133
 1	Toms	86
 2	Tom 1	86
@@ -35,7 +36,9 @@
 3	T4	30
 3	T4 Trig	133
 3	Fund	133
-2	Verb	133
+2	Verb	86
+3	Room	133
+3	Nonlin	133
 1	Cymbals	86
 2	OH	30
 2	Hi-Hat	30
@@ -65,9 +68,8 @@
 3	Brick Wall	30
 0	Bass	86
 1	Guitar	86
-2	Sum	86
-3	DI	86
-3	Amp	86
+2	DI	86
+2	Amp	86
 1	Synth	86
 2	Sub	133
 2	Synth	86

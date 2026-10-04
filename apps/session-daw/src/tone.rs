@@ -6172,7 +6172,11 @@ fn slot_of(name: &str, slots: &'static [&'static str]) -> &'static str {
 const DELAY_SLOTS: &[&str] = &["Slap", "Short", "Long", "Throw"];
 
 /// The reverb slots, shortest first.
-const REVERB_SLOTS: &[&str] = &["Room", "Short", "Long", "Moment", "Throw"];
+///
+/// `Plate` and `Hall` are the snare's, named for the machine rather than
+/// for the length. `Long` stays the middle one — a name that says
+/// nothing lands there — so new slots go in pairs around it.
+const REVERB_SLOTS: &[&str] = &["Room", "Plate", "Short", "Long", "Hall", "Moment", "Throw"];
 
 /// A delay preset from its numbers.
 fn repeat(
@@ -7437,6 +7441,86 @@ fn reverb_presets(name: &str) -> Vec<Preset> {
         ];
     }
     match slot_of(name, REVERB_SLOTS) {
+        // The snare's plate: bright and quick, the crack carried on a
+        // sheet of steel rather than put in a room.
+        "Plate" => vec![
+            space(
+                "Snare Plate",
+                A::Plate,
+                1.2,
+                10.0,
+                0.45,
+                0.2,
+                0.9,
+                0.2,
+                vec![shelf(1.5)],
+                vec![],
+            ),
+            space(
+                "Bright Plate",
+                A::Plate,
+                1.0,
+                5.0,
+                0.4,
+                0.1,
+                0.9,
+                0.2,
+                vec![shelf(3.0)],
+                vec![],
+            ),
+            space(
+                "Dark Plate",
+                A::Plate,
+                1.6,
+                15.0,
+                0.5,
+                0.55,
+                0.9,
+                0.2,
+                vec![shelf(-4.0)],
+                dark(-2.0, -6.0),
+            ),
+        ],
+        // The snare's hall: the ballad's backbeat, two seconds of air
+        // with the top rolled off so the crack stays in front.
+        "Hall" => vec![
+            space(
+                "Snare Hall",
+                A::Hall,
+                2.0,
+                20.0,
+                0.7,
+                0.45,
+                0.8,
+                0.2,
+                vec![shelf(-3.0)],
+                dark(-3.0, -6.0),
+            ),
+            space(
+                "Small Hall",
+                A::Hall,
+                1.4,
+                12.0,
+                0.55,
+                0.35,
+                0.8,
+                0.2,
+                vec![],
+                vec![],
+            ),
+            space(
+                "Dark Hall",
+                A::Hall,
+                2.6,
+                30.0,
+                0.8,
+                0.7,
+                0.8,
+                0.18,
+                vec![shelf(-6.0)],
+                dark(-6.0, -12.0),
+            ),
+        ],
         "Room" => vec![
             space(
                 "Small Room",
@@ -13273,5 +13357,62 @@ mod themed_tests {
             );
         }
         crate::skin::set(None);
+    }
+}
+
+#[cfg(test)]
+mod drum_verb_tests {
+    use super::{AlgorithmType as A, Role, placeholder_for};
+
+    /// What a return opens on, as the seed decides it: its role from
+    /// its place, its presets from its name.
+    fn opens_on(path: &[&str]) -> (Role, Option<A>, Option<String>) {
+        let Some((name, folders)) = path.split_last() else {
+            return (Role::Channel, None, None);
+        };
+        let ancestors: Vec<String> = folders.iter().map(|f| (*f).to_owned()).collect();
+        let role = Role::of(name, false, &ancestors);
+        let tone = placeholder_for(role, 0, name, &ancestors);
+        let first = tone.presets.first();
+        (
+            role,
+            first.map(|p| p.tone.reverb.algorithm),
+            first.map(|p| p.name.clone()),
+        )
+    }
+
+    /// Each drum Verb bank is its rooms by name, and each room opens on
+    /// its own machine: the kick in a room, the snare on a plate, in a
+    /// hall or gated, the toms in a room or gated.
+    #[test]
+    fn the_drum_verbs_open_on_their_algorithms() {
+        for (path, algorithm) in [
+            (&["Drum Kit", "Kick", "Verb", "Room"][..], A::Room),
+            (&["Drum Kit", "Snare", "Verb", "Plate"][..], A::Plate),
+            (&["Drum Kit", "Snare", "Verb", "Hall"][..], A::Hall),
+            (&["Drum Kit", "Snare", "Verb", "Nonlin"][..], A::NonLinear),
+            (&["Drum Kit", "Toms", "Verb", "Room"][..], A::Room),
+            (&["Drum Kit", "Toms", "Verb", "Nonlin"][..], A::NonLinear),
+        ] {
+            let (role, opened, _) = opens_on(path);
+            assert_eq!(role, Role::Reverb, "{path:?} is a reverb return");
+            assert_eq!(opened, Some(algorithm), "{path:?} opens on {algorithm:?}");
+        }
+    }
+
+    /// The new slots do not move the vocal's: its Short, Long and Room
+    /// open on what they always did, and a name that says nothing still
+    /// lands on the middle slot.
+    #[test]
+    fn the_vocal_verbs_keep_their_slots() {
+        let vocal = |slot: &str| opens_on(&["Vocals", "Vox FX", "Verb", slot]).2;
+        assert_eq!(vocal("Short").as_deref(), Some("Plate 1.4"));
+        assert_eq!(vocal("Long").as_deref(), Some("Cloud 4.0"));
+        assert_eq!(vocal("Room").as_deref(), Some("Small Room"));
+        let plain = placeholder_for(Role::Reverb, 0, "Verb", &[]);
+        assert_eq!(
+            plain.presets.first().map(|p| p.name.as_str()),
+            Some("Cloud 4.0")
+        );
     }
 }
