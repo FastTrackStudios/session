@@ -964,9 +964,13 @@ mod machine_tests {
             &ancestors(&["Drum Kit", "Snare"]),
         );
         assert_eq!(snare.reverb_machine, None);
+        let face = crate::faces::of(crate::tone::Which::Reverb, &vocal).expect("a face");
         assert!(
-            crate::faces::of(crate::tone::Which::Reverb, &vocal).is_some(),
-            "a face either way"
+            face.name.contains("96-verb-480"),
+            "the vocal reverb wears the 480: {}",
+            face.name
         );
+        let snare_face = crate::faces::of(crate::tone::Which::Reverb, &snare).expect("a face");
+        assert!(!snare_face.name.contains("480"), "{}", snare_face.name);
     }
 }
