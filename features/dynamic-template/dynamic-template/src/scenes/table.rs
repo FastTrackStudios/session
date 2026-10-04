@@ -205,6 +205,80 @@ fn one_row_per_drum() -> Vec<Rule> {
     rules
 }
 
+/// The electric guitar's taxonomy path.
+const ELECTRIC: [&str; 2] = ["Guitars", "Electric"];
+
+/// The electric's layers that stand over an L and an R, as paths below
+/// [`ELECTRIC`]: the tracks a guitar part is processed and edited on.
+///
+/// Lead has no layer level — it is its own layer, doubled. Solo is not
+/// here at all: its layers are single tracks, with nothing to fold.
+const GUITAR_LAYERS: [&[&str]; 3] = [&["Rhythm", "Main"], &["Rhythm", "Octave"], &["Lead"]];
+
+/// The channels under those layers that are folders of sources, as
+/// paths below [`ELECTRIC`]. Lead's L and R are tracks rather than
+/// folders, and the engine already rails them as halves of a pair.
+const GUITAR_CHANNELS: [&[&str]; 4] = [
+    &["Rhythm", "Main", "L"],
+    &["Rhythm", "Main", "R"],
+    &["Rhythm", "Octave", "L"],
+    &["Rhythm", "Octave", "R"],
+];
+
+/// A path below a group, as one selector path.
+fn below<'a>(group: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
+    group.iter().chain(rest).copied().collect()
+}
+
+/// Each guitar layer is one row in the panel, with its take on it.
+///
+/// The electric reads in the arrangement as ARRANGEMENT concerns —
+/// Rhythm over its Main and Octave, Lead, Solo over its Main and
+/// Harmony — and everything under a layer is a GUITAR concern: the L
+/// and R a part was doubled into and the seven sources each channel was
+/// captured on. Those were recorded together and are comped together,
+/// so while editing a layer is one thing, and its channels and sources
+/// are a fold away.
+///
+/// The same reasoning as [`one_row_per_drum`], and the same shape:
+/// collapsed rather than hidden, so the layer keeps the row its take is
+/// drawn on, and in the ARRANGEMENT only — the mixer keeps every strip.
+fn one_row_per_guitar_layer() -> Vec<Rule> {
+    GUITAR_LAYERS
+        .iter()
+        .map(|layer| Rule {
+            selector: Selector {
+                role: Role::Bus,
+                ..under(&below(&ELECTRIC, layer))
+            },
+            effect: Effect::default(),
+            arrange: Some(Effect::default().folded(Fold::Collapsed)),
+            mixer: None,
+        })
+        .collect()
+}
+
+/// Folders of captures as rails in the mixer: `rails` are paths below
+/// `group`, each rule reaching the folder and every folder under it.
+///
+/// A guitar channel and its amps carry no processing — the chain is on
+/// the layer above — so what they need on a strip is a fader and a
+/// mute. Mixer only: a row's height is a different question.
+fn railed(group: &[&str], rails: &[&[&str]]) -> Vec<Rule> {
+    rails
+        .iter()
+        .map(|rail| Rule {
+            selector: Selector {
+                role: Role::Bus,
+                ..under(&below(group, rail))
+            },
+            effect: Effect::default(),
+            arrange: None,
+            mixer: Some(Effect::at(Size::Minimum)),
+        })
+        .collect()
+}
+
 /// The five pieces a drum mix is made on — matched by the template
 /// groups they stand for, so a kit with a sixth piece needs a line here
 /// and a renamed one needs nothing.
@@ -246,6 +320,11 @@ struct Set {
     /// What the overview collapses to one row each — the pieces, the
     /// parts, the folders a player reads.
     rows: &'static [&'static str],
+    /// The folders under the group that hold only captures — a guitar
+    /// layer's channels — as paths below the group. Railed in the
+    /// mixing scene: nothing is processed on them, so a fader and a
+    /// mute is all they need.
+    rails: &'static [&'static [&'static str]],
     /// The bus the mixing scene shows.
     bus: &'static str,
 }
@@ -440,7 +519,10 @@ impl Set {
                     },
                     Effect::at(Size::Working),
                 ),
-            ],
+            ]
+            .into_iter()
+            .chain(railed(self.group, self.rails))
+            .collect(),
         }
     }
 }
@@ -459,24 +541,28 @@ const SETS: [Set; 4] = [
         instrument: "bass",
         group: &["Bass"],
         rows: &[],
+        rails: &[],
         bus: "BASS BUS",
     },
     Set {
         instrument: "guitar",
-        group: &["Guitars", "Electric"],
+        group: &ELECTRIC,
         rows: &["Rhythm", "Lead", "Solo"],
+        rails: &GUITAR_CHANNELS,
         bus: "ELECTRIC BUS",
     },
     Set {
         instrument: "keys",
         group: &["Keys"],
         rows: &["Piano", "Rhodes", "Wurli", "Organ"],
+        rails: &[],
         bus: "KEYS BUS",
     },
     Set {
         instrument: "percussion",
         group: &["Percussion"],
         rows: &["Shaker", "Tambourine", "Claps"],
+        rails: &[],
         bus: "PERC BUS",
     },
 ];
@@ -837,6 +923,10 @@ fn drum_mixing() -> Scene {
     rules.push(hide_the_bus_tree());
     rules.extend(parallel_colour_out_of_the_panel());
     rules.extend(one_row_per_drum());
+    // The session's first view, so it is also where the electric opens
+    // as its arrangement with its channels little strips.
+    rules.extend(one_row_per_guitar_layer());
+    rules.extend(railed(&ELECTRIC, &GUITAR_CHANNELS));
     Scene {
         name: "Drum Mixing".to_owned(),
         slug: "drum-mixing".to_owned(),
@@ -1481,6 +1571,91 @@ mod tests {
             ["kick", "in", "sub", "fund", "verb", "short", "long"],
             "the mixer lost a fader it needs"
         );
+    }
+
+    /// The electric's rows under the session's first view, by path, in
+    /// the golden session.
+    fn electric_rows(surface: crate::scenes::Surface) -> Vec<(String, f64)> {
+        use crate::golden_session::{maximal, rpp::flatten};
+        let flats = flatten(&maximal());
+        let facts = crate::scenes::from_flat(&flats);
+        let scene = scene("drum-mixing").expect("the drum mixing scene");
+        crate::scenes::resolve(scene, &facts, surface, None, None, None)
+            .iter()
+            .filter_map(|row| {
+                let flat = flats.iter().find(|f| Some(f.guid.as_str()) == row.guid())?;
+                flat.path.starts_with("Electric").then(|| {
+                    (
+                        flat.path.clone(),
+                        crate::scenes::TABLES.width(row.size, 1440.0),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// The arrangement shows the electric as its arrangement — Rhythm
+    /// over Main and Octave, Lead, Solo over Main and Harmony — with
+    /// each layer's channels and sources folded into it.
+    #[test]
+    fn the_arrangement_folds_the_electric_to_its_layers() {
+        let paths: Vec<String> = electric_rows(crate::scenes::Surface::Arrange)
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "Electric",
+                "Electric/Rhythm",
+                "Electric/Rhythm/Main",
+                "Electric/Rhythm/Octave",
+                "Electric/Lead",
+                "Electric/Solo",
+                "Electric/Solo/Main",
+                "Electric/Solo/Harmony",
+            ]
+        );
+    }
+
+    /// The mixer keeps every strip — the fold is the arrangement's — and
+    /// a channel and its amps are rails beside the sources.
+    #[test]
+    fn the_mixer_keeps_the_guitar_sources_as_little_strips() {
+        let rows = electric_rows(crate::scenes::Surface::Mixer);
+        assert_eq!(rows.len(), 1 + 1 + 2 + 4 * 9 + 3 + 3);
+        let rail = crate::scenes::TABLES.width(Size::Minimum, 1440.0);
+        for (path, width) in &rows {
+            let under_a_layer = [
+                "Electric/Rhythm/Main/",
+                "Electric/Rhythm/Octave/",
+                "Electric/Lead/",
+            ]
+            .iter()
+            .any(|layer| path.starts_with(layer));
+            if under_a_layer {
+                assert!(
+                    (width - rail).abs() < f64::EPSILON,
+                    "{path} is {width} wide"
+                );
+            }
+        }
+        // The negative control: the folders the part is arranged and
+        // processed on are not rails.
+        for folder in [
+            "Electric",
+            "Electric/Rhythm",
+            "Electric/Rhythm/Main",
+            "Electric/Rhythm/Octave",
+            "Electric/Lead",
+            "Electric/Solo",
+        ] {
+            let width = rows
+                .iter()
+                .find(|(path, _)| path == folder)
+                .map_or(0.0, |(_, w)| *w);
+            assert!(width > rail, "{folder} is {width} wide");
+        }
     }
 
     /// Every scene shows the Guide folder collapsed to one row, and no

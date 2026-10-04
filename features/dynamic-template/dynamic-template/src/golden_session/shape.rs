@@ -120,6 +120,16 @@ pub struct Node {
     /// notes rather than audio. The checklist has asserted they do
     /// since it was written, and nothing made it true.
     pub midi: bool,
+    /// The mixer strip's width, when the node's place in the part says
+    /// otherwise than the layout's rule ([`super::rpp::strip_width`]).
+    ///
+    /// The layout reads a strip's width off the tree's shape — a piece
+    /// at the tone width, a folder at the head width — and a guitar's
+    /// depth defeats that: every source under a channel is a leaf, so
+    /// every one of the twenty-eight opens as a piece, while the layer
+    /// that actually carries the chain is a folder. So the guitar says
+    /// it here, as data, rather than as a name rule in the writer.
+    pub strip: Option<u32>,
 }
 
 impl Node {
@@ -139,6 +149,7 @@ impl Node {
             fx: Vec::new(),
             no_items: false,
             midi: false,
+            strip: None,
         }
     }
 
@@ -229,6 +240,23 @@ impl Node {
     #[must_use]
     pub fn fx(mut self, chain: &[Fx]) -> Self {
         self.fx = chain.to_vec();
+        self
+    }
+
+    /// A little strip: a track with nothing on it to read — a source
+    /// under a guitar's channel, the channel itself — needs its fader
+    /// and its mute and no more.
+    #[must_use]
+    pub const fn narrow(mut self) -> Self {
+        self.strip = Some(MIN_WIDTH);
+        self
+    }
+
+    /// A strip wide enough for the Tone rack: the track the part's
+    /// chain sits on, folder or not.
+    #[must_use]
+    pub const fn toned(mut self) -> Self {
+        self.strip = Some(TONE_WIDTH);
         self
     }
 
@@ -575,19 +603,25 @@ fn electric() -> Node {
 /// inside a capture's own file name (`18.EG2 (57).wav`), and `R121`
 /// reads as the **R channel**. The names have to survive the classifier
 /// they will be read back through.
+///
+/// Everything here is a guitar concern rather than an arrangement one:
+/// the chain is on the layer above, so the channel, its amps and its
+/// sources carry nothing and open as little strips.
 fn seven_sources(channel: &str) -> Node {
-    Node::new(channel, ELECTRIC, Kind::Group).children(vec![
-        Node::new("DI", ELECTRIC, Kind::Source),
-        Node::new("Pedalboard", ELECTRIC, Kind::Source),
-        Node::new("Amp 1", ELECTRIC, Kind::Group).children(vec![
-            Node::new("SM57", ELECTRIC, Kind::Source),
-            Node::new("Royer", ELECTRIC, Kind::Source),
-        ]),
-        Node::new("Amp 2", ELECTRIC, Kind::Group).children(vec![
-            Node::new("SM57", ELECTRIC, Kind::Source),
-            Node::new("Royer", ELECTRIC, Kind::Source),
-        ]),
-    ])
+    let source = |name: &str| Node::new(name, ELECTRIC, Kind::Source).narrow();
+    let amp = |name: &str| {
+        Node::new(name, ELECTRIC, Kind::Group)
+            .narrow()
+            .children(vec![source("SM57"), source("Royer")])
+    };
+    Node::new(channel, ELECTRIC, Kind::Group)
+        .narrow()
+        .children(vec![
+            source("DI"),
+            source("Pedalboard"),
+            amp("Amp 1"),
+            amp("Amp 2"),
+        ])
 }
 
 /// **Rhythm**: the maximal guitar shape.
@@ -597,13 +631,20 @@ fn seven_sources(channel: &str) -> Node {
 /// seven sources. Four channels, twenty-eight source tracks, one part —
 /// which is the depth every guitar scene and gesture has to work at
 /// without knowing it is deep.
+///
+/// The arrangement and its layers are where the part is processed, so
+/// they open at the tone width; everything under a layer is a little
+/// strip.
 fn rhythm() -> Node {
     Node::new("Rhythm", ELECTRIC, Kind::Group)
         .send("GTR RHYTHM")
+        .toned()
         .children(vec![
             Node::new("Main", ELECTRIC, Kind::Group)
+                .toned()
                 .children(vec![seven_sources("L"), seven_sources("R")]),
             Node::new("Octave", ELECTRIC, Kind::Group)
+                .toned()
                 .children(vec![seven_sources("L"), seven_sources("R")]),
         ])
 }
@@ -615,12 +656,16 @@ fn rhythm() -> Node {
 /// channel captured one way has nothing to hold. The same scenes and
 /// gestures must work here as on Rhythm, which is the point of having
 /// both in the fixture.
+///
+/// Lead is its own layer: the chain is on it, and its two channels are
+/// little strips.
 fn lead_part() -> Node {
     Node::new("Lead", ELECTRIC, Kind::Group)
         .send("GTR LEAD")
+        .toned()
         .children(vec![
-            Node::new("L", ELECTRIC, Kind::Source),
-            Node::new("R", ELECTRIC, Kind::Source),
+            Node::new("L", ELECTRIC, Kind::Source).narrow(),
+            Node::new("R", ELECTRIC, Kind::Source).narrow(),
         ])
 }
 
@@ -628,12 +673,14 @@ fn lead_part() -> Node {
 ///
 /// An arrangement with a Main layer and a Harmony layer of one track
 /// each. No channel level at all, because neither layer is doubled.
+/// The two layers carry their own chains; Solo itself is only the
+/// folder over them.
 fn solo() -> Node {
     Node::new("Solo", ELECTRIC, Kind::Group)
         .send("GTR SOLO")
         .children(vec![
-            Node::new("Main", ELECTRIC, Kind::Source),
-            Node::new("Harmony", ELECTRIC, Kind::Source),
+            Node::new("Main", ELECTRIC, Kind::Source).toned(),
+            Node::new("Harmony", ELECTRIC, Kind::Source).toned(),
         ])
 }
 

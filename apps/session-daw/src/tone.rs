@@ -178,6 +178,11 @@ pub enum Role {
     /// EQ and nothing that changes its dynamics — it is what the
     /// others are balanced against.
     Dry,
+    /// A capture under a guitar's layer — a channel the part was
+    /// doubled into, an amp, a mic, the DI — or an arrangement folder
+    /// that only holds layers. The part is processed on its layer, so
+    /// these carry nothing: see [`guitar_role`].
+    Source,
 }
 
 impl Role {
@@ -264,7 +269,7 @@ impl Role {
             Self::Wide => Some(&WIDE_CHAIN),
             Self::Pitch => Some(&PITCH_CHAIN),
             Self::Fund => Some(&FUND_CHAIN),
-            Self::Trig | Self::Half => Some(&[]),
+            Self::Trig | Self::Half | Self::Source => Some(&[]),
             Self::Parallel => Some(&PARALLEL_CHAIN),
             Self::Dry => Some(&DRY_CHAIN),
         }
@@ -6060,7 +6065,13 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
         }
         Role::Pitch => pitch_presets(name),
         Role::Parallel => parallel_presets(name),
-        Role::Channel | Role::Bus | Role::Fund | Role::Trig | Role::Dry | Role::Half => Vec::new(),
+        Role::Channel
+        | Role::Bus
+        | Role::Fund
+        | Role::Trig
+        | Role::Dry
+        | Role::Half
+        | Role::Source => Vec::new(),
     };
     if presets.is_empty() {
         return tone;
@@ -9649,6 +9660,9 @@ impl Store {
             if track.is_folder && is_pair(rows, index, *depth) {
                 role = Role::Channel;
             }
+            if let Some(guitar) = guitar_role(rows, index, &ancestors) {
+                role = guitar;
+            }
             if track.is_folder {
                 folders.push((*depth, track.name.clone()));
             }
@@ -9679,6 +9693,69 @@ impl Store {
             tone.prerender_tails();
         }
     }
+}
+
+/// The role of a track inside an electric guitar's folder, or `None`
+/// for one that is not in one.
+///
+/// A guitar reads as arrangement → layer → channel → sources: Rhythm
+/// over its Main and Octave, each doubled into an L and an R, each of
+/// those captured on a DI, a pedalboard and two miked amps. The part is
+/// processed on its LAYER — the performance — so the chain goes there,
+/// and everything under a layer is a capture with nothing on it.
+///
+/// - **Arrangement** (directly under the guitar folder): a chain. Rhythm
+///   stacks the octave under the main and is processed as one part;
+///   Lead is its own layer, doubled into an L and an R. The exception
+///   is a Solo folder: its layers are two separate lines (the solo and
+///   its harmony), each processed on its own, so the folder over them
+///   is only a folder.
+/// - **Layer** (under an arrangement): a chain, unless it is one half
+///   of the arrangement's own pair (Lead's L and R).
+/// - **Deeper** — a channel folder, an amp, a mic, the DI: nothing.
+///
+/// Keyed on where the track sits under a folder named for the electric
+/// guitar, because the strip has the rows and not the taxonomy: the
+/// same "Main" or "L" is a lead vocal's layer or a piano's half
+/// elsewhere, and the names alone would process the wrong one. And on
+/// the depth rather than on what a folder holds, because a scene that
+/// hides the sources (Guitar Mixing) or folds a layer (the arrangement)
+/// hands this rows without them, and a track's chain is decided once.
+#[must_use]
+pub fn guitar_role(
+    rows: &[(daw_proto::Track, u32)],
+    index: usize,
+    ancestors: &[String],
+) -> Option<Role> {
+    let at = ancestors.iter().rposition(|a| is_electric_guitar(a))?;
+    // Keys has an Electric of its own (Rhodes, Wurli); it is not a guitar.
+    if ancestors
+        .iter()
+        .take(at)
+        .any(|a| a.to_lowercase().starts_with("keys"))
+    {
+        return None;
+    }
+    let (track, _) = rows.get(index)?;
+    let level = ancestors.len().saturating_sub(at.saturating_add(1));
+    let role = match level {
+        0 if track.is_folder && track.name.trim().to_lowercase().starts_with("solo") => {
+            Role::Source
+        }
+        0 => Role::Channel,
+        1 if !track.is_folder && is_pair_half(&track.name) => Role::Half,
+        1 => Role::Channel,
+        _ => Role::Source,
+    };
+    Some(role)
+}
+
+/// Whether a folder name is the electric guitar's.
+fn is_electric_guitar(name: &str) -> bool {
+    matches!(
+        name.trim().to_lowercase().as_str(),
+        "electric" | "electrics" | "electric guitar" | "electric guitars"
+    )
 }
 
 /// Whether the folder at `index` holds exactly a left and a right half.
@@ -10587,6 +10664,85 @@ mod grip_tests {
         store.edit("a").expect("a").sat.drive = 9.0;
         store.seed(&rows);
         assert!((store.get("a").expect("a").sat.drive - 9.0).abs() < f32::EPSILON);
+    }
+
+    /// The golden session's rows, by path, seeded.
+    fn golden_store() -> (Store, Vec<(String, String)>) {
+        let flats = dynamic_template::golden_session::rpp::flatten(
+            &dynamic_template::golden_session::maximal(),
+        );
+        let rows: Vec<(daw_proto::Track, u32)> = flats
+            .iter()
+            .map(|flat| {
+                (
+                    daw_proto::Track {
+                        guid: flat.guid.clone(),
+                        name: flat.name.clone(),
+                        is_folder: flat.is_folder,
+                        ..daw_proto::Track::default()
+                    },
+                    flat.depth,
+                )
+            })
+            .collect();
+        let mut store = Store::default();
+        store.seed(&rows);
+        let paths = flats
+            .iter()
+            .map(|flat| (flat.path.clone(), flat.guid.clone()))
+            .collect();
+        (store, paths)
+    }
+
+    /// The electric's chain is on its layers — Rhythm, Main, Octave,
+    /// Lead, and Solo's Main and Harmony — and nowhere else in it: the
+    /// channels, the amps, the mics and the DI carry nothing, and Solo
+    /// is only the folder over its two lines.
+    #[test]
+    fn the_electric_is_processed_on_its_layers() {
+        let (store, paths) = golden_store();
+        let chain = |path: &str| {
+            let guid = &paths
+                .iter()
+                .find(|(p, _)| p == path)
+                .unwrap_or_else(|| panic!("no {path}"))
+                .1;
+            store
+                .get(guid)
+                .map(|tone| tone.role.panels() != Some(&[]))
+                .unwrap_or_else(|| panic!("{path} was not seeded"))
+        };
+        for layer in [
+            "Electric/Rhythm",
+            "Electric/Rhythm/Main",
+            "Electric/Rhythm/Octave",
+            "Electric/Lead",
+            "Electric/Solo/Main",
+            "Electric/Solo/Harmony",
+        ] {
+            assert!(chain(layer), "{layer} lost its chain");
+        }
+        let mut bare = 0;
+        for (path, _) in &paths {
+            let Some(rest) = path.strip_prefix("Electric/") else {
+                continue;
+            };
+            if matches!(
+                rest,
+                "Rhythm" | "Rhythm/Main" | "Rhythm/Octave" | "Lead" | "Solo/Main" | "Solo/Harmony"
+            ) {
+                continue;
+            }
+            assert!(!chain(path), "{path} carries a chain");
+            bare += 1;
+        }
+        // Solo, Lead's L and R, and four channels of a folder, two amps
+        // and six sources each.
+        assert_eq!(bare, 1 + 2 + 4 * 9);
+        // The negative control: the same names elsewhere keep theirs —
+        // a lead vocal's Main layer, the piano.
+        assert!(chain("Vocals/Ron/Main"), "the vocal's Main lost its chain");
+        assert!(chain("Keys/Piano"), "the piano lost its chain");
     }
 }
 
