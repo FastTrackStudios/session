@@ -426,7 +426,7 @@ impl Gen<'_> {
                         x: &format!("{} + row.indent", n(field_x + 3.0)),
                         y: &format!("{FT} + ({FH} - 20) / 2"),
                         visible: &format!(
-                            "{knob} && {}track.armed && {}",
+                            "{knob} && ui.recording && {}track.armed && {}",
                             if armed { "" } else { "!" },
                             state("arm", at)
                         ),
@@ -655,7 +655,7 @@ impl Gen<'_> {
                 format!("{FT} + ({FH} - 20) / 2"),
                 "20".into(),
                 "20".into(),
-                knob.into(),
+                format!("{knob} && ui.recording"),
             ),
             (
                 "solo",

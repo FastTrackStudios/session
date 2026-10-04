@@ -1796,6 +1796,7 @@ fn control_row(
                 font: Some(font),
                 hover: all.into_iter().find(|c| look(*c) == Interaction::Hover),
                 pressed: all.into_iter().find(|c| look(*c) == Interaction::Pressed),
+                idle: !row.tcp.recording,
             },
         );
         theme.live(

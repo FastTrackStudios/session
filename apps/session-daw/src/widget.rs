@@ -1566,6 +1566,8 @@ impl Widget for ArrangementWidget {
             // The toolbar changed the panel's shape: nothing else will
             // ask for the frame that re-cuts it.
             || self.scene.tcp.compact != self.compact.get()
+            // …or the window changed mode: the arm comes or goes.
+            || self.scene.tcp.recording != self.recording.get()
             // Other people's pointers glide and their play cursors move
             // with nothing happening here.
             || crate::ghosts::active()
@@ -2218,7 +2220,9 @@ impl ArrangementWidget {
             self.palette =
                 crate::skin::palette(&Palette::from_theme(&daw_ui::theming::Theme::dark()));
             self.recut();
-        } else if self.scene.tcp.compact != self.compact.get() {
+        } else if self.scene.tcp.compact != self.compact.get()
+            || self.scene.tcp.recording != self.recording.get()
+        {
             self.recut();
         }
         let began = web_time::Instant::now();

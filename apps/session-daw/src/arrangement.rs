@@ -616,6 +616,7 @@ fn record_panel(
                     depth,
                     height: body,
                     font: Some(font),
+                    idle: !tcp.recording,
                     ..crate::skin::RowShown::default()
                 },
             );

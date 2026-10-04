@@ -203,6 +203,10 @@ pub struct RowShown<'a> {
     /// The control the pointer is over, and the one it is pressing.
     pub hover: Option<crate::row::Control>,
     pub pressed: Option<crate::row::Control>,
+    /// Not recording: the window is in a mode other than Record, and the
+    /// row has no arm (`ui.recording` false). Off by default — a row
+    /// asked for with nothing said is a recording one, as it always was.
+    pub idle: bool,
 }
 
 /// A row control's name in a theme: its `@name`, its `ui.hover`.
@@ -275,6 +279,7 @@ pub fn row_fields(palette: &Palette, track: &Track, shown: RowShown<'_>) -> Stri
     let named = |c: Option<crate::row::Control>| Value::text(c.map_or("", row_name));
     set("ui.hover", named(shown.hover));
     set("ui.pressed", named(shown.pressed));
+    set("ui.recording", Value::Bool(!shown.idle));
     let Some(font) = shown.font else {
         return out;
     };
