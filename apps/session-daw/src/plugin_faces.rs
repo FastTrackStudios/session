@@ -75,6 +75,23 @@ pub fn is_drum(name: &str, ancestors: &[String]) -> bool {
         .any(|word| is_named(name, ancestors, word))
 }
 
+/// `design` in the shape `suffix` names (`-lane`, `-tall`) where that
+/// has been designed, else `design` itself.
+fn shaped(design: &str, suffix: &str) -> String {
+    let wanted = format!("{design}{suffix}");
+    if size_of(&wanted).is_some() {
+        wanted
+    } else {
+        design.to_owned()
+    }
+}
+
+/// Whether `design` is one of the lane-sized shapes.
+#[must_use]
+pub fn is_shaped(design: &str) -> bool {
+    design.ends_with("-lane") || design.ends_with("-tall")
+}
+
 /// Designs' sizes, by design, as read (`None`: unreadable).
 type Sizes = std::sync::Mutex<std::collections::HashMap<String, Option<(f64, f64)>>>;
 
@@ -266,11 +283,12 @@ fn comp_edit(ns: &str, param: &str, c: &mut crate::tone::Comp, value: f64) -> bo
 pub fn face_after(tone: &Tone) -> Option<(crate::faces::FrameFace, (f64, f64))> {
     let (comp, face) = tone.comp_after?;
     let design = face.design();
-    let size = size_of(design)?;
+    let shaped = shaped(design, "-lane");
+    let size = size_of(&shaped)?;
     Some((
         crate::faces::FrameFace {
             responsive: false,
-            design: design.to_owned(),
+            design: shaped,
             values: comp_values(ns_of(design), comp),
             texts: Vec::new(),
         },
@@ -374,13 +392,23 @@ fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
 /// The plugin face `which` wears over `tone`, and its size.
 #[must_use]
 pub fn face(which: Which, tone: &Tone) -> Option<(crate::faces::FrameFace, (f64, f64))> {
-    let design = design(which, tone)?;
-    let size = size_of(design)?;
+    let base = design(which, tone)?;
+    // A compressor wears the shape designed for where it stands: one of
+    // a stacked pair (`-lane`), or alone filling the column (`-tall`) —
+    // the plugin's own face where those are not designed yet.
+    let shaped = match which {
+        Which::Comp | Which::RescueComp => {
+            let paired = which == Which::Comp && tone.comp_after.is_some();
+            shaped(base, if paired { "-lane" } else { "-tall" })
+        }
+        _ => base.to_owned(),
+    };
+    let size = size_of(&shaped)?;
     Some((
         crate::faces::FrameFace {
             responsive: false,
-            design: design.to_owned(),
-            values: values(design, which, tone),
+            design: shaped,
+            values: values(base, which, tone),
             texts: Vec::new(),
         },
         size,

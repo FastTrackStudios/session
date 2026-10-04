@@ -200,7 +200,7 @@ fn widened(track: &daw_proto::Track) -> daw_proto::Track {
 #[derive(Clone)]
 enum Target {
     Unit(Which),
-    Rig(usize, crate::rig::FaceEntry),
+    Rig(usize, Box<crate::rig::FaceEntry>),
 }
 
 /// What folds in a lane: a mix phase of a channel's chain, or a section
@@ -1342,11 +1342,9 @@ impl DeviceRow {
                 match pair {
                     [a, b] => columns.push(vec![(*a, false), (*b, false)]),
                     [a] => {
-                        let has_back = rig
-                            .blocks
-                            .get(*a)
-                            .and_then(|b| self.rig_faces.of(rig, b))
-                            .is_some_and(|f| f.back.is_some());
+                        let face = rig.blocks.get(*a).and_then(|b| self.rig_faces.of(rig, b));
+                        // A tall layout is the whole column itself.
+                        let has_back = face.is_some_and(|f| f.back.is_some() && f.tall.is_none());
                         columns.push(if has_back {
                             vec![(*a, false), (*a, true)]
                         } else {
@@ -1559,17 +1557,19 @@ impl DeviceRow {
                         hits.faces.push((
                             key.clone(),
                             track.guid.clone(),
-                            Target::Rig(*at, face.clone()),
+                            Target::Rig(*at, Box::new(face.clone())),
                             panel,
                         ));
                         hits.pictures.push((
                             key,
-                            crate::faces::Picture::Frame(crate::rig::face_of(
-                                rig,
-                                block,
-                                face,
-                                (dark, *back),
-                            )),
+                            crate::faces::Picture::Frame({
+                                let mut f = crate::rig::face_of(rig, block, face, (dark, *back));
+                                // Alone in a Time column, its tall layout.
+                                if column.len() == 1 && section == crate::rig::Section::Time {
+                                    f.design = crate::rig::pick_design(face, false, false, true);
+                                }
+                                f
+                            }),
                             panel,
                             hits.clip,
                         ));

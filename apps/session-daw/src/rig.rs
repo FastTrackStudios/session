@@ -301,6 +301,11 @@ pub struct FaceEntry {
     /// over its back.
     pub back: Option<String>,
     pub back_dark: Option<String>,
+    /// Its tall layout — the picture across the top, every control
+    /// across the bottom — for a Time face alone in its column, and its
+    /// dark finish.
+    pub tall: Option<String>,
+    pub tall_dark: Option<String>,
     /// It prints its preset on a nameplate.
     pub nameplate: bool,
     /// It carries the Time knob.
@@ -391,6 +396,8 @@ fn entry(v: &serde_json::Value) -> Option<FaceEntry> {
         dark: named(from, "dark"),
         back: named(from, "back"),
         back_dark: named(from, "back_dark"),
+        tall: named(from, "tall").or_else(|| named(Some(v), "tall")),
+        tall_dark: named(from, "tall_dark").or_else(|| named(Some(v), "tall_dark")),
         nameplate: phone_flag("nameplate"),
         time_knob: phone_flag("time_knob"),
     })
@@ -793,6 +800,20 @@ pub fn face_of(
 /// the front where a finish is missing.
 #[must_use]
 pub fn design_of(face: &FaceEntry, dark: bool, back: bool) -> String {
+    pick_design(face, dark, back, false)
+}
+
+/// Which of `face`'s designs — with `tall`, its tall layout where it has
+/// one.
+#[must_use]
+pub fn pick_design(face: &FaceEntry, dark: bool, back: bool, tall: bool) -> String {
+    if tall && let Some(t) = &face.tall {
+        return if dark {
+            face.tall_dark.clone().unwrap_or_else(|| t.clone())
+        } else {
+            t.clone()
+        };
+    }
     let pick = match (back, dark) {
         (false, false) => None,
         (false, true) => face.dark.clone(),

@@ -213,11 +213,18 @@ fn time_face(which: Which, tone: &Tone, entry: &crate::rig::FaceEntry, back: boo
 /// one: its front over its back, stacked.
 #[must_use]
 pub fn aspect(which: Which, tone: &Tone) -> Option<f64> {
-    if let Some((_, (w, h))) = crate::plugin_faces::face(which, tone) {
+    if let Some((face, (w, h))) = crate::plugin_faces::face(which, tone) {
         // A compressor's column is a pair's, stacked: as wide as one
         // face at half the height, whether the second is there or the
-        // first fills it alone.
-        let stacked = if which == Which::Comp { 2.0 } else { 1.0 };
+        // first fills it alone. A lane-shaped face says its own: a
+        // `-lane` is half the column, a `-tall` all of it.
+        let stacked = if face.design.ends_with("-tall") {
+            1.0
+        } else if which == Which::Comp {
+            2.0
+        } else {
+            1.0
+        };
         return Some(w / (h * stacked).max(1.0));
     }
     time_entry(which, tone).map(|entry| {
@@ -581,7 +588,11 @@ pub fn of(which: Which, tone: &Tone) -> Option<Face> {
         let under = (which == Which::Comp)
             .then(|| crate::plugin_faces::face_after(tone).map(|(f, _)| f))
             .flatten();
-        frame.responsive = which == Which::Comp && under.is_none();
+        // Alone, a rack face is laid out for the column; a `-tall` was
+        // designed for it.
+        frame.responsive = which == Which::Comp
+            && under.is_none()
+            && !crate::plugin_faces::is_shaped(&frame.design);
         return Some(Face {
             name: frame.design.clone(),
             picture: Picture::Frame(frame),
@@ -592,6 +603,20 @@ pub fn of(which: Which, tone: &Tone) -> Option<Face> {
     match which {
         // A machine with a face of its own in frame draws that.
         // A machine frame has a face for draws that, over its back.
+        // Alone, a Time face with a tall layout is that one device.
+        Which::Reverb | Which::Delay
+            if time_entry(which, tone).is_some_and(|e| e.tall.is_some()) =>
+        {
+            let entry = time_entry(which, tone)?;
+            let mut frame = time_face(which, tone, entry, false);
+            frame.design = crate::rig::pick_design(entry, false, false, true);
+            Some(Face {
+                name: entry.face.clone(),
+                picture: Picture::Frame(frame),
+                knobs: &[],
+                under: None,
+            })
+        }
         Which::Reverb | Which::Delay if time_entry(which, tone).is_some() => {
             let entry = time_entry(which, tone)?;
             Some(Face {
