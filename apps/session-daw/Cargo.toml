@@ -133,6 +133,12 @@ anyrender = "0.11"
 # painters here, when one is loaded (`skin`).
 theme-runtime.workspace = true
 anyrender_vello = { version = "0.12", optional = true }
+# A frame face's GPU path (`faces::Painters`): the device the desktop
+# renderer hands over (anyrender_vello 0.12 boxes a wgpu_context 0.7
+# handle), given to frame-live to render its effects stage — the EQ's
+# glow — into a texture the renderer composites.
+wgpu = { workspace = true, optional = true }
+wgpu-context-07 = { package = "wgpu_context", version = "0.7", optional = true }
 vello = "0.9"
 pollster = { version = "0.4", optional = true }
 image = { workspace = true }
@@ -234,6 +240,8 @@ default = ["native"]
 native = [
     "dep:dioxus-native",
     "dep:anyrender_vello",
+    "dep:wgpu",
+    "dep:wgpu-context-07",
     "dep:pollster",
     "dep:dirs",
     "dep:winit",

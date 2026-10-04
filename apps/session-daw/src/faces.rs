@@ -775,6 +775,24 @@ pub struct Painters {
 pub struct Live {
     pub surface: frame_live::LiveSurface,
     shown: Option<FrameFace>,
+    /// Its GPU path, once tried: the texture the renderer knows (and
+    /// the size it was registered at), or `Failed` — vectors from then.
+    #[cfg(feature = "native")]
+    gpu: Gpu,
+}
+
+/// A frame face's GPU state.
+#[cfg(feature = "native")]
+#[derive(Default)]
+enum Gpu {
+    /// Not tried yet.
+    #[default]
+    Untried,
+    /// Attached; the texture registered with the renderer, if one has
+    /// been rendered.
+    Attached(Option<(anyrender::ResourceId, (u32, u32))>),
+    /// The renderer handed no device, or frame-live could not use it.
+    Failed,
 }
 
 impl Painters {
@@ -793,6 +811,93 @@ impl Painters {
         scale: f64,
     ) -> Scene {
         let mut scene = Scene::new();
+        if let Some(live) = self.live(key, face) {
+            live.surface.paint_vectors(&mut scene, width, height, scale);
+        }
+        scene
+    }
+
+    /// `face` as device `key`'s live surface renders it on the GPU — its
+    /// effects stage too (the EQ's glow), which the vector path leaves
+    /// out — into a texture the renderer composites. The vector path
+    /// where the renderer hands over no device.
+    #[cfg(feature = "native")]
+    fn paint_frame_gpu(
+        &mut self,
+        ctx: &mut dyn anyrender::RenderContext,
+        key: &str,
+        face: &FrameFace,
+        (width, height): (u32, u32),
+        scale: f64,
+    ) -> Scene {
+        let Some(live) = self.live(key, face) else {
+            return Scene::new();
+        };
+        if matches!(live.gpu, Gpu::Untried) {
+            let handle = ctx
+                .renderer_specific_context()
+                .and_then(|any| any.downcast::<wgpu_context_07::DeviceHandle>().ok());
+            live.gpu = match handle {
+                Some(h) => match live.surface.attach_gpu(h.device.clone(), h.queue.clone()) {
+                    Ok(()) => Gpu::Attached(None),
+                    Err(error) => {
+                        tracing::warn!(target: "frame", face = %face.design, %error, "frame face: no GPU, vectors");
+                        Gpu::Failed
+                    }
+                },
+                None => Gpu::Failed,
+            };
+        }
+        let Gpu::Attached(registered) = &mut live.gpu else {
+            let mut scene = Scene::new();
+            live.surface.paint_vectors(&mut scene, width, height, scale);
+            return scene;
+        };
+        let (texture, fresh) = match live.surface.render(width, height, scale) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                tracing::warn!(target: "frame", face = %face.design, %error, "frame face: GPU render failed, vectors");
+                live.gpu = Gpu::Failed;
+                let mut scene = Scene::new();
+                live.surface.paint_vectors(&mut scene, width, height, scale);
+                return scene;
+            }
+        };
+        // A new texture (a new size) is registered again, the old one
+        // given back; the same one is re-rendered in place.
+        if fresh || registered.is_none_or(|(_, size)| size != (width, height)) {
+            if let Some((old, _)) = registered.take() {
+                ctx.unregister_resource(old);
+            }
+            match ctx.try_register_custom_resource(Box::new(texture)) {
+                Ok(id) => *registered = Some((id, (width, height))),
+                Err(_) => {
+                    live.gpu = Gpu::Failed;
+                    let mut scene = Scene::new();
+                    live.surface.paint_vectors(&mut scene, width, height, scale);
+                    return scene;
+                }
+            }
+        }
+        let mut scene = Scene::new();
+        if let Some((id, _)) = registered {
+            scene.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                anyrender::Paint::Resource(vello::peniko::ImageBrush {
+                    image: *id,
+                    sampler: vello::peniko::ImageSampler::default(),
+                }),
+                None,
+                &Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+            );
+        }
+        scene
+    }
+
+    /// Device `key`'s live surface, opened the first time and shown
+    /// `face`'s values — `None` where the design does not open.
+    fn live(&mut self, key: &str, face: &FrameFace) -> Option<&mut Live> {
         if !self.frames.contains_key(key) {
             let path = design_dir().join(&face.design);
             let dir = path
@@ -812,18 +917,18 @@ impl Painters {
                         Live {
                             surface,
                             shown: None,
+                            #[cfg(feature = "native")]
+                            gpu: Gpu::Untried,
                         },
                     );
                 }
                 Err(error) => {
                     tracing::warn!(target: "frame", face = %face.design, %error, "frame face did not open");
-                    return scene;
+                    return None;
                 }
             }
         }
-        let Some(live) = self.frames.get_mut(key) else {
-            return scene;
-        };
+        let live = self.frames.get_mut(key)?;
         if live.shown.as_ref() != Some(face) {
             live.surface.set_responsive(face.responsive);
             live.surface.apply_real(face.values.clone());
@@ -831,8 +936,7 @@ impl Painters {
             live.shown = Some(face.clone());
         }
         live.surface.poll_reload();
-        live.surface.paint_vectors(&mut scene, width, height, scale);
-        scene
+        Some(live)
     }
 
     /// `picture`, `width` × `height` device pixels, as device `key`'s
@@ -845,6 +949,10 @@ impl Painters {
         (width, height, scale): (u32, u32, f64),
     ) -> Scene {
         if let Picture::Frame(face) = picture {
+            #[cfg(feature = "native")]
+            if let Some(ctx) = ctx {
+                return self.paint_frame_gpu(ctx, key, face, (width, height), scale);
+            }
             return self.paint_frame(key, face, (width, height), scale);
         }
         let Some(ctx) = ctx else {

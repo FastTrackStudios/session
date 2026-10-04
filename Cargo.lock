@@ -14375,6 +14375,8 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+ "wgpu",
+ "wgpu_context 0.7.0",
  "winit 0.31.0-beta.2",
 ]
 

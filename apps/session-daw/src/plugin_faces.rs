@@ -124,6 +124,15 @@ fn size_of(design: &str) -> Option<(f64, f64)> {
 /// The design `which` wears over `tone`, if a plugin face serves it.
 fn design(which: Which, tone: &Tone) -> Option<&'static str> {
     match which {
+        // Every EQ panel is frame's EQ graph: its gestures, its keys, its
+        // menus, lit by its glow where the GPU is there.
+        Which::RescueEq
+        | Which::Eq
+        | Which::Space
+        | Which::PreEq
+        | Which::PostEq
+        | Which::DecayEq
+        | Which::PolishEq => Some(EQ_FACE),
         Which::Comp => Some(tone.comp_face.design()),
         Which::RescueComp if tone.comp_face == CompFace::Opto => Some(CompFace::Fet.design()),
         Which::Sat => Some(match sat_circuit(tone) {
@@ -158,6 +167,7 @@ fn sat_circuit(tone: &Tone) -> saturate_ui::viz::Circuit {
 /// The namespace a design's controls are under.
 fn ns_of(design: &str) -> &'static str {
     match design {
+        EQ_FACE => "eq",
         "comp/01-fet-black" => "fet",
         "comp/04-opto-leveler" => "opto",
         "comp/09-vca-comp" => "vcacomp",
@@ -210,6 +220,154 @@ fn comp_mut(tone: &mut Tone, which: Which) -> &mut crate::tone::Comp {
 
 /// The used EQ bands, in order: a console EQ's four sections are the
 /// first four.
+/// frame's EQ graph face: 24 bands, `eq/b{n}_*` (n from 1).
+const EQ_FACE: &str = "rig-faces/52-amp-eq";
+const EQ_SLOTS: usize = 24;
+
+/// frame's choice params take their position, 0..1 over the options.
+fn choice(index: usize, options: usize) -> f64 {
+    crate::num::coord(index) / crate::num::coord(options.saturating_sub(1).max(1))
+}
+
+/// And give it back.
+fn choice_index(value: f64, options: usize) -> usize {
+    let top = crate::num::coord(options.saturating_sub(1));
+    crate::num::index((value.clamp(0.0, 1.0) * top).round())
+}
+
+const EQ_SHAPES: [eq_ui::eq_graph_model::EqBandShape; 10] = {
+    use eq_ui::eq_graph_model::EqBandShape as S;
+    [
+        S::Bell,
+        S::LowShelf,
+        S::HighShelf,
+        S::LowCut,
+        S::HighCut,
+        S::Notch,
+        S::BandPass,
+        S::TiltShelf,
+        S::FlatTilt,
+        S::AllPass,
+    ]
+};
+
+const EQ_PLACEMENTS: [eq_ui::eq_graph_model::StereoMode; 5] = {
+    use eq_ui::eq_graph_model::StereoMode as M;
+    [M::Stereo, M::Left, M::Right, M::Mid, M::Side]
+};
+
+/// The slopes frame's graph offers (0 dB/oct … brickwall): the band's
+/// own slope index.
+const EQ_SLOPES: usize = 11;
+
+/// What the EQ graph shows for `bands`: each slot by its band's index.
+fn eq_values(bands: &[eq_ui::eq_graph_model::EqBand]) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    for slot in 0..EQ_SLOTS {
+        let at = |k: &str| format!("eq/b{}_{k}", slot + 1);
+        let Some(b) = bands.iter().find(|b| b.index == slot && b.used) else {
+            out.push((at("used"), 0.0));
+            continue;
+        };
+        let shape = EQ_SHAPES.iter().position(|s| *s == b.shape).unwrap_or(0);
+        let place = EQ_PLACEMENTS
+            .iter()
+            .position(|m| *m == b.stereo_mode)
+            .unwrap_or(0);
+        let slope = b
+            .slope
+            .map_or(2, |s| crate::num::index(f64::from(s).round()));
+        out.extend([
+            (at("used"), 1.0),
+            (at("on"), if b.enabled { 1.0 } else { 0.0 }),
+            (at("freq"), f64::from(b.frequency)),
+            (at("gain"), f64::from(b.gain)),
+            (at("q"), f64::from(b.q)),
+            (at("shape"), choice(shape, EQ_SHAPES.len())),
+            (at("slope"), choice(slope, EQ_SLOPES)),
+            (at("placement"), choice(place, EQ_PLACEMENTS.len())),
+            (at("focus"), if b.focus { 1.0 } else { 0.0 }),
+        ]);
+    }
+    out
+}
+
+/// The EQ graph's band names.
+fn eq_texts(bands: &[eq_ui::eq_graph_model::EqBand]) -> Vec<(String, String)> {
+    bands
+        .iter()
+        .filter(|b| b.used && b.index < EQ_SLOTS)
+        .map(|b| (format!("eq/b{}_name", b.index + 1), b.name.clone()))
+        .collect()
+}
+
+/// An edit the EQ graph made: `param` (`b{n}_field`) on `which`'s bands.
+/// A band added on the graph (`used` on) is made at its slot; one
+/// removed is marked unused.
+fn eq_edit(which: Which, tone: &mut Tone, param: &str, value: f64) -> bool {
+    let Some((slot, field)) = param
+        .strip_prefix('b')
+        .and_then(|rest| rest.split_once('_'))
+        .and_then(|(n, field)| Some((n.parse::<usize>().ok()?.checked_sub(1)?, field)))
+    else {
+        return false;
+    };
+    if slot >= EQ_SLOTS {
+        return false;
+    }
+    let Some(bands) = tone.bands(which) else {
+        return false;
+    };
+    let at = if let Some(at) = bands.iter().position(|b| b.index == slot) {
+        at
+    } else {
+        bands.push(eq_ui::eq_graph_model::EqBand {
+            index: slot,
+            used: false,
+            enabled: true,
+            frequency: 1000.0,
+            gain: 0.0,
+            q: 0.707,
+            slope: None,
+            shape: eq_ui::eq_graph_model::EqBandShape::Bell,
+            focus: false,
+            stereo_mode: eq_ui::eq_graph_model::StereoMode::Stereo,
+            name: String::new(),
+        });
+        bands.len() - 1
+    };
+    let Some(b) = bands.get_mut(at) else {
+        return false;
+    };
+    let v = crate::num::narrow(value);
+    let on = value >= 0.5;
+    match field {
+        "used" => b.used = on,
+        "on" => b.enabled = on,
+        "freq" => b.frequency = v,
+        "gain" => b.gain = v,
+        "q" => b.q = v,
+        "shape" => {
+            if let Some(shape) = EQ_SHAPES.get(choice_index(value, EQ_SHAPES.len())) {
+                b.shape = *shape;
+            }
+        }
+        "slope" => {
+            b.slope = Some(crate::num::narrow(crate::num::coord(choice_index(
+                value, EQ_SLOPES,
+            ))));
+        }
+        "placement" => {
+            if let Some(m) = EQ_PLACEMENTS.get(choice_index(value, EQ_PLACEMENTS.len())) {
+                b.stereo_mode = *m;
+            }
+        }
+        "focus" => b.focus = on,
+        _ => return false,
+    }
+    true
+}
+
 fn band(tone: &Tone, n: usize) -> Option<&eq_ui::eq_graph_model::EqBand> {
     tone.eq.iter().filter(|b| b.used).nth(n)
 }
@@ -331,6 +489,7 @@ fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
     let at = |param: &str| format!("{ns}/{param}");
     let pct = |v: f32| f64::from(v.clamp(0.0, 1.0)) * 100.0;
     match ns {
+        "eq" => eq_values(tone.bands_ref(which)),
         "fet" | "opto" | "vcacomp" => comp_values(ns, comp_of(tone, which)),
         "consoleeq" => {
             let mut out = vec![
@@ -409,12 +568,18 @@ pub fn face(which: Which, tone: &Tone) -> Option<(crate::faces::FrameFace, (f64,
         _ => base.to_owned(),
     };
     let size = size_of(&shaped)?;
+    let eq = base == EQ_FACE;
     Some((
         crate::faces::FrameFace {
-            responsive: false,
+            // The graph fills its box, whatever the box's proportions.
+            responsive: eq,
             design: shaped,
             values: values(base, which, tone),
-            texts: Vec::new(),
+            texts: if eq {
+                eq_texts(tone.bands_ref(which))
+            } else {
+                Vec::new()
+            },
         },
         size,
     ))
@@ -428,6 +593,7 @@ pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
     };
     let v = crate::num::narrow(value);
     match (ns, param) {
+        ("eq", p) => return eq_edit(which, tone, p, value),
         ("fet" | "opto" | "vcacomp", _) => {
             // The second compressor's face speaks its own controls: an
             // edit in its namespace (and not the first's) is its.
@@ -484,4 +650,69 @@ pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
         _ => return false,
     }
     true
+}
+
+#[cfg(test)]
+mod eq_face_tests {
+    use super::*;
+
+    fn value(values: &[(String, f64)], addr: &str) -> Option<f64> {
+        values.iter().find(|(a, _)| a == addr).map(|(_, v)| *v)
+    }
+
+    /// The EQ panels wear frame's EQ graph, each band at its own slot,
+    /// and what the graph edits comes back to the band.
+    #[test]
+    fn the_eq_graph_shows_and_edits_the_bands() {
+        let mut tone = crate::tone::placeholder(0);
+        let (face, _) = face(Which::Eq, &tone).expect("the EQ wears a face");
+        assert_eq!(face.design, EQ_FACE);
+        let first = tone
+            .eq
+            .iter()
+            .find(|b| b.used)
+            .cloned()
+            .expect("a used band");
+        let slot = first.index + 1;
+        assert_eq!(
+            value(&face.values, &format!("eq/b{slot}_freq")),
+            Some(f64::from(first.frequency))
+        );
+        assert_eq!(value(&face.values, &format!("eq/b{slot}_used")), Some(1.0));
+
+        // A drag on the graph moves the band.
+        assert!(edit(
+            Which::Eq,
+            &mut tone,
+            &format!("eq/b{slot}_gain"),
+            -4.5
+        ));
+        let moved = tone
+            .eq
+            .iter()
+            .find(|b| b.index == first.index)
+            .expect("still there");
+        assert!((moved.gain + 4.5).abs() < 1e-6);
+        // A shape is its position over the ten: Low Cut is the fourth.
+        assert!(edit(
+            Which::Eq,
+            &mut tone,
+            &format!("eq/b{slot}_shape"),
+            3.0 / 9.0
+        ));
+        let shaped = tone
+            .eq
+            .iter()
+            .find(|b| b.index == first.index)
+            .expect("still there");
+        assert_eq!(shaped.shape, eq_ui::eq_graph_model::EqBandShape::LowCut);
+
+        // A band added on the graph's last slot is made there.
+        assert!(edit(Which::Eq, &mut tone, "eq/b24_used", 1.0));
+        assert!(edit(Which::Eq, &mut tone, "eq/b24_freq", 8000.0));
+        let added = tone.eq.iter().find(|b| b.index == 23).expect("made");
+        assert!(added.used && (added.frequency - 8000.0).abs() < 1e-3);
+        // Negative control: a slot past the graph's is no band's.
+        assert!(!edit(Which::Eq, &mut tone, "eq/b25_used", 1.0));
+    }
 }
