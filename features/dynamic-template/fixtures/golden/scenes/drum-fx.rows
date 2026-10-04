@@ -201,52 +201,52 @@
 2	Pitch	30
 3	Oct+	86
 3	Oct-	86
-1	BGVs	30
-2	Octave Up	30
-3	EN	86
-3	ES	86
-3	PT	86
-2	Octave Down	30
-3	EN	86
-3	ES	86
-3	PT	86
-2	Higher Harmony	30
-3	EN	86
-3	ES	86
-3	PT	86
-2	Lower Harmony	30
-3	EN	86
-3	ES	86
-3	PT	86
-2	Hey	30
-3	All 1	86
-3	All 2	86
-3	All 3	86
-3	All 4	86
-3	All 5	86
-3	All 6	86
-3	All 7	86
-3	All 8	86
-1	Choir	30
-2	Soprano	30
-3	EN	86
-3	ES	86
-3	PT	86
-2	Alto	30
-3	EN	86
-3	ES	86
-3	PT	86
-2	Tenor	30
-3	EN	86
-3	ES	86
-3	PT	86
-2	Bass	30
-3	EN	86
-3	ES	86
-3	PT	86
 1	VOX EN	86
 1	VOX ES	86
 1	VOX PT	86
+0	BGVs	30
+1	Octave Up	30
+2	EN	86
+2	ES	86
+2	PT	86
+1	Octave Down	30
+2	EN	86
+2	ES	86
+2	PT	86
+1	Higher Harmony	30
+2	EN	86
+2	ES	86
+2	PT	86
+1	Lower Harmony	30
+2	EN	86
+2	ES	86
+2	PT	86
+1	Hey	30
+2	All 1	86
+2	All 2	86
+2	All 3	86
+2	All 4	86
+2	All 5	86
+2	All 6	86
+2	All 7	86
+2	All 8	86
+0	Choir	30
+1	Soprano	30
+2	EN	86
+2	ES	86
+2	PT	86
+1	Alto	30
+2	EN	86
+2	ES	86
+2	PT	86
+1	Tenor	30
+2	EN	86
+2	ES	86
+2	PT	86
+1	Bass	30
+2	EN	86
+2	ES	86
+2	PT	86
 0	Orchestra	30
 1	Winds	30
 2	Flute	86

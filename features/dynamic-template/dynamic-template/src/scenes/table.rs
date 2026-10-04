@@ -315,7 +315,15 @@ const BGV_PARTS: [&[&str]; 9] = [
 fn one_row_per_bgv_part() -> Vec<Rule> {
     BGV_PARTS
         .iter()
-        .map(|part| folded_in_the_arrangement(&below(&["Vocals"], part)))
+        .map(|part| {
+            // The BGVs stand for `Vocals/BGVs`; the choir is a group of
+            // its own, `Choir`.
+            if part.first() == Some(&"Choir") {
+                folded_in_the_arrangement(part)
+            } else {
+                folded_in_the_arrangement(&below(&["Vocals"], part))
+            }
+        })
         .collect()
 }
 
@@ -1832,32 +1840,32 @@ mod tests {
     #[test]
     fn the_arrangement_folds_each_bgv_part_to_one_row() {
         use crate::scenes::Surface;
-        let arranged = first_view_paths(Surface::Arrange, "Vocals/BGVs");
+        let arranged = first_view_paths(Surface::Arrange, "BGVs");
         assert_eq!(
             arranged,
             [
-                "Vocals/BGVs",
-                "Vocals/BGVs/Octave Up",
-                "Vocals/BGVs/Octave Down",
-                "Vocals/BGVs/Higher Harmony",
-                "Vocals/BGVs/Lower Harmony",
-                "Vocals/BGVs/Hey",
+                "BGVs",
+                "BGVs/Octave Up",
+                "BGVs/Octave Down",
+                "BGVs/Higher Harmony",
+                "BGVs/Lower Harmony",
+                "BGVs/Hey",
             ]
         );
-        let choir = first_view_paths(Surface::Arrange, "Vocals/Choir");
+        let choir = first_view_paths(Surface::Arrange, "Choir");
         assert_eq!(
             choir,
             [
-                "Vocals/Choir",
-                "Vocals/Choir/Soprano",
-                "Vocals/Choir/Alto",
-                "Vocals/Choir/Tenor",
-                "Vocals/Choir/Bass",
+                "Choir",
+                "Choir/Soprano",
+                "Choir/Alto",
+                "Choir/Tenor",
+                "Choir/Bass",
             ]
         );
-        let mixed = first_view_paths(Surface::Mixer, "Vocals/BGVs");
+        let mixed = first_view_paths(Surface::Mixer, "BGVs");
         assert_eq!(mixed.len(), 1 + 4 * (1 + 3) + 1 + 8, "{mixed:?}");
-        assert!(mixed.iter().any(|p| p == "Vocals/BGVs/Octave Up/ES"));
+        assert!(mixed.iter().any(|p| p == "BGVs/Octave Up/ES"));
     }
 
     /// Each lead is its name over a Main and a DBL row, each of those
@@ -1887,7 +1895,10 @@ mod tests {
     fn the_process_folder_is_out_of_view() {
         use crate::scenes::Surface;
         assert_eq!(first_view_paths(Surface::Mixer, "Process"), [] as [&str; 0]);
-        assert_eq!(first_view_paths(Surface::Arrange, "Process"), [] as [&str; 0]);
+        assert_eq!(
+            first_view_paths(Surface::Arrange, "Process"),
+            [] as [&str; 0]
+        );
     }
 
     /// The bass guitar and the synth bass are a row each in the

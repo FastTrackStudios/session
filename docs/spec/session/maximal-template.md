@@ -131,8 +131,8 @@ fixed tree.
 
 ### Vocals — `Vocals/`
 
-- [x] Leads Ron (EN/ES/PT), Belen (EN/ES) and Aline (PT), each a mix track with Main and DBL and a source per language; BGV parts; a four-section choir; VOX EN/ES/PT VCAs → **LEAD VOX BUS**.
-- [x] BGVs folder → **BGV BUS**; the vocal FX template (`vocal-fx.rpp`)
+- [ ] Leads Ron (EN/ES/PT), Belen (EN/ES) and Aline (PT), each a mix track with Main and DBL and a source per language; BGV parts; a four-section choir; VOX EN/ES/PT VCAs → **LEAD VOX BUS**.
+- [ ] BGVs folder → **BGV BUS**; the vocal FX template (`vocal-fx.rpp`)
       folded in.
 - [ ] **Three languages** as source tracks under each layer —
       `Vocals / Ron / Main / {EN, ES, PT}` — with a VCA per language over

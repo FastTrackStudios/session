@@ -78,31 +78,26 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
     assert_eq!(
         family(&arranged, "Vocals"),
         [
-            "0 Vocals",
-            "1 Ron",
-            "2 Main",
-            "2 DBL",
-            "1 Belen",
-            "2 Main",
-            "2 DBL",
-            "1 Aline",
-            "2 Main",
-            "2 DBL",
-            "1 BGVs",
-            "2 Octave Up",
-            "2 Octave Down",
-            "2 Higher Harmony",
-            "2 Lower Harmony",
-            "2 Hey",
-            "1 Choir",
-            "2 Soprano",
-            "2 Alto",
-            "2 Tenor",
-            "2 Bass",
-            "1 VOX EN",
-            "1 VOX ES",
-            "1 VOX PT",
+            "0 Vocals", "1 Ron", "2 Main", "2 DBL", "1 Belen", "2 Main", "2 DBL", "1 Aline",
+            "2 Main", "2 DBL", "1 VOX EN", "1 VOX ES", "1 VOX PT",
         ]
+    );
+    // The BGVs and the choir are folders of their own beside Vocals,
+    // each part one row.
+    assert_eq!(
+        family(&arranged, "BGVs"),
+        [
+            "0 BGVs",
+            "1 Octave Up",
+            "1 Octave Down",
+            "1 Higher Harmony",
+            "1 Lower Harmony",
+            "1 Hey",
+        ]
+    );
+    assert_eq!(
+        family(&arranged, "Choir"),
+        ["0 Choir", "1 Soprano", "1 Alto", "1 Tenor", "1 Bass"]
     );
     // Folded, not dropped: a part's row carries its sources' items.
     let ron_main = arranged
@@ -144,10 +139,18 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
         );
         // Every vocal source and return is a strip.
         let vocals = family(strips, "Vocals");
-        for want in ["1 Vox FX", "3 EN", "3 ES", "3 PT", "3 All 8"] {
+        for want in ["1 Vox FX", "3 EN", "3 ES", "3 PT"] {
             assert!(
                 vocals.iter().any(|row| row == want),
                 "the {mixer} mixer has no {want}: {vocals:?}"
+            );
+        }
+        // The BGVs' every layer is a strip, in their own folder.
+        let bgvs = family(strips, "BGVs");
+        for want in ["2 EN", "2 All 8"] {
+            assert!(
+                bgvs.iter().any(|row| row == want),
+                "the {mixer} mixer has no {want}: {bgvs:?}"
             );
         }
         assert_eq!(

@@ -971,37 +971,6 @@ fn vocals() -> Node {
             // its Sum. Into the folder, so to LEAD VOX BUS with the
             // dry vocal.
             fx,
-            // Background vocals are arranged by PART, and a part may
-            // carry as many layers as it needs — nothing in the scenes,
-            // the comp or the edit assumes a count, which is why one of
-            // them is deliberately many (`flow.vocals.bgvs`).
-            Node::new("BGVs", VOX, Kind::Group)
-                .send("BGV BUS")
-                .children(vec![
-                    layer("Octave Up", &LANGUAGES),
-                    layer("Octave Down", &LANGUAGES),
-                    layer("Higher Harmony", &LANGUAGES),
-                    layer("Lower Harmony", &LANGUAGES),
-                    // The fifty-layer "Hey!", in `All`: language-free,
-                    // so it is in every version and the switch leaves
-                    // it alone. Eight here rather than fifty, which is
-                    // enough to prove nothing counts them.
-                    Node::new("Hey", VOX, Kind::Group).children(
-                        (1..=8)
-                            .map(|n| Node::new(&format!("All {n}"), VOX, Kind::Source))
-                            .collect(),
-                    ),
-                ]),
-            // A four-section choir per language, on the language VCAs
-            // like everything else.
-            Node::new("Choir", VOX, Kind::Group)
-                .send("BGV BUS")
-                .children(
-                    ["Soprano", "Alto", "Tenor", "Bass"]
-                        .into_iter()
-                        .map(|section| layer(section, &LANGUAGES))
-                        .collect(),
-                ),
             // The VCAs: control tracks, no audio, deliberately routed
             // nowhere. One per language, over every source of that
             // language across every performer, part and choir section.
@@ -1009,6 +978,48 @@ fn vocals() -> Node {
             Node::new("VOX ES", VOX, Kind::Vca).dead_end(),
             Node::new("VOX PT", VOX, Kind::Vca).dead_end(),
         ])
+}
+
+/// The background vocals: a folder of their own beside Vocals in the
+/// arrangement, arranged by PART — and a part may carry as many layers
+/// as it needs; nothing in the scenes, the comp or the edit assumes a
+/// count, which is why one of them is deliberately many
+/// (`flow.vocals.bgvs`). Still sung into the vocal bus (BGV BUS), and
+/// still `Vocals/BGVs` to the taxonomy.
+fn bgvs() -> Node {
+    Node::new("BGVs", VOX, Kind::Group)
+        .template(&["Vocals", "BGVs"])
+        .send("BGV BUS")
+        .children(vec![
+            layer("Octave Up", &LANGUAGES),
+            layer("Octave Down", &LANGUAGES),
+            layer("Higher Harmony", &LANGUAGES),
+            layer("Lower Harmony", &LANGUAGES),
+            // The fifty-layer "Hey!", in `All`: language-free,
+            // so it is in every version and the switch leaves
+            // it alone. Eight here rather than fifty, which is
+            // enough to prove nothing counts them.
+            Node::new("Hey", VOX, Kind::Group).children(
+                (1..=8)
+                    .map(|n| Node::new(&format!("All {n}"), VOX, Kind::Source))
+                    .collect(),
+            ),
+        ])
+}
+
+/// A four-section choir per language, on the language VCAs like every
+/// other voice: its own folder beside Vocals in the arrangement, into
+/// BGV BUS on the mix side.
+fn choir() -> Node {
+    Node::new("Choir", VOX, Kind::Group)
+        .template(&["Choir"])
+        .send("BGV BUS")
+        .children(
+            ["Soprano", "Alto", "Tenor", "Bass"]
+                .into_iter()
+                .map(|section| layer(section, &LANGUAGES))
+                .collect(),
+        )
 }
 
 /// The bus tree.
@@ -1167,6 +1178,8 @@ pub fn maximal() -> Shape {
             synths(),
             inst_fx(),
             vocals(),
+            bgvs(),
+            choir(),
             orchestra(),
             mix_bus(),
             // Beside MIX BUS, never under it.
