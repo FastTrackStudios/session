@@ -69,6 +69,8 @@ pub struct Flat {
     pub stereo: bool,
     /// The FX chain by name.
     pub fx: Vec<Fx>,
+    /// The strip width the node asks for itself — see [`Node::strip`].
+    pub strip: Option<u32>,
 }
 
 impl Flat {
@@ -230,6 +232,7 @@ fn flatten_node(
         group: node.group,
         stereo: node.stereo,
         fx: node.fx.clone(),
+        strip: node.strip,
     });
     for child in &node.children {
         flatten_node(child, path, piece, Some(&inside), out);
@@ -237,9 +240,13 @@ fn flatten_node(
     path.pop();
 }
 
-/// How wide a track's mixer strip opens under a layout.
+/// How wide a track's mixer strip opens under a layout: the node's own
+/// width when it states one ([`Node::strip`]), else the layout's rule.
 #[must_use]
 pub fn strip_width(layout: Layout, track: &Flat) -> u32 {
+    if let Some(width) = track.strip {
+        return width;
+    }
     match layout {
         Layout::Maximal => {
             if track.auxiliary() {
