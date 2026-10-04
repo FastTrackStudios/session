@@ -275,7 +275,13 @@ pub fn DawPanels(
     // alone): the window's mixer toggle is what opens it.
     let switch = try_use_context::<crate::shell::MixerToggle>().filter(|_| !docked && !mixer_only);
     let links = use_context_provider(|| {
-        let mut links = Links::new(session.rows.as_slice().to_vec());
+        let mut links = Links::new(
+            session
+                .planner
+                .plan_strips(&session.planner.raw)
+                .as_slice()
+                .to_vec(),
+        );
         links.open = switch.map_or_else(
             || Signal::new(MixerMemory::wanted(memory, docked, mode)),
             |s| s.open,
@@ -567,7 +573,13 @@ pub fn WebDawPanels(
 ) -> Element {
     let session: StudioSession = use_context();
     let links = use_context_provider(|| {
-        let mut links = Links::new(session.rows.as_slice().to_vec());
+        let mut links = Links::new(
+            session
+                .planner
+                .plan_strips(&session.planner.raw)
+                .as_slice()
+                .to_vec(),
+        );
         links.open = Signal::new(docked || mixer_only);
         links.docked = docked;
         links.alone = mixer_only;
@@ -954,7 +966,7 @@ impl MixerWidget {
                 && let Some(planner) = &self.links.planner
             {
                 // Mixing, the scene's own layout for the mixer; otherwise
-                // the arrangement's rows, folded as the window has them.
+                // the scene's strips, folded as the window has them.
                 let planned = if mix {
                     planner.plan_mixer(
                         &planner.raw,
@@ -963,7 +975,7 @@ impl MixerWidget {
                         self.extent.get(),
                     )
                 } else {
-                    planner.plan(&planner.raw).1
+                    planner.plan_strips(&planner.raw)
                 };
                 let now: std::collections::HashMap<&str, &daw_proto::Track> =
                     self.tracks.iter().map(|t| (t.guid.as_str(), t)).collect();

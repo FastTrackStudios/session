@@ -319,6 +319,46 @@ fn one_row_per_bgv_part() -> Vec<Rule> {
         .collect()
 }
 
+/// A lead singer's two parts, as paths below the Vocals group: the main
+/// line and its double, each a folder over the language sources it was
+/// sung as. Every lead (`Ron`, `Belen`, `Aline`) stands for the template
+/// group `Vocals/Lead`, so one path reaches each of them.
+const LEAD_PARTS: [&[&str]; 2] = [&["Lead", "Main"], &["Lead", "DBL"]];
+
+/// Each lead's Main and DBL are one row in the panel, the languages
+/// folded under them — [`one_row_per_bgv_part`]'s reasoning for the
+/// leads: the English, Spanish and Portuguese takes of a line are one
+/// decision sung several ways. The singer's own folder stays open, so
+/// Main and DBL read as two rows under the name.
+fn one_row_per_lead_part() -> Vec<Rule> {
+    LEAD_PARTS
+        .iter()
+        .map(|part| folded_in_the_arrangement(&below(&["Vocals"], part)))
+        .collect()
+}
+
+/// The kit's parallel chain, out of the MIXER — hidden, not folded.
+///
+/// `Process` is what the kit is sent to: the compressors from Dry to
+/// Crunch and the room sim and verb bank. Mixing the pieces happens on
+/// the pieces; those returns are set once and then are strips between
+/// the percussion and the bass. Matched by the template's kind, so a
+/// renamed folder still goes. The arrangement keeps it — it is
+/// `parallel_colour_out_of_the_panel` that decides what of it is drawn
+/// there.
+fn process_out_of_the_mixer() -> Rule {
+    Rule {
+        selector: Selector {
+            kind: Some("process".to_owned()),
+            role: Role::Bus,
+            ..Selector::default()
+        },
+        effect: Effect::default(),
+        arrange: None,
+        mixer: Some(Effect::hidden()),
+    }
+}
+
 /// Each bass is one row in the panel: the bass guitar over its DI and
 /// its amp — two captures of one performance, a mixer concern — and the
 /// synth bass over its one synth and the sub beside it.
@@ -998,11 +1038,16 @@ fn drum_mixing() -> Scene {
     // as its arrangement with its channels little strips.
     rules.extend(one_row_per_guitar_layer());
     rules.extend(railed(&ELECTRIC, &GUITAR_CHANNELS));
-    // And the rest of the band as its parts: a bass per row, a BGV part
-    // per row, the vocal returns out of the panel.
+    // And the rest of the band as its parts: a bass per row, a lead's
+    // line and its double per row, a BGV part per row, the vocal returns
+    // out of the panel.
     rules.extend(one_row_per_bass());
+    rules.extend(one_row_per_lead_part());
     rules.extend(one_row_per_bgv_part());
     rules.push(vox_fx_out_of_the_arrangement());
+    // The kit's parallel chain out of the mixer: the pieces are mixed on
+    // the pieces.
+    rules.push(process_out_of_the_mixer());
     Scene {
         name: "Drum Mixing".to_owned(),
         slug: "drum-mixing".to_owned(),
@@ -1800,6 +1845,41 @@ mod tests {
         let mixed = first_view_paths(Surface::Mixer, "Vocals/BGVs");
         assert_eq!(mixed.len(), 1 + 4 * (1 + 3) + 1 + 8, "{mixed:?}");
         assert!(mixed.iter().any(|p| p == "Vocals/BGVs/Octave Up/ES"));
+    }
+
+    /// Each lead is its name over a Main and a DBL row, each of those
+    /// with its language sources folded into it; the mixer keeps every
+    /// source.
+    #[test]
+    fn the_arrangement_folds_each_lead_part_to_one_row() {
+        use crate::scenes::Surface;
+        for (lead, languages) in [("Ron", 3), ("Belen", 2), ("Aline", 1)] {
+            let at = format!("Vocals/{lead}");
+            assert_eq!(
+                first_view_paths(Surface::Arrange, &at),
+                [at.clone(), format!("{at}/Main"), format!("{at}/DBL")],
+                "{lead}"
+            );
+            assert_eq!(
+                first_view_paths(Surface::Mixer, &at).len(),
+                1 + 2 * (1 + languages),
+                "{lead}"
+            );
+        }
+    }
+
+    /// The kit's parallel chain is out of the mixer, every strip of it,
+    /// and the arrangement still has its row.
+    #[test]
+    fn the_mixer_hides_the_process_folder() {
+        use crate::scenes::Surface;
+        assert_eq!(first_view_paths(Surface::Mixer, "Process"), [] as [&str; 0]);
+        assert!(
+            first_view_paths(Surface::Arrange, "Process")
+                .iter()
+                .any(|p| p == "Process"),
+            "the arrangement keeps it"
+        );
     }
 
     /// The bass guitar and the synth bass are a row each in the
