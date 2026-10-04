@@ -879,13 +879,37 @@ impl ArrangementWidget {
         self
     }
 
-    /// The rows, for the mixer, with the generation bumped.
+    /// The mixer's strips, with the generation bumped: the scene's own
+    /// for the mixer ([`crate::studio::Planner::plan_strips`]) — not this
+    /// panel's rows, since a scene hides and folds per surface — each a
+    /// track as this panel has it where it shows one. With no planner,
+    /// this panel's rows.
     fn publish_rows(&self) {
-        if let Some(links) = &self.mixer {
-            let mut shared = links.rows.borrow_mut();
-            shared.0 = shared.0.wrapping_add(1);
-            shared.1.clone_from(&self.rows);
-        }
+        let Some(links) = &self.mixer else { return };
+        let strips = self.replan.as_ref().map_or_else(
+            || self.rows.clone(),
+            |(planner, raw)| {
+                let here: std::collections::HashMap<&str, &daw_proto::Track> = self
+                    .rows
+                    .iter()
+                    .map(|(track, _)| (track.guid.as_str(), track))
+                    .collect();
+                planner
+                    .plan_strips(raw)
+                    .as_slice()
+                    .iter()
+                    .map(|(track, depth)| {
+                        let track = here
+                            .get(track.guid.as_str())
+                            .map_or_else(|| track.clone(), |shown| (*shown).clone());
+                        (track, *depth)
+                    })
+                    .collect()
+            },
+        );
+        let mut shared = links.rows.borrow_mut();
+        shared.0 = shared.0.wrapping_add(1);
+        shared.1 = strips;
     }
 
     /// The mixer's edits since the last frame, applied here too, and the

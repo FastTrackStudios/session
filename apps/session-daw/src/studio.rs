@@ -83,6 +83,21 @@ impl Planner {
         plan_rows_with(raw, self.scene, &self.kinds)
     }
 
+    /// The mixer's strips for `raw` outside Mix mode — docked under the
+    /// arrangement or on its own: the scene's MIXER rows (a folder the
+    /// scene hides from the mixer is gone, one it folds only in the
+    /// arrangement keeps every strip), and the folders the window shut
+    /// (`crate::folds`), which both panels share. Each strip is the track
+    /// as the engine has it: the scene decides which strips, not how wide
+    /// a strip is outside Mix mode.
+    ///
+    /// Not the arrangement's rows: the two panels answer different
+    /// questions, and the scene says so per surface.
+    #[must_use]
+    pub fn plan_strips(&self, raw: &daw_ui::studio::project::Project) -> RowsRef {
+        RowsRef(Arc::new(plan_strips_with(raw, self.scene, &self.kinds)))
+    }
+
     /// The mixer's rows for `raw`: the scene laid out for the mixer — each
     /// track as wide as the scene opens it, the one it focuses selected —
     /// and every folder as the scene leaves it, the way the scene renders
@@ -445,6 +460,50 @@ pub fn plan_rows_with(
         );
     }
     (project, RowsRef(Arc::new(planned)))
+}
+
+/// The strips of `raw` laid out by `scene` for the mixer — see
+/// [`Planner::plan_strips`].
+#[must_use]
+pub fn plan_strips_with(
+    raw: &daw_ui::studio::project::Project,
+    scene: Option<&str>,
+    kinds: &crate::plan::Kinds,
+) -> Vec<(daw_proto::Track, u32)> {
+    let (visible, depths) =
+        daw_ui::components::folders::FolderState::default().visible(&raw.tracks);
+    let planned: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
+    let Some(slug) = scene.and_then(dynamic_template::scenes::scene) else {
+        return crate::folds::apply(planned);
+    };
+    let strips = crate::plan::apply_scene(
+        &planned,
+        kinds,
+        slug,
+        crate::plan::Panel {
+            surface: crate::plan::Surface::Mixer,
+            mode: None,
+            settings: crate::settings::Settings::default(),
+            extent: 1440.0,
+            active_language: None,
+        },
+    );
+    // The track as it was, not as the scene sized and selected it.
+    let as_it_was: std::collections::HashMap<&str, &daw_proto::Track> = planned
+        .iter()
+        .map(|(track, _)| (track.guid.as_str(), track))
+        .collect();
+    crate::folds::apply(
+        strips
+            .into_iter()
+            .map(|(track, depth)| {
+                let track = as_it_was
+                    .get(track.guid.as_str())
+                    .map_or(track, |was| (*was).clone());
+                (track, depth)
+            })
+            .collect(),
+    )
 }
 
 /// Every MIDI item's notes, read before anything is drawn — an item drawn

@@ -144,6 +144,10 @@ fn main() {
         depths();
         return;
     }
+    if let Ok(out) = std::env::var("FTS_BENCH_PLAN") {
+        plan_dump(&path, &std::path::PathBuf::from(out));
+        return;
+    }
     // `FTS_BENCH_FX=out.png`: the FX — `FTS_BENCH_FX_LANES` tracks of
     // it (one, docked), from the selected one; `FTS_BENCH_FX_FOLD` the
     // phases folded, by name (`rescue,polish`).
@@ -1328,6 +1332,48 @@ fn shot(
         at.zoom_y,
         drawn(&widget).submitted,
     );
+}
+
+/// `FTS_BENCH_PLAN=<out>`: the rows the window plans for the open
+/// project, as text — the arrangement's and the mixer's, each laid out
+/// by `FTS_BENCH_SCENE` (the window's opening scene, `drum-mixing`,
+/// unless named). One `surface depth folder name` line a row: what the
+/// window shows, without drawing it.
+fn plan_dump(path: &std::path::Path, out: &std::path::Path) {
+    let Some(raw) = session_daw::studio::fetch() else {
+        tracing::error!("could not read the project back");
+        return;
+    };
+    let scene = std::env::var("FTS_BENCH_SCENE")
+        .ok()
+        .and_then(|slug| dynamic_template::scenes::scene(&slug))
+        .or_else(|| dynamic_template::scenes::scene("drum-mixing"))
+        .map(|scene| scene.slug.as_str());
+    let planner = session_daw::studio::Planner {
+        raw: std::sync::Arc::new(raw),
+        scene,
+        kinds: std::sync::Arc::new(session_daw::plan::Kinds::read(path)),
+    };
+    let (_, arrange) = planner.plan(&planner.raw);
+    let mixer = planner.plan_mixer(
+        &planner.raw,
+        None,
+        session_daw::settings::Settings::default(),
+        1440.0,
+    );
+    let mut text = String::new();
+    for (surface, rows) in [("arrange", &arrange), ("mixer", &mixer)] {
+        for (track, depth) in rows.as_slice() {
+            text.push_str(&format!(
+                "{surface}\t{depth}\t{}\t{}\n",
+                u8::from(track.is_folder),
+                track.name
+            ));
+        }
+    }
+    if let Err(e) = std::fs::write(out, text) {
+        tracing::error!(error = %e, path = %out.display(), "could not write the plan");
+    }
 }
 
 /// Print the first rows' folder depths, to check nesting against the
