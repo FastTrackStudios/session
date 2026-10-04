@@ -33,6 +33,24 @@ use crate::tone::{Folded, Grip, Panel, Shared, Which};
 /// it, a frequency picture too) twice what a compressor needs.
 const DEVICE_W: f64 = 300.0;
 
+/// The widths of a stage's `units` at a lane's height: as wide as each
+/// wants, all shrunk together when the stage would run past
+/// [`STAGE_W`] — a stage is seen whole on a 1440p screen.
+fn stage_widths(units: &[Which], tone: &crate::tone::Tone, body_h: f64) -> Vec<f64> {
+    let wants: Vec<f64> = units.iter().map(|w| unit_w(*w, tone, body_h)).collect();
+    let room = GAP.mul_add(
+        -crate::num::coord(units.len().saturating_add(1)),
+        STAGE_W - EDGE_W - FOLDED_W,
+    );
+    let total: f64 = wants.iter().sum();
+    let shrink = if total > room && total > 0.0 {
+        room / total
+    } else {
+        1.0
+    };
+    wants.into_iter().map(|w| w * shrink).collect()
+}
+
 /// How wide `which` is over `tone` at a lane's height: a frame face as
 /// wide as its design is there, anything else a device.
 fn unit_w(which: Which, tone: &crate::tone::Tone, body_h: f64) -> f64 {
@@ -136,6 +154,14 @@ pub fn FxPanel(#[props(default = 1)] lanes: usize) -> Element {
 
 use session::mix_phases::MixPhase;
 
+/// How wide one stage may run at most: a whole stage on a 16:9 1440p
+/// screen (2560 wide) beside the track's strip — an ultrawide then shows
+/// what is beside it (its returns, the next stage).
+const STAGE_W: f64 = 2560.0 - 120.0;
+
+/// How tall a device's header is: its name and its bypass.
+const HEADER_H: f64 = 18.0;
+
 /// How wide a phase's macros are, open or folded: two knobs across.
 const FOLDED_W: f64 = 2.0 * crate::macros::CELL_W + 8.0;
 
@@ -228,6 +254,9 @@ struct Hits {
     /// The frame faces on screen: their device's key, whose and which,
     /// where — a press on one is the face's.
     faces: Vec<(String, String, Target, Panel)>,
+    /// Each device's bypass button: whose, which (a unit, or a rig's
+    /// block), and where.
+    bypasses: Vec<(String, Target, Panel)>,
     /// The lane being drawn's clip: what scrolls stays right of its strip.
     clip: vello::kurbo::Rect,
     /// The faces' pictures, painted after the rest (`paint_scene`): the
@@ -284,7 +313,13 @@ fn fx_chain(tone: &crate::tone::Tone) -> Vec<Which> {
         tone.role,
         crate::tone::Role::Channel | crate::tone::Role::Bus
     ) {
-        for which in [Which::Sat, Which::Mod] {
+        // A drum gets no modulation unit: nothing on a kit wants one.
+        let added: &[Which] = if tone.drum {
+            &[Which::Sat]
+        } else {
+            &[Which::Sat, Which::Mod]
+        };
+        for &which in added {
             if chain.contains(&which) {
                 continue;
             }
@@ -605,6 +640,34 @@ impl DeviceRow {
 
     fn press(&mut self, e: &BlitzPointerEvent) -> bool {
         let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        let bypass = self
+            .hits
+            .borrow()
+            .bypasses
+            .iter()
+            .find(|(.., at)| at.contains(x, y))
+            .map(|(guid, target, _)| (guid.clone(), target.clone()));
+        if let Some((guid, target)) = bypass {
+            match target {
+                Target::Unit(which) => {
+                    if let Some(tone) = self.tone.store.borrow_mut().edit(&guid) {
+                        tone.bypass.toggle(which);
+                    }
+                    self.tone.edited();
+                }
+                Target::Rig(at, _) => {
+                    if let Some(block) = self
+                        .rigs
+                        .borrow_mut()
+                        .get_mut(&guid)
+                        .and_then(|r| r.blocks.get_mut(at))
+                    {
+                        block.bypassed = !block.bypassed;
+                    }
+                }
+            }
+            return true;
+        }
         let face = self
             .hits
             .borrow()
@@ -822,23 +885,47 @@ impl DeviceRow {
         &self,
         guid: &str,
         tone: &crate::tone::Tone,
-        phase: MixPhase,
-        units: &[Which],
+        (phase, units): (MixPhase, &[Which]),
         body_h: f64,
+        returns: &[usize],
     ) -> f64 {
-        if units.is_empty() {
+        let returns = if phase == MixPhase::Depth {
+            returns
+        } else {
+            &[]
+        };
+        if units.is_empty() && returns.is_empty() {
             BLANK_W
         } else if self.shut(guid, Group::Phase(phase)) {
             EDGE_W + FOLDED_W
         } else {
-            // The macros stay, open or folded: the devices follow them.
+            // The macros stay, open or folded: the devices follow them,
+            // and in Depth the returns the track feeds.
             EDGE_W
                 + FOLDED_W
-                + units
+                + stage_widths(units, tone, body_h)
                     .iter()
-                    .map(|w| GAP + unit_w(*w, tone, body_h))
+                    .map(|w| GAP + w)
                     .sum::<f64>()
+                + self.returns_inside_w(returns, body_h)
         }
+    }
+
+    /// How wide `returns` are inside the Depth stage: each its strip and
+    /// its effect.
+    fn returns_inside_w(&self, returns: &[usize], body_h: f64) -> f64 {
+        let store = self.tone.store.borrow();
+        returns
+            .iter()
+            .filter_map(|r| self.tracks.get(*r))
+            .map(|r| {
+                let device = store
+                    .get(&r.guid)
+                    .and_then(|t| main_unit(t.role).map(|w| ret_device_w(t, w, body_h)))
+                    .unwrap_or(DEVICE_W);
+                GAP + self.layout.width_of(widened(r).width) + GAP + device
+            })
+            .sum()
     }
 
     /// How wide `returns` are, laid out after the chain.
@@ -1000,6 +1087,15 @@ impl DeviceRow {
         which: Which,
         panel: Panel,
     ) {
+        // A header on every device: its name, and its bypass.
+        let on = !tone.bypass.is(which);
+        let panel = self.device_header(
+            scene,
+            hits,
+            (guid, Target::Unit(which)),
+            (&crate::plugin_faces::title(which, tone), on),
+            panel,
+        );
         if self.draw_face(scene, hits, guid, tone, which, panel) {
             return;
         }
@@ -1022,12 +1118,76 @@ impl DeviceRow {
         });
     }
 
+    /// A device's header across the top of `panel`: what it is, and a
+    /// bypass button lit while it is on. The rest of `panel`, for the
+    /// device itself.
+    fn device_header(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        (guid, target): (&str, Target),
+        (title, on): (&str, bool),
+        panel: Panel,
+    ) -> Panel {
+        let bar =
+            vello::kurbo::Rect::new(panel.x, panel.y, panel.x + panel.width, panel.y + HEADER_H);
+        anyrender::PaintScene::fill(
+            scene,
+            vello::peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            self.palette.row_b,
+            None,
+            &bar,
+        );
+        // The bypass: a lamp at the left, lit while the effect is on.
+        let lamp = vello::kurbo::Circle::new((panel.x + 10.0, panel.y + HEADER_H / 2.0), 4.0);
+        anyrender::PaintScene::fill(
+            scene,
+            vello::peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            if on {
+                vello::peniko::Color::from_rgb8(34, 197, 94)
+            } else {
+                self.palette.text_faint
+            },
+            None,
+            &lamp,
+        );
+        crate::tcp::glyphs(
+            scene,
+            &self.font,
+            if on {
+                self.palette.text
+            } else {
+                self.palette.text_faint
+            },
+            &self.font.elide(title, 10.0, panel.width - 30.0),
+            panel.x + 20.0,
+            panel.y + 13.0,
+            10.0,
+        );
+        hits.bypasses.push((
+            guid.to_owned(),
+            target,
+            Panel {
+                width: HEADER_H + 8.0,
+                height: HEADER_H,
+                ..panel
+            },
+        ));
+        Panel {
+            y: panel.y + HEADER_H,
+            height: (panel.height - HEADER_H).max(0.0),
+            ..panel
+        }
+    }
+
     /// `track`'s chain, phase by phase, from `x`. Where it ends.
     fn draw_chain(
         &self,
         scene: &mut Scene,
         hits: &mut Hits,
-        track: &daw_proto::Track,
+        (track, returns): (&daw_proto::Track, &[usize]),
         lane: Lane,
         mut x: f64,
     ) -> f64 {
@@ -1036,16 +1196,19 @@ impl DeviceRow {
             return x;
         };
         let groups = grouped(&fx_chain(tone));
+        let holds = |phase: MixPhase, units: &[Which]| {
+            !units.is_empty() || (phase == MixPhase::Depth && !returns.is_empty())
+        };
         hits.groups.push((
             track.guid.clone(),
             groups
                 .iter()
-                .filter(|(_, units)| !units.is_empty())
+                .filter(|(phase, units)| holds(*phase, units))
                 .map(|(phase, _)| Group::Phase(*phase))
                 .collect(),
         ));
         for (phase, units) in groups {
-            let width = self.group_w(&track.guid, tone, phase, &units, lane.body_h);
+            let width = self.group_w(&track.guid, tone, (phase, &units), lane.body_h, returns);
             let x0 = x;
             x += width + GAP;
             if !lane.sees(x0, width) {
@@ -1064,9 +1227,9 @@ impl DeviceRow {
                 &self.font,
                 (phase.display_name(), crate::tone::phase_tint(phase)),
                 group,
-                (!units.is_empty()).then_some(shut),
+                holds(phase, &units).then_some(shut),
             );
-            if units.is_empty() {
+            if !holds(phase, &units) {
                 continue;
             }
             // The edge folds it, and so does its tint.
@@ -1102,8 +1265,8 @@ impl DeviceRow {
                 continue;
             }
             at += FOLDED_W + GAP;
-            for which in units {
-                let width = unit_w(which, tone, lane.body_h);
+            let widths = stage_widths(&units, tone, lane.body_h);
+            for (which, width) in units.iter().copied().zip(widths) {
                 let here = at;
                 at += width + GAP;
                 if lane.sees(here, width) {
@@ -1116,6 +1279,11 @@ impl DeviceRow {
                         lane.device(here, width),
                     );
                 }
+            }
+            // Depth: the returns the track feeds, each its strip and
+            // its effect — the tracks it takes to mix this one.
+            if phase == MixPhase::Depth && !returns.is_empty() {
+                self.draw_returns(scene, hits, returns, lane, at);
             }
         }
         x
@@ -1532,12 +1700,20 @@ impl DeviceRow {
             store.get(&track.guid).map_or(0.0, |tone| {
                 grouped(&fx_chain(tone))
                     .iter()
-                    .map(|(p, u)| self.group_w(&track.guid, tone, *p, u, lane.body_h) + GAP)
+                    .map(|(p, u)| {
+                        self.group_w(&track.guid, tone, (*p, u), lane.body_h, &returns) + GAP
+                    })
                     .sum()
             })
         };
-        let most =
-            (chain_w + self.returns_w(&returns, lane.body_h) - (right - start) + INSET).max(0.0);
+        let rig = self.rigs.borrow().contains_key(&track.guid);
+        // A rig's returns follow it; a chain's are in its Depth stage.
+        let after = if rig {
+            self.returns_w(&returns, lane.body_h)
+        } else {
+            0.0
+        };
+        let most = (chain_w + after - (right - start) + INSET).max(0.0);
         let scroll = self
             .scroll
             .get(&track.guid)
@@ -1548,13 +1724,13 @@ impl DeviceRow {
         // What scrolls is clipped to the right of the strip.
         hits.clip = vello::kurbo::Rect::new(start, top, right, top + height);
         let mut moving = Scene::new();
-        let end = if self.rigs.borrow().contains_key(&track.guid) {
-            self.draw_rig(&mut moving, hits, &track, lane, start - scroll)
+        if rig {
+            let end = self.draw_rig(&mut moving, hits, &track, lane, start - scroll);
+            // The returns it feeds, after a breath.
+            self.draw_returns(&mut moving, hits, &returns, lane, end - GAP + RETURNS_GAP);
         } else {
-            self.draw_chain(&mut moving, hits, &track, lane, start - scroll)
-        };
-        // The returns it feeds, after a breath.
-        self.draw_returns(&mut moving, hits, &returns, lane, end - GAP + RETURNS_GAP);
+            self.draw_chain(&mut moving, hits, (&track, &returns), lane, start - scroll);
+        }
         let clip = hits.clip;
         anyrender::PaintScene::push_clip_layer(scene, Affine::IDENTITY, &clip);
         anyrender::PaintScene::append_scene(scene, moving, Affine::IDENTITY);

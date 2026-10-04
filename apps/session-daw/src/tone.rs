@@ -120,6 +120,12 @@ pub struct Tone {
     /// Which compressor face the Tone compressor wears (an 1176, an
     /// LA-2A…) — see `plugin_faces`.
     pub comp_face: crate::plugin_faces::CompFace,
+    /// A second compressor after the first, in its own face — a kick's
+    /// 1176 into an LA-2A. Drawn under the first, the two sharing the
+    /// height.
+    pub comp_after: Option<(Comp, crate::plugin_faces::CompFace)>,
+    /// A drum: no modulation unit in its chain.
+    pub drum: bool,
     /// What this track is FOR, which decides its chain — see [`Role`].
     pub role: Role,
     /// The presets this track keeps, brighter to darker, and which of
@@ -6004,6 +6010,8 @@ pub fn placeholder(index: usize) -> Tone {
         // the same range hides the fact that the range is a choice.
         // Every engine somewhere on the desk, so each picture is seen.
         comp_face: crate::plugin_faces::CompFace::Vca,
+        comp_after: None,
+        drum: false,
         modulation: Wobble {
             engine: modulation_ui::viz::Engine::ALL
                 .get(index % modulation_ui::viz::Engine::ALL.len())
@@ -6060,6 +6068,18 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
     let mut tone = placeholder(index);
     tone.role = role;
     tone.comp_face = crate::plugin_faces::CompFace::for_track(name, ancestors);
+    tone.drum = crate::plugin_faces::is_drum(name, ancestors);
+    // The kick: an 1176 catching the beater, into an LA-2A for the body.
+    if crate::plugin_faces::is_named(name, ancestors, "kick") {
+        let after = Comp {
+            threshold: -20.0,
+            ratio: 3.0,
+            attack: 10.0,
+            release: 300.0,
+            ..Comp::default()
+        };
+        tone.comp_after = Some((after, crate::plugin_faces::CompFace::Opto));
+    }
     if role == Role::Fund {
         return fundamental(tone, name, ancestors);
     }

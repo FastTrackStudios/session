@@ -169,6 +169,8 @@ pub struct ArrangementPanel {
     mixer: Option<crate::mixer_panel::Links>,
     /// The panel's shape, toggled by the toolbar and read by the widget.
     pub compact: Rc<Cell<bool>>,
+    /// Whether the window is in Record mode (from its mode, each render).
+    pub recording: Rc<Cell<bool>>,
     /// The same, as a signal: what re-renders the chrome over the panel
     /// (the toolbar's width, the scrollbar's left end) when it changes.
     pub shape: Signal<bool>,
@@ -296,6 +298,14 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     // A finger's screen starts compact too: at touch size the full panel
     // would take half an iPad's width from the lanes.
     let compact = use_hook(|| Rc::new(Cell::new(docked || small || touch)));
+    // The window's mode, read every render (so a change re-renders):
+    // the track panel's arm only in Record mode. No mode to read — a
+    // panel outside the window's shell — and it stays as it was.
+    let recording = use_hook(|| Rc::new(Cell::new(true)));
+    recording.set(
+        try_use_context::<Signal<session::modes::Mode>>()
+            .is_none_or(|mode| mode() == session::modes::Mode::Record),
+    );
     let ui = use_hook(|| Rc::new(Cell::new(crate::touch::arrange_zoom(touch, 0.0))));
     crate::ruler::set_slim(touch);
     let shape = use_signal(|| compact.get());
@@ -344,6 +354,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         .with_view_links(Rc::clone(&which), Rc::clone(&zooms))
         .with_planner(session.planner.clone(), Rc::clone(&content_h))
         .with_compact(Rc::clone(&compact))
+        .with_recording(Rc::clone(&recording))
         .with_touch(touch)
         .with_ui(Rc::clone(&ui))
         .with_redraw(crate::touch::redraw_hook())
@@ -354,7 +365,6 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
                 rows: Rc::clone(&links.rows),
                 echo: Rc::clone(&links.to_arrange),
                 keys: Rc::clone(&links.keys),
-                recording: Rc::clone(&links.recording),
             }),
             None => built,
         };
@@ -399,6 +409,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         engine,
         mixer,
         compact,
+        recording,
         shape,
         follow,
         followed_at,
@@ -887,7 +898,7 @@ impl ArrangementPanel {
             compact: self.compact.get(),
             // The arm only in Record mode; with no mixer to say which
             // mode it is, as it always was.
-            recording: self.mixer.as_ref().is_none_or(|m| m.recording.get()),
+            recording: self.recording.get(),
         }
     }
 

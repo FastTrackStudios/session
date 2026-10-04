@@ -75,9 +75,6 @@ pub struct MixerLinks {
     pub echo: Rc<RefCell<Vec<crate::engine::Edit>>>,
     /// Keys pressed while the mixer had the focus, to handle here.
     pub keys: Rc<RefCell<Vec<crate::mixer_panel::Key>>>,
-    /// Whether the window is in Record mode: the track panel's arm is
-    /// shown only then.
-    pub recording: Rc<std::cell::Cell<bool>>,
 }
 
 /// The finest grid division the ruler will draw.
@@ -398,6 +395,9 @@ pub struct ArrangementWidget {
     /// toolbar that toggles it, read each paint (a change re-cuts the
     /// recorded panel, which is drawn to the shape).
     compact: Rc<Cell<bool>>,
+    /// Whether the window is in Record mode, set by the panel from the
+    /// window's mode: the track panel's arm is shown only then.
+    recording: Rc<Cell<bool>>,
     /// Whether the editor took the last press and has not been let go
     /// of yet.
     ///
@@ -570,6 +570,7 @@ impl ArrangementWidget {
             meters: crate::engine::Meters::start(),
             meters_lit: Cell::new(false),
             compact: Rc::new(Cell::new(false)),
+            recording: Rc::new(Cell::new(true)),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
             project,
@@ -690,6 +691,13 @@ impl ArrangementWidget {
     #[must_use]
     pub fn with_compact(mut self, compact: Rc<Cell<bool>>) -> Self {
         self.compact = compact;
+        self
+    }
+
+    /// Share the panel's Record-mode flag: the arm only while recording.
+    #[must_use]
+    pub fn with_recording(mut self, recording: Rc<Cell<bool>>) -> Self {
+        self.recording = recording;
         self
     }
 
@@ -1316,7 +1324,7 @@ impl ArrangementWidget {
             &self.previews,
             crate::tcp::Tcp {
                 compact: self.compact.get(),
-                recording: self.mixer.as_ref().is_none_or(|m| m.recording.get()),
+                recording: self.recording.get(),
             },
         );
         self.scene.lettering = lettering;

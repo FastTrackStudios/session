@@ -35,6 +35,10 @@ pub struct FrameFace {
     pub design: String,
     pub values: Vec<(String, f64)>,
     pub texts: Vec<(String, String)>,
+    /// Laid out for its box's proportions (frame's responsive mode)
+    /// rather than fitted whole: a lone compressor fills the column a
+    /// pair would share.
+    pub responsive: bool,
 }
 
 /// Where frame's faces are: `FTS_FRAME_DIR`, else frame's generated
@@ -198,6 +202,7 @@ fn time_face(which: Which, tone: &Tone, entry: &crate::rig::FaceEntry, back: boo
         )
     };
     FrameFace {
+        responsive: false,
         design: crate::rig::design_of(entry, false, back),
         values,
         texts,
@@ -209,7 +214,11 @@ fn time_face(which: Which, tone: &Tone, entry: &crate::rig::FaceEntry, back: boo
 #[must_use]
 pub fn aspect(which: Which, tone: &Tone) -> Option<f64> {
     if let Some((_, (w, h))) = crate::plugin_faces::face(which, tone) {
-        return Some(w / h.max(1.0));
+        // A compressor's column is a pair's, stacked: as wide as one
+        // face at half the height, whether the second is there or the
+        // first fills it alone.
+        let stacked = if which == Which::Comp { 2.0 } else { 1.0 };
+        return Some(w / (h * stacked).max(1.0));
     }
     time_entry(which, tone).map(|entry| {
         let (w, h) = entry.size;
@@ -566,12 +575,18 @@ fn taps(tone: &Tone) -> Vec<delay_ui::viz::Tap> {
 /// `which`'s face over `tone`, if it has one.
 #[must_use]
 pub fn of(which: Which, tone: &Tone) -> Option<Face> {
-    if let Some((frame, _)) = crate::plugin_faces::face(which, tone) {
+    if let Some((mut frame, _)) = crate::plugin_faces::face(which, tone) {
+        // A compressor with a second after it: the two stacked, sharing
+        // the height; alone, it fills the column the pair would.
+        let under = (which == Which::Comp)
+            .then(|| crate::plugin_faces::face_after(tone).map(|(f, _)| f))
+            .flatten();
+        frame.responsive = which == Which::Comp && under.is_none();
         return Some(Face {
             name: frame.design.clone(),
             picture: Picture::Frame(frame),
             knobs: &[],
-            under: None,
+            under,
         });
     }
     match which {
@@ -785,6 +800,7 @@ impl Painters {
             return scene;
         };
         if live.shown.as_ref() != Some(face) {
+            live.surface.set_responsive(face.responsive);
             live.surface.apply_real(face.values.clone());
             live.surface.apply_texts(face.texts.clone());
             live.shown = Some(face.clone());

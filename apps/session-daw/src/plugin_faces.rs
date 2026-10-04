@@ -28,18 +28,23 @@ impl CompFace {
     /// a drum an 1176, a voice an LA-2A.
     #[must_use]
     pub fn for_track(name: &str, ancestors: &[String]) -> Self {
-        let within = |word: &str| {
-            ancestors
-                .iter()
-                .chain(std::iter::once(&name.to_owned()))
-                .any(|a| a.to_lowercase().contains(word))
-        };
-        if within("kick") || within("snare") || within("tom") {
+        let within = |word: &str| is_named(name, ancestors, word);
+        if is_drum(name, ancestors) {
             Self::Fet
         } else if within("vocal") || within("vox") || within("bgv") {
             Self::Opto
         } else {
             Self::Vca
+        }
+    }
+
+    /// What its header says it is.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Fet => "FET 1176",
+            Self::Opto => "Opto LA-2A",
+            Self::Vca => "VCA",
         }
     }
 
@@ -50,6 +55,24 @@ impl CompFace {
             Self::Vca => "comp/09-vca-comp",
         }
     }
+}
+
+/// Whether `word` is in the track's name or any folder over it.
+#[must_use]
+pub fn is_named(name: &str, ancestors: &[String], word: &str) -> bool {
+    ancestors
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(name))
+        .any(|a| a.to_lowercase().contains(word))
+}
+
+/// Whether the track is a drum: a kick, a snare, a tom.
+#[must_use]
+pub fn is_drum(name: &str, ancestors: &[String]) -> bool {
+    ["kick", "snare", "tom"]
+        .iter()
+        .any(|word| is_named(name, ancestors, word))
 }
 
 /// Designs' sizes, by design, as read (`None`: unreadable).
@@ -86,7 +109,6 @@ fn design(which: Which, tone: &Tone) -> Option<&'static str> {
     match which {
         Which::Comp => Some(tone.comp_face.design()),
         Which::RescueComp if tone.comp_face == CompFace::Opto => Some(CompFace::Fet.design()),
-        Which::Eq => Some("eq/02-console-eq"),
         Which::Sat => Some(match sat_circuit(tone) {
             saturate_ui::viz::Circuit::Valve => "saturate/01-tube",
             saturate_ui::viz::Circuit::Tape => "saturate/02-tape",
@@ -179,14 +201,11 @@ fn band_mut(tone: &mut Tone, n: usize) -> Option<&mut eq_ui::eq_graph_model::EqB
     tone.eq.iter_mut().filter(|b| b.used).nth(n)
 }
 
-/// The values `design` shows for `which` over `tone`, by address.
-fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
-    let ns = ns_of(design);
+/// What a compressor face shows for `c`, by address.
+fn comp_values(ns: &str, c: crate::tone::Comp) -> Vec<(String, f64)> {
     let at = |param: &str| format!("{ns}/{param}");
-    let pct = |v: f32| f64::from(v.clamp(0.0, 1.0)) * 100.0;
     match ns {
         "fet" => {
-            let c = comp_of(tone, which);
             let ratio = FET_RATIOS
                 .iter()
                 .enumerate()
@@ -206,23 +225,95 @@ fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
                 (at("on"), 1.0),
             ]
         }
-        "opto" => {
-            let c = comp_of(tone, which);
-            vec![
-                (at("peak_reduction"), frac(-c.threshold, 0.0, 40.0) * 100.0),
-                (at("gain"), 50.0),
-                (at("limit"), if c.ratio > 6.0 { 1.0 } else { 0.0 }),
-                (at("power"), 1.0),
-            ]
+        "opto" => vec![
+            (at("peak_reduction"), frac(-c.threshold, 0.0, 40.0) * 100.0),
+            (at("gain"), 50.0),
+            (at("limit"), if c.ratio > 6.0 { 1.0 } else { 0.0 }),
+            (at("power"), 1.0),
+        ],
+        _ => vec![
+            (at("threshold"), f64::from(c.threshold)),
+            (at("ratio"), f64::from(c.ratio)),
+            (at("output"), 0.0),
+        ],
+    }
+}
+
+/// A compressor face's edit `param` = `value`, onto `c`; whether it was
+/// one of its controls.
+fn comp_edit(ns: &str, param: &str, c: &mut crate::tone::Comp, value: f64) -> bool {
+    let v = crate::num::narrow(value);
+    match (ns, param) {
+        ("fet", "input") => c.threshold = ((-48.0 - v) / 1.2).clamp(-60.0, 0.0),
+        ("fet", "attack") => c.attack = undial(value, 0.1, 100.0),
+        ("fet", "release") => c.release = undial(value, 50.0, 1100.0),
+        ("fet", "ratio") => {
+            let at = crate::num::index((value.clamp(0.0, 1.0) * 3.0).round());
+            c.ratio = FET_RATIOS.get(at).copied().unwrap_or(4.0);
         }
-        "vcacomp" => {
-            let c = comp_of(tone, which);
-            vec![
-                (at("threshold"), f64::from(c.threshold)),
-                (at("ratio"), f64::from(c.ratio)),
-                (at("output"), 0.0),
-            ]
+        ("opto", "peak_reduction") => c.threshold = -span(value / 100.0, 0.0, 40.0),
+        ("opto", "limit") => c.ratio = if value >= 0.5 { 10.0 } else { 3.0 },
+        ("vcacomp", "threshold") => c.threshold = v.clamp(-60.0, 0.0),
+        ("vcacomp", "ratio") => c.ratio = v.clamp(1.0, 60.0),
+        _ => return false,
+    }
+    true
+}
+
+/// The second compressor's face, after the first (`Tone::comp_after`),
+/// and its size.
+#[must_use]
+pub fn face_after(tone: &Tone) -> Option<(crate::faces::FrameFace, (f64, f64))> {
+    let (comp, face) = tone.comp_after?;
+    let design = face.design();
+    let size = size_of(design)?;
+    Some((
+        crate::faces::FrameFace {
+            responsive: false,
+            design: design.to_owned(),
+            values: comp_values(ns_of(design), comp),
+            texts: Vec::new(),
+        },
+        size,
+    ))
+}
+
+/// An edit the second compressor's face made.
+pub fn edit_after(tone: &mut Tone, addr: &str, value: f64) -> bool {
+    let Some((ns, param)) = addr.split_once('/') else {
+        return false;
+    };
+    tone.comp_after
+        .as_mut()
+        .is_some_and(|(comp, _)| comp_edit(ns, param, comp, value))
+}
+
+/// What a device's header calls it: the face it wears, where it wears
+/// one.
+#[must_use]
+pub fn title(which: Which, tone: &Tone) -> String {
+    match which {
+        Which::Comp if tone.comp_after.is_some() => {
+            let after = tone.comp_after.map_or("", |(_, f)| f.title());
+            format!("{} → {after}", tone.comp_face.title())
         }
+        Which::Comp => tone.comp_face.title().to_owned(),
+        Which::Sat => saturate_profiles::PROFILES
+            .get(tone.sat_profile)
+            .map_or_else(|| "Saturation".to_owned(), |p| p.name.to_owned()),
+        Which::Mod => format!("{:?}", tone.modulation.engine),
+        Which::Reverb => tone.reverb.algorithm.name().to_owned(),
+        _ => which.name().to_owned(),
+    }
+}
+
+/// The values `design` shows for `which` over `tone`, by address.
+fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
+    let ns = ns_of(design);
+    let at = |param: &str| format!("{ns}/{param}");
+    let pct = |v: f32| f64::from(v.clamp(0.0, 1.0)) * 100.0;
+    match ns {
+        "fet" | "opto" | "vcacomp" => comp_values(ns, comp_of(tone, which)),
         "consoleeq" => {
             let mut out = vec![
                 (at("eq_in"), 1.0),
@@ -287,6 +378,7 @@ pub fn face(which: Which, tone: &Tone) -> Option<(crate::faces::FrameFace, (f64,
     let size = size_of(design)?;
     Some((
         crate::faces::FrameFace {
+            responsive: false,
             design: design.to_owned(),
             values: values(design, which, tone),
             texts: Vec::new(),
@@ -303,19 +395,15 @@ pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
     };
     let v = crate::num::narrow(value);
     match (ns, param) {
-        ("fet", "input") => comp_mut(tone, which).threshold = ((-48.0 - v) / 1.2).clamp(-60.0, 0.0),
-        ("fet", "attack") => comp_mut(tone, which).attack = undial(value, 0.1, 100.0),
-        ("fet", "release") => comp_mut(tone, which).release = undial(value, 50.0, 1100.0),
-        ("fet", "ratio") => {
-            let at = crate::num::index((value.clamp(0.0, 1.0) * 3.0).round());
-            comp_mut(tone, which).ratio = FET_RATIOS.get(at).copied().unwrap_or(4.0);
+        ("fet" | "opto" | "vcacomp", _) => {
+            // The second compressor's face speaks its own controls: an
+            // edit in its namespace (and not the first's) is its.
+            let after = tone.comp_after.map(|(_, f)| ns_of(f.design()));
+            if which == Which::Comp && after == Some(ns) && ns_of(tone.comp_face.design()) != ns {
+                return edit_after(tone, addr, value);
+            }
+            return comp_edit(ns, param, comp_mut(tone, which), value);
         }
-        ("opto", "peak_reduction") => {
-            comp_mut(tone, which).threshold = -span(value / 100.0, 0.0, 40.0);
-        }
-        ("opto", "limit") => comp_mut(tone, which).ratio = if value >= 0.5 { 10.0 } else { 3.0 },
-        ("vcacomp", "threshold") => comp_mut(tone, which).threshold = v.clamp(-60.0, 0.0),
-        ("vcacomp", "ratio") => comp_mut(tone, which).ratio = v.clamp(1.0, 60.0),
         ("consoleeq", p) => {
             let (n, field) = match p {
                 "lf_gain" => (0, 'g'),
