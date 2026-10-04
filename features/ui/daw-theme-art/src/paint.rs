@@ -1127,25 +1127,21 @@ pub mod tcp {
     /// way, which is what they are.
     #[must_use]
     pub fn volume_fader(chrome: &Chrome, lit: Color, value: f64) -> Drawing {
-        // The knob's slot, so the column holds whichever a row shows,
-        // and the FULL height of it: the fader is as tall as the name
-        // field it sits at the end of. A three-pixel bar in a fourteen
-        // pixel row was a hairline with a gap above and below it, which
-        // read as an empty slot rather than as a level.
-        let (w, h) = (24.0, 24.0);
+        // Quiet: a thin track, the level along it in the volume's
+        // colour, muted, and a small thumb at the level — drawn at its
+        // own height and centred in the row, never squashed to it. A
+        // row too short for a knob is read in passing; a block of
+        // colour shouted over the names.
+        let (w, h) = (24.0, 8.0);
         let value = value.clamp(0.0, 1.0);
-        let radius = 2.0;
-
         let mut drawing = Drawing::new(w, h);
-        drawing.fill(rect(0.0, 0.0, w, h, radius), chrome.surface_sunken);
+        drawing.fill(rect(0.0, 3.0, w, 2.0, 1.0), chrome.surface_sunken);
         let filled = w * value;
         if filled > 0.5 {
-            drawing.fill(rect(0.0, 0.0, filled, h, radius), lit);
+            drawing.fill(rect(0.0, 3.0, filled, 2.0, 1.0), lit.with_alpha(140));
         }
-        // The cap, so the level reads as a position rather than as
-        // "about this much colour".
         drawing.fill(
-            rect((filled - 1.0).clamp(0.0, w - 2.0), 0.0, 2.0, h, 0.0),
+            rect((filled - 3.0).clamp(0.0, w - 6.0), 1.0, 6.0, 6.0, 3.0),
             chrome.hardware_mark,
         );
         drawing
@@ -1162,26 +1158,18 @@ pub mod tcp {
     /// glance is worth more than either matching the accent.
     #[must_use]
     pub fn pan_line(chrome: &Chrome, position: f64, ink: Color) -> Drawing {
-        let (w, h) = (24.0, 24.0);
+        // The volume's pair: a thin track, a faint centre mark, the pan
+        // from the centre outward in its own colour, muted, and a small
+        // thumb at the position — at its own height, centred in the row.
+        let (w, h) = (24.0, 8.0);
         let position = position.clamp(-1.0, 1.0);
-        let inset = 2.0;
-        let span = w - inset * 2.0;
-
+        let span = w - 4.0;
         let mut drawing = Drawing::new(w, h);
-        // The travel.
+        drawing.fill(rect(0.0, 3.0, w, 2.0, 1.0), chrome.surface_sunken);
         drawing.fill(
-            rect(inset, h / 2.0 - 1.0, span, 2.0, 1.0),
-            chrome.surface_sunken,
-        );
-        // Centre, so "off centre" is visible without reading the tick's
-        // position against the ends.
-        drawing.fill(
-            rect(w / 2.0 - 0.5, h / 2.0 - 3.0, 1.0, 6.0, 0.0),
+            rect(w / 2.0 - 0.5, 1.0, 1.0, 6.0, 0.0),
             chrome.hardware_edge,
         );
-        // The value. Drawn from the centre outward rather than as a
-        // lone tick: a bar says which way as well as how far, and at
-        // this size "which way" is most of what is being asked.
         let to = (span / 2.0).mul_add(position, w / 2.0);
         let (from, to) = if to < w / 2.0 {
             (to, w / 2.0)
@@ -1189,17 +1177,20 @@ pub mod tcp {
             (w / 2.0, to)
         };
         if (to - from) > 0.5 {
-            drawing.fill(rect(from, h / 2.0 - 1.5, to - from, 3.0, 1.5), ink);
+            drawing.fill(
+                rect(from, 3.0, to - from, 2.0, 1.0),
+                ink.with_alpha(140),
+            );
         }
         drawing.fill(
             rect(
                 (span / 2.0)
-                    .mul_add(position, w / 2.0 - 1.0)
-                    .clamp(0.0, w - 2.0),
-                h / 2.0 - 4.0,
-                2.0,
-                8.0,
+                    .mul_add(position, w / 2.0 - 3.0)
+                    .clamp(0.0, w - 6.0),
                 1.0,
+                6.0,
+                6.0,
+                3.0,
             ),
             chrome.hardware_mark,
         );

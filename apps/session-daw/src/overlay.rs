@@ -1968,7 +1968,8 @@ fn control_row(
                 scale,
             );
         } else {
-            crate::art::squashed(
+            // At its own height, centred in the row — not squashed.
+            crate::art::scaled(
                 &mut *out,
                 &art::volume_fader(
                     &palette.chrome,
@@ -1977,9 +1978,8 @@ fn control_row(
                 ),
                 font,
                 r.x0,
-                r.y0,
+                r.y0 + (field_h - 8.0) / 2.0,
                 1.0,
-                field_h / 24.0,
             );
         }
     }
@@ -2018,7 +2018,7 @@ fn control_row(
                 scale,
             );
         } else {
-            crate::art::squashed(
+            crate::art::scaled(
                 &mut *out,
                 &art::pan_line(
                     &palette.chrome,
@@ -2027,9 +2027,8 @@ fn control_row(
                 ),
                 font,
                 f64::from(gt::PAN_KNOB_X),
-                r.y0,
+                r.y0 + (field_h - 8.0) / 2.0,
                 1.0,
-                field_h / 24.0,
             );
         }
     }
