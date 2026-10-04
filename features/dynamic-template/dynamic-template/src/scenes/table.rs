@@ -143,6 +143,37 @@ fn monitors_out_of_the_arrangement() -> Vec<Rule> {
     .collect()
 }
 
+/// The BGVs and the choir folded to one row each: opened, each part is a
+/// row (`one_row_per_bgv_part`).
+fn vocal_folders_folded() -> Vec<Rule> {
+    [&["Vocals", "BGVs"][..], &["Choir"][..]]
+        .into_iter()
+        .map(|path| Rule {
+            selector: Selector {
+                role: Role::Bus,
+                ..under(path)
+            },
+            effect: Effect::default(),
+            arrange: Some(Effect::default().folded(Fold::Collapsed)),
+            mixer: None,
+        })
+        .collect()
+}
+
+/// The language VCAs (VOX EN, ES, PT) out of the arrangement: control
+/// tracks with nothing on them to arrange, kept in the mixer.
+fn vcas_out_of_the_arrangement() -> Rule {
+    Rule {
+        selector: Selector {
+            kind: Some("vca".to_owned()),
+            ..Selector::default()
+        },
+        effect: Effect::default(),
+        arrange: Some(Effect::hidden()),
+        mixer: None,
+    }
+}
+
 /// A synth family that holds one synth is one row in the arrangement:
 /// the family and its synth are the same part.
 const SYNTH_FAMILIES: [&[&str]; 4] = [
@@ -224,7 +255,7 @@ fn one_row_per_drum() -> Vec<Rule> {
         arrange: Some(Effect::default().folded(Fold::Collapsed)),
         mixer: None,
     };
-    let mut rules: Vec<Rule> = ["Kick", "Snare", "Cymbals", "Rooms"]
+    let mut rules: Vec<Rule> = ["Kick", "Snare", "Toms", "Cymbals", "Rooms"]
         .into_iter()
         .map(|piece| {
             shut(Selector {
@@ -1113,6 +1144,8 @@ fn drum_mixing() -> Scene {
     // the pieces.
     rules.push(process_out_of_view());
     rules.extend(monitors_out_of_the_arrangement());
+    rules.extend(vocal_folders_folded());
+    rules.push(vcas_out_of_the_arrangement());
     rules.extend(one_row_per_synth_family());
     Scene {
         name: "Drum Mixing".to_owned(),
@@ -1880,34 +1913,15 @@ mod tests {
         assert_eq!(mixed.len(), 1 + 1 + 4 + 1 + 5 + 1 + 1 + 2, "{mixed:?}");
     }
 
-    /// Each BGV part is one row in the arrangement, its language sources
-    /// folded into it; the mixer keeps every source.
+    /// The BGVs and the choir are one row each in the arrangement; the
+    /// mixer keeps every source.
     #[test]
     fn the_arrangement_folds_each_bgv_part_to_one_row() {
         use crate::scenes::Surface;
-        let arranged = first_view_paths(Surface::Arrange, "BGVs");
-        assert_eq!(
-            arranged,
-            [
-                "BGVs",
-                "BGVs/Octave Up",
-                "BGVs/Octave Down",
-                "BGVs/Higher Harmony",
-                "BGVs/Lower Harmony",
-                "BGVs/Hey",
-            ]
-        );
-        let choir = first_view_paths(Surface::Arrange, "Choir");
-        assert_eq!(
-            choir,
-            [
-                "Choir",
-                "Choir/Soprano",
-                "Choir/Alto",
-                "Choir/Tenor",
-                "Choir/Bass",
-            ]
-        );
+        // The folders folded to one row each by default; opened, each
+        // part is one row (the part folds hold beneath).
+        assert_eq!(first_view_paths(Surface::Arrange, "BGVs"), ["BGVs"]);
+        assert_eq!(first_view_paths(Surface::Arrange, "Choir"), ["Choir"]);
         let mixed = first_view_paths(Surface::Mixer, "BGVs");
         assert_eq!(mixed.len(), 1 + 4 * (1 + 3) + 1 + 8, "{mixed:?}");
         assert!(mixed.iter().any(|p| p == "BGVs/Octave Up/ES"));

@@ -77,9 +77,7 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
     // not there at all.
     assert_eq!(
         family(&arranged, "Vocals"),
-        [
-            "0 Vocals", "1 Ron", "1 Belen", "1 Aline", "1 VOX EN", "1 VOX ES", "1 VOX PT",
-        ]
+        ["0 Vocals", "1 Ron", "1 Belen", "1 Aline",]
     );
     // A synth family of one synth is one row.
     let synths = family(&arranged, "Synths");
@@ -95,22 +93,13 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
     assert!(family(&arranged, "TALKBACK").is_empty());
     assert!(!family(&alone, "HEADPHONE MIXES").is_empty());
     // The BGVs and the choir are folders of their own beside Vocals,
-    // each part one row.
-    assert_eq!(
-        family(&arranged, "BGVs"),
-        [
-            "0 BGVs",
-            "1 Octave Up",
-            "1 Octave Down",
-            "1 Higher Harmony",
-            "1 Lower Harmony",
-            "1 Hey",
-        ]
-    );
-    assert_eq!(
-        family(&arranged, "Choir"),
-        ["0 Choir", "1 Soprano", "1 Alto", "1 Tenor", "1 Bass"]
-    );
+    // folded to a row each; the language VCAs are out of the arrangement.
+    assert_eq!(family(&arranged, "BGVs"), ["0 BGVs"]);
+    assert_eq!(family(&arranged, "Choir"), ["0 Choir"]);
+    // The toms are one row, folded over Tom 1–4.
+    let kit = family(&arranged, "Drum Kit");
+    assert!(kit.iter().any(|r| r == "1 Toms"), "{kit:?}");
+    assert!(kit.iter().all(|r| !r.contains("Tom 1")), "{kit:?}");
     // Folded, not dropped: a part's row carries its sources' items.
     let ron_main = arranged
         .iter()
