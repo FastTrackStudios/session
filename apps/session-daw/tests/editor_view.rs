@@ -55,4 +55,20 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
         .expect("read back");
     assert_eq!(after.notes.len(), before, "a save keeps every note");
     assert_eq!(at_13(&after.notes), had + 1, "the edit is in the take");
+
+    // Select the piano: the editor's item is the piano's part, the song's
+    // chords — three notes at a time over a bass root.
+    let mut song = session_daw::editor_view::Song::of(project);
+    for t in &mut song.tracks {
+        t.selected = t.name == "Piano";
+    }
+    let piano = song.selected().expect("the piano has a MIDI part");
+    assert!(!piano.drums);
+    let part = session_daw::expression::load_take(&piano.item, piano.bpm, piano.length)
+        .expect("the piano's notes");
+    let first_beat: Vec<_> = part.notes.iter().filter(|n| n.start_ppq < 1.0).collect();
+    assert!(
+        first_beat.len() >= 4,
+        "a root and a triad on the one: {first_beat:?}"
+    );
 }

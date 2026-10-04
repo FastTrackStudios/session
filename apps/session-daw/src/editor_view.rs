@@ -33,25 +33,55 @@ pub struct Target {
 /// the session has no MIDI to edit.
 #[must_use]
 pub fn target(project: &daw_ui::studio::project::Project) -> Option<Target> {
-    let first_midi = |track: &daw_proto::Track| {
-        project
-            .items
+    let song = Song::of(project);
+    song.selected()
+        .or_else(|| song.tracks.iter().find_map(|t| song.first_midi(t)))
+}
+
+/// What the view needs of the session to pick its item: the tracks (kept
+/// current from the engine's events), their items, which are MIDI, and
+/// the tempo.
+#[derive(Clone, Default)]
+pub struct Song {
+    pub tracks: Vec<daw_proto::Track>,
+    items: std::collections::HashMap<String, Vec<daw_proto::Item>>,
+    midi: std::collections::HashSet<String>,
+    bpm: f64,
+}
+
+impl Song {
+    #[must_use]
+    pub fn of(project: &daw_ui::studio::project::Project) -> Self {
+        Self {
+            tracks: project.tracks.clone(),
+            items: project.items.clone(),
+            midi: project.midi.clone(),
+            bpm: project.bpm,
+        }
+    }
+
+    /// `track`'s first MIDI item, as a target.
+    fn first_midi(&self, track: &daw_proto::Track) -> Option<Target> {
+        self.items
             .get(&track.guid)
-            .and_then(|items| items.iter().find(|i| project.midi.contains(&i.guid)))
+            .and_then(|items| items.iter().find(|i| self.midi.contains(&i.guid)))
             .map(|item| Target {
                 track: track.guid.clone(),
                 item: item.guid.clone(),
                 drums: crate::expression::is_drum_track(&track.name),
-                bpm: project.bpm,
+                bpm: self.bpm,
                 length: item.length.as_seconds(),
             })
-    };
-    project
-        .tracks
-        .iter()
-        .filter(|t| t.selected)
-        .find_map(first_midi)
-        .or_else(|| project.tracks.iter().find_map(first_midi))
+    }
+
+    /// The selected track's first MIDI item.
+    #[must_use]
+    pub fn selected(&self) -> Option<Target> {
+        self.tracks
+            .iter()
+            .filter(|t| t.selected)
+            .find_map(|t| self.first_midi(t))
+    }
 }
 
 /// The Editor view, on the session's selected track.
@@ -60,10 +90,10 @@ pub fn EditorPanel() -> Element {
     let Some(session) = try_use_context::<crate::studio::StudioSession>() else {
         return rsx! { crate::shell::EditorComing {} };
     };
-    let target = target(&session.project.0);
+    let song = Song::of(&session.project.0);
     #[cfg(feature = "native")]
     {
-        let widget = use_hook(|| dioxus_native_dom::CustomWidgetAttr::new(EditorView::new(target)));
+        let widget = use_hook(|| dioxus_native_dom::CustomWidgetAttr::new(EditorView::new(song)));
         rsx! {
             object {
                 style: "position:absolute; left:0; top:0; width:100%; height:100%; background:#0b0c0e;",
@@ -73,7 +103,7 @@ pub fn EditorPanel() -> Element {
     }
     #[cfg(not(feature = "native"))]
     {
-        let _ = target;
+        let _ = song;
         rsx! { crate::shell::EditorComing {} }
     }
 }
@@ -81,6 +111,12 @@ pub fn EditorPanel() -> Element {
 /// The widget: the editor on its item, or why there is none.
 #[cfg(feature = "native")]
 pub struct EditorView {
+    /// The session, kept current from the engine: a selection made in
+    /// the arrangement moves the editor to that track's item.
+    song: Song,
+    watch: Option<crate::engine::Watch>,
+    /// The engine's events heard since the last frame.
+    pending: std::cell::RefCell<Vec<daw_proto::track::TrackEvent>>,
     target: Option<Target>,
     view: Option<Expression>,
     look: expression_editor_paint::paint::Look,
@@ -97,8 +133,14 @@ pub struct EditorView {
 #[cfg(feature = "native")]
 impl EditorView {
     #[must_use]
-    pub fn new(target: Option<Target>) -> Self {
+    pub fn new(song: Song) -> Self {
+        let target = song
+            .selected()
+            .or_else(|| song.tracks.iter().find_map(|t| song.first_midi(t)));
         Self {
+            song,
+            watch: crate::engine::Watch::start(),
+            pending: std::cell::RefCell::default(),
             target,
             view: None,
             look: look(),
@@ -198,7 +240,46 @@ impl EditorView {
         }
     }
 
+    /// Take the engine's track events: a newly selected track with a
+    /// MIDI item is the editor's next item (a track with none leaves it
+    /// where it is). `true` when the item changed.
+    fn follow(&mut self) -> bool {
+        let mut events = std::mem::take(&mut *self.pending.borrow_mut());
+        if let Some(watch) = &self.watch {
+            events.extend(watch.drain());
+        }
+        if events.is_empty() {
+            return false;
+        }
+        for event in &events {
+            crate::engine::apply_event(&mut self.song.tracks, event);
+        }
+        let Some(next) = self.song.selected() else {
+            return false;
+        };
+        if self.target.as_ref().is_some_and(|t| t.item == next.item) {
+            return false;
+        }
+        // Whatever is unsaved goes back before the editor moves on.
+        self.save();
+        self.target = Some(next);
+        self.view = None;
+        self.tried = false;
+        true
+    }
+
+    /// Whether the engine has said anything since the last frame.
+    fn heard(&self) -> bool {
+        let Some(watch) = &self.watch else {
+            return false;
+        };
+        let mut pending = self.pending.borrow_mut();
+        pending.extend(watch.drain());
+        !pending.is_empty()
+    }
+
     fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+        self.follow();
         let scale = scale.max(f64::EPSILON);
         let size = (f64::from(width) / scale, f64::from(height) / scale);
         if !self.tried {
@@ -265,6 +346,7 @@ impl blitz_dom::node::Widget for EditorView {
 
     fn needs_redraw(&self) -> bool {
         self.dirty
+            || self.heard()
             || self.skin != crate::skin::version()
             || self.view.as_ref().is_some_and(Expression::dragging)
     }
