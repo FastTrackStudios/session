@@ -58,6 +58,10 @@ pub struct Selector {
     /// A track name, for a user's own folder only.
     #[facet(default)]
     pub name: Option<String>,
+    /// How deep the track sits, 0 at the top: the overviews fold by
+    /// level, whatever the folders are called.
+    #[facet(default)]
+    pub depth: Option<u32>,
 }
 
 /// The structural role a selector can ask for.

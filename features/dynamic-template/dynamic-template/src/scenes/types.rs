@@ -361,6 +361,7 @@ mod tests {
                     arrangement: Some("Rhythm".to_owned()),
                     language: Some(crate::scenes::Language::En),
                     name: Some("Talkback".to_owned()),
+                    depth: None,
                 },
                 effect: Effect::at(Size::Working).folded(Fold::Collapsed),
                 arrange: Some(Effect::at(Size::Focus)),

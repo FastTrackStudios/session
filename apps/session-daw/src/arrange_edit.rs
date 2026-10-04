@@ -1359,6 +1359,7 @@ impl Editor {
             // the panel before the editor is asked.
             Action::View(_)
             | Action::Visibility(_)
+            | Action::ToggleScene(_)
             | Action::ToggleMixer
             | Action::ToggleFx
             | Action::FxFull => {

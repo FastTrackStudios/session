@@ -20,6 +20,7 @@ fn selector_round_trips_through_styx() {
         arrangement: Some("Rhythm".into()),
         language: Some(Language::En),
         name: None,
+        depth: Some(1),
     };
     // `None` is written as the unit `@`, which the parser does not read
     // back into an `Option` — so an absent field is omitted, the way a

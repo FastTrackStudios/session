@@ -437,6 +437,9 @@ pub struct ArrangementWidget {
     /// asking about. A queue would show you the reply to a drag you had
     /// already given up on.
     notice: Option<crate::notice::Notice>,
+    /// The scene the rows were planned by before an overview took over,
+    /// to go back to: `Some(previous)` while one is up.
+    scene_before: Option<Option<&'static str>>,
     /// When and where the last click on a NAME landed, so the next one
     /// can tell whether it is the second half of a double.
     last_name: Option<(usize, web_time::Instant)>,
@@ -580,6 +583,7 @@ impl ArrangementWidget {
             renaming: None,
             keys: crate::keys::Keys::load(),
             notice: None,
+            scene_before: None,
             last_name: None,
             turning: None,
             edits: Rc::new(RefCell::new(Vec::new())),
@@ -734,6 +738,31 @@ impl ArrangementWidget {
         content_h.set(self.content_h.get());
         self.content_h = content_h;
         self
+    }
+
+    /// Lay the rows out as `slug` (an overview); pressed again, or the
+    /// other overview's key pressed in this one's, go back to the scene
+    /// before. `false` with no planner.
+    fn toggle_scene(&mut self, slug: &'static str) -> bool {
+        let Some((planner, raw)) = self.replan.as_mut() else {
+            return false;
+        };
+        let now = if planner.scene == Some(slug) {
+            self.scene_before.take().unwrap_or(planner.scene)
+        } else {
+            if self.scene_before.is_none() {
+                self.scene_before = Some(planner.scene);
+            }
+            Some(slug)
+        };
+        planner.scene = now;
+        let name: &'static str = now
+            .and_then(dynamic_template::scenes::scene)
+            .map_or("Default view", |s| s.name.as_str());
+        let (project, rows) = planner.plan(raw);
+        self.notice = Some(crate::notice::Notice::new(name, None));
+        self.restructure((*project.0).clone(), rows.as_slice().to_vec());
+        true
     }
 
     /// The visibility manager: show or hide a group of tracks, then plan
@@ -1275,6 +1304,10 @@ impl ArrangementWidget {
             }
             if let crate::keys::Action::Visibility(change) = &action {
                 handled |= self.visibility(change);
+                continue;
+            }
+            if let crate::keys::Action::ToggleScene(slug) = action {
+                handled |= self.toggle_scene(slug);
                 continue;
             }
             if action == crate::keys::Action::ToggleMixer {

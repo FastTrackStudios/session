@@ -313,6 +313,9 @@ fn matches_but_for_rank(selector: &Selector, fact: &Fact) -> bool {
             return false;
         }
     }
+    if selector.depth.is_some_and(|depth| fact.depth != depth) {
+        return false;
+    }
     if let Some(language) = selector.language {
         if fact.language != Some(language) {
             return false;

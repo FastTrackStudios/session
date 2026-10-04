@@ -906,7 +906,95 @@ fn build() -> Vec<Scene> {
     ]
     .into_iter()
     .chain(instrument_sets())
+    .chain([overview(), overview_top()])
     .collect()
+}
+
+/// Every bus `depth` deep folded to one row in the arrangement.
+fn folded_at(depth: u32) -> Rule {
+    Rule {
+        selector: Selector {
+            role: Role::Bus,
+            depth: Some(depth),
+            ..Selector::default()
+        },
+        effect: Effect::default(),
+        arrange: Some(Effect::default().folded(Fold::Collapsed)),
+        mixer: None,
+    }
+}
+
+/// What no overview shows: the kit's parallel chain, the monitors, the
+/// control VCAs and the vocal returns — out of the way, as Drum Mixing
+/// has them.
+fn out_of_every_overview() -> Vec<Rule> {
+    let mut rules = vec![
+        process_out_of_view(),
+        vcas_out_of_the_arrangement(),
+        vox_fx_out_of_the_arrangement(),
+    ];
+    rules.extend(monitors_out_of_the_arrangement());
+    rules
+}
+
+/// **Overview** (`v v`): the session one level down — every top folder
+/// open, each thing in it one row: Drums as Kick, Snare, Toms, Cymbals,
+/// Rooms; Bass as its guitar and its synth; the electric as its layers;
+/// each singer one row.
+fn overview() -> Scene {
+    let mut rules = vec![folded_at(1)];
+    rules.extend(out_of_every_overview());
+    Scene {
+        name: "Overview".to_owned(),
+        slug: "overview".to_owned(),
+        short: "Overview".to_owned(),
+        instrument: "all".to_owned(),
+        modes: Vec::new(),
+        audience: Audience::Engineer,
+        group_by: GroupBy::Arrangement,
+        spec: Vec::new(),
+        default: Effect::at(Size::Compact),
+        rules,
+    }
+}
+
+/// **Overview TOP** (`v t`): each top folder one row — but the
+/// Orchestra open over its sections (Strings, Brass, Winds, Percussion),
+/// each of those one row.
+fn overview_top() -> Scene {
+    let orchestra = |depth| Selector {
+        role: Role::Bus,
+        depth: Some(depth),
+        ..under(&["Orchestra"])
+    };
+    let mut rules = vec![
+        folded_at(0),
+        Rule {
+            selector: orchestra(0),
+            effect: Effect::default(),
+            arrange: Some(Effect::default().folded(Fold::Open)),
+            mixer: None,
+        },
+        Rule {
+            selector: orchestra(1),
+            effect: Effect::default(),
+            arrange: Some(Effect::default().folded(Fold::Collapsed)),
+            mixer: None,
+        },
+    ];
+    rules.extend(out_of_every_overview());
+    Scene {
+        name: "Overview TOP".to_owned(),
+        slug: "overview-top".to_owned(),
+        short: "Top".to_owned(),
+        instrument: "all".to_owned(),
+        modes: Vec::new(),
+        audience: Audience::Engineer,
+        group_by: GroupBy::Arrangement,
+        spec: Vec::new(),
+        default: Effect::at(Size::Compact),
+        rules,
+    }
 }
 
 /// **Drum Tracking Overview**: the kit as the drummer reads it, one
@@ -1560,7 +1648,7 @@ mod tests {
     /// than something that slips in.
     #[test]
     fn every_scene_is_reachable_by_its_slug() {
-        assert_eq!(scenes().len(), 34);
+        assert_eq!(scenes().len(), 36);
         for s in scenes() {
             assert_eq!(
                 scene(&s.slug).map(|f| f.slug.as_str()),
@@ -1703,7 +1791,9 @@ mod tests {
                 "bass-comping",
                 "guitar-comping",
                 "keys-comping",
-                "percussion-comping"
+                "percussion-comping",
+                "overview",
+                "overview-top"
             ]
         );
     }
@@ -1881,10 +1971,16 @@ mod tests {
     /// The paths of the golden session's rows under `prefix` in the
     /// session's first view.
     fn first_view_paths(surface: crate::scenes::Surface, prefix: &str) -> Vec<String> {
+        scene_paths("drum-mixing", surface, prefix)
+    }
+
+    /// The golden session's rows under `prefix` as `slug` lays them out
+    /// on `surface`, by path.
+    fn scene_paths(slug: &str, surface: crate::scenes::Surface, prefix: &str) -> Vec<String> {
         use crate::golden_session::{maximal, rpp::flatten};
         let flats = flatten(&maximal());
         let facts = crate::scenes::from_flat(&flats);
-        let Some(scene) = scene("drum-mixing") else {
+        let Some(scene) = scene(slug) else {
             return Vec::new();
         };
         crate::scenes::resolve(scene, &facts, surface, None, None, None)
@@ -1894,6 +1990,58 @@ mod tests {
                 flat.path.starts_with(prefix).then(|| flat.path.clone())
             })
             .collect()
+    }
+
+    /// Overview: one level down — the top folders open, each thing in
+    /// them one row, the kit's parallel chain and the monitors gone.
+    #[test]
+    fn the_overview_is_the_session_one_level_down() {
+        use crate::scenes::Surface;
+        let kit = scene_paths("overview", Surface::Arrange, "Drum Kit");
+        assert_eq!(
+            kit,
+            [
+                "Drum Kit",
+                "Drum Kit/Kick",
+                "Drum Kit/Snare",
+                "Drum Kit/Toms",
+                "Drum Kit/Cymbals",
+                "Drum Kit/Rooms",
+            ]
+        );
+        let electric = scene_paths("overview", Surface::Arrange, "Electric");
+        assert!(
+            electric.iter().all(|p| p.matches('/').count() <= 1),
+            "{electric:?}"
+        );
+        assert!(
+            electric.len() > 1,
+            "the electric open over its layers: {electric:?}"
+        );
+        assert!(scene_paths("overview", Surface::Arrange, "HEADPHONE MIXES").is_empty());
+        // Negative control: the mixer keeps every strip.
+        assert!(scene_paths("overview", Surface::Mixer, "Drum Kit").len() > kit.len());
+    }
+
+    /// Overview TOP: each top folder one row; the Orchestra open over
+    /// its sections, each one row.
+    #[test]
+    fn overview_top_folds_every_top_folder_but_the_orchestra() {
+        use crate::scenes::Surface;
+        assert_eq!(
+            scene_paths("overview-top", Surface::Arrange, "Drum Kit"),
+            ["Drum Kit"]
+        );
+        assert_eq!(
+            scene_paths("overview-top", Surface::Arrange, "Vocals"),
+            ["Vocals"]
+        );
+        let orchestra = scene_paths("overview-top", Surface::Arrange, "Orchestra");
+        assert!(orchestra.len() > 1, "{orchestra:?}");
+        assert!(
+            orchestra.iter().all(|p| p.matches('/').count() <= 1),
+            "each section one row: {orchestra:?}"
+        );
     }
 
     /// The vocal returns are gone from the arrangement — not a folded

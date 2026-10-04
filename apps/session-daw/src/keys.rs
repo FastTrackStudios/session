@@ -63,6 +63,9 @@ pub enum Action {
     ToggleFx,
     /// The FX's own view, full size (`F`): several tracks' chains.
     FxFull,
+    /// Show the session as a scene (`v v` Overview, `v t` Overview TOP),
+    /// or, in it already, go back to the view before.
+    ToggleScene(&'static str),
     /// A binding the window does not do yet, by its REAPER id.
     Unbound(String),
 }
@@ -115,6 +118,8 @@ pub fn action_of(id: &str) -> Action {
         "40078" => Action::ToggleMixer,
         "FTS_TOGGLE_FX" => Action::ToggleFx,
         "FTS_FX_FULL" => Action::FxFull,
+        "FTS_SCENE_OVERVIEW" => Action::ToggleScene("overview"),
+        "FTS_SCENE_OVERVIEW_TOP" => Action::ToggleScene("overview-top"),
         "FTS_VISIBILITY_MANAGER_SHOW_ALL" => Action::Visibility(Visibility::ShowAll),
         "FTS_VISIBILITY_MANAGER_HIDE_ALL" => Action::Visibility(Visibility::HideAll),
         other => {
@@ -438,6 +443,30 @@ mod tests {
             vec![Action::View(crate::zoom::Command::ToggleTracks)]
         );
         assert!(keys.which_key().is_none(), "the popup goes");
+    }
+
+    /// `v v` is the Overview and `v t` Overview TOP; the vocals' toggle
+    /// is `v l`.
+    #[test]
+    fn v_v_is_the_overview() {
+        let tap = |keys: &mut Keys, k: &str| {
+            let actions = keys.press(KeyCode::Character(k.into()), Modifiers::NONE);
+            keys.release(KeyCode::Character(k.into()), Modifiers::NONE);
+            actions
+        };
+        let mut keys = Keys::load();
+        tap(&mut keys, "v");
+        assert_eq!(tap(&mut keys, "v"), vec![Action::ToggleScene("overview")]);
+        tap(&mut keys, "v");
+        assert_eq!(
+            tap(&mut keys, "t"),
+            vec![Action::ToggleScene("overview-top")]
+        );
+        tap(&mut keys, "v");
+        assert_eq!(
+            tap(&mut keys, "l"),
+            vec![Action::Visibility(Visibility::Toggle("VOCALS".to_owned()))]
+        );
     }
 
     /// Held, the prefix is sticky: each key under it fires and the tree
