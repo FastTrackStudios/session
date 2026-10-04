@@ -84,6 +84,8 @@ pub fn schema() -> Schema {
         .field("button.hover")
         .field("button.pressed")
         .field("button.has_icon")
+        .field("button.enabled")
+        .field("button.readout")
         .field("unit.name")
         .field("unit.value")
         .field("unit.bypassed")

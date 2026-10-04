@@ -1,0 +1,15 @@
+<Document>
+  <Page name="editor.bar">
+    <Frame name="Bar" w=1200 h=30>
+      <Rectangle name="Ground" w=1200 h=30 bind:w="w" bind:h="h" bind:fill="$editor.surface_bar" />
+      <Rectangle name="Rule" y=29 w=1200 h=1 bind:y="h - 1" bind:w="w" bind:fill="$editor.panel_border" />
+    </Frame>
+  </Page>
+  <Page name="editor.button">
+    <Frame name="Button" w=80 h=24>
+      <Rectangle name="Plate" w=80 h=24 radius=3 bind:w="w" bind:h="h" bind:visible="!button.readout || button.on" bind:fill="button.on ? $editor.control_active : (button.hover ? $editor.control_hover : $editor.control)" />
+      <Rectangle name="Sheen" x=1 y=1 w=78 h=1 bind:w="w - 2" bind:visible="!button.readout" bind:fill="$sheen" />
+      <Text name="Label" w=80 h=14 size=10 text-align="center" bind:w="w" bind:y="h / 2 - 6.5" bind:text="button.label" bind:fill="!button.enabled ? $text.faint : (button.on ? $editor.text_bright : $editor.text)">Button</Text>
+    </Frame>
+  </Page>
+</Document>

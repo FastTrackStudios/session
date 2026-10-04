@@ -99,7 +99,8 @@ pub struct Button {
 
 impl Button {
     /// Whether a press does anything at all.
-    const fn is_readout(&self) -> bool {
+    #[must_use]
+    pub const fn is_readout(&self) -> bool {
         matches!(self.control, Control::GridLabel | Control::Selection)
     }
 }

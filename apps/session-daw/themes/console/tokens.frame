@@ -28,6 +28,13 @@
     <Var name="route.recv" value="$meter.danger" />
     <Var name="monitor.tape" value="#f08c2e" />
     <Var name="rail.ground" value="$surface" />
+    <Var name="editor.surface_bar" value="#141417" />
+    <Var name="editor.panel_border" value="$border" />
+    <Var name="editor.control" value="#26262c" />
+    <Var name="editor.control_hover" value="#313138" />
+    <Var name="editor.control_active" value="#38bdf88c" />
+    <Var name="editor.text" value="$text" />
+    <Var name="editor.text_bright" value="#fafafa" />
     <Var name="rail.rule" value="$border" />
     <Var name="rail.button" value="$surface" />
     <Var name="rack.well" value="#0a0a0c" />

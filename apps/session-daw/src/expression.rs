@@ -88,6 +88,8 @@ pub struct Expression {
     pending: Option<Pending>,
     /// The colours, from the host's palette.
     look: Look,
+    /// The face a theme's bars letter their buttons in.
+    font: Option<crate::text::Font>,
     /// The stacked view's gestures, for a workspace of several tracks
     /// — the audio drum workflow's surface.
     stack: Stack,
@@ -188,6 +190,7 @@ impl Expression {
             spring_from: None,
             pending: None,
             look: Look::default(),
+            font: crate::text::Font::embedded().ok(),
             stack: Stack::editable(),
             stack_cache: None,
         }
@@ -320,14 +323,22 @@ impl Expression {
             Drag::RazorCreate { pending, .. } => *pending,
             _ => None,
         };
-        let bar = chrome::paint(
+        let bar = themed_bar(
             &self.toolbar,
             self.hover,
-            w,
-            TOOLBAR_H,
-            &mut self.labels,
-            &self.look,
-        );
+            (w, TOOLBAR_H),
+            self.font.as_ref(),
+        )
+        .unwrap_or_else(|| {
+            chrome::paint(
+                &self.toolbar,
+                self.hover,
+                w,
+                TOOLBAR_H,
+                &mut self.labels,
+                &self.look,
+            )
+        });
         painter.append_scene(bar, Affine::translate((ox, oy)));
         if self.stacked() {
             let key = self.stack.view_key(&self.editor);
@@ -361,14 +372,17 @@ impl Expression {
                 painter.append_scene(strip, Affine::translate((ox, oy + TOOLBAR_H + roll_h)));
             }
         }
-        let status = chrome::paint(
-            &self.status,
-            self.hover,
-            w,
-            STATUS_H,
-            &mut self.labels,
-            &self.look,
-        );
+        let status = themed_bar(&self.status, self.hover, (w, STATUS_H), self.font.as_ref())
+            .unwrap_or_else(|| {
+                chrome::paint(
+                    &self.status,
+                    self.hover,
+                    w,
+                    STATUS_H,
+                    &mut self.labels,
+                    &self.look,
+                )
+            });
         painter.append_scene(status, Affine::translate((ox, oy + h - STATUS_H)));
         if let Some(menu) = &self.menu {
             let scene = menu.paint(&mut self.labels, &self.look);
@@ -903,8 +917,58 @@ pub fn look_of(palette: &crate::arrangement::Palette) -> Look {
     look
 }
 
+/// A bar of the editor's (the toolbar, the status bar) drawn by the
+/// loaded theme — its `editor.bar` ground and an `editor.button` per
+/// button — or `None` when the theme does not draw them, for the
+/// editor's own painter.
+fn themed_bar(
+    buttons: &[chrome::Button],
+    hover: Option<chrome::Control>,
+    (w, h): (f64, f64),
+    font: Option<&crate::text::Font>,
+) -> Option<anyrender::Scene> {
+    use theme_runtime::Value;
+    let theme = crate::skin::loaded()
+        .filter(|t| t.has_role("editor.bar") && t.has_role("editor.button"))?;
+    let font = font?;
+    let mut scene = anyrender::Scene::new();
+    let mut host = crate::skin::canvas::Host {
+        scene: &mut scene,
+        font,
+    };
+    if !theme.record(
+        "editor.bar",
+        (w, h),
+        &crate::skin::values(&[]),
+        &mut host,
+        Affine::IDENTITY,
+    ) {
+        return None;
+    }
+    for b in buttons {
+        let fields = crate::skin::values(&[
+            ("button.label", Value::text(&b.label)),
+            ("button.on", Value::Bool(b.active)),
+            (
+                "button.hover",
+                Value::Bool(hover == Some(b.control) && !b.is_readout()),
+            ),
+            ("button.enabled", Value::Bool(b.enabled)),
+            ("button.readout", Value::Bool(b.is_readout())),
+        ]);
+        theme.record(
+            "editor.button",
+            (b.rect.width(), b.rect.height()),
+            &fields,
+            &mut host,
+            Affine::translate((b.rect.x0, b.rect.y0)),
+        );
+    }
+    Some(scene)
+}
+
 /// The theme's own word on any of the editor's colours: `editor.<field>`
-/// in the loaded frame theme's tokens (`editor.bg`, `editor.key-white`,
+/// in the loaded frame theme's tokens (`editor.bg`, `editor.key_white`,
 /// `editor.selected`…) over what the palette mapping chose. A theme
 /// that says nothing leaves the editor reading as the arrangement.
 fn themed(look: &mut Look) {
@@ -922,23 +986,23 @@ fn themed(look: &mut Look) {
     };
     let fields: [(&str, &mut vello::peniko::Color); 32] = [
         ("bg", &mut look.bg),
-        ("row-a", &mut look.row_a),
-        ("row-b", &mut look.row_b),
-        ("grid-beat", &mut look.grid_beat),
-        ("grid-sub", &mut look.grid_sub),
+        ("row_a", &mut look.row_a),
+        ("row_b", &mut look.row_b),
+        ("grid_beat", &mut look.grid_beat),
+        ("grid_sub", &mut look.grid_sub),
         ("panel", &mut look.panel),
-        ("panel-border", &mut look.panel_border),
-        ("border-strong", &mut look.border_strong),
-        ("surface-inset", &mut look.surface_inset),
-        ("surface-bar", &mut look.surface_bar),
-        ("gutter-bg", &mut look.gutter_bg),
-        ("key-white", &mut look.key_white),
-        ("key-black", &mut look.key_black),
-        ("key-label", &mut look.key_label),
+        ("panel_border", &mut look.panel_border),
+        ("border_strong", &mut look.border_strong),
+        ("surface_inset", &mut look.surface_inset),
+        ("surface_bar", &mut look.surface_bar),
+        ("gutter_bg", &mut look.gutter_bg),
+        ("key_white", &mut look.key_white),
+        ("key_black", &mut look.key_black),
+        ("key_label", &mut look.key_label),
         ("text", &mut look.text),
-        ("text-dim", &mut look.text_dim),
-        ("text-bright", &mut look.text_bright),
-        ("text-faint", &mut look.text_faint),
+        ("text_dim", &mut look.text_dim),
+        ("text_bright", &mut look.text_bright),
+        ("text_faint", &mut look.text_faint),
         ("accent", &mut look.accent),
         ("selected", &mut look.selected),
         ("playhead", &mut look.playhead),
@@ -948,10 +1012,10 @@ fn themed(look: &mut Look) {
         ("reference", &mut look.reference),
         ("handle", &mut look.handle),
         ("control", &mut look.control),
-        ("control-active", &mut look.control_active),
-        ("control-hover", &mut look.control_hover),
-        ("control-selected", &mut look.control_selected),
-        ("octave-line", &mut look.octave_line),
+        ("control_active", &mut look.control_active),
+        ("control_hover", &mut look.control_hover),
+        ("control_selected", &mut look.control_selected),
+        ("octave_line", &mut look.octave_line),
         ("peaks", &mut look.peaks),
     ];
     for (name, field) in fields {
@@ -1534,7 +1598,7 @@ mod theme_tests {
         let plain = look_of(&palette);
         let tokens = include_str!("../themes/console/tokens.frame").replace(
             "</Variables>",
-            r##"<Var name="editor.bg" value="#ff0000" /><Var name="editor.key-white" value="#00ff00" /></Variables>"##,
+            r##"<Var name="editor.bg" value="#ff0000" /><Var name="editor.key_white" value="#00ff00" /></Variables>"##,
         );
         let theme =
             theme_runtime::Theme::from_sources(&[("tokens", &tokens)], crate::skin::schema(), None)
@@ -1549,5 +1613,34 @@ mod theme_tests {
         );
         // Negative control: a field the theme says nothing of.
         assert_eq!(themed.row_a, plain.row_a);
+    }
+
+    /// The console theme draws the editor's bars; with no theme, or a
+    /// theme without them, the editor's painter does.
+    #[test]
+    fn the_console_theme_draws_the_bars() {
+        let font = crate::text::Font::embedded().expect("the embedded face");
+        let mut labels = Labeller::new();
+        let ed = demo::editor(
+            demo::Scene::Drums,
+            viewport_for((1200.0, 600.0), DEFAULT_STRIP),
+        );
+        let buttons = chrome::toolbar(&ed, 1200.0, &mut labels);
+        assert!(!buttons.is_empty());
+        crate::skin::set(None);
+        assert!(themed_bar(&buttons, None, (1200.0, 30.0), Some(&font)).is_none());
+        let theme = theme_runtime::Theme::from_sources(
+            &[
+                ("tokens", include_str!("../themes/console/tokens.frame")),
+                ("editor", include_str!("../themes/console/editor.frame")),
+            ],
+            crate::skin::schema(),
+            None,
+        )
+        .expect("the console's editor loads");
+        crate::skin::set(Some(std::sync::Arc::new(theme)));
+        let drawn = themed_bar(&buttons, None, (1200.0, 30.0), Some(&font));
+        crate::skin::set(None);
+        assert!(drawn.is_some_and(|s| !s.commands.is_empty()));
     }
 }
