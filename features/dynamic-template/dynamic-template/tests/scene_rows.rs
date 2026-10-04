@@ -156,7 +156,8 @@ fn a_scene_resolving_to_no_rows_fails_its_fixture() {
 /// present on both gets each table's own number.
 #[test]
 fn a_scene_sizes_both_surfaces_from_its_own_table() {
-    let facts = scenes::from_flat(&flatten(&maximal()));
+    let flats = flatten(&maximal());
+    let facts = scenes::from_flat(&flats);
     let scene = scenes::scene("drum-mixing").expect("a scene");
     let mixer = scenes::resolve(scene, &facts, Surface::Mixer, None, None, None);
     let arrange = scenes::resolve(scene, &facts, Surface::Arrange, None, None, None);
@@ -170,7 +171,28 @@ fn a_scene_sizes_both_surfaces_from_its_own_table() {
         .find(|row| row.guid() == Some(guid))
         .expect("the panel dropped a track the mixer works on");
     assert!((scenes::TABLES.width(worked.size, PANEL) - 133.0).abs() < f64::EPSILON);
-    assert!((scenes::TABLES.height(same.size) - 96.0).abs() < f64::EPSILON);
+    // The mixer opens the piece to working width; the arrangement keeps
+    // it a row like any other instrument's — the drums are not taller.
+    assert_ne!(
+        same.size,
+        Size::Working,
+        "the panel opened a piece to working height"
+    );
+    let other = arrange
+        .iter()
+        .find(|row| {
+            row.guid().is_some_and(|g| {
+                flats
+                    .iter()
+                    .any(|f| f.guid == g && f.path.ends_with("Electric/Rhythm"))
+            })
+        })
+        .expect("the electric's Rhythm is in the panel");
+    assert_eq!(
+        scenes::TABLES.height(same.size),
+        scenes::TABLES.height(other.size),
+        "a drum piece is a different height from the rest of the band"
+    );
 }
 
 /// The panel may show FEWER rows than the mixer, never more.

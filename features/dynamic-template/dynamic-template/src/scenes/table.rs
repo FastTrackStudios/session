@@ -1009,7 +1009,20 @@ fn drum_mixing() -> Scene {
         },
         Effect::at(Size::Minimum),
     )];
-    rules.extend(per_piece(Effect::at(Size::Working)));
+    // The pieces opened to working size in the mixer only: in the
+    // arrangement a piece is a row like any other instrument's, not a
+    // taller one.
+    rules.extend(
+        per_piece(Effect::at(Size::Working))
+            .into_iter()
+            .map(|mut rule| {
+                rule.arrange = Some(Effect {
+                    size: None,
+                    fold: None,
+                });
+                rule
+            }),
+    );
     // A piece's own folders are not the piece: the Sum that holds its
     // mics and the Verb bank beside it are structure, and structure is
     // read at the width of a bus.
