@@ -1967,20 +1967,6 @@ fn control_row(
                 r.y0,
                 scale,
             );
-        } else {
-            // At its own height, centred in the row — not squashed.
-            crate::art::scaled(
-                &mut *out,
-                &art::volume_fader(
-                    &palette.chrome,
-                    crate::tcp::lit(palette).volume,
-                    crate::tcp::volume_fraction(live.volume),
-                ),
-                font,
-                r.x0,
-                r.y0 + (field_h - 8.0) / 2.0,
-                1.0,
-            );
         }
     }
     // The name plate has no hover cell in the traced art — REAPER
@@ -2016,19 +2002,6 @@ fn control_row(
                 f64::from(gt::PAN_KNOB_X),
                 r.y0 + 25.0_f64.mul_add(-scale, field_h) / 2.0,
                 scale,
-            );
-        } else {
-            crate::art::scaled(
-                &mut *out,
-                &art::pan_line(
-                    &palette.chrome,
-                    live.pan.clamp(-1.0, 1.0),
-                    crate::tcp::to_theme(palette.pan),
-                ),
-                font,
-                f64::from(gt::PAN_KNOB_X),
-                r.y0 + (field_h - 8.0) / 2.0,
-                1.0,
             );
         }
     }

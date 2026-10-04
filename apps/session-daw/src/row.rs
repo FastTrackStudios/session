@@ -195,6 +195,9 @@ impl Row {
                 let top = self.field_top + (self.field_h - 20.0) / 2.0;
                 Some(Rect::new(x, top, x + 20.0, top + 20.0))
             })?,
+            // A row too short for the knobs has no volume or pan: a
+            // bar there was too fine to read or to grab.
+            Control::Volume | Control::Pan if self.indicator() != Indicator::Knob => None,
             Control::Volume => {
                 // Scaled DOWN to a field too short to hold the knob,
                 // never up past the size it was drawn at. A control is
@@ -387,14 +390,14 @@ mod tests {
     }
 
     #[test]
-    fn a_short_row_swaps_knobs_for_bars_and_drops_the_arm() {
+    fn a_short_row_drops_the_knobs_and_the_arm() {
         let short = Row::new(0.0, 16.0, 0, false, Tcp::FULL);
         assert_eq!(short.indicator(), Indicator::Bar);
         assert!(short.rect(Control::RecArm).is_none());
-        // The value indicators are still there — they are what a
-        // collapsed row is READ for.
-        assert!(short.rect(Control::Volume).is_some());
-        assert!(short.rect(Control::Pan).is_some());
+        // No volume or pan either: a bar there was too fine to read or
+        // to grab.
+        assert!(short.rect(Control::Volume).is_none());
+        assert!(short.rect(Control::Pan).is_none());
     }
 
     /// Routing and FX are on every row with room for them: the panel is

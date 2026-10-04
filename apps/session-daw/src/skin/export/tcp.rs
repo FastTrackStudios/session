@@ -439,8 +439,9 @@ impl Gen<'_> {
         }
     }
 
-    /// Volume: a knob scaled down to a short field, a flattened fader on a
-    /// row too short for one. The value is `track.fader`.
+    /// Volume: a knob scaled down to a short field; a row too short for
+    /// one shows no volume at all — a bar there was too fine to read or
+    /// to grab. The value is `track.fader`.
     fn tcp_volume(&mut self, knob: &str, volume_x: f64) {
         let p = self.palette;
         let lit = crate::tcp::lit(p).volume;
@@ -491,49 +492,11 @@ impl Gen<'_> {
             ),
         );
         self.line(4, "</Frame>");
-        // The fader, squashed to the field: its well, the level, the mark.
-        let c = &p.chrome;
-        let v = "clamp(track.fader, 0, 1)";
-        let mut fader = String::new();
-        let _ = write!(
-            fader,
-            "<Frame name=\"Volume fader\" w=24 h=24 bind:x=\"{}\" bind:y={} bind:scale-y={} bind:visible={}>",
-            n(volume_x - 12.0),
-            q(FT),
-            q(&format!("{FH} / 24")),
-            q(&format!("!{knob}"))
-        );
-        self.line(4, &fader);
-        self.line(
-            5,
-            &format!(
-                "<Rectangle w=24 h=24 radius=2 fill=\"{}\" />",
-                hex(c.surface_sunken)
-            ),
-        );
-        self.line(
-            5,
-            &format!(
-                "<Rectangle name=\"Level\" w=24 h=24 radius=2 fill=\"{}\" bind:w={} bind:visible={} />",
-                hex(lit),
-                q(&format!("24 * {v}")),
-                q(&format!("24 * {v} > 0.5"))
-            ),
-        );
-        self.line(
-            5,
-            &format!(
-                "<Rectangle name=\"Mark\" w=2 h=24 fill=\"{}\" bind:x={} />",
-                hex(c.hardware_mark),
-                q(&format!("clamp(24 * {v} - 1, 0, 22)"))
-            ),
-        );
-        self.line(4, "</Frame>");
     }
 
-    /// Pan: the mixer's knob scaled to the field, a line on a short row.
+    /// Pan: the mixer's knob scaled to the field; none on a row too short
+    /// for it.
     fn tcp_pan(&mut self, knob: &str) {
-        let p = self.palette;
         let scale = format!("min({FH} / 25, 1)");
         self.line(
             4,
@@ -546,51 +509,6 @@ impl Gen<'_> {
             ),
         );
         self.pan_knob(5);
-        self.line(4, "</Frame>");
-        let c = &p.chrome;
-        let ink = hex(to_theme(p.pan));
-        let pos = "clamp(track.pan, -1, 1)";
-        self.line(
-            4,
-            &format!(
-                "<Frame name=\"Pan line\" w=24 h=24 bind:x=\"{}\" bind:y={} bind:scale-y={} bind:visible={}>",
-                n(f64::from(gt::PAN_KNOB_X)),
-                q(FT),
-                q(&format!("{FH} / 24")),
-                q(&format!("!{knob}"))
-            ),
-        );
-        self.line(
-            5,
-            &format!(
-                "<Rectangle x=2 y=11 w=20 h=2 radius=1 fill=\"{}\" />",
-                hex(c.surface_sunken)
-            ),
-        );
-        self.line(
-            5,
-            &format!(
-                "<Rectangle x=11.5 y=9 w=1 h=6 fill=\"{}\" />",
-                hex(c.hardware_edge)
-            ),
-        );
-        self.line(
-            5,
-            &format!(
-                "<Rectangle name=\"Value\" x=12 y=10.5 w=1 h=3 radius=1.5 fill=\"{ink}\" bind:x={} bind:w={} bind:visible={} />",
-                q(&format!("min(12 + 10 * {pos}, 12)")),
-                q(&format!("abs(10 * {pos})")),
-                q(&format!("abs(10 * {pos}) > 0.5"))
-            ),
-        );
-        self.line(
-            5,
-            &format!(
-                "<Rectangle name=\"Mark\" y=8 w=2 h=8 radius=1 fill=\"{}\" bind:x={} />",
-                hex(c.hardware_mark),
-                q(&format!("clamp(10 * {pos} + 11, 0, 22)"))
-            ),
-        );
         self.line(4, "</Frame>");
     }
 
@@ -639,7 +557,7 @@ impl Gen<'_> {
                 FT.into(),
                 "25".into(),
                 FH.into(),
-                String::new(),
+                knob.into(),
             ),
             (
                 "volume",
@@ -647,7 +565,7 @@ impl Gen<'_> {
                 FT.into(),
                 volume_w.clone(),
                 FH.into(),
-                String::new(),
+                knob.into(),
             ),
             (
                 "arm",
