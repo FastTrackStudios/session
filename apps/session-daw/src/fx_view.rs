@@ -1564,9 +1564,13 @@ impl DeviceRow {
                             key,
                             crate::faces::Picture::Frame({
                                 let mut f = crate::rig::face_of(rig, block, face, (dark, *back));
-                                // Alone in a Time column, its tall layout.
+                                // Alone in a Time column, its tall layout;
+                                // one of two, told it is stacked (no More
+                                // button: the column is the other lane).
                                 if column.len() == 1 && section == crate::rig::Section::Time {
                                     f.design = crate::rig::pick_design(face, false, false, true);
+                                } else if column.len() > 1 {
+                                    f.values.push((format!("{}/stacked", face.ns), 1.0));
                                 }
                                 f
                             }),
