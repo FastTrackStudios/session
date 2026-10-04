@@ -102,8 +102,8 @@ pub struct Node {
     ///
     /// By PATH rather than by name, unlike [`Routing::Send`]: a bus name
     /// is unique in the session, a return's is not — the vocal Delay and
-    /// Verb both have a `Short` and a `Long`, and the snare's Verb has
-    /// a `Short` too.
+    /// Verb both have a `Short` and a `Long`, and the kick's and the
+    /// toms' Verbs both have a `Room`.
     pub aux: Vec<String>,
     /// REAPER track grouping.
     pub group: Option<GroupRole>,
@@ -353,11 +353,14 @@ const PROCESS: u32 = 0x007A_2E3A;
 const BUS: u32 = 0x003E_4C5E;
 const BASS: u32 = 0x006B_8E3F;
 // Session order and hue order: electrics blue, acoustics seafoam, keys
-// green, synths lime.
+// green. Synths are purple, the catalogue's violet family, and so is a
+// synth wherever it sits — the synth bass under Bass included.
 const ELECTRIC: u32 = 0x003A_6FB5;
 const ACOUSTIC: u32 = 0x003F_A9A0;
 const KEYS: u32 = 0x004E_9A55;
-const SYNTHS: u32 = 0x008C_AA3A;
+/// Muted against the catalogue's violet-500, which the vocal Verb
+/// returns already wear.
+const SYNTHS: u32 = 0x007E_57C2;
 const VOX: u32 = 0x00B0_4A6A;
 const INST_FX: u32 = 0x005C_6B7A;
 /// The monitor side of the session — the count, the song's knowledge and
@@ -373,6 +376,14 @@ const DELAY: u32 = 0x003B_82F6;
 const VERB: u32 = 0x008B_5CF6;
 const WIDE: u32 = 0x0022_C55E;
 const PITCH: u32 = 0x00EC_4899;
+// The orchestra by section, each in the colour its instruments are
+// made of: strings wood brown, brass gold, winds a light air blue,
+// percussion a struck red-orange. Muted to sit beside the kit's reds
+// and the electrics' blue rather than shout over them.
+const STRINGS: u32 = 0x008B_5A2B;
+const BRASS: u32 = 0x00C9_9A1E;
+const WINDS: u32 = 0x007E_B8DA;
+const ORCH_PERC: u32 = 0x00D9_5A2B;
 
 /// REAPER's own EQ and compressor, by name — the chain every bus
 /// carries (EQ → Comp).
@@ -441,7 +452,7 @@ fn summed(name: &str, colour: u32, sum: Vec<Node>, beside: Vec<Node>) -> Node {
 
 /// A tom: its mic, its trigger and its fundamental, and nothing else. No
 /// Sum and no Verb of its own — the piece IS the pair, and the toms
-/// share one reverb beside them at the Toms level.
+/// share one Verb bank beside them at the Toms level.
 fn tom(number: u32) -> Node {
     Node::new(format!("Tom {number}"), TOMS, Kind::Piece).children(vec![
         mic(&format!("T{number}"), TOMS),
@@ -476,13 +487,18 @@ fn drum_kit() -> Node {
                 vec![mic("In", KICK), mic("Out", KICK), trig("Trig", KICK)],
                 vec![
                     Node::new("Sub", KICK, Kind::Sub).fx(ONE_NOTE_CHAIN),
-                    verb("Verb", KICK),
+                    // A folder of one, like the snare's and the toms':
+                    // every piece's Verb is a bank of its rooms, and the
+                    // name is what the return's reverb opens on — a
+                    // kick is put in a room.
+                    verb("Verb", KICK).children(vec![verb("Room", KICK)]),
                 ],
             )
             .template(&["Drums", "Drum Kit", "Kick"]),
-            // The snare's verb is a folder of three: a short one, a long
-            // one and a nonlin — the three rooms a snare is put in, so
-            // the one the song wants is a mute away.
+            // The snare's verb is a folder of three: a plate, a hall and
+            // a nonlin — the three rooms a snare is put in, so the one
+            // the song wants is a mute away. Each opens on its own
+            // algorithm, which its name picks.
             summed(
                 "Snare",
                 SNARE,
@@ -493,15 +509,23 @@ fn drum_kit() -> Node {
                     fund(SNARE),
                 ],
                 vec![verb("Verb", SNARE).children(vec![
-                    verb("Short", SNARE),
-                    verb("Long", SNARE),
+                    verb("Plate", SNARE),
+                    verb("Hall", SNARE),
                     verb("Nonlin", SNARE),
                 ])],
             )
             .template(&["Drums", "Drum Kit", "Snare"]),
             Node::new("Toms", TOMS, Kind::Group)
                 .template(&["Drums", "Drum Kit", "Toms"])
-                .children(vec![tom(1), tom(2), tom(3), tom(4), verb("Verb", TOMS)]),
+                .children(vec![
+                    tom(1),
+                    tom(2),
+                    tom(3),
+                    tom(4),
+                    // Shared by the four: a room for the fills and a
+                    // nonlin for the big ones.
+                    verb("Verb", TOMS).children(vec![verb("Room", TOMS), verb("Nonlin", TOMS)]),
+                ]),
             Node::new("Cymbals", CYMBALS, Kind::Group)
                 .template(&["Drums", "Drum Kit", "Cymbals"])
                 .children(vec![
@@ -551,8 +575,13 @@ fn process() -> Node {
         ])
 }
 
-/// Bass, maximally: a bass guitar (DI and amp, summed) and a synth
+/// Bass, maximally: a bass guitar (its DI and its amp) and a synth
 /// bass (its sub and the synth), to the bass bus.
+///
+/// The bass guitar has no Sum: the folder IS the piece, summing the two
+/// captures of one performance itself. A Sum is the kit's — a piece
+/// with sends beside its mics needs one to keep them apart, and a bass
+/// has nothing beside them.
 ///
 /// The bus tree — the dynamic template's canonical one without GUITAR
 /// BUS, with the three electric buses under ELECTRIC BUS, in the bus
@@ -562,18 +591,15 @@ fn bass() -> Node {
         .template(&["Bass"])
         .send("BASS BUS")
         .children(vec![
-            summed(
-                "Guitar",
-                BASS,
-                vec![mic("DI", BASS), mic("Amp", BASS)],
-                vec![],
-            )
-            .template(&["Bass", "Guitar"]),
-            Node::new("Synth", BASS, Kind::Piece)
+            Node::new("Guitar", BASS, Kind::Piece)
+                .template(&["Bass", "Guitar"])
+                .children(vec![mic("DI", BASS), mic("Amp", BASS)]),
+            // A synth first: purple like every synth, on the bass bus.
+            Node::new("Synth", SYNTHS, Kind::Piece)
                 .template(&["Bass", "Synth"])
                 .children(vec![
-                    Node::new("Sub", BASS, Kind::Sub).fx(ONE_NOTE_CHAIN),
-                    part("Synth", BASS),
+                    Node::new("Sub", SYNTHS, Kind::Sub).fx(ONE_NOTE_CHAIN),
+                    part("Synth", SYNTHS),
                 ]),
         ])
 }
@@ -774,36 +800,36 @@ fn orchestra() -> Node {
     Node::new("Orchestra", ACOUSTIC, Kind::Group)
         .template(&["Orchestra"])
         .children(vec![
-            Node::new("Winds", ACOUSTIC, Kind::Group)
+            Node::new("Winds", WINDS, Kind::Group)
                 .send("WINDS BUS")
                 .children(vec![
-                    part("Flute", ACOUSTIC),
-                    part("Oboe", ACOUSTIC),
-                    part("Clarinet", ACOUSTIC),
-                    part("Bassoon", ACOUSTIC),
+                    part("Flute", WINDS),
+                    part("Oboe", WINDS),
+                    part("Clarinet", WINDS),
+                    part("Bassoon", WINDS),
                 ]),
-            Node::new("Brass", ACOUSTIC, Kind::Group)
+            Node::new("Brass", BRASS, Kind::Group)
                 .send("BRASS BUS")
                 .children(vec![
-                    part("Trumpets", ACOUSTIC),
-                    part("Horns", ACOUSTIC),
-                    part("Trombones", ACOUSTIC),
-                    part("Tuba", ACOUSTIC),
+                    part("Trumpets", BRASS),
+                    part("Horns", BRASS),
+                    part("Trombones", BRASS),
+                    part("Tuba", BRASS),
                 ]),
-            Node::new("Strings", ACOUSTIC, Kind::Group)
+            Node::new("Strings", STRINGS, Kind::Group)
                 .send("STRINGS BUS")
                 .children(vec![
-                    part("Violin 1", ACOUSTIC),
-                    part("Violin 2", ACOUSTIC),
-                    part("Viola", ACOUSTIC),
-                    part("Cello", ACOUSTIC),
-                    part("Bass", ACOUSTIC),
+                    part("Violin 1", STRINGS),
+                    part("Violin 2", STRINGS),
+                    part("Viola", STRINGS),
+                    part("Cello", STRINGS),
+                    part("Bass", STRINGS),
                 ]),
             // Present and empty: the section exists in the shape so a
             // scene can render it, and a session fills it or does not.
-            Node::new("Orch Percussion", ACOUSTIC, Kind::Group)
+            Node::new("Orch Percussion", ORCH_PERC, Kind::Group)
                 .send("ORCH PERC BUS")
-                .children(vec![part("Timpani", ACOUSTIC)]),
+                .children(vec![part("Timpani", ORCH_PERC)]),
         ])
 }
 
@@ -1269,6 +1295,78 @@ mod tests {
         let template = golden_template();
         assert_eq!(maximal().resolve(&template), Vec::new());
         assert_eq!(vocal_fx().resolve(&template), Vec::new());
+    }
+
+    /// Each orchestra section and everything under it wears the
+    /// section's colour: strings brown, brass gold, winds light blue,
+    /// percussion red-orange.
+    #[test]
+    fn every_orchestra_section_wears_its_colour_all_the_way_down() {
+        let shape = maximal();
+        let walked = shape.walk();
+        for (section, colour) in [
+            ("Strings", STRINGS),
+            ("Brass", BRASS),
+            ("Winds", WINDS),
+            ("Orch Percussion", ORCH_PERC),
+        ] {
+            let under: Vec<&Node> = walked
+                .iter()
+                .filter(|(path, node)| {
+                    path.first().is_some_and(|p| p == "Orchestra")
+                        && (path.get(1).is_some_and(|p| p == section)
+                            || (path.len() == 1 && node.name == section))
+                })
+                .map(|(_, node)| *node)
+                .collect();
+            assert!(under.len() > 1, "{section} has a subtree");
+            assert!(
+                under.iter().all(|node| node.colour == colour),
+                "{section}: {:?}",
+                under
+                    .iter()
+                    .map(|n| (&n.name, n.colour))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Every synth is purple: the Synths folder and all under it, and
+    /// the synth bass and all under it.
+    #[test]
+    fn every_synth_is_purple() {
+        let shape = maximal();
+        let synths: Vec<&Node> = shape
+            .walk()
+            .into_iter()
+            .filter(|(path, node)| {
+                let path: Vec<&str> = path.iter().map(String::as_str).collect();
+                matches!(path.as_slice(), ["Synths", ..] | ["Bass", "Synth", ..])
+                    || (path.is_empty() && node.name == "Synths")
+                    || (path == ["Bass"] && node.name == "Synth")
+            })
+            .map(|(_, node)| node)
+            .collect();
+        assert_eq!(synths.len(), 1 + 6 + 4 + 3, "the synths and the synth bass");
+        assert!(synths.iter().all(|node| node.colour == SYNTHS));
+        assert_ne!(SYNTHS, VERB, "not the vocal Verb returns' violet");
+    }
+
+    /// The bass guitar's DI and amp sit directly under it: no Sum.
+    #[test]
+    fn the_bass_guitar_has_no_sum() {
+        let shape = maximal();
+        let guitar = shape
+            .walk()
+            .into_iter()
+            .find(|(path, node)| path == &["Bass"] && node.name == "Guitar")
+            .map(|(_, node)| {
+                node.children
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .collect::<Vec<_>>()
+            });
+        assert_eq!(guitar, Some(vec!["DI", "Amp"]));
     }
 
     #[test]

@@ -246,15 +246,86 @@ fn below<'a>(group: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
 fn one_row_per_guitar_layer() -> Vec<Rule> {
     GUITAR_LAYERS
         .iter()
-        .map(|layer| Rule {
-            selector: Selector {
-                role: Role::Bus,
-                ..under(&below(&ELECTRIC, layer))
-            },
-            effect: Effect::default(),
-            arrange: Some(Effect::default().folded(Fold::Collapsed)),
-            mixer: None,
-        })
+        .map(|layer| folded_in_the_arrangement(&below(&ELECTRIC, layer)))
+        .collect()
+}
+
+/// A folder collapsed in the ARRANGEMENT only: its row stays, with its
+/// children's items folded onto it, and the mixer keeps every strip.
+fn folded_in_the_arrangement(path: &[&str]) -> Rule {
+    Rule {
+        selector: Selector {
+            role: Role::Bus,
+            ..under(path)
+        },
+        effect: Effect::default(),
+        arrange: Some(Effect::default().folded(Fold::Collapsed)),
+        mixer: None,
+    }
+}
+
+/// The vocal returns, out of the arrangement — hidden, not folded.
+///
+/// `Vox FX` is the vocal's Delay, Verb, Wide and Pitch banks beside the
+/// leads that feed them. Like a drum's Verb, nothing is recorded or
+/// edited on a return, so its rows are what stands between the leads
+/// and the BGVs; unlike a drum's, the banks are folders, so folding
+/// would still leave a row. Out of the panel until there is something
+/// to draw on them — automation — and kept in the mixer, where a
+/// return's fader is the whole point.
+///
+/// Matched by the template's kind (`fx`) under the Vocals group, so a
+/// renamed folder still goes.
+fn vox_fx_out_of_the_arrangement() -> Rule {
+    Rule {
+        selector: Selector {
+            kind: Some("fx".to_owned()),
+            role: Role::Bus,
+            ..under(&["Vocals"])
+        },
+        effect: Effect::default(),
+        arrange: Some(Effect::hidden()),
+        mixer: None,
+    }
+}
+
+/// The background vocal parts, as paths below the Vocals group: each a
+/// part a singer is asked for, over the language sources (and doubles)
+/// it was sung as. The choir's sections are parts too.
+const BGV_PARTS: [&[&str]; 9] = [
+    &["BGVs", "Octave Up"],
+    &["BGVs", "Octave Down"],
+    &["BGVs", "Higher Harmony"],
+    &["BGVs", "Lower Harmony"],
+    &["BGVs", "Hey"],
+    &["Choir", "Soprano"],
+    &["Choir", "Alto"],
+    &["Choir", "Tenor"],
+    &["Choir", "Bass"],
+];
+
+/// Each BGV part is one row in the panel, with its take on it.
+///
+/// A part is what the arrangement is about — the octave up in the
+/// chorus, the "Hey!" on the four — and the English, Spanish and
+/// Portuguese takes of it, and the doubles, are one decision sung
+/// several ways. The same reasoning as [`one_row_per_guitar_layer`],
+/// and the same shape: collapsed in the arrangement, every strip in the
+/// mixer. The language switch still mutes what it mutes underneath.
+fn one_row_per_bgv_part() -> Vec<Rule> {
+    BGV_PARTS
+        .iter()
+        .map(|part| folded_in_the_arrangement(&below(&["Vocals"], part)))
+        .collect()
+}
+
+/// Each bass is one row in the panel: the bass guitar over its DI and
+/// its amp — two captures of one performance, a mixer concern — and the
+/// synth bass over its one synth and the sub beside it.
+fn one_row_per_bass() -> Vec<Rule> {
+    [["Bass", "Guitar"], ["Bass", "Synth"]]
+        .iter()
+        .map(|piece| folded_in_the_arrangement(piece))
         .collect()
 }
 
@@ -927,6 +998,11 @@ fn drum_mixing() -> Scene {
     // as its arrangement with its channels little strips.
     rules.extend(one_row_per_guitar_layer());
     rules.extend(railed(&ELECTRIC, &GUITAR_CHANNELS));
+    // And the rest of the band as its parts: a bass per row, a BGV part
+    // per row, the vocal returns out of the panel.
+    rules.extend(one_row_per_bass());
+    rules.extend(one_row_per_bgv_part());
+    rules.push(vox_fx_out_of_the_arrangement());
     Scene {
         name: "Drum Mixing".to_owned(),
         slug: "drum-mixing".to_owned(),
@@ -1656,6 +1732,97 @@ mod tests {
                 .map_or(0.0, |(_, w)| *w);
             assert!(width > rail, "{folder} is {width} wide");
         }
+    }
+
+    /// The paths of the golden session's rows under `prefix` in the
+    /// session's first view.
+    fn first_view_paths(surface: crate::scenes::Surface, prefix: &str) -> Vec<String> {
+        use crate::golden_session::{maximal, rpp::flatten};
+        let flats = flatten(&maximal());
+        let facts = crate::scenes::from_flat(&flats);
+        let Some(scene) = scene("drum-mixing") else {
+            return Vec::new();
+        };
+        crate::scenes::resolve(scene, &facts, surface, None, None, None)
+            .iter()
+            .filter_map(|row| {
+                let flat = flats.iter().find(|f| Some(f.guid.as_str()) == row.guid())?;
+                flat.path.starts_with(prefix).then(|| flat.path.clone())
+            })
+            .collect()
+    }
+
+    /// The vocal returns are gone from the arrangement — not a folded
+    /// row, no row at all — and every one of them is in the mixer.
+    #[test]
+    fn the_arrangement_hides_the_vocal_returns_and_the_mixer_keeps_them() {
+        use crate::scenes::Surface;
+        let arranged = first_view_paths(Surface::Arrange, "Vocals/");
+        assert!(
+            arranged.iter().all(|p| !p.starts_with("Vocals/Vox FX")),
+            "{arranged:?}"
+        );
+        // The leads beside them are still there.
+        assert!(arranged.iter().any(|p| p == "Vocals/Ron"));
+        let mixed = first_view_paths(Surface::Mixer, "Vocals/Vox FX");
+        // The folder, its Delay (4), Verb (5) and Pitch (2) banks and Wide.
+        assert_eq!(mixed.len(), 1 + 1 + 4 + 1 + 5 + 1 + 1 + 2, "{mixed:?}");
+    }
+
+    /// Each BGV part is one row in the arrangement, its language sources
+    /// folded into it; the mixer keeps every source.
+    #[test]
+    fn the_arrangement_folds_each_bgv_part_to_one_row() {
+        use crate::scenes::Surface;
+        let arranged = first_view_paths(Surface::Arrange, "Vocals/BGVs");
+        assert_eq!(
+            arranged,
+            [
+                "Vocals/BGVs",
+                "Vocals/BGVs/Octave Up",
+                "Vocals/BGVs/Octave Down",
+                "Vocals/BGVs/Higher Harmony",
+                "Vocals/BGVs/Lower Harmony",
+                "Vocals/BGVs/Hey",
+            ]
+        );
+        let choir = first_view_paths(Surface::Arrange, "Vocals/Choir");
+        assert_eq!(
+            choir,
+            [
+                "Vocals/Choir",
+                "Vocals/Choir/Soprano",
+                "Vocals/Choir/Alto",
+                "Vocals/Choir/Tenor",
+                "Vocals/Choir/Bass",
+            ]
+        );
+        let mixed = first_view_paths(Surface::Mixer, "Vocals/BGVs");
+        assert_eq!(mixed.len(), 1 + 4 * (1 + 3) + 1 + 8, "{mixed:?}");
+        assert!(mixed.iter().any(|p| p == "Vocals/BGVs/Octave Up/ES"));
+    }
+
+    /// The bass guitar and the synth bass are a row each in the
+    /// arrangement; their DI, amp, sub and synth are strips in the mixer.
+    #[test]
+    fn the_arrangement_folds_each_bass_to_one_row() {
+        use crate::scenes::Surface;
+        assert_eq!(
+            first_view_paths(Surface::Arrange, "Bass"),
+            ["Bass", "Bass/Guitar", "Bass/Synth"]
+        );
+        assert_eq!(
+            first_view_paths(Surface::Mixer, "Bass"),
+            [
+                "Bass",
+                "Bass/Guitar",
+                "Bass/Guitar/DI",
+                "Bass/Guitar/Amp",
+                "Bass/Synth",
+                "Bass/Synth/Sub",
+                "Bass/Synth/Synth",
+            ]
+        );
     }
 
     /// Every scene shows the Guide folder collapsed to one row, and no

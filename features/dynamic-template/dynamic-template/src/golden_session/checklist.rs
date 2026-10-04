@@ -164,6 +164,7 @@ fn sums_beside_sends(g: &Golden) -> bool {
 
 fn kick(g: &Golden) -> bool {
     summed(g, "Drum Kit/Kick", &["In", "Out", "Trig"], &["Sub", "Verb"])
+        && names_eq(g, "Drum Kit/Kick/Verb", &["Room"])
 }
 
 fn snare(g: &Golden) -> bool {
@@ -172,7 +173,7 @@ fn snare(g: &Golden) -> bool {
         "Drum Kit/Snare",
         &["Top", "Bottom", "Trig", "Fund"],
         &["Verb"],
-    ) && names_eq(g, "Drum Kit/Snare/Verb", &["Short", "Long", "Nonlin"])
+    ) && names_eq(g, "Drum Kit/Snare/Verb", &["Plate", "Hall", "Nonlin"])
 }
 
 fn toms(g: &Golden) -> bool {
@@ -186,7 +187,7 @@ fn toms(g: &Golden) -> bool {
             &format!("Drum Kit/Toms/Tom {n}"),
             &[&format!("T{n}"), &format!("T{n} Trig"), "Fund"],
         )
-    }) && g.track("Drum Kit/Toms/Verb").is_some_and(|t| !t.is_folder)
+    }) && names_eq(g, "Drum Kit/Toms/Verb", &["Room", "Nonlin"])
 }
 
 fn cymbals_and_rooms(g: &Golden) -> bool {
@@ -260,8 +261,12 @@ fn drum_scenes(g: &Golden) -> bool {
     .all(|s| g.has_scene(s))
 }
 
+/// The bass guitar's DI and amp directly under it: the folder is the
+/// piece and sums them itself, with no `Sum` between.
 fn bass_guitar(g: &Golden) -> bool {
-    summed(g, "Bass/Guitar", &["DI", "Amp"], &[])
+    is_folder(g, "Bass/Guitar")
+        && names_eq(g, "Bass/Guitar", &["DI", "Amp"])
+        && g.track("Bass/Guitar").is_some_and(|t| t.piece)
 }
 
 fn bass_synth(g: &Golden) -> bool {
@@ -428,22 +433,32 @@ fn hue(rgb: u32) -> f64 {
 }
 
 fn colours_in_hue_order(g: &Golden) -> bool {
-    // Electrics blue, acoustics seafoam, keys green, synths lime: the
-    // session order walks the hue wheel one way.
+    // Electrics blue, acoustics seafoam, keys green: the session order
+    // walks the hue wheel one way. Synths sit after keys and are purple —
+    // the catalogue's violet family — and so is every synth under them
+    // and the synth bass under Bass.
     let order = ["Electric", "Acoustic", "Keys", "Synths"];
     let tops: Vec<&Flat> = order.iter().filter_map(|n| g.track(n)).collect();
     let indices: Vec<usize> = tops
         .iter()
         .filter_map(|t| g.built.tracks.iter().position(|x| x.path == t.path))
         .collect();
-    let hues: Vec<f64> = tops.iter().map(|t| hue(t.colour)).collect();
+    let hues: Vec<f64> = tops.iter().take(3).map(|t| hue(t.colour)).collect();
+    let purple = |t: &Flat| (255.0..=300.0).contains(&hue(t.colour));
+    let synths = g
+        .built
+        .tracks
+        .iter()
+        .filter(|t| t.path.starts_with("Synths") || t.path.starts_with("Bass/Synth"));
     tops.len() == order.len()
         && indices.windows(2).all(|w| w.first() < w.get(1))
         && hues
             .windows(2)
             .all(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a > b))
         && hues.first().is_some_and(|h| (200.0..=240.0).contains(h))
-        && hues.last().is_some_and(|h| (60.0..=90.0).contains(h))
+        && hues.last().is_some_and(|h| (100.0..=150.0).contains(h))
+        && synths.clone().count() > 2
+        && synths.into_iter().all(purple)
 }
 
 fn ambience(g: &Golden) -> bool {
@@ -598,17 +613,17 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: DRUMS,
-        text: "**Kick**: In, Out, Trig; Sub; Verb.",
+        text: "**Kick**: In, Out, Trig; Sub; **Verb/** Room.",
         check: Some(kick),
     },
     Item {
         section: DRUMS,
-        text: "**Snare**: Top, Bottom, Trig, Fund; **Verb/** Short, Long, Nonlin.",
+        text: "**Snare**: Top, Bottom, Trig, Fund; **Verb/** Plate, Hall, Nonlin.",
         check: Some(snare),
     },
     Item {
         section: DRUMS,
-        text: "**Toms**: per tom T*n*, Trig, Fund; one shared Verb.",
+        text: "**Toms**: per tom T*n*, Trig, Fund; one shared **Verb/** Room, Nonlin.",
         check: Some(toms),
     },
     Item {
@@ -658,7 +673,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: BASS,
-        text: "**Guitar/** DI, Amp (summed).",
+        text: "**Guitar/** DI, Amp — directly under the piece, no Sum.",
         check: Some(bass_guitar),
     },
     Item {
@@ -748,7 +763,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: KEYS,
-        text: "Colours, in session order and hue order: electrics blue,\nacoustics seafoam, keys green, synths lime.",
+        text: "Colours, in session order and hue order: electrics blue,\nacoustics seafoam, keys green; synths purple, the synth bass\nincluded.",
         check: Some(colours_in_hue_order),
     },
     Item {
@@ -950,7 +965,7 @@ mod tests {
         // the render says so, while the snare's tick is unaffected.
         g.built.tracks.retain(|t| t.path != "Drum Kit/Kick/Sub");
         let text = render(&g);
-        assert!(text.contains("- [ ] **Kick**: In, Out, Trig; Sub; Verb."));
+        assert!(text.contains("- [ ] **Kick**: In, Out, Trig; Sub; **Verb/** Room."));
         assert!(text.contains("- [x] **Snare**: Top, Bottom, Trig, Fund;"));
     }
 

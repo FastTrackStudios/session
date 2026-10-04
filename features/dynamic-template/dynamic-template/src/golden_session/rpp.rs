@@ -143,8 +143,10 @@ pub fn is_auxiliary(name: &str) -> bool {
 /// Is this the track the KIT PIECE is mixed on?
 ///
 /// A piece is one sound source, where the tone processing goes. It is a
-/// **Sum** (several mics of one drum, summed) or a folder with exactly
-/// one real child (`Tom 1` is its mic and its trigger). Anything else
+/// **Sum** (several mics of one drum, summed), a piece folder of
+/// captures only (the bass guitar is its DI and its amp, with no Sum
+/// between) or a folder with exactly one real child (`Tom 1` is its mic
+/// and its trigger). Anything else
 /// with children is a group, and a group is a bus. A leaf is a piece
 /// unless its parent already is one, which is what makes `In` and `Out`
 /// mics of the kick rather than two kicks.
@@ -157,6 +159,16 @@ pub fn is_piece(node: &Node, parent_is_piece: bool) -> bool {
         return !parent_is_piece;
     }
     if node.name == "Sum" {
+        return true;
+    }
+    // Captures only — mics and DIs, no parts: a vocal's Main and Dbl
+    // are two performances, not one heard twice.
+    if node.kind == Kind::Piece
+        && node
+            .children
+            .iter()
+            .all(|c| c.children.is_empty() && c.kind == Kind::Source)
+    {
         return true;
     }
     let not_aux = node
@@ -911,7 +923,10 @@ mod tests {
         // line, where LINES is the chart's melodies.
         // 294 with the vocal template's returns folded in: Vox FX, its
         // Delay (4), Verb (5) and Pitch (2) folders and Wide — sixteen.
-        assert_eq!(tracks.len(), 294);
+        // 296 with every drum Verb a bank of its rooms — the kick's
+        // Room under its Verb (+1), the toms' Room and Nonlin (+2) —
+        // and the bass guitar's Sum gone (−1).
+        assert_eq!(tracks.len(), 296);
     }
 
     fn clear_aux(nodes: &mut [Node]) {
