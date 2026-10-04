@@ -86,6 +86,14 @@ pub struct Tone {
     /// The quantiser after the stage, which only the digital profiles
     /// switch on. Kept so the curve can draw its steps.
     pub sat_digital: saturate_dsp::digital::DigitalStage,
+    /// The saturator's emphasis EQ: six bands before the stage, exactly
+    /// inverted after it, so the curve chooses what distorts and not
+    /// what comes out (`fx.sat.emphasis`). Bell and shelves only — a
+    /// cut has no inverse. At 0 dB a band is idle.
+    pub sat_emphasis: [saturate_dsp::emphasis::EmphBand; saturate_dsp::emphasis::BANDS],
+    /// Whether the saturator's face shows its emphasis EQ in place of
+    /// its picture.
+    pub sat_emphasis_view: bool,
     /// Polish.
     pub de_ess: Suppress,
     /// The Polish EQ: the narrow, surgical cuts — the resonances a room
@@ -5960,6 +5968,17 @@ const fn f64_to_f32(value: f64) -> f32 {
 /// full of racks looks like a mixer full of different decisions rather
 /// than one curve repeated twenty times.
 #[must_use]
+/// The emphasis bands' starting spread — the plugin's: idle bells at
+/// 80 Hz … 10 kHz.
+fn emphasis_spread() -> [saturate_dsp::emphasis::EmphBand; saturate_dsp::emphasis::BANDS] {
+    [80.0, 250.0, 700.0, 1_800.0, 4_500.0, 10_000.0].map(|freq_hz| {
+        saturate_dsp::emphasis::EmphBand {
+            freq_hz,
+            ..saturate_dsp::emphasis::EmphBand::default()
+        }
+    })
+}
+
 pub fn placeholder(index: usize) -> Tone {
     let voice = Character::of(index);
     // A drift within the voice, so two kicks are not one kick. Small
@@ -6039,6 +6058,8 @@ pub fn placeholder(index: usize) -> Tone {
         },
         sat_profile: 0,
         sat_digital: saturate_dsp::digital::DigitalStage::new(),
+        sat_emphasis: emphasis_spread(),
+        sat_emphasis_view: false,
         pre_eq: Vec::new(),
         post_eq: Vec::new(),
         decay_eq: Vec::new(),

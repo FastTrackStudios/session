@@ -368,6 +368,64 @@ fn eq_edit(which: Which, tone: &mut Tone, param: &str, value: f64) -> bool {
     true
 }
 
+/// The emphasis EQ's shapes, by the face's `emph/b{n}_shape` index.
+const EMPH_SHAPES: [saturate_dsp::emphasis::EmphShape; 3] = [
+    saturate_dsp::emphasis::EmphShape::Bell,
+    saturate_dsp::emphasis::EmphShape::LowShelf,
+    saturate_dsp::emphasis::EmphShape::HighShelf,
+];
+
+/// What a saturator's emphasis view shows: whether it is up, and the six
+/// bands (`<ns>/emph/b{n}_*`, n from 1).
+fn emphasis_values(ns: &str, tone: &Tone) -> Vec<(String, f64)> {
+    let mut out = vec![(
+        format!("{ns}/emphasis_view"),
+        if tone.sat_emphasis_view { 1.0 } else { 0.0 },
+    )];
+    for (i, b) in tone.sat_emphasis.iter().enumerate() {
+        let at = |k: &str| format!("{ns}/emph/b{}_{k}", i + 1);
+        let shape = EMPH_SHAPES.iter().position(|s| *s == b.shape).unwrap_or(0);
+        out.extend([
+            (at("shape"), choice(shape, EMPH_SHAPES.len())),
+            (at("freq"), f64::from(b.freq_hz)),
+            (at("gain"), f64::from(b.gain_db)),
+            (at("q"), f64::from(b.q)),
+        ]);
+    }
+    out
+}
+
+/// An edit on a saturator's emphasis view: the toggle, or `emph/b{n}_*`.
+fn emphasis_edit(tone: &mut Tone, param: &str, value: f64) -> bool {
+    if param == "emphasis_view" {
+        tone.sat_emphasis_view = value >= 0.5;
+        return true;
+    }
+    let Some((slot, field)) = param
+        .strip_prefix("emph/b")
+        .and_then(|rest| rest.split_once('_'))
+        .and_then(|(n, field)| Some((n.parse::<usize>().ok()?.checked_sub(1)?, field)))
+    else {
+        return false;
+    };
+    let Some(b) = tone.sat_emphasis.get_mut(slot) else {
+        return false;
+    };
+    let v = crate::num::narrow(value);
+    match field {
+        "shape" => {
+            if let Some(shape) = EMPH_SHAPES.get(choice_index(value, EMPH_SHAPES.len())) {
+                b.shape = *shape;
+            }
+        }
+        "freq" => b.freq_hz = v.clamp(20.0, 20_000.0),
+        "gain" => b.gain_db = v.clamp(-12.0, 12.0),
+        "q" => b.q = v.clamp(0.1, 18.0),
+        _ => return false,
+    }
+    true
+}
+
 fn band(tone: &Tone, n: usize) -> Option<&eq_ui::eq_graph_model::EqBand> {
     tone.eq.iter().filter(|b| b.used).nth(n)
 }
@@ -523,7 +581,7 @@ fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
                 .map_or(1.0, |p| p.voicing.drive_scale)
                 .max(f32::EPSILON);
             let drive = ((tone.sat.drive - 1.0) / (15.0 * scale)).clamp(0.0, 1.0);
-            vec![
+            let mut out = vec![
                 (at("drive"), pct(drive)),
                 (at("mix"), pct(tone.sat.mix)),
                 (at("output"), 0.0),
@@ -533,7 +591,9 @@ fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
                 ),
                 (at("power"), 1.0),
                 (at("on"), 1.0),
-            ]
+            ];
+            out.extend(emphasis_values(ns, tone));
+            out
         }
         "chorus" | "flanger" | "vibrato" | "tremolo" => {
             let w = tone.modulation;
@@ -626,6 +686,11 @@ pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
                 _ => b.q = v,
             }
         }
+        ("tube" | "tape_sat" | "transformer" | "transistor" | "digital_sat", p)
+            if p == "emphasis_view" || p.starts_with("emph/") =>
+        {
+            return emphasis_edit(tone, p, value);
+        }
         ("tube" | "tape_sat" | "transformer" | "transistor" | "digital_sat", "drive") => {
             let scale = saturate_profiles::PROFILES
                 .get(tone.sat_profile)
@@ -714,5 +779,54 @@ mod eq_face_tests {
         assert!(added.used && (added.frequency - 8000.0).abs() < 1e-3);
         // Negative control: a slot past the graph's is no band's.
         assert!(!edit(Which::Eq, &mut tone, "eq/b25_used", 1.0));
+    }
+
+    /// A saturator's face shows its emphasis view and bands, and what it
+    /// edits there comes back to the tone.
+    #[test]
+    fn the_saturator_face_carries_the_emphasis_eq() {
+        let mut tone = crate::tone::placeholder(0);
+        let (face, _) = face(Which::Sat, &tone).expect("the saturator wears a face");
+        let ns = ns_of(design(Which::Sat, &tone).expect("a design"));
+        assert_eq!(
+            value(&face.values, &format!("{ns}/emphasis_view")),
+            Some(0.0)
+        );
+        assert_eq!(
+            value(&face.values, &format!("{ns}/emph/b6_freq")),
+            Some(10_000.0)
+        );
+
+        assert!(edit(
+            Which::Sat,
+            &mut tone,
+            &format!("{ns}/emphasis_view"),
+            1.0
+        ));
+        assert!(tone.sat_emphasis_view);
+        assert!(edit(
+            Which::Sat,
+            &mut tone,
+            &format!("{ns}/emph/b3_gain"),
+            6.0
+        ));
+        assert!(edit(
+            Which::Sat,
+            &mut tone,
+            &format!("{ns}/emph/b3_shape"),
+            1.0
+        ));
+        assert!((tone.sat_emphasis[2].gain_db - 6.0).abs() < 1e-6);
+        assert_eq!(
+            tone.sat_emphasis[2].shape,
+            saturate_dsp::emphasis::EmphShape::HighShelf
+        );
+        // Negative control: there is no seventh band.
+        assert!(!edit(
+            Which::Sat,
+            &mut tone,
+            &format!("{ns}/emph/b7_gain"),
+            6.0
+        ));
     }
 }
