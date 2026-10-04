@@ -394,13 +394,18 @@ fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
 pub fn face(which: Which, tone: &Tone) -> Option<(crate::faces::FrameFace, (f64, f64))> {
     let base = design(which, tone)?;
     // A compressor wears the shape designed for where it stands: one of
-    // a stacked pair (`-lane`), or alone filling the column (`-tall`) —
-    // the plugin's own face where those are not designed yet.
+    // a stacked pair (`-lane`), or alone filling the column (`-tall`); a
+    // saturator its `-tall` — the plugin's own face where those are not
+    // designed yet.
     let shaped = match which {
         Which::Comp | Which::RescueComp => {
             let paired = which == Which::Comp && tone.comp_after.is_some();
             shaped(base, if paired { "-lane" } else { "-tall" })
         }
+        // A saturator stands alone in its column, the compressors' size:
+        // its 960-wide face fitted to the lane's height ran half as wide
+        // again as they do.
+        Which::Sat => shaped(base, "-tall"),
         _ => base.to_owned(),
     };
     let size = size_of(&shaped)?;

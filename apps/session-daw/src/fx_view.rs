@@ -52,12 +52,19 @@ fn stage_widths(units: &[Which], tone: &crate::tone::Tone, body_h: f64) -> Vec<f
 }
 
 /// How wide `which` is over `tone` at a lane's height: a frame face as
-/// wide as its design is there, anything else a device.
+/// wide as its design is under its header, anything else a device.
 fn unit_w(which: Which, tone: &crate::tone::Tone, body_h: f64) -> f64 {
     crate::faces::aspect(which, tone).map_or_else(
         || device_w(which),
-        |aspect| (body_h * aspect).clamp(DEVICE_W * 0.5, DEVICE_W * 4.0),
+        |aspect| (face_h(body_h) * aspect).clamp(DEVICE_W * 0.5, DEVICE_W * 4.0),
     )
+}
+
+/// How tall a device's face is in a lane `body_h` tall: what its header
+/// leaves. A width taken from the whole height left the face narrower
+/// than its header.
+fn face_h(body_h: f64) -> f64 {
+    (body_h - HEADER_H).max(0.0)
 }
 
 /// How wide `which` is as a device.
@@ -168,8 +175,9 @@ const FOLDED_W: f64 = 2.0 * crate::macros::CELL_W + 8.0;
 /// How wide a phase with no devices is: a faint edge holding its place.
 const BLANK_W: f64 = 80.0;
 
-/// How wide a strip is in the FX at least: a working strip, with its
-/// fader and its name, however narrow it is in the mixer.
+/// How wide a strip is in the FX: a working strip, with its fader and
+/// its name, however narrow or wide it is in the mixer — every lane's
+/// and every return's the same.
 const STRIP_W: u32 = 84;
 
 /// How wide a card is, for a block frame has no face for.
@@ -188,10 +196,12 @@ const TINT_H: f64 = 3.0;
 /// The space between a track's own chain and the returns it feeds.
 const RETURNS_GAP: f64 = 48.0;
 
-/// `track` as its FX strip draws it: at least [`STRIP_W`] wide.
+/// `track` as its FX strip draws it: [`STRIP_W`] wide. The mixer's own
+/// width is the scene's (a return planned wide there was a wide strip
+/// here, beside the lane's narrow one).
 fn widened(track: &daw_proto::Track) -> daw_proto::Track {
     let mut track = track.clone();
-    track.width = Some(track.width.unwrap_or(0).max(STRIP_W));
+    track.width = Some(STRIP_W);
     track
 }
 
@@ -203,12 +213,15 @@ enum Target {
     Rig(usize, Box<crate::rig::FaceEntry>),
 }
 
-/// What folds in a lane: a mix phase of a channel's chain, or a section
-/// of a guitar's rig.
+/// What folds in a lane: a mix phase of a channel's chain, a section of
+/// a guitar's rig, or the effects on the returns it feeds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Group {
     Phase(MixPhase),
     Rig(crate::rig::Section),
+    /// The returns a lane feeds: shut, each is its strip alone — the
+    /// faders without their effects.
+    Returns,
 }
 
 impl Group {
@@ -462,6 +475,24 @@ impl DeviceRow {
     /// Shift it stays open and the track's others fold; with Alt+Shift,
     /// that on every lane in view.
     fn fold(&mut self, guid: &str, group: Group, shift: bool, alt: bool) {
+        // The returns fold alone; with Alt, on every lane in view.
+        if group == Group::Returns {
+            let shut = !self.shut(guid, group);
+            let lanes: Vec<String> = if alt {
+                self.hits
+                    .borrow()
+                    .lanes
+                    .iter()
+                    .map(|(g, ..)| g.clone())
+                    .collect()
+            } else {
+                vec![guid.to_owned()]
+            };
+            for lane in lanes {
+                self.folds.insert((lane, group), shut);
+            }
+            return;
+        }
         if !shift {
             let now = self.shut(guid, group);
             self.folds.insert((guid.to_owned(), group), !now);
@@ -907,34 +938,18 @@ impl DeviceRow {
                     .iter()
                     .map(|w| GAP + w)
                     .sum::<f64>()
-                + self.returns_inside_w(returns, body_h)
+                + self.returns_inside_w(returns, body_h, self.shut(guid, Group::Returns))
         }
     }
 
-    /// How wide `returns` are inside the Depth stage: each its strip and
-    /// its effect.
-    fn returns_inside_w(&self, returns: &[usize], body_h: f64) -> f64 {
-        let store = self.tone.store.borrow();
-        returns
-            .iter()
-            .filter_map(|r| self.tracks.get(*r))
-            .map(|r| {
-                let device = store
-                    .get(&r.guid)
-                    .and_then(|t| main_unit(t.role).map(|w| ret_device_w(t, w, body_h)))
-                    .unwrap_or(DEVICE_W);
-                GAP + self.layout.width_of(widened(r).width) + GAP + device
-            })
-            .sum()
-    }
-
-    /// How wide `returns` are, laid out after the chain.
-    fn returns_w(&self, returns: &[usize], body_h: f64) -> f64 {
+    /// How wide `returns` are inside the Depth stage: their fold's edge,
+    /// then each its strip and (open) its effect.
+    fn returns_inside_w(&self, returns: &[usize], body_h: f64, shut: bool) -> f64 {
         if returns.is_empty() {
             return 0.0;
         }
         let store = self.tone.store.borrow();
-        RETURNS_GAP
+        GAP + EDGE_W
             + returns
                 .iter()
                 .filter_map(|r| self.tracks.get(*r))
@@ -943,7 +958,32 @@ impl DeviceRow {
                         .get(&r.guid)
                         .and_then(|t| main_unit(t.role).map(|w| ret_device_w(t, w, body_h)))
                         .unwrap_or(DEVICE_W);
-                    self.layout.width_of(widened(r).width) + GAP + device + GAP
+                    let device = if shut { 0.0 } else { GAP + device };
+                    GAP + self.layout.width_of(widened(r).width) + device
+                })
+                .sum::<f64>()
+    }
+
+    /// How wide `returns` are, laid out after the chain: their fold's
+    /// edge, then each its strip and (open) its effect.
+    fn returns_w(&self, returns: &[usize], body_h: f64, shut: bool) -> f64 {
+        if returns.is_empty() {
+            return 0.0;
+        }
+        let store = self.tone.store.borrow();
+        RETURNS_GAP
+            + EDGE_W
+            + GAP
+            + returns
+                .iter()
+                .filter_map(|r| self.tracks.get(*r))
+                .map(|r| {
+                    let device = store
+                        .get(&r.guid)
+                        .and_then(|t| main_unit(t.role).map(|w| ret_device_w(t, w, body_h)))
+                        .unwrap_or(DEVICE_W);
+                    let device = if shut { 0.0 } else { device + GAP };
+                    self.layout.width_of(widened(r).width) + GAP + device
                 })
                 .sum::<f64>()
     }
@@ -1283,7 +1323,7 @@ impl DeviceRow {
             // Depth: the returns the track feeds, each its strip and
             // its effect — the tracks it takes to mix this one.
             if phase == MixPhase::Depth && !returns.is_empty() {
-                self.draw_returns(scene, hits, returns, lane, at);
+                self.draw_returns(scene, hits, (&track.guid, returns), lane, at);
             }
         }
         x
@@ -1644,10 +1684,27 @@ impl DeviceRow {
         &self,
         scene: &mut Scene,
         hits: &mut Hits,
-        returns: &[usize],
+        (owner, returns): (&str, &[usize]),
         lane: Lane,
         mut x: f64,
     ) {
+        if returns.is_empty() {
+            return;
+        }
+        // The fold's edge: a press folds the effects away, the strips
+        // stay — the faders alone.
+        let shut = self.shut(owner, Group::Returns);
+        let edge = Panel {
+            x,
+            y: lane.top + INSET,
+            width: EDGE_W,
+            height: INSET.mul_add(-2.0, lane.height),
+        };
+        if lane.sees(edge.x, edge.width) {
+            returns_edge(scene, &self.palette, edge, shut);
+        }
+        hits.bars.push((owner.to_owned(), Group::Returns, edge));
+        x += EDGE_W + GAP;
         let store = self.tone.store.borrow();
         for ret in returns.iter().filter_map(|r| self.tracks.get(*r)) {
             let Some((tone, which)) = store
@@ -1661,6 +1718,9 @@ impl DeviceRow {
                 self.strip(scene, ret, x, lane.top, lane.height);
             }
             x += strip_w + GAP;
+            if shut {
+                continue;
+            }
             let width = ret_device_w(tone, which, lane.body_h);
             if lane.sees(x, width) {
                 self.draw_device(scene, hits, &ret.guid, tone, which, lane.device(x, width));
@@ -1713,7 +1773,11 @@ impl DeviceRow {
         let rig = self.rigs.borrow().contains_key(&track.guid);
         // A rig's returns follow it; a chain's are in its Depth stage.
         let after = if rig {
-            self.returns_w(&returns, lane.body_h)
+            self.returns_w(
+                &returns,
+                lane.body_h,
+                self.shut(&track.guid, Group::Returns),
+            )
         } else {
             0.0
         };
@@ -1731,7 +1795,13 @@ impl DeviceRow {
         if rig {
             let end = self.draw_rig(&mut moving, hits, &track, lane, start - scroll);
             // The returns it feeds, after a breath.
-            self.draw_returns(&mut moving, hits, &returns, lane, end - GAP + RETURNS_GAP);
+            self.draw_returns(
+                &mut moving,
+                hits,
+                (&track.guid, &returns),
+                lane,
+                end - GAP + RETURNS_GAP,
+            );
         } else {
             self.draw_chain(&mut moving, hits, (&track, &returns), lane, start - scroll);
         }
@@ -1910,6 +1980,26 @@ fn phase_edge(
     }
 }
 
+/// The returns' fold edge, `edge` tall: a hairline down it and its
+/// chevron at the top.
+fn returns_edge(scene: &mut Scene, palette: &crate::arrangement::Palette, edge: Panel, shut: bool) {
+    let line_x = edge.x + EDGE_W / 2.0 - 0.5;
+    anyrender::PaintScene::fill(
+        scene,
+        vello::peniko::Fill::NonZero,
+        Affine::IDENTITY,
+        palette.divider,
+        None,
+        &vello::kurbo::Rect::new(
+            line_x,
+            edge.y + TINT_H + 18.0,
+            line_x + 1.0,
+            edge.y + edge.height,
+        ),
+    );
+    edge_chevron(scene, palette, edge, shut);
+}
+
 /// The chevron that folds a group, at the top of its edge: down open,
 /// right shut.
 fn edge_chevron(
@@ -1958,11 +2048,11 @@ fn reborrow(ctx: &mut dyn anyrender::RenderContext) -> &mut dyn anyrender::Rende
 }
 
 /// How wide a return's effect is: a frame face as wide as its design is
-/// at the lane's height (a 960 × 164 panel is a long one), anything else
-/// a device.
+/// under its header (a 960 × 164 panel is a long one), anything else a
+/// device.
 fn ret_device_w(tone: &crate::tone::Tone, which: Which, body_h: f64) -> f64 {
     crate::faces::aspect(which, tone).map_or(DEVICE_W, |aspect| {
-        (body_h * aspect).clamp(DEVICE_W, DEVICE_W * 4.0)
+        (face_h(body_h) * aspect).clamp(DEVICE_W, DEVICE_W * 4.0)
     })
 }
 
@@ -1980,13 +2070,14 @@ const fn main_unit(role: crate::tone::Role) -> Option<Which> {
 
 /// The FX as it draws for `rows` with `store`'s settings, `lanes` of
 /// them, `width` × `height` at 1:1 — for the bench's shot. `folded` are
-/// the phases folded, as a press on their edges would leave them.
+/// the phases folded, as a press on their edges would leave them, and
+/// `returns_shut` the returns' effects folded away.
 #[must_use]
 pub fn shot(
     rows: Vec<(daw_proto::Track, u32)>,
     store: crate::tone::Store,
     lanes: usize,
-    folded: &[MixPhase],
+    (folded, returns_shut): (&[MixPhase], bool),
     font: crate::text::Font,
     (width, height): (u32, u32),
 ) -> Scene {
@@ -2001,6 +2092,7 @@ pub fn shot(
         for phase in folded {
             row.folds.insert((guid.clone(), Group::Phase(*phase)), true);
         }
+        row.folds.insert((guid, Group::Returns), returns_shut);
     }
     row.paint_scene(None, width, height, 1.0)
 }

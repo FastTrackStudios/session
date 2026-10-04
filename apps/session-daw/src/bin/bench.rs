@@ -150,7 +150,8 @@ fn main() {
     }
     // `FTS_BENCH_FX=out.png`: the FX — `FTS_BENCH_FX_LANES` tracks of
     // it (one, docked), from the selected one; `FTS_BENCH_FX_FOLD` the
-    // phases folded, by name (`rescue,polish`).
+    // phases folded, by name (`rescue,polish`), and `returns` the
+    // returns' effects.
     if let Ok(out) = std::env::var("FTS_BENCH_FX") {
         fx_shot(&palette, &std::path::PathBuf::from(out), width, height);
         return;
@@ -735,7 +736,18 @@ fn fx_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
         tracing::error!("no embedded font");
         return;
     };
-    let scene = session_daw::fx_view::shot(rows, store, lanes, &folded, font, (width, height));
+    let returns_shut = std::env::var("FTS_BENCH_FX_FOLD")
+        .unwrap_or_default()
+        .split(',')
+        .any(|name| name.trim().eq_ignore_ascii_case("returns"));
+    let scene = session_daw::fx_view::shot(
+        rows,
+        store,
+        lanes,
+        (&folded, returns_shut),
+        font,
+        (width, height),
+    );
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
     image.render_to_vec(
