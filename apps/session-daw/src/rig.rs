@@ -782,7 +782,6 @@ pub fn face_of(
     }
     let design = design_of(face, dark, back);
     crate::faces::FrameFace {
-        responsive: false,
         design,
         values,
         texts,

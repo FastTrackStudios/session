@@ -75,6 +75,9 @@ pub struct MixerLinks {
     pub echo: Rc<RefCell<Vec<crate::engine::Edit>>>,
     /// Keys pressed while the mixer had the focus, to handle here.
     pub keys: Rc<RefCell<Vec<crate::mixer_panel::Key>>>,
+    /// Whether the window is in Record mode: the track panel's arm is
+    /// shown only then.
+    pub recording: Rc<std::cell::Cell<bool>>,
 }
 
 /// The finest grid division the ruler will draw.
@@ -395,9 +398,6 @@ pub struct ArrangementWidget {
     /// toolbar that toggles it, read each paint (a change re-cuts the
     /// recorded panel, which is drawn to the shape).
     compact: Rc<Cell<bool>>,
-    /// Whether the window is in Record mode, set by the panel from the
-    /// window's mode: the track panel's arm is shown only then.
-    recording: Rc<Cell<bool>>,
     /// Whether the editor took the last press and has not been let go
     /// of yet.
     ///
@@ -570,7 +570,6 @@ impl ArrangementWidget {
             meters: crate::engine::Meters::start(),
             meters_lit: Cell::new(false),
             compact: Rc::new(Cell::new(false)),
-            recording: Rc::new(Cell::new(true)),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
             project,
@@ -691,13 +690,6 @@ impl ArrangementWidget {
     #[must_use]
     pub fn with_compact(mut self, compact: Rc<Cell<bool>>) -> Self {
         self.compact = compact;
-        self
-    }
-
-    /// Share the panel's Record-mode flag: the arm only while recording.
-    #[must_use]
-    pub fn with_recording(mut self, recording: Rc<Cell<bool>>) -> Self {
-        self.recording = recording;
         self
     }
 
@@ -879,13 +871,37 @@ impl ArrangementWidget {
         self
     }
 
-    /// The rows, for the mixer, with the generation bumped.
+    /// The mixer's strips, with the generation bumped: the scene's own
+    /// for the mixer ([`crate::studio::Planner::plan_strips`]) — not this
+    /// panel's rows, since a scene hides and folds per surface — each a
+    /// track as this panel has it where it shows one. With no planner,
+    /// this panel's rows.
     fn publish_rows(&self) {
-        if let Some(links) = &self.mixer {
-            let mut shared = links.rows.borrow_mut();
-            shared.0 = shared.0.wrapping_add(1);
-            shared.1.clone_from(&self.rows);
-        }
+        let Some(links) = &self.mixer else { return };
+        let strips = self.replan.as_ref().map_or_else(
+            || self.rows.clone(),
+            |(planner, raw)| {
+                let here: std::collections::HashMap<&str, &daw_proto::Track> = self
+                    .rows
+                    .iter()
+                    .map(|(track, _)| (track.guid.as_str(), track))
+                    .collect();
+                planner
+                    .plan_strips(raw)
+                    .as_slice()
+                    .iter()
+                    .map(|(track, depth)| {
+                        let track = here
+                            .get(track.guid.as_str())
+                            .map_or_else(|| track.clone(), |shown| (*shown).clone());
+                        (track, *depth)
+                    })
+                    .collect()
+            },
+        );
+        let mut shared = links.rows.borrow_mut();
+        shared.0 = shared.0.wrapping_add(1);
+        shared.1 = strips;
     }
 
     /// The mixer's edits since the last frame, applied here too, and the
@@ -1324,7 +1340,7 @@ impl ArrangementWidget {
             &self.previews,
             crate::tcp::Tcp {
                 compact: self.compact.get(),
-                recording: self.recording.get(),
+                recording: self.mixer.as_ref().is_none_or(|m| m.recording.get()),
             },
         );
         self.scene.lettering = lettering;

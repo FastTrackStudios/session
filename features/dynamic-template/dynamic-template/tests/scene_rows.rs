@@ -180,9 +180,23 @@ fn a_scene_sizes_both_surfaces_from_its_own_table() {
 /// parallel colour. The other direction has no meaning: a track you can
 /// edit and cannot mix is not a state any flow wants, and a rule that
 /// produced one would be a mistake rather than a choice.
+///
+/// One exception, named here so that it stays the only one: the kit's
+/// parallel chain (`Process`). Drum Mixing takes it out of the mixer —
+/// its returns are set once, and the pieces are mixed on the pieces — and
+/// leaves the arrangement's row where it was.
 #[test]
 fn the_panel_never_shows_a_row_the_mixer_hides() {
     let facts = scenes::from_flat(&flatten(&maximal()));
+    let in_the_parallel_chain = |guid: &str| {
+        facts.iter().any(|fact| {
+            fact.guid == guid
+                && fact
+                    .path
+                    .first()
+                    .is_some_and(|top| top.answers_to("process"))
+        })
+    };
     for scene in scenes::scenes() {
         let of = |surface| -> std::collections::HashSet<String> {
             scenes::resolve(scene, &facts, surface, None, None, None)
@@ -193,6 +207,7 @@ fn the_panel_never_shows_a_row_the_mixer_hides() {
         };
         let extra: Vec<String> = of(Surface::Arrange)
             .difference(&of(Surface::Mixer))
+            .filter(|guid| !(scene.slug == "drum-mixing" && in_the_parallel_chain(guid)))
             .cloned()
             .collect();
         assert!(
