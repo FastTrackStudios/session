@@ -66,6 +66,7 @@ pub mod load_selection;
 pub mod keyflow;
 pub mod lyrics;
 pub mod mix_phases;
+pub mod mode_phases;
 pub mod modes;
 pub mod playback;
 pub mod quantize;

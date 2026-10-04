@@ -803,6 +803,9 @@ struct MixerWidget {
     /// the session's), the phase, the right rail's switches, and who the
     /// window is for.
     rails: RailState,
+    /// The shared phase choice's version last followed
+    /// (`session::mode_phases`): a newer one was chosen elsewhere.
+    phase_seen: u64,
     /// Where the strips start in the panel (CSS px): past the phase
     /// rails when mixing, under the overview band otherwise.
     origin: Cell<(f64, f64)>,
@@ -918,6 +921,9 @@ impl MixerWidget {
             folds_seen: crate::folds::generation(),
             mix_seen: None,
             rails: RailState::default(),
+            // None followed yet: the first frame tells the rest of the
+            // window which phase the rails start in.
+            phase_seen: u64::MAX,
             origin: Cell::new((0.0, 0.0)),
             extent: Cell::new(1440.0),
             all: Vec::new(),
@@ -1220,6 +1226,28 @@ impl MixerWidget {
     }
 
     /// Do what a rail button says.
+    /// Take up a Mix phase chosen elsewhere (the bottom bar's switcher),
+    /// as a press on its rail would.
+    fn follow_phase(&mut self) {
+        if self.phase_seen == u64::MAX {
+            session::mode_phases::choose(session::modes::Mode::Mix, self.rails.phase.slug());
+            self.phase_seen = session::mode_phases::version();
+            return;
+        }
+        let now = session::mode_phases::version();
+        if now == self.phase_seen {
+            return;
+        }
+        self.phase_seen = now;
+        let chosen = session::mode_phases::current(session::modes::Mode::Mix)
+            .and_then(|p| session::mix_phases::MixPhase::from_slug(p.slug));
+        if let Some(phase) = chosen
+            && phase != self.rails.phase
+        {
+            self.rail_act(crate::rails::Action::Phase(phase));
+        }
+    }
+
     fn rail_act(&mut self, act: crate::rails::Action) {
         use crate::rails::Action;
         use dynamic_template::scenes::Audience;
@@ -1240,6 +1268,10 @@ impl MixerWidget {
             }
             // Every rack opens at that phase's section.
             Action::Phase(phase) => {
+                // The window's one choice of phase: the bottom bar's
+                // switcher shows it.
+                session::mode_phases::choose(session::modes::Mode::Mix, phase.slug());
+                self.phase_seen = session::mode_phases::version();
                 self.rails.phase = phase;
                 self.folds.focus(phase);
                 for analyser in self.spectra.values_mut() {
@@ -2065,6 +2097,7 @@ impl MixerWidget {
     /// The picture: what Blitz's `Widget::paint` returns, and what the web
     /// host draws into its canvas.
     pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+        self.follow_phase();
         self.dirty.set(false);
         self.flush_drag();
         self.catch_up();

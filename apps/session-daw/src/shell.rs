@@ -561,6 +561,7 @@ pub fn BottomBar(
                                 style: "flex:1; min-width:0; display:flex; align-items:stretch; overflow:hidden;",
                 Context { view: showing, transport }
             }
+            PhaseSwitch { mode }
             Modes { mode }
         }
     }
@@ -619,6 +620,72 @@ fn Modes(mode: Signal<Mode>) -> Element {
                                 picking.set(false);
                             },
                             "{each.display_name()}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The phase the mode is in, left of the mode, for a mode that has
+/// phases (Organize: Import, Tempo Map; Mix: Rescue … Overview) —
+/// another place to move through them, beside the mixer's rails. The
+/// choice is `session::mode_phases`', so a phase picked on the rails
+/// shows here, and one picked here moves the rails.
+#[component]
+fn PhaseSwitch(mode: Signal<Mode>) -> Element {
+    let mut picking = use_signal(|| false);
+    // Follow a phase chosen elsewhere (the rails are a widget, which
+    // cannot set a signal): the choice's version, watched.
+    let mut seen = use_signal(session::mode_phases::version);
+    use_future(move || async move {
+        loop {
+            architect::platform::sleep(std::time::Duration::from_millis(150)).await;
+            let now = session::mode_phases::version();
+            if now != *seen.peek() {
+                seen.set(now);
+            }
+        }
+    });
+    let _ = seen();
+    let phases = session::mode_phases::of(mode());
+    let Some(current) = session::mode_phases::current(mode()) else {
+        return rsx! {};
+    };
+    rsx! {
+        div {
+            style: "position:relative; flex:none; display:flex; align-items:stretch;",
+            Divider {}
+            button {
+                title: "The phase: where in this mode's work you are",
+                style: "{bottom_button(picking(), true)} min-width:76px;",
+                onclick: move |_| picking.toggle(),
+                span {
+                    style: "font-size:13px; line-height:19px; font-weight:700; color:{TEXT}; white-space:nowrap;",
+                    "{current.name}"
+                }
+                span { style: LABEL, "Phase" }
+            }
+            if picking() {
+                div {
+                    style: "{SCRIM} z-index:40;",
+                    onclick: move |_| picking.set(false),
+                }
+                div {
+                    style: "position:absolute; right:0; bottom:52px; z-index:41; \
+                            min-width:180px; padding:6px; background:{BAR_BG}; \
+                            border:1px solid {RULE}; border-radius:12px; display:flex; \
+                            flex-direction:column; gap:2px; box-shadow:0 10px 30px rgba(0,0,0,0.5);",
+                    for (n, each) in (1_usize..).zip(phases) {
+                        button {
+                            style: mode_option(each == current),
+                            onclick: move |_| {
+                                session::mode_phases::choose(mode(), each.slug);
+                                seen.set(session::mode_phases::version());
+                                picking.set(false);
+                            },
+                            "{n}. {each.name}"
                         }
                     }
                 }
