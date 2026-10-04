@@ -346,17 +346,17 @@ fn one_row_per_lead_part() -> Vec<Rule> {
 /// renamed folder still goes. The arrangement keeps it — it is
 /// `parallel_colour_out_of_the_panel` that decides what of it is drawn
 /// there.
-fn process_out_of_the_mixer() -> Rule {
-    Rule {
-        selector: Selector {
+fn process_out_of_view() -> Rule {
+    // Out of both: its returns are set once, the pieces are mixed on
+    // the pieces, and there is nothing in it to arrange.
+    Rule::new(
+        Selector {
             kind: Some("process".to_owned()),
             role: Role::Bus,
             ..Selector::default()
         },
-        effect: Effect::default(),
-        arrange: None,
-        mixer: Some(Effect::hidden()),
-    }
+        Effect::hidden(),
+    )
 }
 
 /// Each bass is one row in the panel: the bass guitar over its DI and
@@ -1060,7 +1060,7 @@ fn drum_mixing() -> Scene {
     rules.push(vox_fx_out_of_the_arrangement());
     // The kit's parallel chain out of the mixer: the pieces are mixed on
     // the pieces.
-    rules.push(process_out_of_the_mixer());
+    rules.push(process_out_of_view());
     Scene {
         name: "Drum Mixing".to_owned(),
         slug: "drum-mixing".to_owned(),
@@ -1881,18 +1881,13 @@ mod tests {
         }
     }
 
-    /// The kit's parallel chain is out of the mixer, every strip of it,
-    /// and the arrangement still has its row.
+    /// The kit's parallel chain is out of both surfaces, every row of
+    /// it.
     #[test]
-    fn the_mixer_hides_the_process_folder() {
+    fn the_process_folder_is_out_of_view() {
         use crate::scenes::Surface;
         assert_eq!(first_view_paths(Surface::Mixer, "Process"), [] as [&str; 0]);
-        assert!(
-            first_view_paths(Surface::Arrange, "Process")
-                .iter()
-                .any(|p| p == "Process"),
-            "the arrangement keeps it"
-        );
+        assert_eq!(first_view_paths(Surface::Arrange, "Process"), [] as [&str; 0]);
     }
 
     /// The bass guitar and the synth bass are a row each in the

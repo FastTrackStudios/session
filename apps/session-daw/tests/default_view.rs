@@ -41,7 +41,7 @@ fn family(rows: &Rows, from: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_default_view_folds_the_vocals_and_keeps_process_out_of_the_mixer() {
+fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
     let path = template();
     session_daw::open::open_silent(&path).expect("the golden session opens");
     let session = StudioSession::read_current(Some(&path), None).expect("and reads back");
@@ -121,10 +121,11 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_the_mixer() {
         "Ron's Main row carries his language takes"
     );
 
-    // The arrangement keeps the kit's parallel chain.
-    assert_eq!(
-        family(&arranged, "Process").first().map(String::as_str),
-        Some("0 Process")
+    // The kit's parallel chain is out of the arrangement too.
+    assert!(
+        family(&arranged, "Process").is_empty(),
+        "the arrangement shows {:?}",
+        family(&arranged, "Process")
     );
 
     for (mixer, strips) in [("docked", &docked), ("alone", &alone)] {
