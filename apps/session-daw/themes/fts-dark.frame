@@ -532,7 +532,6 @@
         </Frame>
         <Text name="Number" w=400 h=15 size=11 bind:x="row.number_x - 1" bind:y="row.number_baseline - 0.8 * row.number_size - 1" bind:size="row.number_size" bind:text="row.number" bind:fill="(luma(track.band) > 0.179 ? #000000 : #e8e8ea)" bind:visible="row.has_number">1</Text>
         <Frame name="%icon" w=16 h=16 bind:x="row.icon_x" bind:y="row.icon_y" bind:w="row.icon_size" bind:h="row.icon_size" bind:visible="row.icon" />
-        <Rectangle name="Name field" w=136 h=24 bind:x="33 + row.indent" bind:y="(h >= 58 ? 6 : clamp((h - min(24, max(h - 2, 1))) / 2, 1, 6))" bind:w="max(136 - row.indent, 0)" bind:h="(h >= 58 ? 24 : min(24, max(h - 2, 1)))" bind:radius-tl="(h >= 58 ? 24 : min(24, max(h - 2, 1))) / 2" bind:radius-bl="(h >= 58 ? 24 : min(24, max(h - 2, 1))) / 2" fill="#0a0a0c" bind:visible="(h >= 58 ? 24 : min(24, max(h - 2, 1))) >= 20" />
         <Text name="Name" w=400 h=15 size=11 bind:x="57 + row.indent" bind:y="(h >= 58 ? 6 : clamp((h - min(24, max(h - 2, 1))) / 2, 1, 6)) + (h >= 58 ? 24 : min(24, max(h - 2, 1))) / 2 + 0.35 * row.name_size - 0.8 * row.name_size - 1" bind:size="row.name_size" bind:text="row.name" bind:fill="track.selected ? #e4e4e7 : #a1a1aa">Track</Text>
         <Frame name="Row two" w=343 h=70 bind:visible="h >= 58 && track.armed">
           <Rectangle name="Input FX" x=56 y=34 w=34 h=20 fill="#0a0a0c" />

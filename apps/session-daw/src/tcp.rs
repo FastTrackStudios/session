@@ -32,7 +32,7 @@
 use anyrender::PaintScene;
 use daw_proto::Track;
 use daw_theme_art::geometry::tcp as g;
-use vello::kurbo::{Affine, Rect, RoundedRect, Vec2};
+use vello::kurbo::{Affine, Rect, Vec2};
 use vello::peniko::{Color, Fill};
 
 use daw_theme_art::paint::tcp as art;
@@ -628,34 +628,12 @@ fn row_one(
     /// The height row one is authored at — the name field's.
     const AUTHORED: f64 = 24.0;
 
-    // One long box with the record arm and the volume knob ON its two
-    // ends, not three boxes in a line: drawn separately they had grey
-    // gutters either side that REAPER does not have.
-    // The field takes the band; the controls take their own size,
-    // centred in it.
+    // The name sits on the row's own colour at every height: a dark
+    // field behind it was a box the row read fine without. The band is
+    // the name's; the controls take their own size, centred in it.
     let field_h = band;
     let control_top = y + (band - AUTHORED) / 2.0;
     let field_top = y;
-    let (field_x, field_w) = tcp.name_field();
-    let field_x = field_x + indent;
-    let field_w = (field_w - indent).max(0.0);
-    // The compact panel's name sits on the row's own colour: the field was
-    // the arm's and the knob's box, and the compact row has neither — a
-    // dark pill round a name alone was a box for nothing. Nor has a row
-    // too short for the knobs: its name is on the row too.
-    if !tcp.compact && field_h >= 20.0 {
-        scene_fill(
-            scene,
-            palette.tcp_field,
-            &RoundedRect::new(
-                field_x,
-                field_top,
-                field_x + field_w,
-                field_top + field_h,
-                (field_h / 2.0, 0.0, 0.0, field_h / 2.0),
-            ),
-        );
-    }
 
     // The record arm, on the field's left end. Lit when armed, which is
     // the one control on this row that has to be readable at a glance
