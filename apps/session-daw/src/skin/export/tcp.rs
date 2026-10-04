@@ -118,11 +118,12 @@ impl Gen<'_> {
         );
         self.line(4, "<Frame name=\"%icon\" w=16 h=16 bind:x=\"row.icon_x\" bind:y=\"row.icon_y\" bind:w=\"row.icon_size\" bind:h=\"row.icon_size\" bind:visible=\"row.icon\" />");
         // The name field: a pill at its left end, the arm's and the knob's
-        // box.
+        // box — on a row tall enough for them; a shorter row's name is
+        // on the row's own colour.
         self.line(
             4,
             &format!(
-                "<Rectangle name=\"Name field\" w={} h=24 bind:x={} bind:y={} bind:w={} bind:h={} bind:radius-tl={} bind:radius-bl={} fill=\"{}\" />",
+                "<Rectangle name=\"Name field\" w={} h=24 bind:x={} bind:y={} bind:w={} bind:h={} bind:radius-tl={} bind:radius-bl={} fill=\"{}\" bind:visible={} />",
                 n(field_w),
                 q(&format!("{} + row.indent", n(field_x))),
                 q(FT),
@@ -130,7 +131,8 @@ impl Gen<'_> {
                 q(FH),
                 q(&format!("{FH} / 2")),
                 q(&format!("{FH} / 2")),
-                hex(to_theme(p.tcp_field))
+                hex(to_theme(p.tcp_field)),
+                q(&format!("{FH} >= 20"))
             ),
         );
         self.line(

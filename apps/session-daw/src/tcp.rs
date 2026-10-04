@@ -641,8 +641,9 @@ fn row_one(
     let field_w = (field_w - indent).max(0.0);
     // The compact panel's name sits on the row's own colour: the field was
     // the arm's and the knob's box, and the compact row has neither — a
-    // dark pill round a name alone was a box for nothing.
-    if !tcp.compact {
+    // dark pill round a name alone was a box for nothing. Nor has a row
+    // too short for the knobs: its name is on the row too.
+    if !tcp.compact && field_h >= 20.0 {
         scene_fill(
             scene,
             palette.tcp_field,
