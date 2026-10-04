@@ -73,15 +73,27 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
         .as_slice()
         .to_vec();
 
-    // The vocals in the arrangement: each lead's line and double one row,
-    // each BGV and choir part one row, the returns not there at all.
+    // The vocals in the arrangement: each singer one row, the returns
+    // not there at all.
     assert_eq!(
         family(&arranged, "Vocals"),
         [
-            "0 Vocals", "1 Ron", "2 Main", "2 DBL", "1 Belen", "2 Main", "2 DBL", "1 Aline",
-            "2 Main", "2 DBL", "1 VOX EN", "1 VOX ES", "1 VOX PT",
+            "0 Vocals", "1 Ron", "1 Belen", "1 Aline", "1 VOX EN", "1 VOX ES", "1 VOX PT",
         ]
     );
+    // A synth family of one synth is one row.
+    let synths = family(&arranged, "Synths");
+    for family_row in ["1 SY Arps", "1 SY Pads", "1 SY Leads", "1 SY Chords"] {
+        assert!(synths.iter().any(|r| r == family_row), "{synths:?}");
+    }
+    assert!(
+        synths.iter().all(|r| !r.starts_with("2 ")),
+        "a family shows its synth: {synths:?}"
+    );
+    // The monitor side is out of the arrangement, and in the mixer.
+    assert!(family(&arranged, "HEADPHONE MIXES").is_empty());
+    assert!(family(&arranged, "TALKBACK").is_empty());
+    assert!(!family(&alone, "HEADPHONE MIXES").is_empty());
     // The BGVs and the choir are folders of their own beside Vocals,
     // each part one row.
     assert_eq!(
@@ -102,8 +114,7 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
     // Folded, not dropped: a part's row carries its sources' items.
     let ron_main = arranged
         .iter()
-        .skip_while(|(t, d)| !(*d == 1 && t.name == "Ron"))
-        .find(|(t, d)| *d == 2 && t.name == "Main")
+        .find(|(t, d)| *d == 1 && t.name == "Ron")
         .map(|(t, _)| t.guid.clone())
         .expect("Ron's Main");
     assert!(
@@ -113,7 +124,7 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
             .folds
             .get(&ron_main)
             .is_some_and(|fold| !fold.items.is_empty()),
-        "Ron's Main row carries his language takes"
+        "Ron's row carries his takes"
     );
 
     // The kit's parallel chain is out of the arrangement too.

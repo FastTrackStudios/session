@@ -901,7 +901,6 @@ mod tests {
         assert!(by_path("Process/FX").is_some_and(|t| t.piece));
         assert!(by_path("Process/FX/Room Sim").is_some_and(|t| !t.piece));
         assert!(by_path("Drum Kit/Snare/Verb").is_some_and(|t| t.auxiliary() && t.is_folder));
-        assert!(by_path("Inst FX/Ambience/Short Room").is_some_and(|t| t.piece));
         // The maximal session, all of it: the instruments, the monitor
         // side (Guide, Keyflow, the headphone buses, talkback), the
         // three vocal languages across every lead, BGV part and choir
@@ -926,7 +925,9 @@ mod tests {
         // 296 with every drum Verb a bank of its rooms — the kick's
         // Room under its Verb (+1), the toms' Room and Nonlin (+2) —
         // and the bass guitar's Sum gone (−1).
-        assert_eq!(tracks.len(), 296);
+        // 272 with the Inst FX folder gone — the folder, its six banks
+        // and their seventeen returns (−24).
+        assert_eq!(tracks.len(), 272);
     }
 
     fn clear_aux(nodes: &mut [Node]) {

@@ -122,6 +122,43 @@ fn hide_the_bus_tree() -> Rule {
     )
 }
 
+/// The monitor side out of the arrangement — the headphone mixes and the
+/// talkback are heard in the room and never by the record, so they have
+/// nothing to arrange — and kept in the mixer, where their faders are.
+fn monitors_out_of_the_arrangement() -> Vec<Rule> {
+    [
+        Selector {
+            kind: Some("headphones".to_owned()),
+            ..Selector::default()
+        },
+        under(&["TALKBACK"]),
+    ]
+    .into_iter()
+    .map(|selector| Rule {
+        selector,
+        effect: Effect::default(),
+        arrange: Some(Effect::hidden()),
+        mixer: None,
+    })
+    .collect()
+}
+
+/// A synth family that holds one synth is one row in the arrangement:
+/// the family and its synth are the same part.
+const SYNTH_FAMILIES: [&[&str]; 4] = [
+    &["Synths", "SY Arps"],
+    &["Synths", "SY Pads"],
+    &["Synths", "SY Leads"],
+    &["Synths", "SY Chords"],
+];
+
+fn one_row_per_synth_family() -> Vec<Rule> {
+    SYNTH_FAMILIES
+        .iter()
+        .map(|family| folded_in_the_arrangement(family))
+        .collect()
+}
+
 /// Sub, Verb and Fundamental keep their strips and give up their rows.
 ///
 /// They are parallel colour, not the kit. Nothing is recorded on one and
@@ -339,9 +376,15 @@ const LEAD_PARTS: [&[&str]; 2] = [&["Lead", "Main"], &["Lead", "DBL"]];
 /// decision sung several ways. The singer's own folder stays open, so
 /// Main and DBL read as two rows under the name.
 fn one_row_per_lead_part() -> Vec<Rule> {
-    LEAD_PARTS
-        .iter()
-        .map(|part| folded_in_the_arrangement(&below(&["Vocals"], part)))
+    // Each singer is one row: Ron, Belen, Aline folded over their line
+    // and its double — and those folded over their languages, for when
+    // a singer is opened.
+    std::iter::once(folded_in_the_arrangement(&["Vocals", "Lead"]))
+        .chain(
+            LEAD_PARTS
+                .iter()
+                .map(|part| folded_in_the_arrangement(&below(&["Vocals"], part))),
+        )
         .collect()
 }
 
@@ -1069,6 +1112,8 @@ fn drum_mixing() -> Scene {
     // The kit's parallel chain out of the mixer: the pieces are mixed on
     // the pieces.
     rules.push(process_out_of_view());
+    rules.extend(monitors_out_of_the_arrangement());
+    rules.extend(one_row_per_synth_family());
     Scene {
         name: "Drum Mixing".to_owned(),
         slug: "drum-mixing".to_owned(),
@@ -1868,9 +1913,8 @@ mod tests {
         assert!(mixed.iter().any(|p| p == "BGVs/Octave Up/ES"));
     }
 
-    /// Each lead is its name over a Main and a DBL row, each of those
-    /// with its language sources folded into it; the mixer keeps every
-    /// source.
+    /// Each lead is one row, its Main and DBL (and their language
+    /// sources) folded into it; the mixer keeps every source.
     #[test]
     fn the_arrangement_folds_each_lead_part_to_one_row() {
         use crate::scenes::Surface;
@@ -1878,7 +1922,7 @@ mod tests {
             let at = format!("Vocals/{lead}");
             assert_eq!(
                 first_view_paths(Surface::Arrange, &at),
-                [at.clone(), format!("{at}/Main"), format!("{at}/DBL")],
+                [at.clone()],
                 "{lead}"
             );
             assert_eq!(

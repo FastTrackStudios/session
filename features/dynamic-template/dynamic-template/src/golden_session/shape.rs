@@ -362,7 +362,11 @@ const KEYS: u32 = 0x004E_9A55;
 /// returns already wear.
 const SYNTHS: u32 = 0x007E_57C2;
 const VOX: u32 = 0x00B0_4A6A;
-const INST_FX: u32 = 0x005C_6B7A;
+/// The background vocals and the choir: the voice's rose, each a shade
+/// off it — the BGVs lighter, the choir deeper — so the three vocal
+/// folders sit together and still read apart.
+const BGV: u32 = 0x00C2_5F80;
+const CHOIR: u32 = 0x0092_3D5A;
 /// The monitor side of the session — the count, the song's knowledge and
 /// the cue mixes. Deliberately dim: present at the top of every scene,
 /// read only when a flow opens one of them.
@@ -381,6 +385,9 @@ const PITCH: u32 = 0x00EC_4899;
 // percussion a struck red-orange. Muted to sit beside the kit's reds
 // and the electrics' blue rather than shout over them.
 const STRINGS: u32 = 0x008B_5A2B;
+/// The orchestra folder: brown like its strings, a shade warmer and
+/// lighter so the folder and its first section read apart.
+const ORCHESTRA: u32 = 0x00A0_6B3C;
 const BRASS: u32 = 0x00C9_9A1E;
 const WINDS: u32 = 0x007E_B8DA;
 const ORCH_PERC: u32 = 0x00D9_5A2B;
@@ -797,7 +804,7 @@ fn percussion() -> Node {
 /// session owes is a tree every orchestra scene can be rendered
 /// against (`flow.orchestra.golden`).
 fn orchestra() -> Node {
-    Node::new("Orchestra", ACOUSTIC, Kind::Group)
+    Node::new("Orchestra", ORCHESTRA, Kind::Group)
         .template(&["Orchestra"])
         .children(vec![
             Node::new("Winds", WINDS, Kind::Group)
@@ -833,49 +840,6 @@ fn orchestra() -> Node {
         ])
 }
 
-/// One set of effects for everything that is not drums or a voice.
-///
-/// Rooms to sit an instrument in without changing it, plates bright to
-/// dark, halls short to endless, springs for guitars, delays slap to
-/// long, and movement. Every return is a slot: its presets are takes on
-/// the one job.
-///
-/// The bus tree — the dynamic template's canonical one without GUITAR
-/// BUS, with the three electric buses under ELECTRIC BUS, in the bus
-/// list rather than in the folder.
-fn inst_fx() -> Node {
-    Node::new("Inst FX", INST_FX, Kind::Fx)
-        .send("INST BUS")
-        .children(vec![
-            returns(
-                "Ambience",
-                INST_FX,
-                Kind::Verb,
-                &["Short Room", "Slap Room", "Early"],
-            ),
-            returns(
-                "Plate",
-                INST_FX,
-                Kind::Verb,
-                &["Fat Plate", "Dark Plate", "Gold Plate"],
-            ),
-            returns(
-                "Hall",
-                INST_FX,
-                Kind::Verb,
-                &["Large Hall", "Vienna", "Atmosphere"],
-            ),
-            returns("Spring", INST_FX, Kind::Verb, &["Big Sky", "XL35"]),
-            returns(
-                "Delay",
-                INST_FX,
-                Kind::Return,
-                &["Slap", "Tape", "Echo Boy", "Space Echo"],
-            ),
-            returns("Mod", INST_FX, Kind::Return, &["Chorus", "Flanger"]),
-        ])
-}
-
 /// The lead vocal and the layers beside it, to the lead vocal bus.
 ///
 /// The bus tree — the dynamic template's canonical one without GUITAR
@@ -897,10 +861,15 @@ const LANGUAGES: [&str; 3] = ["EN", "ES", "PT"];
 /// vocal come out the same, and it is most of the CPU — one chain per
 /// performer instead of one per language.
 fn layer(name: &str, languages: &[&str]) -> Node {
-    Node::new(name, VOX, Kind::Group).children(
+    layer_in(name, languages, VOX)
+}
+
+/// A part over its language sources, in `colour`.
+fn layer_in(name: &str, languages: &[&str], colour: u32) -> Node {
+    Node::new(name, colour, Kind::Group).children(
         languages
             .iter()
-            .map(|code| Node::new(*code, VOX, Kind::Source))
+            .map(|code| Node::new(*code, colour, Kind::Source))
             .collect(),
     )
 }
@@ -987,21 +956,21 @@ fn vocals() -> Node {
 /// (`flow.vocals.bgvs`). Still sung into the vocal bus (BGV BUS), and
 /// still `Vocals/BGVs` to the taxonomy.
 fn bgvs() -> Node {
-    Node::new("BGVs", VOX, Kind::Group)
+    Node::new("BGVs", BGV, Kind::Group)
         .template(&["Vocals", "BGVs"])
         .send("BGV BUS")
         .children(vec![
-            layer("Octave Up", &LANGUAGES),
-            layer("Octave Down", &LANGUAGES),
-            layer("Higher Harmony", &LANGUAGES),
-            layer("Lower Harmony", &LANGUAGES),
+            layer_in("Octave Up", &LANGUAGES, BGV),
+            layer_in("Octave Down", &LANGUAGES, BGV),
+            layer_in("Higher Harmony", &LANGUAGES, BGV),
+            layer_in("Lower Harmony", &LANGUAGES, BGV),
             // The fifty-layer "Hey!", in `All`: language-free,
             // so it is in every version and the switch leaves
             // it alone. Eight here rather than fifty, which is
             // enough to prove nothing counts them.
-            Node::new("Hey", VOX, Kind::Group).children(
+            Node::new("Hey", BGV, Kind::Group).children(
                 (1..=8)
-                    .map(|n| Node::new(&format!("All {n}"), VOX, Kind::Source))
+                    .map(|n| Node::new(&format!("All {n}"), BGV, Kind::Source))
                     .collect(),
             ),
         ])
@@ -1011,13 +980,13 @@ fn bgvs() -> Node {
 /// other voice: its own folder beside Vocals in the arrangement, into
 /// BGV BUS on the mix side.
 fn choir() -> Node {
-    Node::new("Choir", VOX, Kind::Group)
+    Node::new("Choir", CHOIR, Kind::Group)
         .template(&["Choir"])
         .send("BGV BUS")
         .children(
             ["Soprano", "Alto", "Tenor", "Bass"]
                 .into_iter()
-                .map(|section| layer(section, &LANGUAGES))
+                .map(|section| layer_in(section, &LANGUAGES, CHOIR))
                 .collect(),
         )
 }
@@ -1176,7 +1145,6 @@ pub fn maximal() -> Shape {
             acoustic(),
             keys(),
             synths(),
-            inst_fx(),
             vocals(),
             bgvs(),
             choir(),

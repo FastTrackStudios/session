@@ -461,32 +461,6 @@ fn colours_in_hue_order(g: &Golden) -> bool {
         && synths.into_iter().all(purple)
 }
 
-fn ambience(g: &Golden) -> bool {
-    names_eq(g, "Inst FX/Ambience", &["Short Room", "Slap Room", "Early"])
-}
-
-fn plate_and_hall(g: &Golden) -> bool {
-    names_eq(
-        g,
-        "Inst FX/Plate",
-        &["Fat Plate", "Dark Plate", "Gold Plate"],
-    ) && names_eq(g, "Inst FX/Hall", &["Large Hall", "Vienna", "Atmosphere"])
-}
-
-fn spring_delay_mod(g: &Golden) -> bool {
-    names_eq(g, "Inst FX/Spring", &["Big Sky", "XL35"])
-        && names_eq(
-            g,
-            "Inst FX/Delay",
-            &["Slap", "Tape", "Echo Boy", "Space Echo"],
-        )
-        && names_eq(g, "Inst FX/Mod", &["Chorus", "Flanger"])
-}
-
-fn inst_fx_to_bus(g: &Golden) -> bool {
-    sends_to(g, "Inst FX", "INST BUS")
-}
-
 /// Three leads, the BGV parts, a choir and the three language VCAs.
 ///
 /// Each lead is a mix track with a Main and a DBL under it, and a
@@ -498,9 +472,12 @@ fn vocals(g: &Golden) -> bool {
         g,
         "Vocals",
         &[
-            "Ron", "Belen", "Aline", "Vox FX", "BGVs", "Choir", "VOX EN", "VOX ES", "VOX PT",
+            "Ron", "Belen", "Aline", "Vox FX", "VOX EN", "VOX ES", "VOX PT",
         ],
-    ) && names_eq(g, "Vocals/Ron", &["Main", "DBL"])
+    ) // The BGVs and the choir: folders of their own beside Vocals.
+        && g.track("BGVs").is_some()
+        && g.track("Choir").is_some()
+        && names_eq(g, "Vocals/Ron", &["Main", "DBL"])
         && names_eq(g, "Vocals/Ron/Main", &["EN", "ES", "PT"])
         && names_eq(g, "Vocals/Belen/Main", &["EN", "ES"])
         && names_eq(g, "Vocals/Aline/Main", &["PT"])
@@ -521,7 +498,8 @@ fn bgvs_and_vocal_fx(g: &Golden) -> bool {
         .map(|t| t.path.clone())
         .collect();
     let kinds = |path: &str, kind: Kind| g.children(path).iter().all(|t| t.kind == kind);
-    sends_to(g, "Vocals/BGVs", "BGV BUS")
+    sends_to(g, "BGVs", "BGV BUS")
+        && sends_to(g, "Choir", "BGV BUS")
         && g.track(FX).is_some_and(|t| t.kind == Kind::Fx)
         && names_eq(g, FX, &["Delay", "Verb", "Wide", "Pitch"])
         && names_eq(
@@ -595,7 +573,6 @@ const BASS: &str = "Bass — `Bass/`";
 const GUITARS: &str = "Guitars — `Electric/`, `Acoustic/` (a different shape every song)";
 const KEYS: &str = "Keys — `Keys/`, Synths — `Synths/`";
 const ORCHESTRA: &str = "Orchestra — `Orchestra/` (expanded in a later spec)";
-const INST_FX: &str = "Instrument FX — `Inst FX/` (one set for guitars, keys, synths, strings)";
 const VOCALS: &str = "Vocals — `Vocals/`";
 const BUSES: &str = "Buses — `MIX BUS/`";
 
@@ -794,31 +771,6 @@ pub const ITEMS: &[Item] = &[
     Item {
         section: ORCHESTRA,
         text: "One bus per section under INST BUS (`flow.orchestra.golden`).",
-        check: None,
-    },
-    Item {
-        section: INST_FX,
-        text: "**Ambience**: Short Room, Slap Room, Early.",
-        check: Some(ambience),
-    },
-    Item {
-        section: INST_FX,
-        text: "**Plate**: Fat, Dark, Gold. **Hall**: Large, Vienna, Atmosphere.",
-        check: Some(plate_and_hall),
-    },
-    Item {
-        section: INST_FX,
-        text: "**Spring**: Big Sky, XL35. **Delay**: Slap, Tape, Echo Boy, Space\nEcho. **Mod**: Chorus, Flanger.",
-        check: Some(spring_delay_mod),
-    },
-    Item {
-        section: INST_FX,
-        text: "To **INST BUS**.",
-        check: Some(inst_fx_to_bus),
-    },
-    Item {
-        section: INST_FX,
-        text: "Sends from the delay returns into the reverbs (\"reverb the delay\").",
         check: None,
     },
     Item {

@@ -120,19 +120,10 @@ fixed tree.
 - [ ] **Orch Percussion/** — present, empty for now.
 - [ ] One bus per section under INST BUS (`flow.orchestra.golden`).
 
-### Instrument FX — `Inst FX/` (one set for guitars, keys, synths, strings)
-
-- [x] **Ambience**: Short Room, Slap Room, Early.
-- [x] **Plate**: Fat, Dark, Gold. **Hall**: Large, Vienna, Atmosphere.
-- [x] **Spring**: Big Sky, XL35. **Delay**: Slap, Tape, Echo Boy, Space
-      Echo. **Mod**: Chorus, Flanger.
-- [x] To **INST BUS**.
-- [ ] Sends from the delay returns into the reverbs ("reverb the delay").
-
 ### Vocals — `Vocals/`
 
-- [ ] Leads Ron (EN/ES/PT), Belen (EN/ES) and Aline (PT), each a mix track with Main and DBL and a source per language; BGV parts; a four-section choir; VOX EN/ES/PT VCAs → **LEAD VOX BUS**.
-- [ ] BGVs folder → **BGV BUS**; the vocal FX template (`vocal-fx.rpp`)
+- [x] Leads Ron (EN/ES/PT), Belen (EN/ES) and Aline (PT), each a mix track with Main and DBL and a source per language; BGV parts; a four-section choir; VOX EN/ES/PT VCAs → **LEAD VOX BUS**.
+- [x] BGVs folder → **BGV BUS**; the vocal FX template (`vocal-fx.rpp`)
       folded in.
 - [ ] **Three languages** as source tracks under each layer —
       `Vocals / Ron / Main / {EN, ES, PT}` — with a VCA per language over
