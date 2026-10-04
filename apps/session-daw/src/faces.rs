@@ -107,7 +107,11 @@ fn preset_name(tone: &Tone, fallback: &str) -> String {
 fn time_entry(which: Which, tone: &Tone) -> Option<&'static crate::rig::FaceEntry> {
     let faces = crate::rig::faces();
     match which {
-        Which::Reverb => faces.reverb(tone.reverb.algorithm.name()),
+        // A machine wears its own face, whatever program it runs.
+        Which::Reverb => tone
+            .reverb_machine
+            .and_then(|m| faces.reverb(m.face()))
+            .or_else(|| faces.reverb(tone.reverb.algorithm.name())),
         Which::Delay => faces.delay(
             crate::rig::DELAY_ALGOS
                 .get(tone.delay.style.to_index())
@@ -115,6 +119,17 @@ fn time_entry(which: Which, tone: &Tone) -> Option<&'static crate::rig::FaceEntr
                 .unwrap_or(""),
         ),
         _ => None,
+    }
+}
+
+/// The algorithm as a machine's display spells a program.
+fn program_name(algorithm: reverb_dsp::algorithm::AlgorithmType) -> String {
+    use reverb_dsp::algorithm::AlgorithmType as A;
+    match algorithm {
+        A::Room => "SMALL ROOM".to_owned(),
+        A::Hall => "LARGE HALL".to_owned(),
+        A::Random => "RANDOM HALL".to_owned(),
+        other => other.name().to_uppercase(),
     }
 }
 
@@ -171,6 +186,8 @@ fn time_face(which: Which, tone: &Tone, entry: &crate::rig::FaceEntry, back: boo
             vec![
                 (at("preset"), preset_name(tone, room.algorithm.name())),
                 (at("time_text"), text),
+                // What a machine's display calls the algorithm it runs.
+                (at("program"), program_name(room.algorithm)),
             ],
         )
     } else {

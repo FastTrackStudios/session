@@ -942,3 +942,31 @@ mod eq_face_tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod machine_tests {
+    use crate::tone::{ReverbMachine, Role, placeholder_for};
+
+    /// The voices' reverbs run in the 480; a drum's does not; until frame
+    /// has the 480's face, the algorithm's own is worn.
+    #[test]
+    fn the_vocal_reverbs_run_in_the_480() {
+        let ancestors = |p: &[&str]| p.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let vocal = placeholder_for(Role::Reverb, 0, "Hall", &ancestors(&["Vocals", "Vox FX"]));
+        assert_eq!(vocal.reverb_machine, Some(ReverbMachine::Digital480));
+        let choir = placeholder_for(Role::Reverb, 0, "Plate", &ancestors(&["Choir"]));
+        assert_eq!(choir.reverb_machine, Some(ReverbMachine::Digital480));
+        // Negative control.
+        let snare = placeholder_for(
+            Role::Reverb,
+            0,
+            "Snare Plate",
+            &ancestors(&["Drum Kit", "Snare"]),
+        );
+        assert_eq!(snare.reverb_machine, None);
+        assert!(
+            crate::faces::of(crate::tone::Which::Reverb, &vocal).is_some(),
+            "a face either way"
+        );
+    }
+}

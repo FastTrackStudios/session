@@ -108,6 +108,9 @@ pub struct Tone {
     /// Depth.
     pub delay: Echo,
     pub reverb: Room,
+    /// The machine the reverb runs in, when it is one: it wears that
+    /// machine's face whatever the algorithm, the algorithm its program.
+    pub reverb_machine: Option<ReverbMachine>,
     /// The advanced Depth units' own EQs: ahead of the effect, and
     /// after it. Inside the one instance — a reverb return does not
     /// carry three plugins, it carries one with an EQ at each end.
@@ -457,9 +460,12 @@ impl Tone {
         let loaded = (*preset.tone).clone();
         let presets = std::mem::take(&mut self.presets);
         let role = self.role;
+        // A preset is a sound, not the hardware it runs in.
+        let machine = self.reverb_machine;
         *self = loaded;
         self.presets = presets;
         self.role = role;
+        self.reverb_machine = machine;
         self.preset = Some(index);
     }
 
@@ -5974,6 +5980,23 @@ const fn f64_to_f32(value: f64) -> f32 {
 /// full of racks looks like a mixer full of different decisions rather
 /// than one curve repeated twenty times.
 #[must_use]
+/// A reverb machine: hardware that runs any algorithm as a program.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReverbMachine {
+    /// The 480-style digital effects system and its remote.
+    Digital480,
+}
+
+impl ReverbMachine {
+    /// The word frame's manifest matches its face by.
+    #[must_use]
+    pub const fn face(self) -> &'static str {
+        match self {
+            Self::Digital480 => "480",
+        }
+    }
+}
+
 /// Which compressor a sidechain EQ is for: the Rescue one, the Tone
 /// one, or the second of a stacked pair after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6045,6 +6068,7 @@ pub fn placeholder(index: usize) -> Tone {
             style: voice.delay_style(),
             ..Echo::default()
         },
+        reverb_machine: None,
         reverb: Room {
             decay: f64_to_f32(1.1 + 0.35 * (drift + 2.0)),
             algorithm: voice.reverb(),
@@ -6131,6 +6155,14 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
     }
     if role == Role::Fund {
         return fundamental(tone, name, ancestors);
+    }
+    // The voices' reverbs run in a 480: the classic vocal box.
+    if role == Role::Reverb
+        && ["vocal", "bgv", "choir"]
+            .iter()
+            .any(|w| crate::plugin_faces::is_named(name, ancestors, w))
+    {
+        tone.reverb_machine = Some(ReverbMachine::Digital480);
     }
     // The presets are the slot's — a Short delay offers short delays
     // — and the track opens on the slot's default, which is first.
