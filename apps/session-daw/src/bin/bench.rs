@@ -320,6 +320,10 @@ fn main() {
     );
     println!("  {}", "-".repeat(78));
 
+    if let Ok(faces) = std::env::var("FTS_BENCH_FACES") {
+        faces_bench(&faces);
+        return;
+    }
     if std::env::var_os("FTS_BENCH_ANIMATE").is_some() {
         animate(&palette, &font, layout, width, height);
         return;
@@ -2229,4 +2233,115 @@ fn patch_list_shot_overridden_stale(out: &std::path::Path, width: u32, height: u
         table.buses.len(),
         table.stale.is_some()
     );
+}
+
+/// Frame faces, drawn the two ways the FX view can: `FTS_BENCH_FACES=1`
+/// for the set below, or a design (`comp/01-fet-black-tall`) for one.
+/// One design a process is the reliable way: frame's renderer keeps its
+/// Vello state across devices, and each face here opens its own.
+///
+/// Per face, on one device: its vectors recorded into a scene and
+/// rendered (what the view does with no GPU path); `LiveSurface::render`,
+/// its effects stage included, every frame (a face that moves); and,
+/// polled at 60 Hz for a second, how many of those frames it actually
+/// renders (a face that does not — the GPU path skips the rest). Sizes
+/// are what a 1440p lane gives a face (1.5× its design).
+fn faces_bench(which: &str) {
+    const DESIGNS: [&str; 7] = [
+        "comp/01-fet-black-tall",
+        "comp/04-opto-leveler-tall",
+        "saturate/03-transformer",
+        "saturate/04-transistor",
+        "rig-faces/80-verb-room-tall",
+        "rig-faces/81-verb-hall-tall",
+        "rig-faces/52-amp-eq",
+    ];
+    const RUNS: usize = 120;
+    let dir = std::env::var_os("FTS_FRAME_DIR").map_or_else(
+        || {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../../frame/examples/plugins")
+        },
+        Into::into,
+    );
+    println!(
+        "  {:<30} {:>9} {:>9} {:>9} {:>8} {:>8}",
+        "face", "size", "vectors", "gpu", "renders", "of"
+    );
+    let designs: Vec<&str> = if which == "1" {
+        DESIGNS.to_vec()
+    } else {
+        which.split(',').collect()
+    };
+    for design in designs {
+        let path = dir.join(design);
+        let (Some(parent), Some(stem)) = (path.parent(), path.file_name()) else {
+            continue;
+        };
+        let (markup, catalog) = frame_live::face_paths(parent, &stem.to_string_lossy());
+        let open = || {
+            let mut s = frame_live::LiveSurface::open(&markup, catalog.clone()).ok()?;
+            s.set_animate(true);
+            s.set_responsive(true);
+            Some(s)
+        };
+        let Some(mut vectors) = open() else {
+            println!("  {design:<30} (did not open)");
+            continue;
+        };
+        let (dw, dh) = vectors.content_size();
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a face's design size, a few hundred pixels"
+        )]
+        let (w, h) = ((dw * 1.5).round() as u32, (dh * 1.5).round() as u32);
+        let Ok(mut renderer) = Headless::new(w, h) else {
+            eprintln!("no GPU");
+            return;
+        };
+        // Vectors: recorded into the frame's scene, rendered with it.
+        let started = Instant::now();
+        for batch in 0..RUNS / BATCH {
+            for _ in 0..BATCH {
+                let _ = renderer.frame(|p| vectors.paint_vectors(p, w, h, 1.0));
+            }
+            if batch == 0 {
+                let _ = renderer.wait();
+            }
+        }
+        let _ = renderer.wait();
+        let vector_ms = started.elapsed().as_secs_f64() * 1000.0 / RUNS as f64;
+        // The GPU path, rendering every frame.
+        let Some(mut gpu) = open() else { continue };
+        let (device, queue) = renderer.gpu();
+        if gpu.attach_gpu(device, queue).is_err() {
+            println!("  {design:<30} (no GPU path)");
+            continue;
+        }
+        let _ = gpu.render(w, h, 1.0);
+        let _ = renderer.wait();
+        let started = Instant::now();
+        for _ in 0..RUNS {
+            let _ = gpu.render(w, h, 1.0);
+        }
+        let _ = renderer.wait();
+        let gpu_ms = started.elapsed().as_secs_f64() * 1000.0 / RUNS as f64;
+        // Polled at 60 Hz for a second, paced at the view's 30 fps: the
+        // frames it renders.
+        gpu.set_max_fps(30);
+        let mut rendered = 0;
+        for _ in 0..60 {
+            if gpu.needs_redraw() {
+                let _ = gpu.render(w, h, 1.0);
+                rendered += 1;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        println!(
+            "  {design:<30} {:>9} {vector_ms:>7.2}ms {gpu_ms:>7.2}ms {rendered:>8} {:>8}",
+            format!("{w}x{h}"),
+            60
+        );
+    }
 }

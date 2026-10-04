@@ -115,6 +115,13 @@ impl Headless {
         })
     }
 
+    /// The device and queue, for a renderer of its own to share — a
+    /// frame face rendering its effects stage on the same GPU.
+    #[must_use]
+    pub fn gpu(&self) -> (wgpu::Device, wgpu::Queue) {
+        (self.device.clone(), self.queue.clone())
+    }
+
     #[must_use]
     pub const fn size(&self) -> (u32, u32) {
         (self.width, self.height)

@@ -741,6 +741,27 @@ pub fn picture_at(panel: Panel) -> Panel {
     }
 }
 
+/// How often a frame face that moves by itself renders on the GPU.
+#[cfg(feature = "native")]
+const GPU_FPS: u32 = 30;
+
+/// A registered texture, `width` × `height`, as a scene.
+#[cfg(feature = "native")]
+fn texture_fill(id: anyrender::ResourceId, width: u32, height: u32) -> Scene {
+    let mut scene = Scene::new();
+    scene.fill(
+        vello::peniko::Fill::NonZero,
+        Affine::IDENTITY,
+        anyrender::Paint::Resource(vello::peniko::ImageBrush {
+            image: id,
+            sampler: vello::peniko::ImageSampler::default(),
+        }),
+        None,
+        &Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+    );
+    scene
+}
+
 /// The effects' own widgets, one per device, kept so each keeps its GPU
 /// surface and its animation's clock: the shader where the renderer
 /// hands over a device, the vector painter where it does not.
@@ -839,7 +860,13 @@ impl Painters {
                 .and_then(|any| any.downcast::<wgpu_context_07::DeviceHandle>().ok());
             live.gpu = match handle {
                 Some(h) => match live.surface.attach_gpu(h.device.clone(), h.queue.clone()) {
-                    Ok(()) => Gpu::Attached(None),
+                    Ok(()) => {
+                        // A face that moves by itself (a scope, a reverb's
+                        // field, a needle settling) is paced; one that does
+                        // not renders only when it changes.
+                        live.surface.set_max_fps(GPU_FPS);
+                        Gpu::Attached(None)
+                    }
                     Err(error) => {
                         tracing::warn!(target: "frame", face = %face.design, %error, "frame face: no GPU, vectors");
                         Gpu::Failed
@@ -853,6 +880,14 @@ impl Painters {
             live.surface.paint_vectors(&mut scene, width, height, scale);
             return scene;
         };
+        // Nothing new and the texture the right size: the last render is
+        // still the face — composite it again, render nothing.
+        if let Some((id, size)) = *registered
+            && size == (width, height)
+            && !live.surface.needs_redraw()
+        {
+            return texture_fill(id, width, height);
+        }
         let (texture, fresh) = match live.surface.render(width, height, scale) {
             Ok(rendered) => rendered,
             Err(error) => {
@@ -879,20 +914,7 @@ impl Painters {
                 }
             }
         }
-        let mut scene = Scene::new();
-        if let Some((id, _)) = registered {
-            scene.fill(
-                vello::peniko::Fill::NonZero,
-                Affine::IDENTITY,
-                anyrender::Paint::Resource(vello::peniko::ImageBrush {
-                    image: *id,
-                    sampler: vello::peniko::ImageSampler::default(),
-                }),
-                None,
-                &Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
-            );
-        }
-        scene
+        registered.map_or_else(Scene::new, |(id, _)| texture_fill(id, width, height))
     }
 
     /// Device `key`'s live surface, opened the first time and shown
