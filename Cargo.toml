@@ -1301,7 +1301,6 @@ comp-dsp = { path = "../processor/features/fx/comp/comp-dsp" }
 comp-profiles = { path = "../processor/features/fx/comp/comp-profiles" }
 comp-ui = { path = "../processor/features/fx/comp/comp-ui" }
 dsp-core = { path = "../processor/features/fx/dsp-core" }
-dsp-golden = { path = "../processor/features/fx/dsp-golden" }
 eq-profiles = { path = "../processor/features/fx/eq/eq-profiles" }
 eq-ui = { path = "../processor/features/fx/eq/eq-ui" }
 saturate-dsp = { path = "../processor/features/fx/saturate/saturate-dsp" }
