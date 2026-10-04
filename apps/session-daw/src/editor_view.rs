@@ -174,6 +174,28 @@ impl EditorView {
             _ => false,
         };
         self.dirty |= changed;
+        // A gesture finished or a key pressed that changed the take:
+        // write it back, so the arrangement and the engine have it.
+        if matches!(event, UiEvent::PointerUp(_) | UiEvent::KeyDown(_)) {
+            self.save();
+        }
+    }
+
+    /// Write the editor's take back to its item, if it changed.
+    fn save(&mut self) {
+        let Some(view) = self.view.as_mut() else {
+            return;
+        };
+        if !view.unsaved() {
+            return;
+        }
+        let Some(item) = view.item().map(str::to_owned) else {
+            return;
+        };
+        let content = view.take_content();
+        if !crate::expression::save_take(&item, content) {
+            tracing::warn!(editor.item = %item, "the editor's take could not be written back");
+        }
     }
 
     fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {

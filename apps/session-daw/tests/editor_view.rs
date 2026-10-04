@@ -30,7 +30,7 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
     assert!(!snapshot.notes.is_empty());
 
     // The editor holds them.
-    let view = session_daw::expression::Expression::from_take(
+    let mut view = session_daw::expression::Expression::from_take(
         &snapshot,
         target.item.clone(),
         target.drums,
@@ -38,4 +38,21 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
         (1200.0, 700.0),
     );
     assert!(!view.stacked(), "a take opens on the roll");
+
+    // An edit, saved, is in the take: the first note's velocity to 13.
+    let at_13 =
+        |notes: &[daw::service::midi::MidiNote]| notes.iter().filter(|n| n.velocity == 13).count();
+    let had = at_13(&snapshot.notes);
+    assert!(!view.unsaved(), "nothing changed yet");
+    let before = snapshot.notes.len();
+    let note = view.editor.doc.notes.first_mut().expect("a note");
+    note.velocity = 13.0 / 127.0;
+    assert!(view.unsaved());
+    let content = view.take_content();
+    assert!(!view.unsaved(), "saved");
+    assert!(session_daw::expression::save_take(&target.item, content));
+    let after = session_daw::expression::load_take(&target.item, target.bpm, target.length)
+        .expect("read back");
+    assert_eq!(after.notes.len(), before, "a save keeps every note");
+    assert_eq!(at_13(&after.notes), had + 1, "the edit is in the take");
 }

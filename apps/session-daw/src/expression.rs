@@ -90,6 +90,11 @@ pub struct Expression {
     look: Look,
     /// The face a theme's bars letter their buttons in.
     font: Option<crate::text::Font>,
+    /// A take's notes the editor does not show (a drum take's notes on
+    /// no lane of the kit), kept to write back as they were.
+    aside: Vec<expression_editor_core::Note>,
+    /// The document as last loaded or saved: what "unsaved" is against.
+    saved: expression_editor_core::ExpressionDoc,
     /// The stacked view's gestures, for a workspace of several tracks
     /// — the audio drum workflow's surface.
     stack: Stack,
@@ -140,8 +145,17 @@ impl Expression {
     ) -> Self {
         let vp = viewport_for(size, DEFAULT_STRIP);
         let mut doc = expression_editor_daw::to_doc(snapshot, 48.0);
+        let mut aside = Vec::new();
         if drums {
             let map = kit_for(&doc);
+            // The notes the kit has no lane for: off the roll, and kept
+            // to write back untouched — a save must not delete them.
+            aside = doc
+                .notes
+                .iter()
+                .filter(|n| map.row_of_pitch(n.row).is_none())
+                .cloned()
+                .collect();
             let before = doc.notes.len();
             doc.notes.retain_mut(|n| match map.row_of_pitch(n.row) {
                 Some(row) => {
@@ -151,6 +165,7 @@ impl Expression {
                 None => false,
             });
             let dropped = before.saturating_sub(doc.notes.len());
+
             if dropped > 0 {
                 tracing::warn!(
                     expression.item = item,
@@ -166,11 +181,46 @@ impl Expression {
         }
         editor.reset_view();
         let mut this = Self::hold(editor, Some(item), origin, size);
+        this.aside = aside;
         this.relayout();
         this
     }
 
+    /// The item this view edits, when it is one.
+    #[must_use]
+    pub fn item(&self) -> Option<&str> {
+        self.item.as_deref()
+    }
+
+    /// Whether the document has changed since it was loaded or saved.
+    #[must_use]
+    pub fn unsaved(&self) -> bool {
+        self.editor.doc != self.saved
+    }
+
+    /// The take as it should be written back: a drum lane's notes at the
+    /// lane's pitch again, and the notes the kit had no lane for, as
+    /// they were. Marks the document saved.
+    pub fn take_content(&mut self) -> daw::service::midi::MidiTakeContent {
+        let mut doc = self.editor.doc.clone();
+        if let RowSpace::Drums(map) = &doc.row_space {
+            let map = map.clone();
+            for n in &mut doc.notes {
+                if let Some(pitch) = usize::try_from(n.row)
+                    .ok()
+                    .and_then(|r| map.pitch_of_row(r))
+                {
+                    n.row = pitch;
+                }
+            }
+        }
+        doc.notes.extend(self.aside.iter().cloned());
+        self.saved = self.editor.doc.clone();
+        expression_editor_daw::to_content(&doc)
+    }
+
     fn hold(editor: Editor, item: Option<String>, origin: (f64, f64), size: (f64, f64)) -> Self {
+        let saved = editor.doc.clone();
         Self {
             editor,
             drag: Drag::None,
@@ -192,6 +242,8 @@ impl Expression {
             look: Look::default(),
             font: crate::text::Font::embedded().ok(),
             stack: Stack::editable(),
+            aside: Vec::new(),
+            saved,
             stack_cache: None,
         }
     }
@@ -882,6 +934,30 @@ pub fn load_take(
             ppq: PPQ,
             length_ppq: (length_seconds * bpm / 60.0 * PPQ).max(played),
         })
+    })
+}
+
+/// Write `content` back to an item's active take, replacing it, as one
+/// undo point. `false` when there is no engine or the write failed.
+pub fn save_take(item_guid: &str, content: daw::service::midi::MidiTakeContent) -> bool {
+    let Some(runtime) = crate::open::runtime() else {
+        return false;
+    };
+    runtime.block_on(async {
+        let Some(daw) = daw::rpc::Daw::try_get() else {
+            return false;
+        };
+        let Ok(project) = daw.current_project().await else {
+            return false;
+        };
+        let Ok(Some(item)) = project.items().by_guid(item_guid).await else {
+            return false;
+        };
+        item.active_take()
+            .midi()
+            .write_take(content, daw::service::midi::WriteMode::Replace)
+            .await
+            .is_ok()
     })
 }
 
