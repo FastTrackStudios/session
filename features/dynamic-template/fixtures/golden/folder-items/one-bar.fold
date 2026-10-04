@@ -2,21 +2,21 @@ window 2.000000 4.000000
 take 0
 
 folder Drum Kit
-children 30
+children 31
 takes 1
-revision 06c29659d15eef73
+revision 19825b20af99750e
 mute-mask 0000000000000000
   child In role Kick side None muted false hidden false takes 1
   child Out role Kick side None muted false hidden false takes 1
   child Trig role Kick side None muted false hidden false takes 1
   child Sub role Kick side None muted false hidden false takes 1
-  child Verb role Kick side None muted false hidden false takes 1
+  child Room role Other side None muted false hidden false takes 1
   child Top role Snare side None muted false hidden false takes 1
   child Bottom role Snare side None muted false hidden false takes 1
   child Trig role Snare side None muted false hidden false takes 1
   child Fund role Snare side None muted false hidden false takes 1
-  child Short role Other side None muted false hidden false takes 1
-  child Long role Other side None muted false hidden false takes 1
+  child Plate role Other side None muted false hidden false takes 1
+  child Hall role Other side None muted false hidden false takes 1
   child Nonlin role Other side None muted false hidden false takes 1
   child T1 role Toms side None muted false hidden false takes 1
   child T1 Trig role Toms side None muted false hidden false takes 1
@@ -30,7 +30,8 @@ mute-mask 0000000000000000
   child T4 role Toms side None muted false hidden false takes 1
   child T4 Trig role Toms side None muted false hidden false takes 1
   child Fund role Toms side None muted false hidden false takes 1
-  child Verb role Toms side None muted false hidden false takes 1
+  child Room role Other side None muted false hidden false takes 1
+  child Nonlin role Other side None muted false hidden false takes 1
   child OH role Other side None muted false hidden false takes 1
   child Hi-Hat role Other side None muted false hidden false takes 1
   child Ride role Other side None muted false hidden false takes 1
@@ -298,14 +299,14 @@ columns 256
 folder Snare
 children 7
 takes 1
-revision ae60cef09a7bd239
+revision b3e26f78f580a6eb
 mute-mask 0000000000000000
   child Top role Snare side None muted false hidden false takes 1
   child Bottom role Snare side None muted false hidden false takes 1
   child Trig role Snare side None muted false hidden false takes 1
   child Fund role Snare side None muted false hidden false takes 1
-  child Short role Other side None muted false hidden false takes 1
-  child Long role Other side None muted false hidden false takes 1
+  child Plate role Other side None muted false hidden false takes 1
+  child Hall role Other side None muted false hidden false takes 1
   child Nonlin role Other side None muted false hidden false takes 1
 group-by role
 columns 256

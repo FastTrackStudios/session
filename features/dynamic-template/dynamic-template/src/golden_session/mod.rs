@@ -19,6 +19,7 @@ pub mod kind;
 pub mod media;
 pub mod rpp;
 pub mod shape;
+pub mod song;
 
 use std::path::{Path, PathBuf};
 
@@ -89,6 +90,12 @@ pub fn write_fixtures(dir: &Path) -> std::io::Result<Written> {
         let built = build(&shape);
         let file = rpp_file(&shape);
         std::fs::write(dir.join(&file), &built.rpp)?;
+        // The song as a keyflow chart beside its project: what the Chart
+        // view and a re-stamp read (`session::keyflow::from_chart`).
+        if !shape.sections.is_empty() {
+            let chart = song::chart(shape.name, shape.bpm, &shape.sections);
+            std::fs::write(dir.join(&file).with_extension("kf"), chart)?;
+        }
         written.projects.push(file);
         written.media.extend(media::write_all(dir, &built.tracks)?);
     }

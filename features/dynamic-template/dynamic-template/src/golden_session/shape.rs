@@ -749,10 +749,16 @@ fn keys() -> Node {
             // Piano is a stereo TRACK, not a folder over an L and an
             // R: two mics on one instrument are one capture of one
             // thing (`flow.scenes.reaper-model`).
-            pair("Piano", KEYS).template(&["Keys", "Piano"]),
-            part("Rhodes", KEYS).template(&["Keys", "Electric", "Rhodes"]),
-            part("Wurli", KEYS).template(&["Keys", "Electric", "Wurlitzer"]),
-            part("Organ", KEYS).template(&["Keys", "Organ"]),
+            // MIDI, every one: the song's chords as parts
+            // (`golden_session::song`), so the editor has notes to show.
+            pair("Piano", KEYS).template(&["Keys", "Piano"]).midi(),
+            part("Rhodes", KEYS)
+                .template(&["Keys", "Electric", "Rhodes"])
+                .midi(),
+            part("Wurli", KEYS)
+                .template(&["Keys", "Electric", "Wurlitzer"])
+                .midi(),
+            part("Organ", KEYS).template(&["Keys", "Organ"]).midi(),
         ])
 }
 
@@ -771,12 +777,14 @@ fn synths() -> Node {
             // that belong to no family sit beside them at the top,
             // where they are still reachable without inventing a
             // family to hold them (`flow.synths.families`).
-            part("Sub Bass Synth", SYNTHS),
-            part("Texture", SYNTHS),
-            Node::new("SY Arps", SYNTHS, Kind::Group).children(vec![part("Arp", SYNTHS)]),
-            Node::new("SY Pads", SYNTHS, Kind::Group).children(vec![part("Pad", SYNTHS)]),
-            Node::new("SY Leads", SYNTHS, Kind::Group).children(vec![part("Lead Synth", SYNTHS)]),
-            Node::new("SY Chords", SYNTHS, Kind::Group).children(vec![part("Chord", SYNTHS)]),
+            part("Sub Bass Synth", SYNTHS).midi(),
+            part("Texture", SYNTHS).midi(),
+            Node::new("SY Arps", SYNTHS, Kind::Group).children(vec![part("Arp", SYNTHS).midi()]),
+            Node::new("SY Pads", SYNTHS, Kind::Group).children(vec![part("Pad", SYNTHS).midi()]),
+            Node::new("SY Leads", SYNTHS, Kind::Group)
+                .children(vec![part("Lead Synth", SYNTHS).midi()]),
+            Node::new("SY Chords", SYNTHS, Kind::Group)
+                .children(vec![part("Chord", SYNTHS).midi()]),
         ])
 }
 
@@ -1043,11 +1051,12 @@ fn keyflow() -> Node {
     Node::new("Keyflow", KEYFLOW, Kind::Keyflow).children(vec![
         Node::new("KEY", KEYFLOW, Kind::Source).dead_end().midi(),
         Node::new("CHORD", KEYFLOW, Kind::Source).dead_end().midi(),
-        // Empty on purpose. The chart says nothing about what belongs
-        // in them, and a generator filling them would be composing.
-        Node::new("LINES", KEYFLOW, Kind::Source).empty(),
+        // The song's melody and its accents (`golden_session::song`):
+        // the golden session is a song, so its Keyflow folder says
+        // everything a chart would.
+        Node::new("LINES", KEYFLOW, Kind::Source).dead_end().midi(),
         Node::new("Lyrics", KEYFLOW, Kind::Source).empty(),
-        Node::new("HITS", KEYFLOW, Kind::Source).empty(),
+        Node::new("HITS", KEYFLOW, Kind::Source).dead_end().midi(),
     ])
 }
 

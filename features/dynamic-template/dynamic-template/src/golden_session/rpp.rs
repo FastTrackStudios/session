@@ -483,6 +483,8 @@ struct TrackContext<'a> {
     receives: &'a [i32],
     /// Seconds per bar at the fixture's tempo.
     secs_per_bar: f64,
+    /// The song's sections: what the song's parts are written over.
+    sections: &'a [super::shape::Section],
     /// The song's length in bars.
     bars: u32,
     /// The layout the fixture is rendered under.
@@ -550,6 +552,44 @@ fn with_items(mut builder: TrackBuilder, track: &Flat, context: &TrackContext) -
     let name = track.name.clone();
     let media = track.media_file();
     let midi = track.is_midi();
+    // A part of the song (the Keyflow folder, the keys, the synths):
+    // its MIDI is the song's, and the Keyflow tracks are laid out by it —
+    // one key, an item a chord, an item a section.
+    let part = midi
+        .then(|| super::song::Part::of(&track.name))
+        .flatten()
+        .filter(|_| !context.sections.is_empty());
+    if let Some(part) = part {
+        let laid_out = part
+            .items(context.sections, context.bars)
+            .unwrap_or_else(|| {
+                items_for(context.layout, &track.take, context.bars)
+                    .into_iter()
+                    .map(|p| {
+                        let n = p.bar.saturating_div(4).saturating_add(1);
+                        (
+                            p.bar,
+                            p.length.min(context.bars.saturating_sub(p.bar)),
+                            format!("{name} {n}"),
+                        )
+                    })
+                    .filter(|(_, len, _)| *len > 0)
+                    .collect()
+            });
+        for (n, (bar, bars, item_name)) in laid_out.into_iter().enumerate() {
+            let item_path = format!("item:{}/{n}", track.path);
+            builder = builder.item(
+                f64::from(bar) * context.secs_per_bar,
+                f64::from(bars) * context.secs_per_bar,
+                |item| {
+                    item.name(item_name)
+                        .guid(guid(&item_path))
+                        .midi(|m| part.write(m, context.sections, bar, bars))
+                },
+            );
+        }
+        return builder;
+    }
     // Seeded by the TAKE, not by the track: the mics of one drum were
     // recorded together and comped together, so their items land in the
     // same places. Seeding per track gave a snare top and a snare bottom
@@ -810,6 +850,7 @@ pub fn build(shape: &Shape) -> Built {
             selected: selected == Some(i),
             receives: &sources,
             secs_per_bar,
+            sections: &shape.sections,
             bars: shape.bars,
             layout,
         };
