@@ -59,6 +59,33 @@ fn seconds_of(knob: f64) -> f32 {
     crate::num::narrow(0.3 * (20.0_f64 / 0.3).powf(knob.clamp(0.0, 1.0)))
 }
 
+/// The engine's decay knob (0..1) that rings for `room`'s decay on its
+/// algorithm — its own law, inverted — or the Time knob's log reading
+/// for an algorithm whose decay is not a calibrated time.
+fn decay_knob(room: &crate::tone::Room) -> f64 {
+    let law = |d: f64| reverb_dsp::algorithm::decay_seconds(room.algorithm, 0, d);
+    let want = f64::from(room.decay);
+    if law(0.5).is_none() {
+        return time_knob(room.decay);
+    }
+    let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if law(mid).is_some_and(|s| s < want) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
+/// …and the seconds the engine's decay knob `d` rings for.
+fn decay_seconds(room: &crate::tone::Room, d: f64) -> f32 {
+    reverb_dsp::algorithm::decay_seconds(room.algorithm, 0, d.clamp(0.0, 1.0))
+        .map_or_else(|| seconds_of(d), crate::num::narrow)
+}
+
 /// A delay's time as the Time knob: log ms over 20–2500.
 fn delay_knob(ms: f32) -> f64 {
     (f64::from(ms.max(20.0)) / 20.0).log(125.0)
@@ -117,6 +144,20 @@ fn time_face(which: Which, tone: &Tone, entry: &crate::rig::FaceEntry, back: boo
             vec![
                 (at("time_knob"), knob),
                 (at("sync"), sync),
+                // The engine's own decay knob: what a face's picture
+                // moves with (the plate's damper, the hall's arches).
+                (at("decay"), decay_knob(room)),
+                (
+                    at("algorithm"),
+                    crate::num::coord(
+                        reverb_dsp::algorithm::AlgorithmType::ALL
+                            .iter()
+                            .position(|a| *a == room.algorithm)
+                            .unwrap_or(0),
+                    ),
+                ),
+                (at("tone"), 0.0),
+                (at("modulation"), 0.2),
                 (at("predelay"), f64::from(room.predelay)),
                 (at("size"), f64::from(room.size)),
                 (at("damping"), f64::from(room.damping)),
@@ -252,6 +293,18 @@ pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
                 crate::num::narrow(crate::beats::DELAY.get(k).map_or(1.0, |d| d.2) * beat * 1000.0);
         }
         (Which::Reverb, "time_knob") => tone.reverb.decay = seconds_of(value),
+        // A program key: that algorithm.
+        (Which::Reverb, "algorithm") => {
+            if let Some(algorithm) =
+                reverb_dsp::algorithm::AlgorithmType::ALL.get(crate::num::index(value.round()))
+            {
+                tone.reverb.algorithm = *algorithm;
+            }
+        }
+        (Which::Reverb, "decay") => {
+            tone.reverb.decay = decay_seconds(&tone.reverb, value);
+            tone.reverb.sync = None;
+        }
         (Which::Reverb, "predelay") => tone.reverb.predelay = v.clamp(0.0, 200.0),
         (Which::Reverb, "size") => tone.reverb.size = v.clamp(0.0, 1.0),
         (Which::Reverb, "damping") => tone.reverb.damping = v.clamp(0.0, 1.0),

@@ -356,26 +356,43 @@ fn entry(v: &serde_json::Value) -> Option<FaceEntry> {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
     };
+    // The phone's layout is the standard one here: a shorter picture,
+    // bigger buttons, narrower — the design language the iOS app has.
+    // Where a face has one, it replaces the desktop's, back and finishes
+    // with it.
+    let phone = v.get("tiers").and_then(|t| t.get("phone"));
+    let named = |from: Option<&serde_json::Value>, k: &str| {
+        from.and_then(|t| t.get(k))
+            .and_then(serde_json::Value::as_str)
+            .map(|d| format!("{SET}/{d}"))
+    };
+    let face = phone
+        .and_then(|t| t.get("face"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(face);
+    let size = phone
+        .and_then(|t| t.get("size"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|s| Some((s.first()?.as_f64()?, s.get(1)?.as_f64()?)))
+        .unwrap_or(size);
+    let from = if phone.is_some() { phone } else { Some(v) };
+    let phone_flag = |k: &str| {
+        phone
+            .and_then(|t| t.get(k))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_else(|| flag(k))
+    };
     Some(FaceEntry {
         face: format!("{SET}/{face}"),
         ns,
         words,
         size,
         maps,
-        dark: v
-            .get("dark")
-            .and_then(serde_json::Value::as_str)
-            .map(|d| format!("{SET}/{d}")),
-        back: v
-            .get("back")
-            .and_then(serde_json::Value::as_str)
-            .map(|d| format!("{SET}/{d}")),
-        back_dark: v
-            .get("back_dark")
-            .and_then(serde_json::Value::as_str)
-            .map(|d| format!("{SET}/{d}")),
-        nameplate: flag("nameplate"),
-        time_knob: flag("time_knob"),
+        dark: named(from, "dark"),
+        back: named(from, "back"),
+        back_dark: named(from, "back_dark"),
+        nameplate: phone_flag("nameplate"),
+        time_knob: phone_flag("time_knob"),
     })
 }
 
@@ -683,7 +700,10 @@ fn flip(block: &mut Block, beat_on: bool) {
         "reverb" if beat_on => {
             let div =
                 crate::beats::nearest_reverb(verb_seconds(block, block.param("decay", 0.4)), bpm);
-            let decay = verb_decay_for(block, crate::beats::REVERB.get(div).map_or(1.0, |d| d.1) * beat);
+            let decay = verb_decay_for(
+                block,
+                crate::beats::REVERB.get(div).map_or(1.0, |d| d.1) * beat,
+            );
             block.set("sync_div", crate::num::coord(div));
             block.set("decay", decay);
         }
@@ -705,7 +725,10 @@ fn flip(block: &mut Block, beat_on: bool) {
         k if MOD_KINDS.contains(&k) && beat_on => {
             let div = crate::beats::nearest_mod(block.param("rate", 1.0), bpm);
             block.set("sync_div", crate::num::coord(div));
-            block.set("rate", 1.0 / (crate::beats::MOD.get(div).map_or(1.0, |d| d.1) * beat));
+            block.set(
+                "rate",
+                1.0 / (crate::beats::MOD.get(div).map_or(1.0, |d| d.1) * beat),
+            );
         }
         _ => block.set("sync_div", 0.0),
     }
