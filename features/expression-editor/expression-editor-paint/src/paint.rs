@@ -65,6 +65,10 @@ pub struct Overlay {
     pub razor: Option<RazorArea>,
     /// Where a string roll draws its bend flow (#161).
     pub flow: crate::guitar::BendFlow,
+    /// The host draws the keyboard and the ruler itself (a themed host,
+    /// from `canvas::keyboard` / `canvas::ruler` / `canvas::markers`):
+    /// the roll leaves both bands to it.
+    pub host_chrome: bool,
 }
 
 /// The colours the roll and the strip are drawn in.
@@ -389,8 +393,10 @@ pub fn roll_scene(
     //
     // Painted after the roll, so anything that overflowed is covered
     // rather than showing through the keyboard.
-    keyboard(&mut scene, look, ed, h, labels);
-    ruler(&mut scene, look, ed, w, labels);
+    if !overlay.host_chrome {
+        keyboard(&mut scene, look, ed, h, labels);
+        ruler(&mut scene, look, ed, w, labels);
+    }
 
     scene
 }

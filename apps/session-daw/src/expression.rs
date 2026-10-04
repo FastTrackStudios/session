@@ -357,6 +357,9 @@ impl Expression {
             let over = self.stack.overlays(&self.editor, playhead, &self.look);
             painter.append_scene(over, at);
         } else {
+            // A theme with the keyboard and the ruler draws them; the
+            // roll leaves both bands to it.
+            self.overlay.host_chrome = themes_roll_chrome();
             let roll = paint::roll_scene(
                 &self.editor,
                 w,
@@ -366,6 +369,12 @@ impl Expression {
                 &self.look,
             );
             painter.append_scene(roll, Affine::translate((ox, oy + TOOLBAR_H)));
+            if self.overlay.host_chrome
+                && let Some(chrome) =
+                    themed_roll_chrome(&self.editor, w, roll_h, self.font.as_ref())
+            {
+                painter.append_scene(chrome, Affine::translate((ox, oy + TOOLBAR_H)));
+            }
             if strip_h > 0.0 {
                 let strip =
                     paint::strip_scene(&self.editor, w, strip_h, &mut self.labels, &self.look);
@@ -964,6 +973,145 @@ fn themed_bar(
             Affine::translate((b.rect.x0, b.rect.y0)),
         );
     }
+    Some(scene)
+}
+
+/// The roll's chrome the theme draws, all of it or none: the key bed,
+/// each key, the drum pieces' braces, the ruler, its ticks and markers.
+const ROLL_CHROME: [&str; 6] = [
+    "editor.keys",
+    "editor.key",
+    "editor.keygroup",
+    "editor.ruler",
+    "editor.tick",
+    "editor.marker",
+];
+
+/// Whether the loaded theme draws the roll's keyboard and ruler.
+fn themes_roll_chrome() -> bool {
+    crate::skin::loaded().is_some_and(|t| ROLL_CHROME.iter().all(|r| t.has_role(r)))
+}
+
+/// The roll's keyboard and ruler, `w` × `h`, drawn by the loaded theme
+/// from the same models the editor's painter draws them from
+/// (`canvas::keyboard`, `canvas::key_groups`, `canvas::ruler`,
+/// `canvas::markers`). `None` when the theme does not draw them.
+fn themed_roll_chrome(
+    ed: &Editor,
+    w: f64,
+    h: f64,
+    font: Option<&crate::text::Font>,
+) -> Option<anyrender::Scene> {
+    use theme_runtime::Value;
+    let theme = crate::skin::loaded().filter(|t| ROLL_CHROME.iter().all(|r| t.has_role(r)))?;
+    let font = font?;
+    let (gutter, ruler_h) = (canvas::GUTTER_W, canvas::RULER_H);
+    let band_h = ed.viewport.h.min((h - ruler_h).max(0.0));
+    let piano = matches!(ed.row_space, RowSpace::Pitch);
+    let mut scene = anyrender::Scene::new();
+    // The keyboard: its bed, the keys on it, the braces over split
+    // pieces — clipped to the note area's band, as the rows are.
+    let keys = canvas::keyboard(ed);
+    let groups = canvas::key_groups(ed, &keys);
+    {
+        let mut host = crate::skin::canvas::Host {
+            scene: &mut scene,
+            font,
+        };
+        let at = Affine::translate((0.0, ruler_h));
+        theme.record(
+            "editor.keys",
+            (gutter, band_h),
+            &crate::skin::values(&[("key.piano", Value::Bool(piano))]),
+            &mut host,
+            at,
+        );
+    }
+    scene.push_clip_layer(
+        Affine::translate((0.0, ruler_h)),
+        &vello::kurbo::Rect::new(0.0, 0.0, gutter, band_h),
+    );
+    {
+        let mut host = crate::skin::canvas::Host {
+            scene: &mut scene,
+            font,
+        };
+        for k in &keys {
+            let label = k.label.as_deref().unwrap_or("");
+            let fields = crate::skin::values(&[
+                ("key.black", Value::Bool(k.black)),
+                ("key.piano", Value::Bool(piano)),
+                ("key.label", Value::text(label)),
+                ("key.labelled", Value::Bool(!label.is_empty() && k.h >= 9.0)),
+            ]);
+            theme.record(
+                "editor.key",
+                (gutter, k.h),
+                &fields,
+                &mut host,
+                Affine::translate((0.0, ruler_h + k.y)),
+            );
+        }
+        for g in &groups {
+            theme.record(
+                "editor.keygroup",
+                (gutter, g.h),
+                &crate::skin::values(&[("group.label", Value::text(&g.label))]),
+                &mut host,
+                Affine::translate((0.0, ruler_h + g.y)),
+            );
+        }
+    }
+    scene.pop_layer();
+    // The ruler across the top, its ticks and markers past the gutter.
+    {
+        let mut host = crate::skin::canvas::Host {
+            scene: &mut scene,
+            font,
+        };
+        theme.record(
+            "editor.ruler",
+            (w, ruler_h),
+            &crate::skin::values(&[]),
+            &mut host,
+            Affine::IDENTITY,
+        );
+    }
+    scene.push_clip_layer(
+        Affine::IDENTITY,
+        &vello::kurbo::Rect::new(gutter, 0.0, w, ruler_h),
+    );
+    {
+        let mut host = crate::skin::canvas::Host {
+            scene: &mut scene,
+            font,
+        };
+        for t in canvas::ruler(ed) {
+            let label = t.label.as_deref().unwrap_or("");
+            let fields = crate::skin::values(&[
+                ("tick.bar", Value::Bool(t.bar)),
+                ("tick.label", Value::text(label)),
+                ("tick.labelled", Value::Bool(!label.is_empty())),
+            ]);
+            theme.record(
+                "editor.tick",
+                (60.0, ruler_h),
+                &fields,
+                &mut host,
+                Affine::translate((gutter + t.x, 0.0)),
+            );
+        }
+        for m in canvas::markers(ed) {
+            theme.record(
+                "editor.marker",
+                (160.0, ruler_h),
+                &crate::skin::values(&[("marker.label", Value::text(&m.label))]),
+                &mut host,
+                Affine::translate((gutter + m.x, 0.0)),
+            );
+        }
+    }
+    scene.pop_layer();
     Some(scene)
 }
 
@@ -1596,10 +1744,15 @@ mod theme_tests {
         let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
         crate::skin::set(None);
         let plain = look_of(&palette);
-        let tokens = include_str!("../themes/console/tokens.frame").replace(
-            "</Variables>",
-            r##"<Var name="editor.bg" value="#ff0000" /><Var name="editor.key_white" value="#00ff00" /></Variables>"##,
-        );
+        let tokens = include_str!("../themes/console/tokens.frame")
+            .replace(
+                r##"<Var name="editor.key_white" value="#26262c" />"##,
+                r##"<Var name="editor.key_white" value="#00ff00" />"##,
+            )
+            .replace(
+                "</Variables>",
+                r##"<Var name="editor.bg" value="#ff0000" /></Variables>"##,
+            );
         let theme =
             theme_runtime::Theme::from_sources(&[("tokens", &tokens)], crate::skin::schema(), None)
                 .expect("the tokens load");
@@ -1618,7 +1771,7 @@ mod theme_tests {
     /// The console theme draws the editor's bars; with no theme, or a
     /// theme without them, the editor's painter does.
     #[test]
-    fn the_console_theme_draws_the_bars() {
+    fn the_console_theme_draws_the_bars_keyboard_and_ruler() {
         let font = crate::text::Font::embedded().expect("the embedded face");
         let mut labels = Labeller::new();
         let ed = demo::editor(
@@ -1640,7 +1793,16 @@ mod theme_tests {
         .expect("the console's editor loads");
         crate::skin::set(Some(std::sync::Arc::new(theme)));
         let drawn = themed_bar(&buttons, None, (1200.0, 30.0), Some(&font));
+        let chrome = themed_roll_chrome(&ed, 1200.0, 500.0, Some(&font));
+        let lets_it = themes_roll_chrome();
         crate::skin::set(None);
         assert!(drawn.is_some_and(|s| !s.commands.is_empty()));
+        assert!(
+            lets_it,
+            "the roll leaves the keyboard and ruler to the theme"
+        );
+        assert!(chrome.is_some_and(|s| !s.commands.is_empty()));
+        // Negative control: no theme, and the roll draws its own.
+        assert!(!themes_roll_chrome());
     }
 }

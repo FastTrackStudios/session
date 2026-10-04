@@ -269,6 +269,7 @@ pub fn Canvas(
             // Prototype (#161): read deep in the drawing and nothing
             // between here and there cares, so it arrives by context.
             flow: try_consume_context::<BendFlow>().unwrap_or_default(),
+            host_chrome: false,
         },
         &mut labels.borrow_mut(),
         &paint::Look::default(),

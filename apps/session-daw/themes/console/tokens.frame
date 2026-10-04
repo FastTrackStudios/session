@@ -35,6 +35,12 @@
     <Var name="editor.control_active" value="#38bdf88c" />
     <Var name="editor.text" value="$text" />
     <Var name="editor.text_bright" value="#fafafa" />
+    <Var name="editor.text_dim" value="$text.dim" />
+    <Var name="editor.key_white" value="#26262c" />
+    <Var name="editor.key_black" value="#111114" />
+    <Var name="editor.key_label" value="$text.faint" />
+    <Var name="editor.grid_sub" value="#2c2c33" />
+    <Var name="editor.gold" value="#eab308" />
     <Var name="rail.rule" value="$border" />
     <Var name="rail.button" value="$surface" />
     <Var name="rack.well" value="#0a0a0c" />
