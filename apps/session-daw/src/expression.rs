@@ -872,7 +872,7 @@ pub fn load_take(
 #[must_use]
 pub fn look_of(palette: &crate::arrangement::Palette) -> Look {
     let canonical = Look::default();
-    Look {
+    let mut look = Look {
         bg: palette.surface,
         row_a: palette.row_a,
         row_b: palette.row_b,
@@ -898,6 +898,66 @@ pub fn look_of(palette: &crate::arrangement::Palette) -> Look {
         control_hover: palette.tcp_field,
         band_tint: 0.35,
         ..canonical
+    };
+    themed(&mut look);
+    look
+}
+
+/// The theme's own word on any of the editor's colours: `editor.<field>`
+/// in the loaded frame theme's tokens (`editor.bg`, `editor.key-white`,
+/// `editor.selected`…) over what the palette mapping chose. A theme
+/// that says nothing leaves the editor reading as the arrangement.
+fn themed(look: &mut Look) {
+    let Some(theme) = crate::skin::loaded() else {
+        return;
+    };
+    let colour = |name: &str| {
+        theme
+            .token(&format!("editor.{name}"))
+            .and_then(theme_runtime::Value::color)
+            .map(|c| {
+                let [r, g, b, a] = c.to_rgba8();
+                vello::peniko::Color::from_rgba8(r, g, b, a)
+            })
+    };
+    let fields: [(&str, &mut vello::peniko::Color); 32] = [
+        ("bg", &mut look.bg),
+        ("row-a", &mut look.row_a),
+        ("row-b", &mut look.row_b),
+        ("grid-beat", &mut look.grid_beat),
+        ("grid-sub", &mut look.grid_sub),
+        ("panel", &mut look.panel),
+        ("panel-border", &mut look.panel_border),
+        ("border-strong", &mut look.border_strong),
+        ("surface-inset", &mut look.surface_inset),
+        ("surface-bar", &mut look.surface_bar),
+        ("gutter-bg", &mut look.gutter_bg),
+        ("key-white", &mut look.key_white),
+        ("key-black", &mut look.key_black),
+        ("key-label", &mut look.key_label),
+        ("text", &mut look.text),
+        ("text-dim", &mut look.text_dim),
+        ("text-bright", &mut look.text_bright),
+        ("text-faint", &mut look.text_faint),
+        ("accent", &mut look.accent),
+        ("selected", &mut look.selected),
+        ("playhead", &mut look.playhead),
+        ("razor", &mut look.razor),
+        ("gold", &mut look.gold),
+        ("zone", &mut look.zone),
+        ("reference", &mut look.reference),
+        ("handle", &mut look.handle),
+        ("control", &mut look.control),
+        ("control-active", &mut look.control_active),
+        ("control-hover", &mut look.control_hover),
+        ("control-selected", &mut look.control_selected),
+        ("octave-line", &mut look.octave_line),
+        ("peaks", &mut look.peaks),
+    ];
+    for (name, field) in fields {
+        if let Some(c) = colour(name) {
+            *field = c;
+        }
     }
 }
 
@@ -1458,5 +1518,36 @@ mod tests {
         assert_eq!(v.editor.doc.notes.len(), 2);
         assert!(v.editor.doc.notes.iter().all(|n| n.row == 0));
         assert_eq!(v.item.as_deref(), Some("item"));
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+
+    /// A theme's `editor.*` tokens recolour the editor; a token it does
+    /// not set leaves the palette's choice.
+    #[test]
+    fn the_theme_recolours_the_editor() {
+        let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
+        crate::skin::set(None);
+        let plain = look_of(&palette);
+        let tokens = include_str!("../themes/console/tokens.frame").replace(
+            "</Variables>",
+            r##"<Var name="editor.bg" value="#ff0000" /><Var name="editor.key-white" value="#00ff00" /></Variables>"##,
+        );
+        let theme =
+            theme_runtime::Theme::from_sources(&[("tokens", &tokens)], crate::skin::schema(), None)
+                .expect("the tokens load");
+        crate::skin::set(Some(std::sync::Arc::new(theme)));
+        let themed = look_of(&palette);
+        crate::skin::set(None);
+        assert_eq!(themed.bg, vello::peniko::Color::from_rgba8(255, 0, 0, 255));
+        assert_eq!(
+            themed.key_white,
+            vello::peniko::Color::from_rgba8(0, 255, 0, 255)
+        );
+        // Negative control: a field the theme says nothing of.
+        assert_eq!(themed.row_a, plain.row_a);
     }
 }

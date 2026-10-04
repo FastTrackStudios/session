@@ -63,12 +63,7 @@ pub fn EditorPanel() -> Element {
     let target = target(&session.project.0);
     #[cfg(feature = "native")]
     {
-        let palette = crate::skin::palette(&crate::arrangement::Palette::from_theme(
-            &daw_ui::theming::Theme::dark(),
-        ));
-        let widget = use_hook(|| {
-            dioxus_native_dom::CustomWidgetAttr::new(EditorView::new(target, &palette))
-        });
+        let widget = use_hook(|| dioxus_native_dom::CustomWidgetAttr::new(EditorView::new(target)));
         rsx! {
             object {
                 style: "position:absolute; left:0; top:0; width:100%; height:100%; background:#0b0c0e;",
@@ -89,6 +84,9 @@ pub struct EditorView {
     target: Option<Target>,
     view: Option<Expression>,
     look: expression_editor_paint::paint::Look,
+    /// The theme the look was taken from: a new one (a saved edit to the
+    /// theme file) and the look is taken again.
+    skin: u64,
     font: Option<crate::text::Font>,
     /// Loaded yet: the take is read on the first paint, when the box's
     /// size is known.
@@ -99,11 +97,12 @@ pub struct EditorView {
 #[cfg(feature = "native")]
 impl EditorView {
     #[must_use]
-    pub fn new(target: Option<Target>, palette: &crate::arrangement::Palette) -> Self {
+    pub fn new(target: Option<Target>) -> Self {
         Self {
             target,
             view: None,
-            look: crate::expression::look_of(palette),
+            look: look(),
+            skin: crate::skin::version(),
             font: crate::text::Font::embedded().ok(),
             tried: false,
             dirty: true,
@@ -183,6 +182,13 @@ impl EditorView {
         if !self.tried {
             self.load(size);
         }
+        if self.skin != crate::skin::version() {
+            self.skin = crate::skin::version();
+            self.look = look();
+            if let Some(view) = self.view.as_mut() {
+                view.set_look(self.look);
+            }
+        }
         self.dirty = false;
         let mut scene = Scene::new();
         let mut inner = Scene::new();
@@ -210,6 +216,15 @@ impl EditorView {
     }
 }
 
+/// The editor's colours from the loaded theme: the window's palette, and
+/// the theme's `editor.*` tokens over it.
+#[cfg(feature = "native")]
+fn look() -> expression_editor_paint::paint::Look {
+    crate::expression::look_of(&crate::skin::palette(
+        &crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark()),
+    ))
+}
+
 /// A key as the editor names it: a character's text, else the W3C name
 /// (`"Delete"`, `"ArrowLeft"`).
 #[cfg(feature = "native")]
@@ -227,7 +242,9 @@ impl blitz_dom::node::Widget for EditorView {
     }
 
     fn needs_redraw(&self) -> bool {
-        self.dirty || self.view.as_ref().is_some_and(Expression::dragging)
+        self.dirty
+            || self.skin != crate::skin::version()
+            || self.view.as_ref().is_some_and(Expression::dragging)
     }
 
     fn paint(
