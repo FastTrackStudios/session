@@ -590,9 +590,10 @@ pub fn of(which: Which, tone: &Tone) -> Option<Face> {
             .flatten();
         // Alone, a rack face is laid out for the column; a `-tall` was
         // designed for it.
-        frame.responsive = which == Which::Comp
-            && under.is_none()
-            && !crate::plugin_faces::is_shaped(&frame.design);
+        frame.responsive = frame.responsive
+            || (which == Which::Comp
+                && under.is_none()
+                && !crate::plugin_faces::is_shaped(&frame.design));
         return Some(Face {
             name: frame.design.clone(),
             picture: Picture::Frame(frame),

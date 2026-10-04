@@ -305,6 +305,12 @@ fn eq_texts(bands: &[eq_ui::eq_graph_model::EqBand]) -> Vec<(String, String)> {
 /// A band added on the graph (`used` on) is made at its slot; one
 /// removed is marked unused.
 fn eq_edit(which: Which, tone: &mut Tone, param: &str, value: f64) -> bool {
+    tone.bands(which)
+        .is_some_and(|bands| bands_edit(bands, param, value))
+}
+
+/// An edit an EQ graph made on `bands`: `param` is `b{n}_field`.
+fn bands_edit(bands: &mut Vec<eq_ui::eq_graph_model::EqBand>, param: &str, value: f64) -> bool {
     let Some((slot, field)) = param
         .strip_prefix('b')
         .and_then(|rest| rest.split_once('_'))
@@ -315,9 +321,6 @@ fn eq_edit(which: Which, tone: &mut Tone, param: &str, value: f64) -> bool {
     if slot >= EQ_SLOTS {
         return false;
     }
-    let Some(bands) = tone.bands(which) else {
-        return false;
-    };
     let at = if let Some(at) = bands.iter().position(|b| b.index == slot) {
         at
     } else {
@@ -366,6 +369,41 @@ fn eq_edit(which: Which, tone: &mut Tone, param: &str, value: f64) -> bool {
         _ => return false,
     }
     true
+}
+
+/// The sidechain EQ's face: frame's EQ graph in yellow (`sc/b{n}_*`),
+/// its SC key (`sc/sc_view`) the way back, its title `sc/title`.
+const SC_FACE: &str = "comp/00-sc-eq";
+
+/// The sidechain EQ face for `of`'s compressor, filling the column.
+fn sc_face(
+    tone: &Tone,
+    of: crate::tone::Sidechain,
+) -> Option<(crate::faces::FrameFace, (f64, f64))> {
+    let size = size_of(SC_FACE)?;
+    let bands = tone.sidechain.get(of as usize)?;
+    let mut values = eq_values(bands);
+    for (addr, _) in &mut values {
+        *addr = addr.replacen("eq/", "sc/", 1);
+    }
+    values.push(("sc/sc_view".to_owned(), 1.0));
+    let comp = match of {
+        crate::tone::Sidechain::After => tone.comp_after.map_or(tone.comp_face, |(_, f)| f),
+        crate::tone::Sidechain::Main => tone.comp_face,
+        crate::tone::Sidechain::Rescue => CompFace::Fet,
+    };
+    Some((
+        crate::faces::FrameFace {
+            responsive: true,
+            design: SC_FACE.to_owned(),
+            values,
+            texts: vec![(
+                "sc/title".to_owned(),
+                format!("{} · Sidechain", comp.title()),
+            )],
+        },
+        size,
+    ))
 }
 
 /// The emphasis EQ's shapes, by the face's `emph/b{n}_shape` index.
@@ -497,6 +535,10 @@ fn comp_edit(ns: &str, param: &str, c: &mut crate::tone::Comp, value: f64) -> bo
 /// and its size.
 #[must_use]
 pub fn face_after(tone: &Tone) -> Option<(crate::faces::FrameFace, (f64, f64))> {
+    // The pair's sidechain EQ fills both faces' column.
+    if tone.sc_view.is_some_and(|of| of.panel() == Which::Comp) && size_of(SC_FACE).is_some() {
+        return None;
+    }
     let (comp, face) = tone.comp_after?;
     let design = face.design();
     let shaped = shaped(design, "-lane");
@@ -517,6 +559,12 @@ pub fn edit_after(tone: &mut Tone, addr: &str, value: f64) -> bool {
     let Some((ns, param)) = addr.split_once('/') else {
         return false;
     };
+    if param == "sc_view" {
+        if value >= 0.5 {
+            tone.sc_view = Some(crate::tone::Sidechain::After);
+        }
+        return true;
+    }
     tone.comp_after
         .as_mut()
         .is_some_and(|(comp, _)| comp_edit(ns, param, comp, value))
@@ -611,6 +659,14 @@ fn values(design: &str, which: Which, tone: &Tone) -> Vec<(String, f64)> {
 /// The plugin face `which` wears over `tone`, and its size.
 #[must_use]
 pub fn face(which: Which, tone: &Tone) -> Option<(crate::faces::FrameFace, (f64, f64))> {
+    // A compressor whose sidechain EQ is open is that EQ.
+    if let Some(sc) = tone
+        .sc_view
+        .filter(|of| of.panel() == which)
+        .and_then(|of| sc_face(tone, of))
+    {
+        return Some(sc);
+    }
     let base = design(which, tone)?;
     // A compressor wears the shape designed for where it stands: one of
     // a stacked pair (`-lane`), or alone filling the column (`-tall`); a
@@ -654,12 +710,40 @@ pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
     let v = crate::num::narrow(value);
     match (ns, param) {
         ("eq", p) => return eq_edit(which, tone, p, value),
+        // The sidechain EQ: its SC key closes it, its bands are its
+        // compressor's.
+        ("sc", p) => {
+            let Some(of) = tone.sc_view else {
+                return false;
+            };
+            if p == "sc_view" {
+                if value < 0.5 {
+                    tone.sc_view = None;
+                }
+                return true;
+            }
+            return tone
+                .sidechain
+                .get_mut(of as usize)
+                .is_some_and(|bands| bands_edit(bands, p, value));
+        }
         ("fet" | "opto" | "vcacomp", _) => {
             // The second compressor's face speaks its own controls: an
             // edit in its namespace (and not the first's) is its.
             let after = tone.comp_after.map(|(_, f)| ns_of(f.design()));
             if which == Which::Comp && after == Some(ns) && ns_of(tone.comp_face.design()) != ns {
                 return edit_after(tone, addr, value);
+            }
+            // Its SC key opens its sidechain EQ in the column.
+            if param == "sc_view" {
+                if value >= 0.5 {
+                    tone.sc_view = Some(if which == Which::RescueComp {
+                        crate::tone::Sidechain::Rescue
+                    } else {
+                        crate::tone::Sidechain::Main
+                    });
+                }
+                return true;
             }
             return comp_edit(ns, param, comp_mut(tone, which), value);
         }
@@ -779,6 +863,34 @@ mod eq_face_tests {
         assert!(added.used && (added.frequency - 8000.0).abs() < 1e-3);
         // Negative control: a slot past the graph's is no band's.
         assert!(!edit(Which::Eq, &mut tone, "eq/b25_used", 1.0));
+    }
+
+    /// A compressor's SC key opens its sidechain EQ; the pair's second
+    /// opens its own; the EQ's bands are that compressor's, and its SC
+    /// key closes it.
+    #[test]
+    fn the_sc_key_opens_the_compressors_sidechain_eq() {
+        use crate::tone::Sidechain;
+        let mut tone = crate::tone::placeholder(0);
+        tone.comp_face = CompFace::Fet;
+        tone.comp_after = Some((tone.comp, CompFace::Opto));
+        assert!(edit(Which::Comp, &mut tone, "opto/sc_view", 1.0));
+        assert_eq!(tone.sc_view, Some(Sidechain::After));
+        assert!(edit(Which::Comp, &mut tone, "sc/b1_used", 1.0));
+        assert!(edit(Which::Comp, &mut tone, "sc/b1_freq", 120.0));
+        let band = tone.sidechain[Sidechain::After as usize]
+            .iter()
+            .find(|b| b.index == 0)
+            .expect("made on the second's");
+        assert!((band.frequency - 120.0).abs() < 1e-3);
+        assert!(tone.sidechain[Sidechain::Main as usize].is_empty());
+        assert!(edit(Which::Comp, &mut tone, "sc/sc_view", 0.0));
+        assert_eq!(tone.sc_view, None);
+        assert!(edit(Which::Comp, &mut tone, "fet/sc_view", 1.0));
+        assert_eq!(tone.sc_view, Some(Sidechain::Main));
+        // Negative control: closed, the sidechain EQ takes no edits.
+        tone.sc_view = None;
+        assert!(!edit(Which::Comp, &mut tone, "sc/b1_gain", 3.0));
     }
 
     /// A saturator's face shows its emphasis view and bands, and what it

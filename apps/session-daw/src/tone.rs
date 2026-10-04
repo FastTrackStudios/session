@@ -132,6 +132,12 @@ pub struct Tone {
     /// 1176 into an LA-2A. Drawn under the first, the two sharing the
     /// height.
     pub comp_after: Option<(Comp, crate::plugin_faces::CompFace)>,
+    /// Each compressor's sidechain EQ: what it listens to, never what
+    /// comes out — so any shape, cuts above all. By [`Sidechain`].
+    pub sidechain: [Vec<EqBand>; 3],
+    /// Whose sidechain EQ is open, filling its compressor's column (both
+    /// faces of a stacked pair) in place of the faces.
+    pub sc_view: Option<Sidechain>,
     /// A drum: no modulation unit in its chain.
     pub drum: bool,
     /// What this track is FOR, which decides its chain — see [`Role`].
@@ -5968,6 +5974,26 @@ const fn f64_to_f32(value: f64) -> f32 {
 /// full of racks looks like a mixer full of different decisions rather
 /// than one curve repeated twenty times.
 #[must_use]
+/// Which compressor a sidechain EQ is for: the Rescue one, the Tone
+/// one, or the second of a stacked pair after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sidechain {
+    Rescue = 0,
+    Main = 1,
+    After = 2,
+}
+
+impl Sidechain {
+    /// The panel this compressor stands in.
+    #[must_use]
+    pub const fn panel(self) -> Which {
+        match self {
+            Self::Rescue => Which::RescueComp,
+            Self::Main | Self::After => Which::Comp,
+        }
+    }
+}
+
 /// The emphasis bands' starting spread — the plugin's: idle bells at
 /// 80 Hz … 10 kHz.
 fn emphasis_spread() -> [saturate_dsp::emphasis::EmphBand; saturate_dsp::emphasis::BANDS] {
@@ -6030,6 +6056,8 @@ pub fn placeholder(index: usize) -> Tone {
         // Every engine somewhere on the desk, so each picture is seen.
         comp_face: crate::plugin_faces::CompFace::Vca,
         comp_after: None,
+        sidechain: Default::default(),
+        sc_view: None,
         drum: false,
         modulation: Wobble {
             engine: modulation_ui::viz::Engine::ALL
