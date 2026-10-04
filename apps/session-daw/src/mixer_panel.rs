@@ -1229,6 +1229,11 @@ impl MixerWidget {
     /// Take up a Mix phase chosen elsewhere (the bottom bar's switcher),
     /// as a press on its rail would.
     fn follow_phase(&mut self) {
+        // Only a mixer in the window's shell shares the window's phase:
+        // one standing alone (a test, a bench) keeps its own.
+        if self.links.switch.is_none() {
+            return;
+        }
         if self.phase_seen == u64::MAX {
             session::mode_phases::choose(session::modes::Mode::Mix, self.rails.phase.slug());
             self.phase_seen = session::mode_phases::version();
@@ -1270,8 +1275,10 @@ impl MixerWidget {
             Action::Phase(phase) => {
                 // The window's one choice of phase: the bottom bar's
                 // switcher shows it.
-                session::mode_phases::choose(session::modes::Mode::Mix, phase.slug());
-                self.phase_seen = session::mode_phases::version();
+                if self.links.switch.is_some() {
+                    session::mode_phases::choose(session::modes::Mode::Mix, phase.slug());
+                    self.phase_seen = session::mode_phases::version();
+                }
                 self.rails.phase = phase;
                 self.folds.focus(phase);
                 for analyser in self.spectra.values_mut() {
