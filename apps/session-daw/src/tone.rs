@@ -117,6 +117,9 @@ pub struct Tone {
     pub pitch_mix: f32,
     /// The modulation: which of the six engines, how fast and how deep.
     pub modulation: Wobble,
+    /// Which compressor face the Tone compressor wears (an 1176, an
+    /// LA-2A…) — see `plugin_faces`.
+    pub comp_face: crate::plugin_faces::CompFace,
     /// What this track is FOR, which decides its chain — see [`Role`].
     pub role: Role,
     /// The presets this track keeps, brighter to darker, and which of
@@ -6000,6 +6003,7 @@ pub fn placeholder(index: usize) -> Tone {
         // is the normal case, and a desk where every graph is drawn to
         // the same range hides the fact that the range is a choice.
         // Every engine somewhere on the desk, so each picture is seen.
+        comp_face: crate::plugin_faces::CompFace::Vca,
         modulation: Wobble {
             engine: modulation_ui::viz::Engine::ALL
                 .get(index % modulation_ui::viz::Engine::ALL.len())
@@ -6055,6 +6059,7 @@ pub fn placeholder(index: usize) -> Tone {
 pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String]) -> Tone {
     let mut tone = placeholder(index);
     tone.role = role;
+    tone.comp_face = crate::plugin_faces::CompFace::for_track(name, ancestors);
     if role == Role::Fund {
         return fundamental(tone, name, ancestors);
     }

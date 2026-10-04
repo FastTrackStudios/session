@@ -60,6 +60,7 @@ pub mod open_core;
 pub mod options;
 #[cfg(feature = "native")]
 pub mod organize;
+pub mod plugin_faces;
 pub mod rig;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod song_modes;

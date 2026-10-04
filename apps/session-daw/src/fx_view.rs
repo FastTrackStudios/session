@@ -33,6 +33,15 @@ use crate::tone::{Folded, Grip, Panel, Shared, Which};
 /// it, a frequency picture too) twice what a compressor needs.
 const DEVICE_W: f64 = 300.0;
 
+/// How wide `which` is over `tone` at a lane's height: a frame face as
+/// wide as its design is there, anything else a device.
+fn unit_w(which: Which, tone: &crate::tone::Tone, body_h: f64) -> f64 {
+    crate::faces::aspect(which, tone).map_or_else(
+        || device_w(which),
+        |aspect| (body_h * aspect).clamp(DEVICE_W * 0.5, DEVICE_W * 4.0),
+    )
+}
+
 /// How wide `which` is as a device.
 fn device_w(which: Which) -> f64 {
     match which {
@@ -809,14 +818,26 @@ impl DeviceRow {
     }
 
     /// How wide `phase`'s group is, with `units` in it.
-    fn group_w(&self, guid: &str, phase: MixPhase, units: &[Which]) -> f64 {
+    fn group_w(
+        &self,
+        guid: &str,
+        tone: &crate::tone::Tone,
+        phase: MixPhase,
+        units: &[Which],
+        body_h: f64,
+    ) -> f64 {
         if units.is_empty() {
             BLANK_W
         } else if self.shut(guid, Group::Phase(phase)) {
             EDGE_W + FOLDED_W
         } else {
             // The macros stay, open or folded: the devices follow them.
-            EDGE_W + FOLDED_W + units.iter().map(|w| GAP + device_w(*w)).sum::<f64>()
+            EDGE_W
+                + FOLDED_W
+                + units
+                    .iter()
+                    .map(|w| GAP + unit_w(*w, tone, body_h))
+                    .sum::<f64>()
         }
     }
 
@@ -1024,7 +1045,7 @@ impl DeviceRow {
                 .collect(),
         ));
         for (phase, units) in groups {
-            let width = self.group_w(&track.guid, phase, &units);
+            let width = self.group_w(&track.guid, tone, phase, &units, lane.body_h);
             let x0 = x;
             x += width + GAP;
             if !lane.sees(x0, width) {
@@ -1082,7 +1103,7 @@ impl DeviceRow {
             }
             at += FOLDED_W + GAP;
             for which in units {
-                let width = device_w(which);
+                let width = unit_w(which, tone, lane.body_h);
                 let here = at;
                 at += width + GAP;
                 if lane.sees(here, width) {
@@ -1511,7 +1532,7 @@ impl DeviceRow {
             store.get(&track.guid).map_or(0.0, |tone| {
                 grouped(&fx_chain(tone))
                     .iter()
-                    .map(|(p, u)| self.group_w(&track.guid, *p, u) + GAP)
+                    .map(|(p, u)| self.group_w(&track.guid, tone, *p, u, lane.body_h) + GAP)
                     .sum()
             })
         };

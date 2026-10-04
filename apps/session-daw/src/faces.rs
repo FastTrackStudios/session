@@ -208,6 +208,9 @@ fn time_face(which: Which, tone: &Tone, entry: &crate::rig::FaceEntry, back: boo
 /// one: its front over its back, stacked.
 #[must_use]
 pub fn aspect(which: Which, tone: &Tone) -> Option<f64> {
+    if let Some((_, (w, h))) = crate::plugin_faces::face(which, tone) {
+        return Some(w / h.max(1.0));
+    }
     time_entry(which, tone).map(|entry| {
         let (w, h) = entry.size;
         let stacked = if entry.back.is_some() { 2.0 } else { 1.0 };
@@ -218,6 +221,9 @@ pub fn aspect(which: Which, tone: &Tone) -> Option<f64> {
 /// Apply an edit a frame face made on `which` to `tone`; whether it
 /// was one of `tone`'s.
 pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
+    if crate::plugin_faces::edit(which, tone, addr, value) {
+        return true;
+    }
     let Some((_, param)) = addr.split_once('/') else {
         return false;
     };
@@ -560,6 +566,14 @@ fn taps(tone: &Tone) -> Vec<delay_ui::viz::Tap> {
 /// `which`'s face over `tone`, if it has one.
 #[must_use]
 pub fn of(which: Which, tone: &Tone) -> Option<Face> {
+    if let Some((frame, _)) = crate::plugin_faces::face(which, tone) {
+        return Some(Face {
+            name: frame.design.clone(),
+            picture: Picture::Frame(frame),
+            knobs: &[],
+            under: None,
+        });
+    }
     match which {
         // A machine with a face of its own in frame draws that.
         // A machine frame has a face for draws that, over its back.
