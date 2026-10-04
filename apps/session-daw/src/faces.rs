@@ -59,54 +59,209 @@ fn seconds_of(knob: f64) -> f32 {
     crate::num::narrow(0.3 * (20.0_f64 / 0.3).powf(knob.clamp(0.0, 1.0)))
 }
 
-/// The Cloud reverb's face (`rig-faces/84-verb-cloud`), from `tone`.
-fn cloud_face(tone: &Tone) -> FrameFace {
-    let room = &tone.reverb;
-    let preset = tone
-        .preset
+/// A delay's time as the Time knob: log ms over 20–2500.
+fn delay_knob(ms: f32) -> f64 {
+    (f64::from(ms.max(20.0)) / 20.0).log(125.0)
+}
+
+/// The preset `tone` last loaded, or `fallback`.
+fn preset_name(tone: &Tone, fallback: &str) -> String {
+    tone.preset
         .and_then(|at| tone.presets.get(at))
-        .map_or_else(|| "Cloud".to_owned(), |p| p.name.clone());
-    FrameFace {
-        design: "rig-faces/84-verb-cloud".to_owned(),
-        values: vec![
-            ("verb/time_knob".to_owned(), time_knob(room.decay)),
-            ("verb/predelay".to_owned(), f64::from(room.predelay)),
-            ("verb/size".to_owned(), f64::from(room.size)),
-            ("verb/damping".to_owned(), f64::from(room.damping)),
-            (
-                "verb/level".to_owned(),
-                20.0 * f64::from(room.mix.max(0.001)).log10(),
-            ),
-            ("verb/on".to_owned(), 1.0),
-        ],
-        texts: vec![
-            ("verb/preset".to_owned(), preset),
-            ("verb/time_text".to_owned(), format!("{:.1} s", room.decay)),
-        ],
+        .map_or_else(|| fallback.to_owned(), |p| p.name.clone())
+}
+
+/// The frame face frame designed for `which`'s machine — a reverb's
+/// algorithm, a delay's style — and its back.
+fn time_entry(which: Which, tone: &Tone) -> Option<&'static crate::rig::FaceEntry> {
+    let faces = crate::rig::faces();
+    match which {
+        Which::Reverb => faces.reverb(tone.reverb.algorithm.name()),
+        Which::Delay => faces.delay(
+            crate::rig::DELAY_ALGOS
+                .get(tone.delay.style.to_index())
+                .copied()
+                .unwrap_or(""),
+        ),
+        _ => None,
     }
 }
 
-/// Width over height of `which`'s frame face over `tone`, if it has one.
+/// What `entry`'s face (its back, with `back`) shows for `which` over
+/// `tone`: values by address in their own units, and its text.
+fn time_face(which: Which, tone: &Tone, entry: &crate::rig::FaceEntry, back: bool) -> FrameFace {
+    let ns = &entry.ns;
+    let at = |param: &str| format!("{ns}/{param}");
+    let beat = crate::beats::beat(crate::beats::BPM);
+    let (values, texts) = if which == Which::Reverb {
+        let room = &tone.reverb;
+        let free = || {
+            (
+                time_knob(room.decay),
+                0.0,
+                crate::beats::seconds_text(f64::from(room.decay)),
+            )
+        };
+        let (knob, sync, text) = room.sync.map_or_else(free, |div| {
+            (
+                crate::num::coord(div.saturating_sub(1)) / 6.0,
+                1.0,
+                format!(
+                    "{} · {}",
+                    crate::beats::REVERB.get(div).map_or("", |d| d.0),
+                    crate::beats::seconds_text(f64::from(room.decay))
+                ),
+            )
+        });
+        (
+            vec![
+                (at("time_knob"), knob),
+                (at("sync"), sync),
+                (at("predelay"), f64::from(room.predelay)),
+                (at("size"), f64::from(room.size)),
+                (at("damping"), f64::from(room.damping)),
+                (at("level"), 20.0 * f64::from(room.mix.max(0.001)).log10()),
+                (at("on"), 1.0),
+            ],
+            vec![
+                (at("preset"), preset_name(tone, room.algorithm.name())),
+                (at("time_text"), text),
+            ],
+        )
+    } else {
+        let echo = &tone.delay;
+        let (knob, sync, text) = match echo
+            .sync
+            .and_then(|k| crate::beats::DELAY.get(k).map(|d| (k, d)))
+        {
+            Some((k, (label, _, beats))) => (
+                crate::num::coord(k) / 7.0,
+                1.0,
+                format!("{label} · {:.0} ms", beats * beat * 1000.0),
+            ),
+            None => (delay_knob(echo.time), 0.0, format!("{:.0} ms", echo.time)),
+        };
+        (
+            vec![
+                (at("time_knob"), knob),
+                (at("sync"), sync),
+                (at("time"), f64::from(echo.time)),
+                (at("feedback"), f64::from(echo.feedback)),
+                (at("level"), 20.0 * f64::from(echo.mix.max(0.001)).log10()),
+                (at("on"), 1.0),
+            ],
+            vec![
+                (at("preset"), preset_name(tone, "Delay")),
+                (at("time_text"), text),
+            ],
+        )
+    };
+    FrameFace {
+        design: crate::rig::design_of(entry, false, back),
+        values,
+        texts,
+    }
+}
+
+/// Width over height of `which`'s frame face over `tone`, if it has
+/// one: its front over its back, stacked.
 #[must_use]
 pub fn aspect(which: Which, tone: &Tone) -> Option<f64> {
-    (which == Which::Reverb && tone.reverb.algorithm == reverb_dsp::algorithm::AlgorithmType::Cloud)
-        .then_some(960.0 / 164.0)
+    time_entry(which, tone).map(|entry| {
+        let (w, h) = entry.size;
+        let stacked = if entry.back.is_some() { 2.0 } else { 1.0 };
+        w / (h * stacked).max(1.0)
+    })
 }
 
 /// Apply an edit a frame face made on `which` to `tone`; whether it
 /// was one of `tone`'s.
 pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
-    if which != Which::Reverb {
+    let Some((_, param)) = addr.split_once('/') else {
         return false;
-    }
-    let room = &mut tone.reverb;
+    };
     let v = crate::num::narrow(value);
-    match addr {
-        "verb/time_knob" => room.decay = seconds_of(value),
-        "verb/predelay" => room.predelay = v.clamp(0.0, 200.0),
-        "verb/size" => room.size = v.clamp(0.0, 1.0),
-        "verb/damping" => room.damping = v.clamp(0.0, 1.0),
-        "verb/level" => room.mix = crate::num::narrow(10.0_f64.powf(value / 20.0)).clamp(0.0, 1.0),
+    let gain = || crate::num::narrow(10.0_f64.powf(value / 20.0)).clamp(0.0, 1.0);
+    let beat = crate::beats::beat(crate::beats::BPM);
+    let pressed = value >= 0.5;
+    match (which, param) {
+        // The nameplate's arrows: the slot's presets, round.
+        (_, "preset_prev" | "preset_next") => {
+            if pressed && !tone.presets.is_empty() {
+                let count = tone.presets.len();
+                let at = tone.preset.unwrap_or(0);
+                let step = if param == "preset_next" {
+                    1
+                } else {
+                    count.saturating_sub(1)
+                };
+                let next = at.saturating_add(step).checked_rem(count).unwrap_or(0);
+                tone.load_preset(next);
+            }
+        }
+        // The algorithm button: the next machine.
+        (Which::Reverb, "algo_menu") => {
+            if pressed {
+                let all = reverb_dsp::algorithm::AlgorithmType::ALL;
+                let at = all
+                    .iter()
+                    .position(|a| *a == tone.reverb.algorithm)
+                    .unwrap_or(0);
+                if let Some(next) =
+                    all.get(at.saturating_add(1).checked_rem(all.len()).unwrap_or(0))
+                {
+                    tone.reverb.algorithm = *next;
+                }
+            }
+        }
+        (Which::Delay, "algo_menu") => {
+            if pressed {
+                tone.delay.cycle_style();
+            }
+        }
+        // Time ↔ Beat: locked to the length nearest what it plays now;
+        // free again at what it was playing.
+        (Which::Reverb, "sync") => {
+            tone.reverb.sync = pressed.then(|| {
+                let div =
+                    crate::beats::nearest_reverb(f64::from(tone.reverb.decay), crate::beats::BPM);
+                tone.reverb.decay =
+                    crate::num::narrow(crate::beats::REVERB.get(div).map_or(1.0, |d| d.1) * beat);
+                div
+            });
+        }
+        (Which::Delay, "sync") => {
+            tone.delay.sync = pressed.then(|| {
+                let k = crate::beats::nearest_delay(f64::from(tone.delay.time), crate::beats::BPM);
+                tone.delay.time = crate::num::narrow(
+                    crate::beats::DELAY.get(k).map_or(1.0, |d| d.2) * beat * 1000.0,
+                );
+                k
+            });
+        }
+        (Which::Reverb, "time_knob") if tone.reverb.sync.is_some() => {
+            let div = crate::num::index((value.clamp(0.0, 1.0) * 6.0).round()).saturating_add(1);
+            tone.reverb.sync = Some(div);
+            tone.reverb.decay =
+                crate::num::narrow(crate::beats::REVERB.get(div).map_or(1.0, |d| d.1) * beat);
+        }
+        (Which::Delay, "time_knob") if tone.delay.sync.is_some() => {
+            let k = crate::num::index((value.clamp(0.0, 1.0) * 7.0).round()).min(7);
+            tone.delay.sync = Some(k);
+            tone.delay.time =
+                crate::num::narrow(crate::beats::DELAY.get(k).map_or(1.0, |d| d.2) * beat * 1000.0);
+        }
+        (Which::Reverb, "time_knob") => tone.reverb.decay = seconds_of(value),
+        (Which::Reverb, "predelay") => tone.reverb.predelay = v.clamp(0.0, 200.0),
+        (Which::Reverb, "size") => tone.reverb.size = v.clamp(0.0, 1.0),
+        (Which::Reverb, "damping") => tone.reverb.damping = v.clamp(0.0, 1.0),
+        (Which::Reverb, "level") => tone.reverb.mix = gain(),
+        (Which::Delay, "time_knob") => {
+            tone.delay.time = crate::num::narrow(20.0 * 125.0_f64.powf(value.clamp(0.0, 1.0)));
+        }
+        (Which::Delay, "time") => tone.delay.time = v.clamp(20.0, 2500.0),
+        (Which::Delay, "feedback") => tone.delay.feedback = v.clamp(0.0, 0.95),
+        (Which::Delay, "level") => tone.delay.mix = gain(),
         _ => return false,
     }
     true
@@ -118,6 +273,9 @@ pub struct Face {
     pub name: String,
     pub picture: Picture,
     pub knobs: &'static [Macro],
+    /// A second frame face stacked under it — a Time face's back, its
+    /// "More" panel, when it stands alone in its column.
+    pub under: Option<FrameFace>,
 }
 
 /// How tall the face's name is.
@@ -351,11 +509,17 @@ fn taps(tone: &Tone) -> Vec<delay_ui::viz::Tap> {
 pub fn of(which: Which, tone: &Tone) -> Option<Face> {
     match which {
         // A machine with a face of its own in frame draws that.
-        Which::Reverb if tone.reverb.algorithm == reverb_dsp::algorithm::AlgorithmType::Cloud => {
+        // A machine frame has a face for draws that, over its back.
+        Which::Reverb | Which::Delay if time_entry(which, tone).is_some() => {
+            let entry = time_entry(which, tone)?;
             Some(Face {
-                name: "Cloud".to_owned(),
-                picture: Picture::Frame(cloud_face(tone)),
+                name: entry.face.clone(),
+                picture: Picture::Frame(time_face(which, tone, entry, false)),
                 knobs: &[],
+                under: entry
+                    .back
+                    .is_some()
+                    .then(|| time_face(which, tone, entry, true)),
             })
         }
         Which::Reverb => {
@@ -376,6 +540,7 @@ pub fn of(which: Which, tone: &Tone) -> Option<Face> {
                     time: 0.0,
                 }),
                 knobs: &REVERB_KNOBS,
+                under: None,
             })
         }
         Which::Delay => {
@@ -398,6 +563,7 @@ pub fn of(which: Which, tone: &Tone) -> Option<Face> {
                     time: 0.0,
                 }),
                 knobs: &DELAY_KNOBS,
+                under: None,
             })
         }
         Which::Sat => sat_view(tone).map(|view| Face {
@@ -406,11 +572,13 @@ pub fn of(which: Which, tone: &Tone) -> Option<Face> {
                 .map_or_else(String::new, |p| p.name.to_owned()),
             picture: Picture::Sat(view),
             knobs: &SAT_KNOBS,
+            under: None,
         }),
         Which::Mod => Some(Face {
             name: format!("{:?}", tone.modulation.engine),
             picture: Picture::Mod(mod_view(tone)),
             knobs: &MOD_KNOBS,
+            under: None,
         }),
         _ => None,
     }

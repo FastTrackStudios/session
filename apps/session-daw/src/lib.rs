@@ -13,6 +13,7 @@ pub mod arrangement;
 pub mod art;
 pub mod audio_mode;
 pub mod balance;
+pub mod beats;
 #[cfg(feature = "native")]
 pub mod chart_editor;
 pub mod chart_panel;

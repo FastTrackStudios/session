@@ -917,10 +917,36 @@ impl DeviceRow {
         let key = format!("{guid}/{which:?}");
         if let crate::faces::Picture::Frame(_) = face.picture {
             // A frame face is the whole device, and plays its own
-            // controls: the pointer goes to it.
+            // controls: the pointer goes to it. With its back under it,
+            // the two share the height, front over back.
+            let (top, bottom) = match face.under {
+                Some(_) => {
+                    let half = panel.height / 2.0;
+                    (
+                        Panel {
+                            height: half,
+                            ..panel
+                        },
+                        Some(Panel {
+                            y: panel.y + half,
+                            height: half,
+                            ..panel
+                        }),
+                    )
+                }
+                None => (panel, None),
+            };
             hits.faces
-                .push((key.clone(), guid.to_owned(), Target::Unit(which), panel));
-            hits.pictures.push((key, face.picture, panel, hits.clip));
+                .push((key.clone(), guid.to_owned(), Target::Unit(which), top));
+            hits.pictures
+                .push((key.clone(), face.picture, top, hits.clip));
+            if let (Some(under), Some(bottom)) = (face.under, bottom) {
+                let back = format!("{key}/back");
+                hits.faces
+                    .push((back.clone(), guid.to_owned(), Target::Unit(which), bottom));
+                hits.pictures
+                    .push((back, crate::faces::Picture::Frame(under), bottom, hits.clip));
+            }
             return true;
         }
         crate::faces::chrome(scene, &self.palette, &self.font, &face, panel);
@@ -1103,6 +1129,57 @@ impl DeviceRow {
             .collect()
     }
 
+    /// `section`'s blocks as columns: in Time, a kind's two lanes (two
+    /// delays, two reverbs) stacked in one column, a lone one over its
+    /// own back; elsewhere a block a column. Each entry: the block, and
+    /// whether it is its back.
+    fn columns(
+        &self,
+        rig: &crate::rig::Rig,
+        section: crate::rig::Section,
+        blocks: &[usize],
+    ) -> Vec<Vec<(usize, bool)>> {
+        if section != crate::rig::Section::Time {
+            return blocks.iter().map(|at| vec![(*at, false)]).collect();
+        }
+        let mut columns = Vec::new();
+        for kind in ["delay", "reverb"] {
+            let of_kind: Vec<usize> = blocks
+                .iter()
+                .copied()
+                .filter(|at| rig.blocks.get(*at).is_some_and(|b| b.kind == kind))
+                .collect();
+            for pair in of_kind.chunks(2) {
+                match pair {
+                    [a, b] => columns.push(vec![(*a, false), (*b, false)]),
+                    [a] => {
+                        let has_back = rig
+                            .blocks
+                            .get(*a)
+                            .and_then(|b| self.rig_faces.of(rig, b))
+                            .is_some_and(|f| f.back.is_some());
+                        columns.push(if has_back {
+                            vec![(*a, false), (*a, true)]
+                        } else {
+                            vec![(*a, false)]
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        columns
+    }
+
+    /// How wide a column is: its faces at their share of the height.
+    fn column_w(&self, rig: &crate::rig::Rig, column: &[(usize, bool)], body_h: f64) -> f64 {
+        let share = body_h / crate::num::coord(column.len().max(1));
+        column
+            .iter()
+            .map(|(at, _)| self.block_w(rig, *at, share))
+            .fold(0.0, f64::max)
+    }
+
     /// How wide `section` of `guid`'s rig is.
     fn section_w(
         &self,
@@ -1116,9 +1193,10 @@ impl DeviceRow {
             return EDGE_W + SECTION_LIST_W;
         }
         EDGE_W
-            + blocks
+            + self
+                .columns(rig, section, blocks)
                 .iter()
-                .map(|at| self.block_w(rig, *at, body_h) + GAP)
+                .map(|column| self.column_w(rig, column, body_h) + GAP)
                 .sum::<f64>()
             - GAP
     }
@@ -1244,26 +1322,51 @@ impl DeviceRow {
                 self.section_list(scene, rig, section, &blocks, (x0, lane));
                 continue;
             }
-            let mut at_x = x0 + EDGE_W;
-            // The second of a kind in Time is drawn dark under the first.
-            let mut seen_kinds: Vec<&str> = Vec::new();
-            for at in &blocks {
+            self.draw_columns(scene, hits, (track, rig), section, &blocks, (x0, lane));
+        }
+        x
+    }
+
+    /// An open section's blocks, column by column from `x0`: each in its
+    /// frame face, a card where frame has none.
+    fn draw_columns(
+        &self,
+        scene: &mut Scene,
+        hits: &mut Hits,
+        (track, rig): (&daw_proto::Track, &crate::rig::Rig),
+        section: crate::rig::Section,
+        blocks: &[usize],
+        (x0, lane): (f64, Lane),
+    ) {
+        let mut at_x = x0 + EDGE_W;
+        for column in self.columns(rig, section, blocks) {
+            let w = self.column_w(rig, &column, lane.body_h);
+            let here = at_x;
+            at_x += w + GAP;
+            if !lane.sees(here, w) {
+                continue;
+            }
+            let share = lane.body_h / crate::num::coord(column.len().max(1));
+            for (row, (at, back)) in column.iter().enumerate() {
                 let Some(block) = rig.blocks.get(*at) else {
                     continue;
                 };
-                let w = self.block_w(rig, *at, lane.body_h);
-                let here = at_x;
-                at_x += w + GAP;
-                let dark = section == crate::rig::Section::Time
-                    && seen_kinds.contains(&block.kind.as_str());
-                seen_kinds.push(block.kind.as_str());
-                if !lane.sees(here, w) {
-                    continue;
-                }
-                let panel = lane.device(here, w);
+                let panel = Panel {
+                    x: here,
+                    y: crate::num::coord(row).mul_add(share, lane.body_top),
+                    width: w,
+                    height: share,
+                };
+                // The lower of two lanes is drawn dark, as the rig
+                // draws the second of a kind.
+                let dark = row > 0 && !back;
                 match self.rig_faces.of(rig, block) {
                     Some(face) => {
-                        let key = format!("{}/rig/{at}", track.guid);
+                        let key = format!(
+                            "{}/rig/{at}{}",
+                            track.guid,
+                            if *back { "/back" } else { "" }
+                        );
                         hits.faces.push((
                             key.clone(),
                             track.guid.clone(),
@@ -1273,7 +1376,10 @@ impl DeviceRow {
                         hits.pictures.push((
                             key,
                             crate::faces::Picture::Frame(crate::rig::face_of(
-                                rig, block, face, dark,
+                                rig,
+                                block,
+                                face,
+                                (dark, *back),
                             )),
                             panel,
                             hits.clip,
@@ -1283,7 +1389,6 @@ impl DeviceRow {
                 }
             }
         }
-        x
     }
 
     /// A block frame has no face for: a card with its name, what is

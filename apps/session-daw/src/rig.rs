@@ -144,6 +144,7 @@ impl Rig {
             "level" => block.output_level_db = Some(value),
             "option" => block.option = Some(value),
             "time_knob" => turn(block, value),
+            "sync" => flip(block, value >= 0.5),
             _ => block.set(name, value),
         }
     }
@@ -295,6 +296,11 @@ pub struct FaceEntry {
     pub maps: Vec<ParamMap>,
     /// Its dark finish: a Time lane under another draws this.
     pub dark: Option<String>,
+    /// Its back — the advanced controls, the "More" panel — and the
+    /// back's dark finish: a Time face alone in its column is stacked
+    /// over its back.
+    pub back: Option<String>,
+    pub back_dark: Option<String>,
     /// It prints its preset on a nameplate.
     pub nameplate: bool,
     /// It carries the Time knob.
@@ -360,6 +366,14 @@ fn entry(v: &serde_json::Value) -> Option<FaceEntry> {
             .get("dark")
             .and_then(serde_json::Value::as_str)
             .map(|d| format!("{SET}/{d}")),
+        back: v
+            .get("back")
+            .and_then(serde_json::Value::as_str)
+            .map(|d| format!("{SET}/{d}")),
+        back_dark: v
+            .get("back_dark")
+            .and_then(serde_json::Value::as_str)
+            .map(|d| format!("{SET}/{d}")),
         nameplate: flag("nameplate"),
         time_knob: flag("time_knob"),
     })
@@ -413,6 +427,18 @@ impl Faces {
             modulation: list(doc.get("modulation")),
             trim: doc.get("trim").and_then(entry),
         }
+    }
+
+    /// The Time face for a reverb algorithm, by its name.
+    #[must_use]
+    pub fn reverb(&self, algorithm: &str) -> Option<&FaceEntry> {
+        exact(&self.time_reverb, algorithm)
+    }
+
+    /// The Time face for a delay machine, by its name.
+    #[must_use]
+    pub fn delay(&self, machine: &str) -> Option<&FaceEntry> {
+        exact(&self.time_delay, machine)
     }
 
     /// The face `block` wears in `rig`, if frame has one for it.
@@ -470,7 +496,7 @@ impl Faces {
 }
 
 /// `delay::Style` order, as signal's rig view names the machines.
-const DELAY_ALGOS: [&str; 13] = [
+pub const DELAY_ALGOS: [&str; 13] = [
     "Tape", "Digital", "Analog", "Lo-Fi", "Shimmer", "Reverse", "Ice", "Rhythm", "Drum", "Oil Can",
     "MultiTap", "Spectral", "Filter",
 ];
@@ -488,10 +514,20 @@ fn pick<'a>(list: &'a [FaceEntry], name: &str) -> Option<&'a FaceEntry> {
     })
 }
 
-/// The face one of whose words is exactly `name`.
+/// The face one of whose words is exactly `name`, case and dashes aside
+/// (`Non-Linear` is `nonlinear`).
 fn exact<'a>(list: &'a [FaceEntry], name: &str) -> Option<&'a FaceEntry> {
-    let name = name.to_lowercase();
-    list.iter().find(|e| e.words.contains(&name))
+    let plain = |s: &str| s.to_lowercase().replace('-', "");
+    let name = plain(name);
+    list.iter()
+        .find(|e| e.words.iter().any(|w| plain(w) == name))
+}
+
+/// The manifest, read once.
+#[must_use]
+pub fn faces() -> &'static Faces {
+    static FACES: std::sync::OnceLock<Faces> = std::sync::OnceLock::new();
+    FACES.get_or_init(Faces::load)
 }
 
 /// A delay's time range the Time knob sweeps (ms), logarithmically.
@@ -500,60 +536,178 @@ const DELAY_MS: (f64, f64) = (20.0, 2500.0);
 /// A modulation's rate range (Hz), logarithmically.
 const MOD_HZ: (f64, f64) = (0.05, 12.0);
 
-/// Seconds as the Time knob reads them.
-fn seconds_text(s: f64) -> String {
-    if s < 1.0 {
-        format!("{:.0} ms", s * 1000.0)
-    } else if s < 10.0 {
-        format!("{s:.1} s")
-    } else {
-        format!("{s:.0} s")
-    }
+/// The Time knob for `block`, running free: where it stands, and what it
+/// The reverb's tail in seconds, by the engine's own law.
+fn verb_seconds(block: &Block, decay: f64) -> f64 {
+    let alg = AlgorithmType::from_index(crate::num::index(block.param("algorithm", 1.0).round()));
+    let variant = crate::num::index(block.param("variant", 0.0).round());
+    reverb_dsp::algorithm::decay_seconds(alg, variant, decay).unwrap_or(decay * 8.0)
 }
 
-/// The Time knob for `block`, running free: where it stands, and what it
-/// reads.
-fn time_view(block: &Block) -> Option<(f64, String)> {
+/// The decay that rings for `seconds` (the engine's law, inverted).
+fn verb_decay_for(block: &Block, seconds: f64) -> f64 {
+    let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if verb_seconds(block, mid) < seconds {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
+/// A param as an index.
+fn index_of(block: &Block, name: &str, default: f64) -> usize {
+    crate::num::index(block.param(name, default).round())
+}
+
+/// The Time knob for `block`: where it stands, whether it is locked to
+/// the beat, and what it reads — signal's `time_face::view`.
+fn time_view(block: &Block) -> Option<(f64, bool, String)> {
+    let beat = crate::beats::beat(crate::beats::BPM);
     match block.kind.as_str() {
         "reverb" => {
             let decay = block.param("decay", 0.4);
-            let alg =
-                AlgorithmType::from_index(crate::num::index(block.param("algorithm", 1.0).round()));
-            let variant = crate::num::index(block.param("variant", 0.0).round());
-            let secs =
-                reverb_dsp::algorithm::decay_seconds(alg, variant, decay).unwrap_or(decay * 8.0);
-            Some((decay, seconds_text(secs)))
+            let secs = crate::beats::seconds_text(verb_seconds(block, decay));
+            let div = index_of(block, "sync_div", 0.0);
+            Some(
+                crate::beats::REVERB
+                    .get(div)
+                    .filter(|_| div > 0)
+                    .map_or_else(
+                        || (decay, false, secs.clone()),
+                        |(label, _)| {
+                            (
+                                crate::num::coord(div.saturating_sub(1)) / 6.0,
+                                true,
+                                format!("{label} · {secs}"),
+                            )
+                        },
+                    ),
+            )
         }
         "delay" => {
-            let ms = block.param("time", 350.0);
-            Some((
-                (ms / DELAY_MS.0)
-                    .log(DELAY_MS.1 / DELAY_MS.0)
-                    .clamp(0.0, 1.0),
-                format!("{ms:.0} ms"),
-            ))
+            let div = index_of(block, "tap_div_l", 7.0);
+            let free = || {
+                let ms = block.param("time", 350.0);
+                (
+                    (ms / DELAY_MS.0)
+                        .log(DELAY_MS.1 / DELAY_MS.0)
+                        .clamp(0.0, 1.0),
+                    false,
+                    format!("{ms:.0} ms"),
+                )
+            };
+            Some(
+                crate::beats::DELAY
+                    .iter()
+                    .enumerate()
+                    .find(|(_, d)| d.1 == div)
+                    .map_or_else(free, |(k, (label, _, beats))| {
+                        (
+                            crate::num::coord(k) / 7.0,
+                            true,
+                            format!("{label} · {:.0} ms", beats * beat * 1000.0),
+                        )
+                    }),
+            )
         }
         k if MOD_KINDS.contains(&k) => {
             let hz = block.param("rate", 1.0);
-            Some((
-                (hz / MOD_HZ.0).log(MOD_HZ.1 / MOD_HZ.0).clamp(0.0, 1.0),
-                format!("{hz:.2} Hz"),
+            let div = index_of(block, "sync_div", 0.0);
+            Some(crate::beats::MOD.get(div).filter(|_| div > 0).map_or_else(
+                || {
+                    (
+                        (hz / MOD_HZ.0).log(MOD_HZ.1 / MOD_HZ.0).clamp(0.0, 1.0),
+                        false,
+                        format!("{hz:.2} Hz"),
+                    )
+                },
+                |(label, beats)| {
+                    (
+                        crate::num::coord(div.saturating_sub(1)) / 7.0,
+                        true,
+                        format!("{label} · {:.2} Hz", 1.0 / (beats * beat)),
+                    )
+                },
             ))
         }
         _ => None,
     }
 }
 
-/// A turn of the Time knob to `pos`, running free.
+/// A turn of the Time knob to `pos` — through the lengths when locked to
+/// the beat, the time when free (signal's `time_face::turn`).
 fn turn(block: &mut Block, pos: f64) {
     let pos = pos.clamp(0.0, 1.0);
-    match block.kind.as_str() {
-        "reverb" => block.set("decay", pos),
-        "delay" => block.set("time", DELAY_MS.0 * (DELAY_MS.1 / DELAY_MS.0).powf(pos)),
-        k if MOD_KINDS.contains(&k) => {
+    let beat = crate::beats::beat(crate::beats::BPM);
+    let synced = time_view(block).is_some_and(|(_, sync, _)| sync);
+    match (block.kind.as_str(), synced) {
+        ("reverb", false) => block.set("decay", pos),
+        ("reverb", true) => {
+            let div = crate::num::index((pos * 6.0).round()).saturating_add(1);
+            let secs = crate::beats::REVERB.get(div).map_or(1.0, |d| d.1) * beat;
+            let decay = verb_decay_for(block, secs);
+            block.set("sync_div", crate::num::coord(div));
+            block.set("decay", decay);
+        }
+        ("delay", false) => block.set("time", DELAY_MS.0 * (DELAY_MS.1 / DELAY_MS.0).powf(pos)),
+        ("delay", true) => {
+            let k = crate::num::index((pos * 7.0).round()).min(7);
+            let div = crate::num::coord(crate::beats::DELAY.get(k).map_or(0, |d| d.1));
+            block.set("tap_div_l", div);
+            block.set("tap_div_r", div);
+        }
+        (k, false) if MOD_KINDS.contains(&k) => {
             block.set("rate", MOD_HZ.0 * (MOD_HZ.1 / MOD_HZ.0).powf(pos));
         }
+        (k, true) if MOD_KINDS.contains(&k) => {
+            let div = crate::num::index((pos * 7.0).round()).saturating_add(1);
+            let beats = crate::beats::MOD.get(div).map_or(1.0, |d| d.1);
+            block.set("sync_div", crate::num::coord(div));
+            block.set("rate", 1.0 / (beats * beat));
+        }
         _ => {}
+    }
+}
+
+/// The Time/Beat switch thrown: locked to the length nearest what it
+/// plays now, or free again at what it was playing (signal's
+/// `time_face::flip`).
+fn flip(block: &mut Block, beat_on: bool) {
+    let bpm = crate::beats::BPM;
+    let beat = crate::beats::beat(bpm);
+    match block.kind.as_str() {
+        "reverb" if beat_on => {
+            let div =
+                crate::beats::nearest_reverb(verb_seconds(block, block.param("decay", 0.4)), bpm);
+            let decay = verb_decay_for(block, crate::beats::REVERB.get(div).map_or(1.0, |d| d.1) * beat);
+            block.set("sync_div", crate::num::coord(div));
+            block.set("decay", decay);
+        }
+        "delay" if beat_on => {
+            let k = crate::beats::nearest_delay(block.param("time", 350.0), bpm);
+            let div = crate::num::coord(crate::beats::DELAY.get(k).map_or(0, |d| d.1));
+            block.set("tap_div_l", div);
+            block.set("tap_div_r", div);
+        }
+        "delay" => {
+            let div = index_of(block, "tap_div_l", 7.0);
+            if let Some(d) = crate::beats::DELAY.iter().find(|d| d.1 == div) {
+                block.set("time", d.2 * beat * 1000.0);
+            }
+            let free = crate::num::coord(crate::beats::FREE_DIV);
+            block.set("tap_div_l", free);
+            block.set("tap_div_r", free);
+        }
+        k if MOD_KINDS.contains(&k) && beat_on => {
+            let div = crate::beats::nearest_mod(block.param("rate", 1.0), bpm);
+            block.set("sync_div", crate::num::coord(div));
+            block.set("rate", 1.0 / (crate::beats::MOD.get(div).map_or(1.0, |d| d.1) * beat));
+        }
+        _ => block.set("sync_div", 0.0),
     }
 }
 
@@ -561,7 +715,12 @@ fn turn(block: &mut Block, pos: f64) {
 /// another of its kind: the face's design and its values and text, by
 /// address, in the block's own units — as signal's rig view feeds it.
 #[must_use]
-pub fn face_of(rig: &Rig, block: &Block, face: &FaceEntry, dark: bool) -> crate::faces::FrameFace {
+pub fn face_of(
+    rig: &Rig,
+    block: &Block,
+    face: &FaceEntry,
+    (dark, back): (bool, bool),
+) -> crate::faces::FrameFace {
     let ns = &face.ns;
     let mut values: Vec<(String, f64)> = block
         .params
@@ -583,10 +742,10 @@ pub fn face_of(rig: &Rig, block: &Block, face: &FaceEntry, dark: bool) -> crate:
     }
     let mut texts = Vec::new();
     if face.time_knob
-        && let Some((pos, text)) = time_view(block)
+        && let Some((pos, sync, text)) = time_view(block)
     {
         values.push((format!("{ns}/time_knob"), pos));
-        values.push((format!("{ns}/sync"), 0.0));
+        values.push((format!("{ns}/sync"), if sync { 1.0 } else { 0.0 }));
         texts.push((format!("{ns}/time_text"), text));
     }
     if face.nameplate {
@@ -598,14 +757,23 @@ pub fn face_of(rig: &Rig, block: &Block, face: &FaceEntry, dark: bool) -> crate:
                 .unwrap_or_else(|| "—".to_owned()),
         ));
     }
-    let design = if dark {
-        face.dark.clone().unwrap_or_else(|| face.face.clone())
-    } else {
-        face.face.clone()
-    };
+    let design = design_of(face, dark, back);
     crate::faces::FrameFace {
         design,
         values,
         texts,
     }
+}
+
+/// Which of `face`'s designs: its front or its back, light or dark —
+/// the front where a finish is missing.
+#[must_use]
+pub fn design_of(face: &FaceEntry, dark: bool, back: bool) -> String {
+    let pick = match (back, dark) {
+        (false, false) => None,
+        (false, true) => face.dark.clone(),
+        (true, false) => face.back.clone(),
+        (true, true) => face.back_dark.clone().or_else(|| face.back.clone()),
+    };
+    pick.unwrap_or_else(|| face.face.clone())
 }

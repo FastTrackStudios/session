@@ -753,6 +753,9 @@ pub struct Echo {
     /// plugin's own faces do — a tape softens, a chip smears, a
     /// shimmer climbs.
     pub style: DelayStyle,
+    /// Locked to the beat: which division (`crate::beats::DELAY`), or
+    /// `None` running free at `time`.
+    pub sync: Option<usize>,
 }
 
 impl Default for Echo {
@@ -764,6 +767,7 @@ impl Default for Echo {
             tone: 0.4,
             width: 0.5,
             style: DelayStyle::Tape,
+            sync: None,
         }
     }
 }
@@ -820,6 +824,9 @@ pub struct Room {
     pub damping: f32,
     /// How dense the reflections are, 0..1.
     pub diffusion: f32,
+    /// Locked to the beat: how long its tail is, a length in beats
+    /// (`crate::beats::REVERB`), or `None` running free at `decay`.
+    pub sync: Option<usize>,
 }
 
 impl Default for Room {
@@ -832,6 +839,7 @@ impl Default for Room {
             size: 0.5,
             damping: 0.3,
             diffusion: 0.7,
+            sync: None,
         }
     }
 }
@@ -6181,6 +6189,7 @@ fn repeat(
         tone,
         width,
         style,
+        sync: None,
     };
     t.post_eq = post_eq;
     preset(name, t)
@@ -6211,6 +6220,7 @@ fn space(
         size,
         diffusion,
         mix,
+        sync: None,
     };
     t.post_eq = post_eq;
     t.decay_eq = decay_eq;
