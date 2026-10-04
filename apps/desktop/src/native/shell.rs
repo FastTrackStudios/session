@@ -453,10 +453,12 @@ fn SongViews(
     // The FX, pinned under the arrangement or the mixer: the view gives
     // up its bottom to it.
     let fx = try_use_context::<session_daw::shell::FxToggle>();
-    let fx_docked = fx.is_some_and(|f| {
-        (f.docked)() && (f.open)() && f.hosts.contains(&view())
-    });
-    let view_bottom = if fx_docked { format!("{FX_DOCK_H}px") } else { "0px".to_owned() };
+    let fx_docked = fx.is_some_and(|f| (f.docked)() && (f.open)() && f.hosts.contains(&view()));
+    let view_bottom = if fx_docked {
+        format!("{FX_DOCK_H}px")
+    } else {
+        "0px".to_owned()
+    };
     rsx! {
         session_daw::shell::PinnedProgress { view: view() }
         div {
@@ -475,7 +477,7 @@ fn SongViews(
                 },
                 View::Chart => rsx! { session_daw::chart_panel::Chart { paged: true } },
                 View::Lyrics => rsx! { session_daw::lyrics_panel::LyricsPanel {} },
-                View::Editor => rsx! { session_daw::shell::EditorComing {} },
+                View::Editor => rsx! { session_daw::editor_view::EditorPanel {} },
                 View::Mixer => rsx! {
                     session_daw::mixer_panel::DawPanels { mode: Some(mode()), mixer_only: true }
                 },

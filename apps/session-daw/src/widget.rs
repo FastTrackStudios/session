@@ -233,7 +233,7 @@ impl View {
 }
 
 /// Blitz's modifier set, as the mouse map's.
-fn mods(from: Modifiers) -> crate::mousemap::Mods {
+pub(crate) fn mods(from: Modifiers) -> crate::mousemap::Mods {
     crate::mousemap::Mods {
         shift: from.contains(Modifiers::SHIFT),
         ctrl: from.contains(Modifiers::CONTROL),

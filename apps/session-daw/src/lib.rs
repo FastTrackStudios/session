@@ -26,6 +26,7 @@ pub mod collab_bar;
 pub mod collab_pointers;
 pub mod compact;
 pub mod cursor;
+pub mod editor_view;
 pub mod engine;
 pub mod expression;
 pub mod faces;
