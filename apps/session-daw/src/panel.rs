@@ -354,6 +354,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
                 rows: Rc::clone(&links.rows),
                 echo: Rc::clone(&links.to_arrange),
                 keys: Rc::clone(&links.keys),
+                recording: Rc::clone(&links.recording),
             }),
             None => built,
         };
@@ -884,6 +885,9 @@ impl ArrangementPanel {
     pub fn tcp(&self) -> crate::tcp::Tcp {
         crate::tcp::Tcp {
             compact: self.compact.get(),
+            // The arm only in Record mode; with no mixer to say which
+            // mode it is, as it always was.
+            recording: self.mixer.as_ref().is_none_or(|m| m.recording.get()),
         }
     }
 
@@ -942,6 +946,7 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
     // Read as a signal so a toggle re-renders what is sized to the panel.
     let tcp_w = crate::tcp::Tcp {
         compact: (panel.shape)(),
+        recording: true,
     }
     .width();
     rsx! {

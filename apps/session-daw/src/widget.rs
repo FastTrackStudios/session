@@ -75,6 +75,9 @@ pub struct MixerLinks {
     pub echo: Rc<RefCell<Vec<crate::engine::Edit>>>,
     /// Keys pressed while the mixer had the focus, to handle here.
     pub keys: Rc<RefCell<Vec<crate::mixer_panel::Key>>>,
+    /// Whether the window is in Record mode: the track panel's arm is
+    /// shown only then.
+    pub recording: Rc<std::cell::Cell<bool>>,
 }
 
 /// The finest grid division the ruler will draw.
@@ -621,7 +624,10 @@ impl ArrangementWidget {
             rows,
             layout,
             previews,
-            crate::tcp::Tcp { compact },
+            crate::tcp::Tcp {
+                compact,
+                recording: true,
+            },
         );
         let bpm = scene.bpm;
         Self::new(
@@ -1310,6 +1316,7 @@ impl ArrangementWidget {
             &self.previews,
             crate::tcp::Tcp {
                 compact: self.compact.get(),
+                recording: self.mixer.as_ref().is_none_or(|m| m.recording.get()),
             },
         );
         self.scene.lettering = lettering;

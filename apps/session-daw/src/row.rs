@@ -172,6 +172,7 @@ impl Row {
             // and as tall as the row less a margin.
             // The compact panel's: mute, solo and the arm on a second line
             // under the name, where the row is tall enough to have one.
+            Control::RecArm if !self.tcp.recording => None,
             Control::Mute | Control::Solo | Control::RecArm if self.tcp.compact => {
                 self.second_line(control)
             }
@@ -364,6 +365,25 @@ mod tests {
             .rect(Control::Name)
             .unwrap();
         assert!(short.y0 >= 101.0 && short.y1 <= 119.0, "{short:?}");
+    }
+
+    #[test]
+    fn the_arm_is_there_only_when_recording() {
+        let tall = Row::new(0.0, 60.0, 0, false, Tcp::FULL);
+        assert!(tall.rect(Control::RecArm).is_some());
+        let mixing = Row::new(
+            0.0,
+            60.0,
+            0,
+            false,
+            Tcp {
+                recording: false,
+                ..Tcp::FULL
+            },
+        );
+        assert!(mixing.rect(Control::RecArm).is_none());
+        // Everything else stays where it was.
+        assert_eq!(mixing.rect(Control::Volume), tall.rect(Control::Volume));
     }
 
     #[test]
