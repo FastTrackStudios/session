@@ -64,4 +64,19 @@
       <Rectangle name="Three quarters" x=54 y=24 w=1146 h=1 bind:y="h * 0.25" bind:w="w - 54" bind:fill="$editor.grid_sub" />
     </Frame>
   </Page>
+  <Page name="editor.menu">
+    <Frame name="Menu" w=220 h=200>
+      <Rectangle name="Shadow" x=0 y=3 w=220 h=200 radius=6 bind:w="w" bind:h="h" fill="#00000066" />
+      <Rectangle name="Panel" w=220 h=200 radius=6 bind:w="w" bind:h="h" bind:fill="$editor.panel" />
+      <Rectangle name="Edge" w=220 h=1 radius=6 bind:w="w" bind:fill="$sheen" />
+    </Frame>
+  </Page>
+  <Page name="editor.menuitem">
+    <Frame name="Item" w=220 h=22>
+      <Rectangle name="Rule" x=6 y=-2 w=208 h=1 bind:w="w - 12" bind:visible="menu.rule" bind:fill="$editor.panel_border" />
+      <Rectangle name="Hover" x=3 w=214 h=22 radius=4 bind:w="w - 6" bind:h="h" bind:visible="menu.hover" bind:fill="$editor.control_active" />
+      <Text name="Label" x=10 w=150 h=14 size=11 bind:y="h / 2 - 7" bind:text="menu.label" bind:fill="menu.enabled ? (menu.hover ? $editor.text_bright : $editor.text) : $text.faint">Quantize</Text>
+      <Text name="Key" x=150 w=60 h=14 size=10 text-align="right" bind:x="w - 70" bind:y="h / 2 - 6.5" bind:text="menu.shortcut" bind:fill="$editor.text_dim">Q</Text>
+    </Frame>
+  </Page>
 </Document>

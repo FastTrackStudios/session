@@ -660,10 +660,26 @@ fn set_on_every_folder(
 /// Write one frame of the expression editor to a PNG.
 ///
 /// `FTS_BENCH_EXPRESSION=/tmp/expression.png`. The demo drum groove,
-/// the way `e` opens it in the window with nothing selected.
+/// the way `e` opens it in the window with nothing selected;
+/// `FTS_BENCH_EXPRESSION_MENU=1` with its context menu open.
 fn expression_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
     let size = (f64::from(width), f64::from(height));
     let mut view = session_daw::expression::Expression::demo((0.0, 0.0), size);
+    // `FTS_BENCH_EXPRESSION_MENU=1`: with the context menu open, as a
+    // right-click in the roll leaves it.
+    if std::env::var_os("FTS_BENCH_EXPRESSION_MENU").is_some() {
+        view.press(
+            size.0 * 0.4,
+            size.1 * 0.3,
+            session_daw::mousemap::Mods::default(),
+            2,
+        );
+        view.release(
+            size.0 * 0.4,
+            size.1 * 0.3,
+            session_daw::mousemap::Mods::default(),
+        );
+    }
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
     image.render_to_vec(

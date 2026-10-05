@@ -43,6 +43,7 @@
     <Var name="editor.gold" value="#eab308" />
     <Var name="editor.gutter_bg" value="#0f0f12" />
     <Var name="editor.grid_beat" value="#34343c" />
+    <Var name="editor.panel" value="#1b1b20" />
     <Var name="rail.rule" value="$border" />
     <Var name="rail.button" value="$surface" />
     <Var name="rack.well" value="#0a0a0c" />

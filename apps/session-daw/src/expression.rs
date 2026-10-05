@@ -461,7 +461,8 @@ impl Expression {
             });
         painter.append_scene(status, Affine::translate((ox, oy + h - STATUS_H)));
         if let Some(menu) = &self.menu {
-            let scene = menu.paint(&mut self.labels, &self.look);
+            let scene = themed_menu(menu, self.font.as_ref())
+                .unwrap_or_else(|| menu.paint(&mut self.labels, &self.look));
             painter.append_scene(
                 scene,
                 Affine::translate((ox + canvas::GUTTER_W, oy + TOOLBAR_H + canvas::RULER_H)),
@@ -1218,6 +1219,52 @@ fn themed_roll_chrome(
     Some(scene)
 }
 
+/// The context menu drawn by the loaded theme — its `editor.menu` panel
+/// and an `editor.menuitem` per row — or `None` when the theme does not
+/// draw it, for the editor's own painter.
+fn themed_menu(menu: &chrome::Menu, font: Option<&crate::text::Font>) -> Option<anyrender::Scene> {
+    use theme_runtime::Value;
+    let theme = crate::skin::loaded()
+        .filter(|t| t.has_role("editor.menu") && t.has_role("editor.menuitem"))?;
+    let font = font?;
+    let bounds = menu.bounds();
+    let mut scene = anyrender::Scene::new();
+    let mut host = crate::skin::canvas::Host {
+        scene: &mut scene,
+        font,
+    };
+    if !theme.record(
+        "editor.menu",
+        (bounds.width(), bounds.height()),
+        &crate::skin::values(&[]),
+        &mut host,
+        Affine::translate((bounds.x0, bounds.y0)),
+    ) {
+        return None;
+    }
+    for (i, item) in menu.items.iter().enumerate() {
+        let r = menu.item_rect(i);
+        let fields = crate::skin::values(&[
+            ("menu.label", Value::text(&item.label)),
+            ("menu.shortcut", Value::text(item.shortcut.unwrap_or(""))),
+            ("menu.enabled", Value::Bool(item.enabled)),
+            (
+                "menu.hover",
+                Value::Bool(menu.hover == Some(i) && item.enabled),
+            ),
+            ("menu.rule", Value::Bool(item.group_break)),
+        ]);
+        theme.record(
+            "editor.menuitem",
+            (r.width(), r.height()),
+            &fields,
+            &mut host,
+            Affine::translate((r.x0, r.y0)),
+        );
+    }
+    Some(scene)
+}
+
 /// Whether the loaded theme draws the velocity/CC strip's chrome.
 fn themes_strip() -> bool {
     crate::skin::loaded().is_some_and(|t| t.has_role("editor.strip"))
@@ -1932,6 +1979,8 @@ mod theme_tests {
         let drawn = themed_bar(&buttons, None, (1200.0, 30.0), Some(&font));
         let chrome = themed_roll_chrome(&ed, 1200.0, 500.0, Some(&font));
         let strip = themed_strip(&ed, 1200.0, 96.0, Some(&font));
+        let menu = chrome::Menu::open(&ed, 200.0, 100.0, None, 0.0, 0);
+        let themed_menu = themed_menu(&menu, Some(&font));
         let strips = themes_strip();
         let lets_it = themes_roll_chrome();
         crate::skin::set(None);
@@ -1942,6 +1991,7 @@ mod theme_tests {
         );
         assert!(chrome.is_some_and(|s| !s.commands.is_empty()));
         assert!(strips && strip.is_some_and(|s| !s.commands.is_empty()));
+        assert!(themed_menu.is_some_and(|s| !s.commands.is_empty()));
         // Negative control: no theme, and the roll draws its own.
         assert!(!themes_roll_chrome());
     }
