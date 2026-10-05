@@ -28,6 +28,10 @@ pub struct Target {
     pub length: f64,
     /// Where the item starts in the project, seconds: the take's zero.
     pub start: f64,
+    /// An audio take (analysed into notes) rather than a MIDI one.
+    pub audio: bool,
+    /// The item's gain, which the analysis reads the take at.
+    pub volume: f64,
 }
 
 /// The item the Editor opens on in `project`: the selected track's
@@ -62,12 +66,17 @@ impl Song {
         }
     }
 
-    /// `track`'s first MIDI item, as a target.
+    /// `track`'s first item, as a target: its first MIDI item, else its
+    /// first item as audio.
     fn first_midi(&self, track: &daw_proto::Track) -> Option<Target> {
-        self.items
-            .get(&track.guid)
-            .and_then(|items| items.iter().find(|i| self.midi.contains(&i.guid)))
+        let items = self.items.get(&track.guid)?;
+        items
+            .iter()
+            .find(|i| self.midi.contains(&i.guid))
+            .or_else(|| items.first())
             .map(|item| Target {
+                audio: !self.midi.contains(&item.guid),
+                volume: item.volume,
                 track: track.guid.clone(),
                 item: item.guid.clone(),
                 drums: self.is_drums(track),
@@ -166,7 +175,15 @@ pub struct EditorView {
 
 /// What a read hands back: nothing yet, then the take or `None`.
 #[cfg(feature = "native")]
-type Slot = std::sync::Arc<std::sync::Mutex<Option<Option<daw::service::midi::MidiTakeSnapshot>>>>;
+type Slot = std::sync::Arc<std::sync::Mutex<Option<Read>>>;
+
+/// What a read hands back: a MIDI take, or an audio take analysed into
+/// the editor — `None` inside when there was nothing to edit.
+#[cfg(feature = "native")]
+enum Read {
+    Midi(Option<daw::service::midi::MidiTakeSnapshot>),
+    Audio(Option<Box<expression_editor_core::Editor>>),
+}
 #[cfg(feature = "native")]
 type Content = daw::service::midi::MidiTakeContent;
 
@@ -222,12 +239,38 @@ impl EditorView {
         let slot: Slot = std::sync::Arc::default();
         let into = std::sync::Arc::clone(&slot);
         let (item, bpm, length) = (t.item.clone(), t.bpm, t.length);
-        runtime.spawn(async move {
-            let read = crate::expression::read_take(item, bpm, length).await;
-            if let Ok(mut slot) = into.lock() {
-                *slot = Some(read);
-            }
-        });
+        if t.audio {
+            // Read and analysed off the window: a take's samples through
+            // the engine's accessor, its notes found by pitch analysis.
+            let volume = t.volume;
+            runtime.spawn_blocking(move || {
+                let editor = crate::open::local_engine().and_then(|daw| {
+                    expression_editor_audio::AudioSession::load(
+                        daw,
+                        expression_editor_audio::AudioTakeLocation {
+                            project: daw::service::ProjectContext::Current,
+                            item: daw::service::ItemRef::Guid(item),
+                            take: daw::service::TakeRef::Active,
+                        },
+                        length,
+                        volume,
+                        expression_editor_core::Viewport::new(1000.0, 500.0),
+                        expression_editor_audio::TakeConfig::default(),
+                    )
+                    .map(|session| Box::new(session.editor))
+                });
+                if let Ok(mut slot) = into.lock() {
+                    *slot = Some(Read::Audio(editor));
+                }
+            });
+        } else {
+            runtime.spawn(async move {
+                let read = crate::expression::read_take(item, bpm, length).await;
+                if let Ok(mut slot) = into.lock() {
+                    *slot = Some(Read::Midi(read));
+                }
+            });
+        }
         self.loading = Some(slot);
     }
 
@@ -241,12 +284,24 @@ impl EditorView {
             return;
         };
         self.loading = None;
-        let (Some(t), Some(snapshot)) = (&self.target, read) else {
-            tracing::warn!("the editor's take could not be read, or has no notes");
+        let view = match (&self.target, read) {
+            (Some(t), Read::Midi(Some(snapshot))) => Some(Expression::from_take(
+                &snapshot,
+                t.item.clone(),
+                t.drums,
+                (0.0, 0.0),
+                size,
+            )),
+            (Some(_), Read::Audio(Some(editor))) => {
+                Some(Expression::from_audio(*editor, (0.0, 0.0), size))
+            }
+            _ => None,
+        };
+        let Some(mut view) = view else {
+            tracing::warn!("the editor's take could not be read, or has nothing to edit");
             self.failed = true;
             return;
         };
-        let mut view = Expression::from_take(&snapshot, t.item.clone(), t.drums, (0.0, 0.0), size);
         view.set_look(self.look);
         self.view = Some(view);
         self.dirty = true;

@@ -122,4 +122,29 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+
+    // An audio track: its take is read through the engine and analysed,
+    // and the editor shows it on its own, the audio surface.
+    let mut audio = drums.clone();
+    for t in &mut audio.tracks {
+        t.selected = t.name == "Shaker";
+    }
+    let shaker = audio.selected().expect("the shaker has an item");
+    assert!(shaker.audio, "an audio item: {shaker:?}");
+    let mut widget = session_daw::editor_view::EditorView::new(audio);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while widget.editor().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the analysis never landed"
+        );
+        let _ = widget.frame(1200, 700, 1.0);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let editor = widget.editor().expect("landed");
+    assert_eq!(
+        editor.editor.mode,
+        expression_editor_core::Mode::PitchedAudio
+    );
+    assert_eq!(editor.item(), None, "an audio take writes nothing back");
 }

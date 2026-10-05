@@ -186,6 +186,18 @@ impl Expression {
         this
     }
 
+    /// An audio take, analysed (`expression_editor_audio::AudioSession`),
+    /// as the editor shows it: on its own, one track. It writes nothing
+    /// back — the audio write path (a resynthesis) is not this view's.
+    #[must_use]
+    pub fn from_audio(mut editor: Editor, origin: (f64, f64), size: (f64, f64)) -> Self {
+        editor.viewport = viewport_for(size, DEFAULT_STRIP);
+        editor.reset_view();
+        let mut this = Self::hold(editor, None, origin, size);
+        this.relayout();
+        this
+    }
+
     /// The item this view edits, when it is one.
     #[must_use]
     pub fn item(&self) -> Option<&str> {
