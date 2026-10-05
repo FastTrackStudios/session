@@ -70,11 +70,32 @@ impl Song {
             .map(|item| Target {
                 track: track.guid.clone(),
                 item: item.guid.clone(),
-                drums: crate::expression::is_drum_track(&track.name),
+                drums: self.is_drums(track),
                 bpm: self.bpm,
                 length: item.length.as_seconds(),
                 start: item.position.as_seconds(),
             })
+    }
+
+    /// Whether `track` is a drum's: by its name, or by a folder it is in
+    /// (a kick's `Trig` is a drum though its name says nothing of it).
+    fn is_drums(&self, track: &daw_proto::Track) -> bool {
+        let mut at = Some(track);
+        let mut steps = 0;
+        while let Some(t) = at {
+            if crate::expression::is_drum_track(&t.name) {
+                return true;
+            }
+            steps += 1;
+            if steps > 64 {
+                break;
+            }
+            at = t
+                .parent_guid
+                .as_deref()
+                .and_then(|g| self.tracks.iter().find(|p| p.guid == g));
+        }
+        false
     }
 
     /// The selected track's first MIDI item.

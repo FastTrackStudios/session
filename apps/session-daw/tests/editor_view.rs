@@ -64,6 +64,26 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
     }
     let piano = song.selected().expect("the piano has a MIDI part");
     assert!(!piano.drums);
+    // A kick's trigger opens on the kit's lanes, by its folder.
+    let mut drums = song.clone();
+    let kick = drums
+        .tracks
+        .iter()
+        .find(|t| t.name == "Kick")
+        .map(|t| t.guid.clone())
+        .expect("a kick");
+    for t in &mut drums.tracks {
+        t.selected = t.name == "Trig"
+            && t.parent_guid.as_deref().is_some_and(|p| {
+                p == kick
+                    || project
+                        .tracks
+                        .iter()
+                        .any(|q| q.guid == p && q.parent_guid.as_deref() == Some(&kick))
+            });
+    }
+    let trig = drums.selected().expect("the kick's trigger has MIDI");
+    assert!(trig.drums, "a trigger under the kick is a drum");
     let part = session_daw::expression::load_take(&piano.item, piano.bpm, piano.length)
         .expect("the piano's notes");
     let first_beat: Vec<_> = part.notes.iter().filter(|n| n.start_ppq < 1.0).collect();
