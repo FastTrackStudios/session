@@ -26,6 +26,8 @@ pub struct Target {
     pub drums: bool,
     pub bpm: f64,
     pub length: f64,
+    /// Where the item starts in the project, seconds: the take's zero.
+    pub start: f64,
 }
 
 /// The item the Editor opens on in `project`: the selected track's
@@ -71,6 +73,7 @@ impl Song {
                 drums: crate::expression::is_drum_track(&track.name),
                 bpm: self.bpm,
                 length: item.length.as_seconds(),
+                start: item.position.as_seconds(),
             })
     }
 
@@ -366,6 +369,15 @@ impl EditorView {
             self.load();
         }
         self.landed(size);
+        // The transport's playhead, and the page following it.
+        if let (Some(view), Some(t), Some(transport)) = (
+            self.view.as_mut(),
+            self.target.as_ref(),
+            crate::engine::Transport::shared(),
+        ) {
+            let (at, playing) = transport.read();
+            view.follow_transport(at, playing, t.start);
+        }
         if self.skin != crate::skin::version() {
             self.skin = crate::skin::version();
             self.look = look();
@@ -430,6 +442,7 @@ impl blitz_dom::node::Widget for EditorView {
     fn needs_redraw(&self) -> bool {
         self.dirty
             || self.loading.is_some()
+            || crate::engine::moving()
             || self.heard()
             || self.skin != crate::skin::version()
             || self.view.as_ref().is_some_and(Expression::dragging)

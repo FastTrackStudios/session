@@ -346,6 +346,34 @@ impl Expression {
         self.editor.playhead.filter(|_| ups > 1e-9).map(|p| p / ups)
     }
 
+    /// The transport, into the editor: the playhead at `at` seconds in the
+    /// project (the take starting at `item_start`), and — while `playing`
+    /// — the view paged to it when it leaves. `true` when the picture
+    /// changed.
+    pub fn follow_transport(&mut self, at: f64, playing: bool, item_start: f64) -> bool {
+        let ups = self.editor.doc.time_base.units_per_second(self.editor.bpm);
+        if ups <= 1e-9 {
+            return false;
+        }
+        let p = (at - item_start) * ups;
+        let moved = self
+            .editor
+            .playhead
+            .is_none_or(|was| (was - p).abs() > 1e-6);
+        self.editor.playhead = Some(p);
+        if playing {
+            let (t0, t1) = self.editor.camera.time_span(self.editor.viewport);
+            if p < t0 || p > t1 {
+                // A page, not a scroll: the notes hold still to be read
+                // and the view turns over when the playhead reaches its
+                // edge, a tenth of a page in.
+                self.editor.camera.t0 = (t1 - t0).mul_add(-0.1, p);
+                self.invalidate_stack();
+            }
+        }
+        moved
+    }
+
     /// Where the roll starts, below the toolbar.
     const fn roll_top() -> f64 {
         TOOLBAR_H
@@ -2099,5 +2127,39 @@ mod theme_tests {
         assert!(themed_menu.is_some_and(|s| !s.commands.is_empty()));
         // Negative control: no theme, and the roll draws its own.
         assert!(!themes_roll_chrome());
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+
+    /// The playhead follows the transport, from the take's start; the view
+    /// pages to it only while playing.
+    #[test]
+    fn the_editor_follows_the_transport() {
+        let mut view = Expression::demo((0.0, 0.0), (1200.0, 700.0));
+        let (t0, t1) = view.editor.camera.time_span(view.editor.viewport);
+        let ups = view.editor.doc.time_base.units_per_second(view.editor.bpm);
+        let past = t1 / ups + 30.0;
+
+        // Stopped: the playhead moves, the page does not.
+        assert!(view.follow_transport(past + 2.0, false, 2.0));
+        assert!((view.editor.playhead.unwrap_or(0.0) - past * ups).abs() < 1e-6);
+        assert!(
+            (view.editor.camera.t0 - t0).abs() < 1e-9,
+            "a stopped transport leaves the view"
+        );
+
+        // Playing: the page turns to it.
+        view.follow_transport(past + 2.0, true, 2.0);
+        let (n0, n1) = view.editor.camera.time_span(view.editor.viewport);
+        let p = view.editor.playhead.unwrap_or(0.0);
+        assert!(
+            p >= n0 && p <= n1,
+            "the playhead is on the page: {n0}..{n1} ∌ {p}"
+        );
+        // The same reading again changes nothing.
+        assert!(!view.follow_transport(past + 2.0, true, 2.0));
     }
 }
