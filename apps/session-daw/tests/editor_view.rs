@@ -71,4 +71,35 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
         first_beat.len() >= 4,
         "a root and a triad on the one: {first_beat:?}"
     );
+
+    // The widget itself, on the piano: its read runs on the engine's
+    // runtime and lands on a later frame; its save goes to the saver.
+    let mut widget = session_daw::editor_view::EditorView::new(song);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while widget.editor().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the read never landed"
+        );
+        let _ = widget.frame(1200, 700, 1.0);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let editor = widget.editor().expect("landed");
+    assert_eq!(editor.item(), Some(piano.item.as_str()));
+    let note = editor.editor.doc.notes.first_mut().expect("a note");
+    note.velocity = 7.0 / 127.0;
+    widget.flush();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let back = session_daw::expression::load_take(&piano.item, piano.bpm, piano.length)
+            .expect("read back");
+        if back.notes.iter().any(|n| n.velocity == 7) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the save never landed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }

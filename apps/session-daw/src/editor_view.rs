@@ -127,7 +127,39 @@ pub struct EditorView {
     /// Loaded yet: the take is read on the first paint, when the box's
     /// size is known.
     tried: bool,
+    /// A read in flight on the engine's runtime: its result lands here,
+    /// and the next frame takes it. Replaced (and so ignored) when the
+    /// editor moves to another item before it lands.
+    loading: Option<Slot>,
+    /// The last read found nothing to edit.
+    failed: bool,
+    /// The saver: one task on the engine's runtime writing each saved
+    /// take back in the order it was saved, so a save never holds the
+    /// window and two saves never land out of order.
+    saver: Option<tokio::sync::mpsc::UnboundedSender<(String, Content)>>,
     dirty: bool,
+}
+
+/// What a read hands back: nothing yet, then the take or `None`.
+#[cfg(feature = "native")]
+type Slot = std::sync::Arc<std::sync::Mutex<Option<Option<daw::service::midi::MidiTakeSnapshot>>>>;
+#[cfg(feature = "native")]
+type Content = daw::service::midi::MidiTakeContent;
+
+/// Start the saver on the engine's runtime: each take sent is written
+/// back in turn. `None` with no engine.
+#[cfg(feature = "native")]
+fn saver() -> Option<tokio::sync::mpsc::UnboundedSender<(String, Content)>> {
+    let runtime = crate::open::runtime()?;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, Content)>();
+    runtime.spawn(async move {
+        while let Some((item, content)) = rx.recv().await {
+            if !crate::expression::write_take(item.clone(), content).await {
+                tracing::warn!(editor.item = %item, "the editor's take could not be written back");
+            }
+        }
+    });
+    Some(tx)
 }
 
 #[cfg(feature = "native")]
@@ -147,27 +179,53 @@ impl EditorView {
             skin: crate::skin::version(),
             font: crate::text::Font::embedded().ok(),
             tried: false,
+            loading: None,
+            failed: false,
+            saver: saver(),
             dirty: true,
         }
     }
 
     /// Read the target's take into the editor, `size` big. A take with
     /// no notes, or no engine to read it from, leaves no editor.
-    fn load(&mut self, size: (f64, f64)) {
+    fn load(&mut self) {
         self.tried = true;
-        let Some(t) = &self.target else {
+        self.failed = false;
+        let (Some(t), Some(runtime)) = (&self.target, crate::open::runtime()) else {
+            self.failed = self.target.is_some();
             return;
         };
-        let Some(snapshot) = crate::expression::load_take(&t.item, t.bpm, t.length) else {
-            tracing::warn!(
-                editor.item = %t.item,
-                "the editor's take could not be read, or has no notes"
-            );
+        let slot: Slot = std::sync::Arc::default();
+        let into = std::sync::Arc::clone(&slot);
+        let (item, bpm, length) = (t.item.clone(), t.bpm, t.length);
+        runtime.spawn(async move {
+            let read = crate::expression::read_take(item, bpm, length).await;
+            if let Ok(mut slot) = into.lock() {
+                *slot = Some(read);
+            }
+        });
+        self.loading = Some(slot);
+    }
+
+    /// The read that landed, into the editor, `size` big.
+    fn landed(&mut self, size: (f64, f64)) {
+        let Some(read) = self
+            .loading
+            .as_ref()
+            .and_then(|slot| slot.lock().ok().and_then(|mut s| s.take()))
+        else {
+            return;
+        };
+        self.loading = None;
+        let (Some(t), Some(snapshot)) = (&self.target, read) else {
+            tracing::warn!("the editor's take could not be read, or has no notes");
+            self.failed = true;
             return;
         };
         let mut view = Expression::from_take(&snapshot, t.item.clone(), t.drums, (0.0, 0.0), size);
         view.set_look(self.look);
         self.view = Some(view);
+        self.dirty = true;
     }
 
     fn event(&mut self, event: &UiEvent) {
@@ -235,8 +293,12 @@ impl EditorView {
             return;
         };
         let content = view.take_content();
-        if !crate::expression::save_take(&item, content) {
-            tracing::warn!(editor.item = %item, "the editor's take could not be written back");
+        let sent = self
+            .saver
+            .as_ref()
+            .is_some_and(|tx| tx.send((item.clone(), content)).is_ok());
+        if !sent {
+            tracing::warn!(editor.item = %item, "the editor has no engine to write its take back to");
         }
     }
 
@@ -264,8 +326,26 @@ impl EditorView {
         self.save();
         self.target = Some(next);
         self.view = None;
+        self.loading = None;
         self.tried = false;
         true
+    }
+
+    /// One frame, `width` × `height` at `scale`, offscreen: what the
+    /// window paints, for a test or the bench.
+    pub fn frame(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+        self.paint_scene(width, height, scale)
+    }
+
+    /// The editor, once its take has landed.
+    pub const fn editor(&mut self) -> Option<&mut Expression> {
+        self.view.as_mut()
+    }
+
+    /// Write the take back now, if it changed — what the end of a
+    /// gesture does.
+    pub fn flush(&mut self) {
+        self.save();
     }
 
     /// Whether the engine has said anything since the last frame.
@@ -283,8 +363,9 @@ impl EditorView {
         let scale = scale.max(f64::EPSILON);
         let size = (f64::from(width) / scale, f64::from(height) / scale);
         if !self.tried {
-            self.load(size);
+            self.load();
         }
+        self.landed(size);
         if self.skin != crate::skin::version() {
             self.skin = crate::skin::version();
             self.look = look();
@@ -299,7 +380,9 @@ impl EditorView {
             view.layout((0.0, 0.0), size);
             view.paint(&mut inner);
         } else if let Some(font) = &self.font {
-            let why = if self.target.is_some() {
+            let why = if self.loading.is_some() {
+                "Loading…"
+            } else if self.target.is_some() && self.failed {
                 "This item's notes could not be read."
             } else {
                 "Select a track with a MIDI item to edit it here."
@@ -346,6 +429,7 @@ impl blitz_dom::node::Widget for EditorView {
 
     fn needs_redraw(&self) -> bool {
         self.dirty
+            || self.loading.is_some()
             || self.heard()
             || self.skin != crate::skin::version()
             || self.view.as_ref().is_some_and(Expression::dragging)
