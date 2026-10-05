@@ -44,6 +44,25 @@
     <Var name="editor.gutter_bg" value="#0f0f12" />
     <Var name="editor.grid_beat" value="#34343c" />
     <Var name="editor.panel" value="#1b1b20" />
+    <Var name="editor.pitch_0" value="#ef4444" />
+    <Var name="editor.pitch_1" value="#f97316" />
+    <Var name="editor.pitch_2" value="#f59e0b" />
+    <Var name="editor.pitch_3" value="#eab308" />
+    <Var name="editor.pitch_4" value="#84cc16" />
+    <Var name="editor.pitch_5" value="#22c55e" />
+    <Var name="editor.pitch_6" value="#14b8a6" />
+    <Var name="editor.pitch_7" value="#06b6d4" />
+    <Var name="editor.pitch_8" value="#3b82f6" />
+    <Var name="editor.pitch_9" value="#6366f1" />
+    <Var name="editor.pitch_10" value="#a855f7" />
+    <Var name="editor.pitch_11" value="#ec4899" />
+    <Var name="editor.drum_kick" value="#ef4444" />
+    <Var name="editor.drum_snare" value="#f59e0b" />
+    <Var name="editor.drum_tom" value="#a3e635" />
+    <Var name="editor.drum_hat" value="#22d3ee" />
+    <Var name="editor.drum_ride" value="#60a5fa" />
+    <Var name="editor.drum_cymbal" value="#f472b6" />
+    <Var name="editor.drum_other" value="#c084fc" />
     <Var name="rail.rule" value="$border" />
     <Var name="rail.button" value="$surface" />
     <Var name="rack.well" value="#0a0a0c" />

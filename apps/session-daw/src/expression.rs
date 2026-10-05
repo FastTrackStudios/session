@@ -353,6 +353,7 @@ impl Expression {
 
     /// Draw the bars, the roll, the strip and any menu into the frame.
     pub fn paint(&mut self, painter: &mut impl PaintScene) {
+        note_palette(&self.editor.row_space);
         // The strip may have been toggled by a key or a button since
         // the last frame; the viewport follows it.
         self.relayout();
@@ -1305,6 +1306,9 @@ fn themed_strip(
 /// that says nothing leaves the editor reading as the arrangement.
 fn themed(look: &mut Look) {
     let Some(theme) = crate::skin::loaded() else {
+        if let Ok(mut slot) = NOTE_PALETTES.write() {
+            *slot = None;
+        }
         return;
     };
     let colour = |name: &str| {
@@ -1355,6 +1359,61 @@ fn themed(look: &mut Look) {
             *field = c;
         }
     }
+    // The notes' palettes: each pitch class, each piece of the kit. Two
+    // tables, not one: C's colour and the kick's are the same red, and
+    // the editor shows one row space at a time ([`note_palette`]).
+    use expression_editor_core::rows as kit;
+    let table = |names: &mut dyn Iterator<Item = (String, &'static str)>| {
+        let mut t = std::collections::HashMap::new();
+        for (name, hex) in names {
+            if let Some(c) = colour(&name) {
+                t.insert(hex.to_ascii_lowercase(), c);
+            }
+        }
+        t
+    };
+    let pitches = table(
+        &mut expression_editor_paint::theme::PITCH_CLASS
+            .iter()
+            .enumerate()
+            .map(|(i, hex)| (format!("pitch_{i}"), *hex)),
+    );
+    let drums = table(
+        &mut [
+            ("drum_kick", kit::DRUM_KICK_COLOR),
+            ("drum_snare", kit::DRUM_SNARE_COLOR),
+            ("drum_tom", kit::DRUM_TOM_COLOR),
+            ("drum_hat", kit::DRUM_HAT_COLOR),
+            ("drum_ride", kit::DRUM_RIDE_COLOR),
+            ("drum_cymbal", kit::DRUM_CYMBAL_COLOR),
+            ("drum_other", kit::DRUM_OTHER_COLOR),
+        ]
+        .map(|(n, hex)| (n.to_owned(), hex))
+        .into_iter(),
+    );
+    if let Ok(mut slot) = NOTE_PALETTES.write() {
+        *slot = Some((pitches, drums));
+    }
+}
+
+/// The theme's recolouring of the notes' palettes: by pitch class, by
+/// piece of the kit.
+type Palettes = (
+    std::collections::HashMap<String, vello::peniko::Color>,
+    std::collections::HashMap<String, vello::peniko::Color>,
+);
+static NOTE_PALETTES: std::sync::RwLock<Option<Palettes>> = std::sync::RwLock::new(None);
+
+/// Hand the painter the theme's palette for what `space` shows: the
+/// kit's for drum lanes, the pitch classes' otherwise.
+fn note_palette(space: &RowSpace) {
+    let table = NOTE_PALETTES.read().ok().and_then(|p| {
+        p.as_ref().map(|(pitches, drums)| match space {
+            RowSpace::Drums(_) => drums.clone(),
+            _ => pitches.clone(),
+        })
+    });
+    expression_editor_paint::paint::set_recolour(table);
 }
 
 /// How far a press may travel and still be a click, in pixels.
@@ -1950,6 +2009,37 @@ mod theme_tests {
         );
         // Negative control: a field the theme says nothing of.
         assert_eq!(themed.row_a, plain.row_a);
+    }
+
+    /// The notes' palettes follow the theme: `editor.drum_kick` recolours
+    /// every kick, and with no theme the kit is its own colours again.
+    #[test]
+    fn the_theme_recolours_the_notes() {
+        use expression_editor_core::rows::DRUM_KICK_COLOR;
+        let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let tokens = include_str!("../themes/console/tokens.frame").replace(
+            "</Variables>",
+            r##"<Var name="editor.drum_kick" value="#00ff00" /></Variables>"##,
+        );
+        let tokens = tokens.replace(r##"<Var name="editor.drum_kick" value="#ef4444" />"##, "");
+        let theme =
+            theme_runtime::Theme::from_sources(&[("tokens", &tokens)], crate::skin::schema(), None)
+                .expect("the tokens load");
+        crate::skin::set(Some(std::sync::Arc::new(theme)));
+        let _ = look_of(&palette);
+        let drums = RowSpace::Drums(DrumMap::fts());
+        note_palette(&drums);
+        let kick = paint::color(DRUM_KICK_COLOR);
+        // The same red as a pitch class (C) is not the kick's on a piano.
+        note_palette(&RowSpace::Pitch);
+        let c = paint::color(DRUM_KICK_COLOR);
+        crate::skin::set(None);
+        let _ = look_of(&palette);
+        note_palette(&drums);
+        let back = paint::color(DRUM_KICK_COLOR);
+        assert_eq!(kick, vello::peniko::Color::from_rgba8(0, 255, 0, 255));
+        assert_ne!(c, kick, "C keeps its colour");
+        assert_ne!(back, kick, "no theme, the kit's own red");
     }
 
     /// The console theme draws the editor's bars; with no theme, or a

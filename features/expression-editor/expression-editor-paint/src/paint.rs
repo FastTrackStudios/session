@@ -201,9 +201,34 @@ pub fn mix(a: Color, b: Color, t: f32) -> Color {
 /// surface that are still DOM. Falling back to transparent rather than
 /// panicking: a mistyped colour should cost a shape, not the window.
 pub fn color(css: &str) -> Color {
+    if let Some(c) = recoloured(css) {
+        return c;
+    }
     peniko::color::parse_color(css)
         .map(|c| c.to_alpha_color())
         .unwrap_or(Color::TRANSPARENT)
+}
+
+/// A host's recolouring of the editor's own palettes — the pitch-class
+/// colours, the kit's, the bands' — keyed by the colour they replace, as
+/// written (`"#ef4444"`). The notes and stems take their colour from
+/// those palettes by name; this is how a themed host says what each
+/// one is in its theme without the core knowing there is a theme.
+static RECOLOUR: std::sync::RwLock<Option<std::collections::HashMap<String, Color>>> =
+    std::sync::RwLock::new(None);
+
+/// Replace the recolouring table (`None` or empty: the palettes as they
+/// are).
+pub fn set_recolour(table: Option<std::collections::HashMap<String, Color>>) {
+    if let Ok(mut slot) = RECOLOUR.write() {
+        *slot = table.filter(|t| !t.is_empty());
+    }
+}
+
+fn recoloured(css: &str) -> Option<Color> {
+    let slot = RECOLOUR.read().ok()?;
+    let table = slot.as_ref()?;
+    table.get(&css.to_ascii_lowercase()).copied()
 }
 
 pub fn with_alpha(c: Color, alpha: f64) -> Color {
