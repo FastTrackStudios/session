@@ -264,6 +264,7 @@ impl Gen<'_> {
         self.line(2, "</Frame>");
         self.line(1, "</Page>");
         self.tcp();
+        self.editor();
         self.line(0, "</Document>");
     }
 
@@ -300,7 +301,57 @@ impl Gen<'_> {
                 &format!("<Var name=\"{name}\" value=\"{}\" />", hex(color)),
             );
         }
+        self.editor_tokens();
         self.line(1, "</Variables>");
+    }
+
+    /// The editor's colours as tokens (`editor.<name>`), as it draws
+    /// itself from this palette, and its notes' palettes as they are —
+    /// so this theme draws the editor's chrome exactly as the editor
+    /// would without it.
+    fn editor_tokens(&mut self) {
+        let mut look = crate::expression::base_look(self.palette);
+        let mut vars: Vec<(String, String)> = crate::expression::look_fields(&mut look)
+            .into_iter()
+            .map(|(name, c)| (format!("editor.{name}"), hex(to_theme(*c))))
+            .collect();
+        vars.push(("sheen".to_owned(), "#ffffff12".to_owned()));
+        for (i, c) in expression_editor_paint::theme::PITCH_CLASS
+            .iter()
+            .enumerate()
+        {
+            vars.push((format!("editor.pitch_{i}"), (*c).to_owned()));
+        }
+        use expression_editor_core::rows as kit;
+        for (name, c) in [
+            ("kick", kit::DRUM_KICK_COLOR),
+            ("snare", kit::DRUM_SNARE_COLOR),
+            ("tom", kit::DRUM_TOM_COLOR),
+            ("hat", kit::DRUM_HAT_COLOR),
+            ("ride", kit::DRUM_RIDE_COLOR),
+            ("cymbal", kit::DRUM_CYMBAL_COLOR),
+            ("other", kit::DRUM_OTHER_COLOR),
+        ] {
+            vars.push((format!("editor.drum_{name}"), c.to_owned()));
+        }
+        for (name, value) in vars {
+            self.line(2, &format!("<Var name=\"{name}\" value=\"{value}\" />"));
+        }
+    }
+
+    /// The expression editor's components — its bars, keyboard, ruler,
+    /// strip and menu — the console theme's, one definition: drawn in
+    /// this theme's `editor.*` tokens.
+    fn editor(&mut self) {
+        const EDITOR: &str = include_str!("../../themes/console/editor.frame");
+        for line in EDITOR.lines() {
+            let t = line.trim();
+            if t == "<Document>" || t == "</Document>" || t.is_empty() {
+                continue;
+            }
+            self.out.push_str(line);
+            self.out.push('\n');
+        }
     }
 
     // ── geometry, as `Strip` lays it out ──────────────────────────────

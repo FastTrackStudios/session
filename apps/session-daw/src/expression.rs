@@ -999,8 +999,18 @@ pub async fn write_take(item_guid: String, content: daw::service::midi::MidiTake
 /// where the standalone editor paints it solid.
 #[must_use]
 pub fn look_of(palette: &crate::arrangement::Palette) -> Look {
+    let mut look = base_look(palette);
+    themed(&mut look);
+    look
+}
+
+/// [`look_of`] before the theme's `editor.*` tokens: the editor's colours
+/// from the palette alone — what a generated theme writes those tokens
+/// as, so it draws the editor the way the editor draws itself.
+#[must_use]
+pub fn base_look(palette: &crate::arrangement::Palette) -> Look {
     let canonical = Look::default();
-    let mut look = Look {
+    Look {
         bg: palette.surface,
         row_a: palette.row_a,
         row_b: palette.row_b,
@@ -1026,9 +1036,7 @@ pub fn look_of(palette: &crate::arrangement::Palette) -> Look {
         control_hover: palette.tcp_field,
         band_tint: 0.35,
         ..canonical
-    };
-    themed(&mut look);
-    look
+    }
 }
 
 /// A bar of the editor's (the toolbar, the status bar) drawn by the
@@ -1300,27 +1308,11 @@ fn themed_strip(
     drew.then_some(scene)
 }
 
-/// The theme's own word on any of the editor's colours: `editor.<field>`
-/// in the loaded frame theme's tokens (`editor.bg`, `editor.key_white`,
-/// `editor.selected`…) over what the palette mapping chose. A theme
-/// that says nothing leaves the editor reading as the arrangement.
-fn themed(look: &mut Look) {
-    let Some(theme) = crate::skin::loaded() else {
-        if let Ok(mut slot) = NOTE_PALETTES.write() {
-            *slot = None;
-        }
-        return;
-    };
-    let colour = |name: &str| {
-        theme
-            .token(&format!("editor.{name}"))
-            .and_then(theme_runtime::Value::color)
-            .map(|c| {
-                let [r, g, b, a] = c.to_rgba8();
-                vello::peniko::Color::from_rgba8(r, g, b, a)
-            })
-    };
-    let fields: [(&str, &mut vello::peniko::Color); 32] = [
+/// Every colour of the editor's [`Look`] by its theme token's name
+/// (`editor.<name>`): what a theme reads and what a generated theme
+/// writes, one list.
+pub fn look_fields(look: &mut Look) -> [(&'static str, &mut vello::peniko::Color); 32] {
+    [
         ("bg", &mut look.bg),
         ("row_a", &mut look.row_a),
         ("row_b", &mut look.row_b),
@@ -1353,7 +1345,30 @@ fn themed(look: &mut Look) {
         ("control_selected", &mut look.control_selected),
         ("octave_line", &mut look.octave_line),
         ("peaks", &mut look.peaks),
-    ];
+    ]
+}
+
+/// The theme's own word on any of the editor's colours: `editor.<field>`
+/// in the loaded frame theme's tokens (`editor.bg`, `editor.key_white`,
+/// `editor.selected`…) over what the palette mapping chose. A theme
+/// that says nothing leaves the editor reading as the arrangement.
+fn themed(look: &mut Look) {
+    let Some(theme) = crate::skin::loaded() else {
+        if let Ok(mut slot) = NOTE_PALETTES.write() {
+            *slot = None;
+        }
+        return;
+    };
+    let colour = |name: &str| {
+        theme
+            .token(&format!("editor.{name}"))
+            .and_then(theme_runtime::Value::color)
+            .map(|c| {
+                let [r, g, b, a] = c.to_rgba8();
+                vello::peniko::Color::from_rgba8(r, g, b, a)
+            })
+    };
+    let fields = look_fields(look);
     for (name, field) in fields {
         if let Some(c) = colour(name) {
             *field = c;

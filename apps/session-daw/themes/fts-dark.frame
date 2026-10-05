@@ -18,6 +18,58 @@
     <Var name="surface" value="#09090b" />
     <Var name="surface.sunken" value="#0a0a0c" />
     <Var name="border" value="#27272a" />
+    <Var name="editor.bg" value="#0a0a0c" />
+    <Var name="editor.row_a" value="#121215" />
+    <Var name="editor.row_b" value="#101013" />
+    <Var name="editor.grid_beat" value="#ffffff14" />
+    <Var name="editor.grid_sub" value="#ffffff24" />
+    <Var name="editor.panel" value="#18181b" />
+    <Var name="editor.panel_border" value="#1d1d21" />
+    <Var name="editor.border_strong" value="#0a0a0c" />
+    <Var name="editor.surface_inset" value="#0a0a0c" />
+    <Var name="editor.surface_bar" value="#09090b" />
+    <Var name="editor.gutter_bg" value="#0a0a0c" />
+    <Var name="editor.key_white" value="#09090b" />
+    <Var name="editor.key_black" value="#0a0a0c" />
+    <Var name="editor.key_label" value="#a1a1aa" />
+    <Var name="editor.text" value="#e4e4e7" />
+    <Var name="editor.text_dim" value="#a1a1aa" />
+    <Var name="editor.text_bright" value="#e4e4e7" />
+    <Var name="editor.text_faint" value="#5a5a5a" />
+    <Var name="editor.accent" value="#38bdf8" />
+    <Var name="editor.selected" value="#38bdf8" />
+    <Var name="editor.playhead" value="#38bdf8" />
+    <Var name="editor.razor" value="#22d3ee" />
+    <Var name="editor.gold" value="#eab308" />
+    <Var name="editor.zone" value="#ef4444" />
+    <Var name="editor.reference" value="#7c8598" />
+    <Var name="editor.handle" value="#c2c6ce" />
+    <Var name="editor.control" value="#09090b" />
+    <Var name="editor.control_active" value="#38bdf88c" />
+    <Var name="editor.control_hover" value="#0a0a0c" />
+    <Var name="editor.control_selected" value="#3a4a52" />
+    <Var name="editor.octave_line" value="#3a3a4d" />
+    <Var name="editor.peaks" value="#5b8def" />
+    <Var name="sheen" value="#ffffff12" />
+    <Var name="editor.pitch_0" value="#ef4444" />
+    <Var name="editor.pitch_1" value="#f97316" />
+    <Var name="editor.pitch_2" value="#f59e0b" />
+    <Var name="editor.pitch_3" value="#eab308" />
+    <Var name="editor.pitch_4" value="#84cc16" />
+    <Var name="editor.pitch_5" value="#22c55e" />
+    <Var name="editor.pitch_6" value="#14b8a6" />
+    <Var name="editor.pitch_7" value="#06b6d4" />
+    <Var name="editor.pitch_8" value="#3b82f6" />
+    <Var name="editor.pitch_9" value="#6366f1" />
+    <Var name="editor.pitch_10" value="#a855f7" />
+    <Var name="editor.pitch_11" value="#ec4899" />
+    <Var name="editor.drum_kick" value="#ef4444" />
+    <Var name="editor.drum_snare" value="#f59e0b" />
+    <Var name="editor.drum_tom" value="#a3e635" />
+    <Var name="editor.drum_hat" value="#22d3ee" />
+    <Var name="editor.drum_ride" value="#60a5fa" />
+    <Var name="editor.drum_cymbal" value="#f472b6" />
+    <Var name="editor.drum_other" value="#c084fc" />
   </Variables>
   <Page name="mcp.strip">
     <Frame name="Strip" w=86 h=400>
@@ -934,6 +986,86 @@
         <Frame name="@mute" w=10 h=10 bind:x="298" bind:y="(h >= 58 ? 6 : clamp((h - min(24, max(h - 2, 1))) / 2, 1, 6)) + ((h >= 58 ? 24 : min(24, max(h - 2, 1))) - min((h >= 58 ? 24 : min(24, max(h - 2, 1))), 20)) / 2" bind:w="21" bind:h="min((h >= 58 ? 24 : min(24, max(h - 2, 1))), 20)" />
         <Frame name="@phase" w=10 h=10 bind:x="320" bind:y="h - 24" bind:w="16" bind:h="16" bind:visible="h >= 94" />
       </Frame>
+    </Frame>
+  </Page>
+  <Page name="editor.bar">
+    <Frame name="Bar" w=1200 h=30>
+      <Rectangle name="Ground" w=1200 h=30 bind:w="w" bind:h="h" bind:fill="$editor.surface_bar" />
+      <Rectangle name="Rule" y=29 w=1200 h=1 bind:y="h - 1" bind:w="w" bind:fill="$editor.panel_border" />
+    </Frame>
+  </Page>
+  <Page name="editor.button">
+    <Frame name="Button" w=80 h=24>
+      <Rectangle name="Plate" w=80 h=24 radius=3 bind:w="w" bind:h="h" bind:visible="!button.readout || button.on" bind:fill="button.on ? $editor.control_active : (button.hover ? $editor.control_hover : $editor.control)" />
+      <Rectangle name="Sheen" x=1 y=1 w=78 h=1 bind:w="w - 2" bind:visible="!button.readout" bind:fill="$sheen" />
+      <Text name="Label" w=80 h=14 size=10 text-align="center" bind:w="w" bind:y="h / 2 - 6.5" bind:text="button.label" bind:fill="!button.enabled ? $text.faint : (button.on ? $editor.text_bright : $editor.text)">Button</Text>
+    </Frame>
+  </Page>
+  <Page name="editor.keys">
+    <Frame name="Keys" w=54 h=400>
+      <Rectangle name="Bed" w=54 h=400 bind:w="w" bind:h="h" bind:fill="key.piano ? $editor.key_white : $editor.surface_bar" />
+      <Rectangle name="Edge" x=53 w=1 h=400 bind:x="w - 1" bind:h="h" bind:fill="$editor.panel_border" />
+    </Frame>
+  </Page>
+  <Page name="editor.key">
+    <Frame name="Key" w=54 h=12>
+      <Rectangle name="Lane" w=53 h=12 bind:w="w - 1" bind:h="h" bind:visible="!key.piano" bind:fill="key.black ? $editor.key_black : $editor.key_white" />
+      <Rectangle name="Black" w=33 h=12 radius=1.5 bind:w="(w - 1) * 0.62" bind:h="h" bind:visible="key.piano && key.black" bind:fill="$editor.key_black" />
+      <Rectangle name="Shine" x=1 w=31 h=1 bind:w="(w - 1) * 0.62 - 2" bind:y="h - 2" bind:visible="key.piano && key.black" bind:fill="$sheen" />
+      <Rectangle name="Part" w=53 h=0.5 bind:w="w - 1" bind:visible="!(key.piano && key.black)" bind:fill="$editor.panel_border" />
+      <Text name="Name" w=49 h=12 size=9 text-align="right" bind:w="w - 5" bind:y="h / 2 - 5.5" bind:visible="key.labelled" bind:text="key.label" bind:fill="$editor.key_label">C4</Text>
+    </Frame>
+  </Page>
+  <Page name="editor.keygroup">
+    <Frame name="Group" w=54 h=24>
+      <Rectangle name="Brace" x=1 y=2 w=1.5 h=20 bind:h="h - 4" bind:fill="$editor.text_dim" />
+      <Text name="Name" x=5 w=46 h=12 size=9 bind:y="h / 2 - 5.5" bind:text="group.label" bind:fill="$editor.text_dim">T1</Text>
+    </Frame>
+  </Page>
+  <Page name="editor.ruler">
+    <Frame name="Ruler" w=1200 h=28>
+      <Rectangle name="Ground" w=1200 h=28 bind:w="w" bind:h="h" bind:fill="$editor.surface_bar" />
+      <Rectangle name="Rule" y=27 w=1200 h=1 bind:y="h - 1" bind:w="w" bind:fill="$editor.panel_border" />
+      <Rectangle name="Gutter edge" x=53 w=1 h=28 bind:h="h" bind:fill="$editor.panel_border" />
+    </Frame>
+  </Page>
+  <Page name="editor.tick">
+    <Frame name="Tick" w=60 h=28>
+      <Rectangle name="Line" w=1 h=22 bind:y="tick.bar ? 6 : h - 7" bind:h="tick.bar ? h - 6 : 7" bind:fill="tick.bar ? $editor.text_dim : $editor.grid_sub" />
+      <Text name="Number" x=4 y=3 w=54 h=12 size=9 bind:visible="tick.labelled" bind:text="tick.label" bind:fill="$editor.text_dim">1</Text>
+    </Frame>
+  </Page>
+  <Page name="editor.marker">
+    <Frame name="Marker" w=160 h=28>
+      <Rectangle name="Flag" y=2 w=6 h=6 radius=1 bind:fill="$editor.gold" />
+      <Text name="Name" x=8 w=150 h=12 size=9 bind:y="h - 15" bind:text="marker.label" bind:fill="$editor.gold">Verse</Text>
+    </Frame>
+  </Page>
+  <Page name="editor.strip">
+    <Frame name="Strip" w=1200 h=96>
+      <Rectangle name="Ground" w=1200 h=96 bind:w="w" bind:h="h" bind:fill="$editor.surface_bar" />
+      <Rectangle name="Top rule" w=1200 h=1 bind:w="w" bind:fill="$editor.panel_border" />
+      <Rectangle name="Gutter" w=54 h=96 bind:h="h" bind:fill="$editor.gutter_bg" />
+      <Rectangle name="Gutter edge" x=53 w=1 h=96 bind:h="h" bind:fill="$editor.panel_border" />
+      <Text name="Lane" x=6 y=6 w=46 h=12 size=9 bind:text="strip.label" bind:fill="$editor.text_dim">Velocity</Text>
+      <Rectangle name="Quarter" x=54 y=72 w=1146 h=1 bind:y="h * 0.75" bind:w="w - 54" bind:fill="$editor.grid_sub" />
+      <Rectangle name="Half" x=54 y=48 w=1146 h=1 bind:y="h * 0.5" bind:w="w - 54" bind:fill="$editor.grid_beat" />
+      <Rectangle name="Three quarters" x=54 y=24 w=1146 h=1 bind:y="h * 0.25" bind:w="w - 54" bind:fill="$editor.grid_sub" />
+    </Frame>
+  </Page>
+  <Page name="editor.menu">
+    <Frame name="Menu" w=220 h=200>
+      <Rectangle name="Shadow" x=0 y=3 w=220 h=200 radius=6 bind:w="w" bind:h="h" fill="#00000066" />
+      <Rectangle name="Panel" w=220 h=200 radius=6 bind:w="w" bind:h="h" bind:fill="$editor.panel" />
+      <Rectangle name="Edge" w=220 h=1 radius=6 bind:w="w" bind:fill="$sheen" />
+    </Frame>
+  </Page>
+  <Page name="editor.menuitem">
+    <Frame name="Item" w=220 h=22>
+      <Rectangle name="Rule" x=6 y=-2 w=208 h=1 bind:w="w - 12" bind:visible="menu.rule" bind:fill="$editor.panel_border" />
+      <Rectangle name="Hover" x=3 w=214 h=22 radius=4 bind:w="w - 6" bind:h="h" bind:visible="menu.hover" bind:fill="$editor.control_active" />
+      <Text name="Label" x=10 w=150 h=14 size=11 bind:y="h / 2 - 7" bind:text="menu.label" bind:fill="menu.enabled ? (menu.hover ? $editor.text_bright : $editor.text) : $text.faint">Quantize</Text>
+      <Text name="Key" x=150 w=60 h=14 size=10 text-align="right" bind:x="w - 70" bind:y="h / 2 - 6.5" bind:text="menu.shortcut" bind:fill="$editor.text_dim">Q</Text>
     </Frame>
   </Page>
 </Document>
