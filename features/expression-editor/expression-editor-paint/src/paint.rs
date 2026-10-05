@@ -426,7 +426,38 @@ fn label(
 /// move. That was most of the twelve milliseconds a pan cost at that
 /// note count — the drawing was never the problem, the *elements* were.
 pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller, look: &Look) -> Scene {
+    strip_scene_hosted(ed, w, h, labels, look, false)
+}
+
+/// [`strip_scene`], with `host_chrome` the host drawing the strip's
+/// chrome itself (a themed host: the ground, the gutter column and its
+/// lane name, the guides) — this then draws only the stems and curves.
+pub fn strip_scene_hosted(
+    ed: &Editor,
+    w: f64,
+    h: f64,
+    labels: &mut Labeller,
+    look: &Look,
+    host_chrome: bool,
+) -> Scene {
     let mut scene = Scene::new();
+    let at = Affine::translate((canvas::GUTTER_W, 0.0));
+    if !host_chrome {
+        strip_chrome(&mut scene, ed, w, h, labels, look);
+    }
+    strip_stems(&mut scene, ed, h, look, at);
+    scene
+}
+
+/// The strip's ground, gutter column, lane name and guides.
+fn strip_chrome(
+    scene: &mut Scene,
+    ed: &Editor,
+    w: f64,
+    h: f64,
+    labels: &mut Labeller,
+    look: &Look,
+) {
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
@@ -444,7 +475,7 @@ pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller, look: &Lo
         &Rect::new(0.0, 0.0, canvas::GUTTER_W, h),
     );
     label(
-        scene_mut(&mut scene),
+        scene,
         labels,
         ed.strip_lane.label(),
         6.0,
@@ -465,8 +496,11 @@ pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller, look: &Lo
             &Line::new((0.0, y), (vp_w, y)),
         );
     }
-    guides.stroke(&mut scene, at, 1.0);
+    guides.stroke(scene, at, 1.0);
+}
 
+/// The strip's stems and curves, in the note area at `at`.
+fn strip_stems(scene: &mut Scene, ed: &Editor, h: f64, look: &Look, at: Affine) {
     // One path per colour, rather than one command per note.
     let mut stems = Batch::default();
     let mut caps = Batch::default();
@@ -484,8 +518,8 @@ pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller, look: &Lo
             );
         }
     }
-    stems.fill(&mut scene, at);
-    caps.fill(&mut scene, at);
+    stems.fill(scene, at);
+    caps.fill(scene, at);
 
     let mut quiet = Batch::default();
     let mut selected = Batch::default();
@@ -500,16 +534,8 @@ pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller, look: &Lo
             quiet.add(with_alpha(color(c.color), 0.6), &path);
         }
     }
-    quiet.stroke(&mut scene, at, 1.5);
-    selected.stroke(&mut scene, at, 1.5);
-
-    scene
-}
-
-/// `label` takes `&mut Scene`; this is only here to keep the call above
-/// readable rather than reborrowing inline.
-fn scene_mut(scene: &mut Scene) -> &mut Scene {
-    scene
+    quiet.stroke(scene, at, 1.5);
+    selected.stroke(scene, at, 1.5);
 }
 
 fn rows(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, w: f64) {

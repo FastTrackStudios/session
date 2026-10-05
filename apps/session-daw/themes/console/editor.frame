@@ -52,4 +52,16 @@
       <Text name="Name" x=8 w=150 h=12 size=9 bind:y="h - 15" bind:text="marker.label" bind:fill="$editor.gold">Verse</Text>
     </Frame>
   </Page>
+  <Page name="editor.strip">
+    <Frame name="Strip" w=1200 h=96>
+      <Rectangle name="Ground" w=1200 h=96 bind:w="w" bind:h="h" bind:fill="$editor.surface_bar" />
+      <Rectangle name="Top rule" w=1200 h=1 bind:w="w" bind:fill="$editor.panel_border" />
+      <Rectangle name="Gutter" w=54 h=96 bind:h="h" bind:fill="$editor.gutter_bg" />
+      <Rectangle name="Gutter edge" x=53 w=1 h=96 bind:h="h" bind:fill="$editor.panel_border" />
+      <Text name="Lane" x=6 y=6 w=46 h=12 size=9 bind:text="strip.label" bind:fill="$editor.text_dim">Velocity</Text>
+      <Rectangle name="Quarter" x=54 y=72 w=1146 h=1 bind:y="h * 0.75" bind:w="w - 54" bind:fill="$editor.grid_sub" />
+      <Rectangle name="Half" x=54 y=48 w=1146 h=1 bind:y="h * 0.5" bind:w="w - 54" bind:fill="$editor.grid_beat" />
+      <Rectangle name="Three quarters" x=54 y=24 w=1146 h=1 bind:y="h * 0.25" bind:w="w - 54" bind:fill="$editor.grid_sub" />
+    </Frame>
+  </Page>
 </Document>

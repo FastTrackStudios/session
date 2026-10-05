@@ -95,6 +95,7 @@ pub fn schema() -> Schema {
         .field("tick.label")
         .field("tick.labelled")
         .field("marker.label")
+        .field("strip.label")
         .field("unit.name")
         .field("unit.value")
         .field("unit.bypassed")

@@ -428,9 +428,24 @@ impl Expression {
                 painter.append_scene(chrome, Affine::translate((ox, oy + TOOLBAR_H)));
             }
             if strip_h > 0.0 {
-                let strip =
-                    paint::strip_scene(&self.editor, w, strip_h, &mut self.labels, &self.look);
-                painter.append_scene(strip, Affine::translate((ox, oy + TOOLBAR_H + roll_h)));
+                // A theme with the strip draws its chrome; the stems and
+                // curves are the editor's either way.
+                let hosted = themes_strip();
+                let strip = paint::strip_scene_hosted(
+                    &self.editor,
+                    w,
+                    strip_h,
+                    &mut self.labels,
+                    &self.look,
+                    hosted,
+                );
+                let at = Affine::translate((ox, oy + TOOLBAR_H + roll_h));
+                if hosted
+                    && let Some(chrome) = themed_strip(&self.editor, w, strip_h, self.font.as_ref())
+                {
+                    painter.append_scene(chrome, at);
+                }
+                painter.append_scene(strip, at);
             }
         }
         let status = themed_bar(&self.status, self.hover, (w, STATUS_H), self.font.as_ref())
@@ -1203,6 +1218,40 @@ fn themed_roll_chrome(
     Some(scene)
 }
 
+/// Whether the loaded theme draws the velocity/CC strip's chrome.
+fn themes_strip() -> bool {
+    crate::skin::loaded().is_some_and(|t| t.has_role("editor.strip"))
+}
+
+/// The strip's chrome, `w` × `h`, drawn by the loaded theme: its ground,
+/// the gutter column with the lane's name, and the guides at a quarter,
+/// a half and three quarters. `None` when the theme does not draw it.
+fn themed_strip(
+    ed: &Editor,
+    w: f64,
+    h: f64,
+    font: Option<&crate::text::Font>,
+) -> Option<anyrender::Scene> {
+    let theme = crate::skin::loaded().filter(|t| t.has_role("editor.strip"))?;
+    let font = font?;
+    let mut scene = anyrender::Scene::new();
+    let mut host = crate::skin::canvas::Host {
+        scene: &mut scene,
+        font,
+    };
+    let drew = theme.record(
+        "editor.strip",
+        (w, h),
+        &crate::skin::values(&[(
+            "strip.label",
+            theme_runtime::Value::text(ed.strip_lane.label()),
+        )]),
+        &mut host,
+        Affine::IDENTITY,
+    );
+    drew.then_some(scene)
+}
+
 /// The theme's own word on any of the editor's colours: `editor.<field>`
 /// in the loaded frame theme's tokens (`editor.bg`, `editor.key_white`,
 /// `editor.selected`…) over what the palette mapping chose. A theme
@@ -1882,6 +1931,8 @@ mod theme_tests {
         crate::skin::set(Some(std::sync::Arc::new(theme)));
         let drawn = themed_bar(&buttons, None, (1200.0, 30.0), Some(&font));
         let chrome = themed_roll_chrome(&ed, 1200.0, 500.0, Some(&font));
+        let strip = themed_strip(&ed, 1200.0, 96.0, Some(&font));
+        let strips = themes_strip();
         let lets_it = themes_roll_chrome();
         crate::skin::set(None);
         assert!(drawn.is_some_and(|s| !s.commands.is_empty()));
@@ -1890,6 +1941,7 @@ mod theme_tests {
             "the roll leaves the keyboard and ruler to the theme"
         );
         assert!(chrome.is_some_and(|s| !s.commands.is_empty()));
+        assert!(strips && strip.is_some_and(|s| !s.commands.is_empty()));
         // Negative control: no theme, and the roll draws its own.
         assert!(!themes_roll_chrome());
     }

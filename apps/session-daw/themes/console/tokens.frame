@@ -41,6 +41,8 @@
     <Var name="editor.key_label" value="$text.faint" />
     <Var name="editor.grid_sub" value="#2c2c33" />
     <Var name="editor.gold" value="#eab308" />
+    <Var name="editor.gutter_bg" value="#0f0f12" />
+    <Var name="editor.grid_beat" value="#34343c" />
     <Var name="rail.rule" value="$border" />
     <Var name="rail.button" value="$surface" />
     <Var name="rack.well" value="#0a0a0c" />
