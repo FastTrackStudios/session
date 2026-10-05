@@ -152,6 +152,12 @@ fn main() {
     // it (one, docked), from the selected one; `FTS_BENCH_FX_FOLD` the
     // phases folded, by name (`rescue,polish`), and `returns` the
     // returns' effects.
+    // `FTS_BENCH_EDITOR=out.png`: the Editor view on the track
+    // `FTS_BENCH_EDITOR_TRACK` names (a folder of takes stacks them).
+    if let Ok(out) = std::env::var("FTS_BENCH_EDITOR") {
+        editor_shot(&palette, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
     if let Ok(out) = std::env::var("FTS_BENCH_FX") {
         fx_shot(&palette, &std::path::PathBuf::from(out), width, height);
         return;
@@ -713,6 +719,60 @@ fn expression_shot(palette: &Palette, out: &std::path::Path, width: u32, height:
 ///
 /// `FTS_BENCH_MIXER=/tmp/mixer.png`, with `FTS_BENCH_SCROLL=x,y` to move
 /// along the strips.
+fn editor_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let Some(project) = rt.block_on(daw_ui::studio::project::fetch()) else {
+        tracing::error!("could not read the project back");
+        return;
+    };
+    let mut song = session_daw::editor_view::Song::of(&project);
+    let named = std::env::var("FTS_BENCH_EDITOR_TRACK").unwrap_or_else(|_| "Piano".to_owned());
+    for t in &mut song.tracks {
+        t.selected = t.name == named;
+    }
+    let mut view = session_daw::editor_view::EditorView::new(song);
+    let deadline = Instant::now() + std::time::Duration::from_secs(60);
+    while view.editor().is_none() && Instant::now() < deadline {
+        let _ = view.frame(width, height, 1.0);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if let Some(e) = view.editor() {
+        let starts: Vec<f64> = e.editor.doc.notes.iter().map(|n| n.start).collect();
+        let max = starts.iter().copied().fold(0.0, f64::max);
+        let (t0, t1) = e.editor.camera.time_span(e.editor.viewport);
+        println!(
+            "  notes {} start..{max:.0}; doc {:.0}..{:.0}; view {t0:.0}..{t1:.0}; tracks {}",
+            starts.len(),
+            e.editor.doc.start,
+            e.editor.doc.end,
+            e.editor.tracks.len()
+        );
+    }
+    let scene = view.frame(width, height, 1.0);
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    image.render_to_vec(
+        |painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+            );
+            painter.append_scene(scene, Affine::IDENTITY);
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    println!("  wrote {} — the editor on {named}", out.display());
+}
+
 fn fx_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

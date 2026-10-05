@@ -975,17 +975,24 @@ pub async fn read_take(
     bpm: f64,
     length_seconds: f64,
 ) -> Option<daw::service::midi::MidiTakeSnapshot> {
-    const PPQ: f64 = 960.0;
     let item_guid = item_guid.as_str();
     let daw = daw::rpc::Daw::try_get()?;
     let project = daw.current_project().await.ok()?;
     let item = project.items().by_guid(item_guid).await.ok()??;
     let midi = item.active_take().midi();
-    let notes = midi.notes().await.ok()?;
+    let mut notes = midi.notes().await.ok()?;
     if notes.is_empty() {
         return None;
     }
-    let ccs = midi.ccs(None).await.unwrap_or_default();
+    let mut ccs = midi.ccs(None).await.unwrap_or_default();
+    // The engine speaks quarter notes; the editor, ticks.
+    for n in &mut notes {
+        n.start_ppq *= TICKS_PER_QN;
+        n.length_ppq *= TICKS_PER_QN;
+    }
+    for c in &mut ccs {
+        c.position_ppq *= TICKS_PER_QN;
+    }
     let played = notes
         .iter()
         .map(|n| n.start_ppq + n.length_ppq)
@@ -997,9 +1004,41 @@ pub async fn read_take(
         channel_pressures: Vec::new(),
         poly_pressures: Vec::new(),
         note_expressions: Vec::new(),
-        ppq: PPQ,
-        length_ppq: (length_seconds * bpm / 60.0 * PPQ).max(played),
+        ppq: TICKS_PER_QN,
+        length_ppq: (length_seconds * bpm / 60.0 * TICKS_PER_QN).max(played),
     })
+}
+
+/// Ticks per quarter note in the editor's documents. The daw speaks
+/// quarter notes (its positions are `ppq` by name and quarters by
+/// value); the editor's rules are written in ticks — a note is at least
+/// one long, a nudge is so many — so a take comes in multiplied by this
+/// and goes back divided by it. Read as quarters, a sixteenth would have
+/// been saved a quarter long.
+pub const TICKS_PER_QN: f64 = 960.0;
+
+/// The editor's take content (ticks) as the daw takes it (quarters).
+fn to_quarters(
+    mut content: daw::service::midi::MidiTakeContent,
+) -> daw::service::midi::MidiTakeContent {
+    let q = |t: &mut f64| *t /= TICKS_PER_QN;
+    for n in &mut content.notes {
+        q(&mut n.start_ppq);
+        q(&mut n.length_ppq);
+    }
+    for c in &mut content.ccs {
+        q(&mut c.position_ppq);
+    }
+    for b in &mut content.pitch_bends {
+        q(&mut b.position_ppq);
+    }
+    for e in &mut content.note_expressions {
+        q(&mut e.position_ppq);
+    }
+    for p in &mut content.channel_pressures {
+        q(&mut p.position_ppq);
+    }
+    content
 }
 
 /// Write `content` back to an item's active take, replacing it, as one
@@ -1012,6 +1051,7 @@ pub fn save_take(item_guid: &str, content: daw::service::midi::MidiTakeContent) 
 /// [`save_take`], awaited: what the Editor view's saver runs.
 pub async fn write_take(item_guid: String, content: daw::service::midi::MidiTakeContent) -> bool {
     let item_guid = item_guid.as_str();
+    let content = to_quarters(content);
     {
         let Some(daw) = daw::rpc::Daw::try_get() else {
             return false;

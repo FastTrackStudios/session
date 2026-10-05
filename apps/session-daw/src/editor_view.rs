@@ -32,6 +32,12 @@ pub struct Target {
     pub audio: bool,
     /// The item's gain, which the analysis reads the take at.
     pub volume: f64,
+    /// The track's name.
+    pub name: String,
+    /// More takes to stack with this one (a singer's doubles, a guitar's
+    /// takes): the folder's other children, each its first audio item.
+    /// Empty for one track.
+    pub takes: Vec<Self>,
 }
 
 /// The item the Editor opens on in `project`: the selected track's
@@ -77,6 +83,8 @@ impl Song {
             .map(|item| Target {
                 audio: !self.midi.contains(&item.guid),
                 volume: item.volume,
+                name: track.name.clone(),
+                takes: Vec::new(),
                 track: track.guid.clone(),
                 item: item.guid.clone(),
                 drums: self.is_drums(track),
@@ -107,13 +115,69 @@ impl Song {
         false
     }
 
-    /// The selected track's first MIDI item.
+    /// What the selected track opens: a folder of takes stacked (two or
+    /// more of its children with audio — a drum's folder excepted), else
+    /// the track's own first item.
     #[must_use]
     pub fn selected(&self) -> Option<Target> {
+        self.tracks.iter().filter(|t| t.selected).find_map(|t| {
+            // A drum's folder holds its mics, not takes: the kit is
+            // edited in the arrangement, on its folder items.
+            if t.is_folder && !self.is_drums(t) {
+                self.takes(t)
+            } else {
+                self.first_midi(t)
+            }
+        })
+    }
+
+    /// The tracks directly in `folder`, in order.
+    fn children<'a>(&'a self, folder: &'a str) -> impl Iterator<Item = &'a daw_proto::Track> {
         self.tracks
             .iter()
-            .filter(|t| t.selected)
-            .find_map(|t| self.first_midi(t))
+            .filter(move |c| c.parent_guid.as_deref() == Some(folder))
+    }
+
+    /// Every track under `folder` with no folder of its own, in order.
+    fn leaves<'a>(&'a self, folder: &'a str) -> Vec<&'a daw_proto::Track> {
+        let mut out = Vec::new();
+        for c in self.children(folder) {
+            if c.is_folder {
+                out.extend(self.leaves(&c.guid));
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// A folder's takes stacked: its children with an audio item, the
+    /// first the one the others line up against.
+    fn takes(&self, folder: &daw_proto::Track) -> Option<Target> {
+        // Each child is a take: a track with audio on it, or a folder of
+        // its sources (a singer's Main over its EN), whose first source
+        // with audio stands for it, named for the take.
+        let mut takes: Vec<Target> = self
+            .children(&folder.guid)
+            .filter_map(|c| {
+                let audio = |t: &daw_proto::Track| self.first_midi(t).filter(|x| x.audio);
+                let found = if c.is_folder {
+                    self.leaves(&c.guid).into_iter().find_map(audio)
+                } else {
+                    audio(c)
+                };
+                found.map(|mut t| {
+                    t.name.clone_from(&c.name);
+                    t
+                })
+            })
+            .collect();
+        if takes.len() < 2 {
+            return None;
+        }
+        let mut first = takes.remove(0);
+        first.takes = takes;
+        Some(first)
     }
 }
 
@@ -187,6 +251,60 @@ enum Read {
 #[cfg(feature = "native")]
 type Content = daw::service::midi::MidiTakeContent;
 
+/// One audio take, analysed through the in-process engine: `None` with
+/// no engine, or a take with no samples.
+#[cfg(feature = "native")]
+fn analysed(item: String, length: f64, volume: f64) -> Option<expression_editor_core::Editor> {
+    let daw = crate::open::local_engine()?;
+    expression_editor_audio::AudioSession::load(
+        daw,
+        expression_editor_audio::AudioTakeLocation {
+            project: daw::service::ProjectContext::Current,
+            item: daw::service::ItemRef::Guid(item),
+            take: daw::service::TakeRef::Active,
+        },
+        length,
+        volume,
+        expression_editor_core::Viewport::new(1000.0, 500.0),
+        expression_editor_audio::TakeConfig::default(),
+    )
+    .map(|session| session.editor)
+}
+
+/// The first take analysed, with `takes` stacked under it: each analysed
+/// in turn, moved onto the first take's timeline (its item starting
+/// where it does in the project), on a lane of its own.
+#[cfg(feature = "native")]
+fn stacked(
+    (item, length, volume, start, name): (String, f64, f64, f64, String),
+    takes: &[Target],
+) -> Option<Box<expression_editor_core::Editor>> {
+    let mut editor = analysed(item.clone(), length, volume)?;
+    if takes.is_empty() {
+        return Some(Box::new(editor));
+    }
+    editor.adopt_track_identity(item, Some(name));
+    let ups = editor.doc.time_base.units_per_second(editor.bpm);
+    for take in takes {
+        let Some(other) = analysed(take.item.clone(), take.length, take.volume) else {
+            continue;
+        };
+        let mut doc = other.doc;
+        let delta = (take.start - start) * ups;
+        if delta.abs() > 1e-9 {
+            doc.start += delta;
+            doc.end += delta;
+            for n in &mut doc.notes {
+                n.shift_time(delta);
+            }
+        }
+        editor.add_track_with_guid(take.item.clone(), take.name.clone(), doc);
+    }
+    editor.stacked = true;
+    editor.fit_lanes();
+    Some(Box::new(editor))
+}
+
 /// Start the saver on the engine's runtime: each take sent is written
 /// back in turn. `None` with no engine.
 #[cfg(feature = "native")]
@@ -241,24 +359,14 @@ impl EditorView {
         let (item, bpm, length) = (t.item.clone(), t.bpm, t.length);
         if t.audio {
             // Read and analysed off the window: a take's samples through
-            // the engine's accessor, its notes found by pitch analysis.
-            let volume = t.volume;
+            // the engine's accessor, its notes found by pitch analysis —
+            // and a stack's other takes after it, each on its own lane.
+            let (main, takes) = (
+                (item, length, t.volume, t.start, t.name.clone()),
+                t.takes.clone(),
+            );
             runtime.spawn_blocking(move || {
-                let editor = crate::open::local_engine().and_then(|daw| {
-                    expression_editor_audio::AudioSession::load(
-                        daw,
-                        expression_editor_audio::AudioTakeLocation {
-                            project: daw::service::ProjectContext::Current,
-                            item: daw::service::ItemRef::Guid(item),
-                            take: daw::service::TakeRef::Active,
-                        },
-                        length,
-                        volume,
-                        expression_editor_core::Viewport::new(1000.0, 500.0),
-                        expression_editor_audio::TakeConfig::default(),
-                    )
-                    .map(|session| Box::new(session.editor))
-                });
+                let editor = stacked(main, &takes);
                 if let Ok(mut slot) = into.lock() {
                     *slot = Some(Read::Audio(editor));
                 }

@@ -123,6 +123,43 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
+    // A save keeps a note's length: the arp's sixteenths stay sixteenths
+    // (the editor works in ticks, the engine in quarters).
+    let mut arps = song_of(project);
+    for t in &mut arps.tracks {
+        t.selected = t.name == "Arp";
+    }
+    let arp = arps.selected().expect("the arp's part");
+    let before =
+        session_daw::expression::load_take(&arp.item, arp.bpm, arp.length).expect("its notes");
+    let mut view = session_daw::expression::Expression::from_take(
+        &before,
+        arp.item.clone(),
+        false,
+        (0.0, 0.0),
+        (1200.0, 700.0),
+    );
+    view.editor.doc.notes.first_mut().expect("a note").velocity = 0.5;
+    assert!(session_daw::expression::save_take(
+        &arp.item,
+        view.take_content()
+    ));
+    let after = session_daw::expression::load_take(&arp.item, arp.bpm, arp.length).expect("back");
+    let lengths = |s: &daw::service::midi::MidiTakeSnapshot| {
+        let mut l: Vec<i64> = s
+            .notes
+            .iter()
+            .map(|n| n.length_ppq.round() as i64)
+            .collect();
+        l.sort_unstable();
+        l
+    };
+    assert_eq!(lengths(&after), lengths(&before), "every length as it was");
+    assert!(
+        lengths(&before).first().is_some_and(|l| *l < 960),
+        "the arp's notes are shorter than a quarter"
+    );
+
     // An audio track: its take is read through the engine and analysed,
     // and the editor shows it on its own, the audio surface.
     let mut audio = drums.clone();
@@ -147,4 +184,39 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
         expression_editor_core::Mode::PitchedAudio
     );
     assert_eq!(editor.item(), None, "an audio take writes nothing back");
+
+    // A singer's folder: Main and DBL stacked, each from its source, on
+    // one timeline — the view for lining a double up with its lead.
+    let mut ron = song_of(project);
+    for t in &mut ron.tracks {
+        t.selected = t.name == "Ron";
+    }
+    let stack = ron.selected().expect("Ron's takes");
+    assert!(stack.audio);
+    assert_eq!(stack.name, "Main");
+    assert_eq!(
+        stack
+            .takes
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>(),
+        ["DBL"]
+    );
+    let mut widget = session_daw::editor_view::EditorView::new(ron);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while widget.editor().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the takes never landed"
+        );
+        let _ = widget.frame(1200, 700, 1.0);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let view = widget.editor().expect("landed");
+    assert!(view.stacked(), "the takes are stacked");
+    assert_eq!(view.editor.tracks.len(), 2, "a lane a take");
+}
+
+fn song_of(project: &daw_ui::studio::project::Project) -> session_daw::editor_view::Song {
+    session_daw::editor_view::Song::of(project)
 }
