@@ -359,6 +359,7 @@ pub fn StackView(
         mic_item_h: MIC_ITEM_H,
         mic_menu_w: MIC_MENU_W,
         hit_margin: HIT_MARGIN,
+        host_lanes: false,
     };
     // The same picture, drawn the way each renderer is fast at.
     //
