@@ -1,10 +1,9 @@
 //! A kit's hits, read off its folder's peaks: where a quantize cuts.
 //!
 //! The folder already holds every mic's peaks (`load`), folded by piece
-//! of the kit (`fold`); a hit is where a piece's envelope jumps. Peaks
-//! are 160-sample blocks — under 4 ms — which is finer than a drummer
-//! places anything and coarser than any edit needs, so the hits come
-//! from what is already loaded rather than a second read of the audio.
+//! of the kit (`fold`); a hit is where a piece's envelope jumps. Read at
+//! `load::DETECT_BLOCK_SIZE` — finer than the picture's blocks, because
+//! a hit placed a block late is a slice moved a block wrong.
 //!
 //! The pieces are read apart (kick, snare, toms; never the cymbals and
 //! rooms, which ring through everything) and their hits merged: a kick
@@ -16,8 +15,9 @@ use expression_editor_core::kit::LaneRole;
 use super::Folder;
 use super::fold::{Grid, GroupBy, SLOTS, fold};
 
-/// The envelope's resolution, in seconds.
-pub const COLUMN_SECS: f64 = 0.004;
+/// The envelope's resolution, in seconds: the kit read at
+/// `load::DETECT_BLOCK_SIZE`, a hit placed to a couple of milliseconds.
+pub const COLUMN_SECS: f64 = 0.002;
 /// The least gap between two hits on one piece: a buzz roll is not
 /// twenty hits.
 pub const REFRACTORY_SECS: f64 = 0.06;
@@ -27,7 +27,7 @@ pub const MERGE_SECS: f64 = 0.025;
 const FLOOR: f32 = 0.12;
 /// And this many times what the piece was doing just before.
 const JUMP: f32 = 2.0;
-/// "Just before": this many columns.
+/// "Just before": this many columns (12 ms).
 const BEFORE: usize = 6;
 
 /// The hits in `take` of `folder` between `from` and `to`, in project

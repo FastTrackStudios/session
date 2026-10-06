@@ -773,8 +773,14 @@ impl ArrangementWidget {
                 .iter()
                 .map(|(_, folder, ..)| (folder.clone(), crate::folder_item::GroupBy::Role))
                 .collect();
-            let (folders, _) =
-                crate::folder_item::load::load(&project, &snapshot, &wanted, fallback).await;
+            let (folders, _) = crate::folder_item::load::load_at(
+                &project,
+                &snapshot,
+                &wanted,
+                fallback,
+                crate::folder_item::load::DETECT_BLOCK_SIZE,
+            )
+            .await;
             let found: Vec<(String, Vec<f64>)> = rows
                 .iter()
                 .filter_map(|(row, folder, from, to)| {

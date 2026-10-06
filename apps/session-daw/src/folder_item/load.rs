@@ -139,6 +139,22 @@ pub async fn load(
     wanted: &[(String, GroupBy)],
     fallback: Color,
 ) -> (Vec<Folder>, Loaded) {
+    load_at(daw, snapshot, wanted, fallback, BLOCK_SIZE).await
+}
+
+/// Samples per peak a quantize reads the kit at: where a hit is matters
+/// to well under a peak block (160 samples is 3.6 ms at 44.1 kHz, 14.5 ms
+/// on an 11 kHz source), and the read is one take, once.
+pub const DETECT_BLOCK_SIZE: u32 = 32;
+
+/// [`load`] with `block` samples per peak.
+pub async fn load_at(
+    daw: &daw_control::Project,
+    snapshot: &Project,
+    wanted: &[(String, GroupBy)],
+    fallback: Color,
+    block: u32,
+) -> (Vec<Folder>, Loaded) {
     let by_guid: HashMap<&str, &Track> = snapshot
         .tracks
         .iter()
@@ -188,7 +204,7 @@ pub async fn load(
                 };
                 let start_secs = item.position.as_seconds();
                 let length_secs = item.length.as_seconds();
-                let peaks = read_peaks(daw, &item.guid).await;
+                let peaks = read_peaks(daw, &item.guid, block).await;
                 let drift = peaks.drift(length_secs);
                 if drift > DRIFT_TOLERANCE {
                     found.off_rate = found.off_rate.saturating_add(1);
@@ -242,18 +258,18 @@ pub async fn load(
         folder_item.items = found.items,
         folder_item.off_rate_children = found.off_rate,
         folder_item.worst_grid_drift = found.worst_drift,
-        folder_item.block_size = BLOCK_SIZE,
+        folder_item.block_size = block,
         "folder items loaded"
     );
     (folders, found)
 }
 
 /// One item's active take's peaks, or an empty take.
-async fn read_peaks(daw: &daw_control::Project, item_guid: &str) -> TakePeaks {
+async fn read_peaks(daw: &daw_control::Project, item_guid: &str, block: u32) -> TakePeaks {
     let Ok(Some(handle)) = daw.items().by_guid(item_guid).await else {
         return TakePeaks::empty();
     };
-    let Ok(data) = handle.active_take().peaks(BLOCK_SIZE).await else {
+    let Ok(data) = handle.active_take().peaks(block).await else {
         return TakePeaks::empty();
     };
     TakePeaks::new(

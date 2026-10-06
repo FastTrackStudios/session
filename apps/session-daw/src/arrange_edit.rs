@@ -1602,11 +1602,21 @@ impl Editor {
             // Each mic's slices, by where they start: the mic's own guid
             // and every piece a cut has made of it.
             let of_mics = |guid: &str| mics.iter().any(|m| piece_of(guid, m));
-            for &hit in hits {
-                let at = hit - QUANTIZE_PRE_ROLL;
-                if at <= start + QUANTIZE_PRE_ROLL || at >= end - QUANTIZE_PRE_ROLL {
-                    continue;
-                }
+            // Every cut first, in the take's own time, then every move.
+            // Cut and move hit by hit and each move shifts the audio the
+            // next cut is placed on: the error runs down the take.
+            let cuts: Vec<(f64, f64)> = hits
+                .iter()
+                .map(|&hit| {
+                    let to = (hit / step).round() * step;
+                    (
+                        hit - QUANTIZE_PRE_ROLL,
+                        (to - hit) * strength.clamp(0.0, 1.0),
+                    )
+                })
+                .filter(|(at, _)| *at > start + QUANTIZE_PRE_ROLL && *at < end - QUANTIZE_PRE_ROLL)
+                .collect();
+            for &(at, _) in &cuts {
                 let mine: HashSet<String> = project
                     .items
                     .values()
@@ -1615,8 +1625,8 @@ impl Editor {
                     .map(|i| i.guid.clone())
                     .collect();
                 effects.extend(cut(project, at, &mine).into_iter().map(Effect::Send));
-                let to = (hit / step).round().mul_add(step, 0.0);
-                let shift = (to - hit) * strength.clamp(0.0, 1.0);
+            }
+            for &(at, shift) in &cuts {
                 if shift.abs() < 1e-4 {
                     continue;
                 }
@@ -1649,17 +1659,20 @@ fn piece_of(guid: &str, mic: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with("-split@"))
 }
 
-/// The second half of a quantize, on one mic: each slice's predecessor
-/// trimmed or stretched to meet it — a slice moved later left a gap
-/// behind it, one moved earlier ran over the one before — with a short
-/// crossfade across the seam while auto-crossfade is on. The audio a
-/// stretched slice plays into the gap is its own take's, carried on.
+/// The second half of a quantize, on one mic: the seams between its
+/// slices closed, with a short crossfade across each while auto-crossfade
+/// is on. Where a slice moved earlier it runs over the one before, which
+/// is trimmed to meet it. Where it moved later it left a gap, which it
+/// fills itself — its start pulled back into its own source, the ring of
+/// the hit before — rather than the slice before running on into it:
+/// that one would play on past its cut into this hit's attack, a flam.
 fn close_seams(
     project: &mut Project,
     mic: &str,
     (from, to): (f64, f64),
     effects: &mut Vec<Effect>,
 ) {
+    use daw_proto::primitives::{Duration, PositionInSeconds};
     let fade = if crate::options::AUTO_CROSSFADE.get() {
         QUANTIZE_CROSSFADE
     } else {
@@ -1682,13 +1695,41 @@ fn close_seams(
         })
         .collect();
     pieces.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
+    let mut prev_end: Option<f64> = None;
+    for (k, piece) in pieces.iter_mut().enumerate() {
+        let start = piece.position.as_seconds();
+        if let Some(ends) = prev_end
+            && ends + fade < start
+        {
+            // A gap: this slice reaches back to meet the one before.
+            let reach = start - ends + fade;
+            let (at, length) = (start - reach, piece.length.as_seconds() + reach);
+            let offset = (piece.start_offset.as_seconds() - reach).max(0.0);
+            piece.position = PositionInSeconds::from_seconds(at);
+            piece.length = Duration::from_seconds(length);
+            piece.start_offset = Duration::from_seconds(offset);
+            effects.push(Effect::Send(Edit::TrimItem(piece.guid.clone(), at, length)));
+            effects.push(Effect::Send(Edit::SlipItem(piece.guid.clone(), offset)));
+        }
+        if k > 0 && fade > 0.0 {
+            piece.fade_in_length = Duration::from_seconds(fade);
+            effects.push(Effect::Send(Edit::SetFadeIn(
+                piece.guid.clone(),
+                fade,
+                daw_proto::item::FadeShape::default(),
+            )));
+        }
+        prev_end = Some(piece.position.as_seconds() + piece.length.as_seconds());
+    }
+    // Overlaps, from the end back: each slice that runs past the next
+    // one's start (plus the crossfade) stops there.
     let mut next_start: Option<f64> = None;
     for piece in pieces.iter_mut().rev() {
         let start = piece.position.as_seconds();
         if let Some(next) = next_start {
             let length = next + fade - start;
-            if (length - piece.length.as_seconds()).abs() > 1e-6 && length > 0.0 {
-                piece.length = daw_proto::primitives::Duration::from_seconds(length);
+            if length > 0.0 && length < piece.length.as_seconds() - 1e-6 {
+                piece.length = Duration::from_seconds(length);
                 effects.push(Effect::Send(Edit::TrimItem(
                     piece.guid.clone(),
                     start,
@@ -1696,7 +1737,7 @@ fn close_seams(
                 )));
             }
             if fade > 0.0 {
-                piece.fade_out_length = daw_proto::primitives::Duration::from_seconds(fade);
+                piece.fade_out_length = Duration::from_seconds(fade);
                 effects.push(Effect::Send(Edit::SetFadeOut(
                     piece.guid.clone(),
                     fade,
@@ -1705,16 +1746,6 @@ fn close_seams(
             }
         }
         next_start = Some(start);
-    }
-    if fade > 0.0 {
-        for piece in pieces.iter_mut().skip(1) {
-            piece.fade_in_length = daw_proto::primitives::Duration::from_seconds(fade);
-            effects.push(Effect::Send(Edit::SetFadeIn(
-                piece.guid.clone(),
-                fade,
-                daw_proto::item::FadeShape::default(),
-            )));
-        }
     }
 }
 
@@ -3079,10 +3110,17 @@ mod tests {
                 _ => None,
             })
             .collect();
+        // The slice moved earlier runs over the one before, trimmed to
+        // meet it; the slice moved later reaches back over its gap.
         assert!(trims.contains(&("in1".to_owned(), 1.0)), "{trims:?}");
         assert!(
-            trims.contains(&("in1-split@3.015".to_owned(), 1.505)),
+            trims.contains(&("in1-split@3.015-split@4.485".to_owned(), 1.55)),
             "{trims:?}"
+        );
+        assert!(
+            sent.iter().any(|e| matches!(e, Edit::SlipItem(g, off)
+                if g == "in1-split@3.015-split@4.485" && (off - 2.45).abs() < 1e-9)),
+            "and plays from as far back in its source"
         );
         let fades_in = sent
             .iter()

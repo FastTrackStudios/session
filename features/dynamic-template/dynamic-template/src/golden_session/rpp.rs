@@ -390,7 +390,11 @@ pub struct Placed {
 /// re-run lands them in the same places.
 #[must_use]
 pub fn items_for(layout: Layout, path: &str, bars: u32) -> Vec<Placed> {
-    let mut rng = Rng::new(hash(&format!("items:{path}")));
+    // Seeded by the recording pass, not the track: every mic of one pass
+    // was cut where the others were (a kit's, a guitar's), so a folded row
+    // over them lines up as a real session's does.
+    let pass = super::perform::pass(path);
+    let mut rng = Rng::new(hash(&format!("items:{pass}")));
     let mut out = Vec::new();
     let (first, lengths, gaps): (u64, &[u32], &[u32]) = match layout {
         Layout::Maximal => (8, &[4, 8, 8, 16], &[0, 0, 4]),
@@ -1033,10 +1037,14 @@ mod tests {
     }
 
     #[test]
-    fn items_are_deterministic_per_path_and_cover_the_song() {
+    fn items_are_deterministic_per_pass_and_cover_the_song() {
         let a = items_for(Layout::Maximal, "Drum Kit/Kick/Sum/In", 64);
         assert_eq!(a, items_for(Layout::Maximal, "Drum Kit/Kick/Sum/In", 64));
-        assert_ne!(a, items_for(Layout::Maximal, "Drum Kit/Kick/Sum/Out", 64));
+        // One pass, one layout: every mic of the kit was cut where the
+        // others were, so its folded row lines up.
+        assert_eq!(a, items_for(Layout::Maximal, "Drum Kit/Snare/Sum/Top", 64));
+        // Another pass is cut its own way.
+        assert_ne!(a, items_for(Layout::Maximal, "Bass/DI", 64));
         assert!(a.iter().all(|p| p.bar < 64));
         assert!(a
             .last()
