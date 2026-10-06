@@ -1601,7 +1601,7 @@ impl Editor {
             let end = spans.iter().map(|s| s.1).fold(start, f64::max);
             // Each mic's slices, by where they start: the mic's own guid
             // and every piece a cut has made of it.
-            let of_mics = |guid: &str| mics.iter().any(|m| guid.starts_with(m.as_str()));
+            let of_mics = |guid: &str| mics.iter().any(|m| piece_of(guid, m));
             for &hit in hits {
                 let at = hit - QUANTIZE_PRE_ROLL;
                 if at <= start + QUANTIZE_PRE_ROLL || at >= end - QUANTIZE_PRE_ROLL {
@@ -1630,6 +1630,9 @@ impl Editor {
                     }
                 }
             }
+            for mic in &mics {
+                close_seams(project, mic, (start, end), effects);
+            }
         }
         if effects.len() > from {
             project.item_count = project.items.values().map(Vec::len).sum();
@@ -1638,6 +1641,85 @@ impl Editor {
         }
     }
 }
+
+/// Whether `guid` is the mic `mic` or a piece a cut made of it
+/// (`{mic}-split@{t}`, and pieces of those).
+fn piece_of(guid: &str, mic: &str) -> bool {
+    guid.strip_prefix(mic)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with("-split@"))
+}
+
+/// The second half of a quantize, on one mic: each slice's predecessor
+/// trimmed or stretched to meet it — a slice moved later left a gap
+/// behind it, one moved earlier ran over the one before — with a short
+/// crossfade across the seam while auto-crossfade is on. The audio a
+/// stretched slice plays into the gap is its own take's, carried on.
+fn close_seams(
+    project: &mut Project,
+    mic: &str,
+    (from, to): (f64, f64),
+    effects: &mut Vec<Effect>,
+) {
+    let fade = if crate::options::AUTO_CROSSFADE.get() {
+        QUANTIZE_CROSSFADE
+    } else {
+        0.0
+    };
+    let Some(lane) = project
+        .items
+        .values_mut()
+        .find(|lane| lane.iter().any(|i| piece_of(&i.guid, mic)))
+    else {
+        return;
+    };
+    let mut pieces: Vec<&mut daw_proto::Item> = lane
+        .iter_mut()
+        .filter(|i| {
+            let at = i.position.as_seconds();
+            // This take's pieces only: a next take that abuts it is
+            // not a seam this quantize made.
+            piece_of(&i.guid, mic) && at >= from - 1e-6 && at < to
+        })
+        .collect();
+    pieces.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
+    let mut next_start: Option<f64> = None;
+    for piece in pieces.iter_mut().rev() {
+        let start = piece.position.as_seconds();
+        if let Some(next) = next_start {
+            let length = next + fade - start;
+            if (length - piece.length.as_seconds()).abs() > 1e-6 && length > 0.0 {
+                piece.length = daw_proto::primitives::Duration::from_seconds(length);
+                effects.push(Effect::Send(Edit::TrimItem(
+                    piece.guid.clone(),
+                    start,
+                    length,
+                )));
+            }
+            if fade > 0.0 {
+                piece.fade_out_length = daw_proto::primitives::Duration::from_seconds(fade);
+                effects.push(Effect::Send(Edit::SetFadeOut(
+                    piece.guid.clone(),
+                    fade,
+                    daw_proto::item::FadeShape::default(),
+                )));
+            }
+        }
+        next_start = Some(start);
+    }
+    if fade > 0.0 {
+        for piece in pieces.iter_mut().skip(1) {
+            piece.fade_in_length = daw_proto::primitives::Duration::from_seconds(fade);
+            effects.push(Effect::Send(Edit::SetFadeIn(
+                piece.guid.clone(),
+                fade,
+                daw_proto::item::FadeShape::default(),
+            )));
+        }
+    }
+}
+
+/// The crossfade across a quantize's seams, with auto-crossfade on.
+pub const QUANTIZE_CROSSFADE: f64 = 0.005;
 
 /// How far before a hit a quantize cuts: the stick's attack is in the
 /// slice it moves, not left behind in the one before.
@@ -2986,6 +3068,30 @@ mod tests {
             .find(|i| i.guid == "in1-split@3.015")
             .expect("the slice");
         assert!((slice.start_offset.as_seconds() - 1.015).abs() < 1e-9);
+        // The seams closed: the slice before each moved one meets it,
+        // a 5 ms crossfade over (auto-crossfade is on by default).
+        let trims: Vec<(String, f64)> = sent
+            .iter()
+            .filter_map(|e| match e {
+                Edit::TrimItem(g, _, len) if g.starts_with("in1") => {
+                    Some((g.clone(), (len * 1000.0).round() / 1000.0))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(trims.contains(&("in1".to_owned(), 1.0)), "{trims:?}");
+        assert!(
+            trims.contains(&("in1-split@3.015".to_owned(), 1.505)),
+            "{trims:?}"
+        );
+        let fades_in = sent
+            .iter()
+            .filter(|e| matches!(e, Edit::SetFadeIn(g, ..) if g.starts_with("in1")))
+            .count();
+        assert_eq!(fades_in, 2, "both later slices fade in");
+        // A mic's pieces are its own, not a mic whose name runs on.
+        assert!(super::piece_of("in1-split@3.015-split@4.485", "in1"));
+        assert!(!super::piece_of("in10", "in1"));
         // The second take was not selected and did not move.
         assert!(
             sent.iter()
