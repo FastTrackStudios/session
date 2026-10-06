@@ -84,6 +84,10 @@ pub struct Expression {
     menu: Option<Menu>,
     /// The tool before a spring-loaded one was armed by a held key.
     spring_from: Option<Tool>,
+    /// Actions the keymap named that the editor does not do itself —
+    /// the host's (aligning a stack's takes needs their audio), handed
+    /// over by [`Expression::host_actions`].
+    host: Vec<String>,
     /// What a menu command still needs from the host.
     pending: Option<Pending>,
     /// The colours, from the host's palette.
@@ -250,6 +254,7 @@ impl Expression {
             hover_at: None,
             menu: None,
             spring_from: None,
+            host: Vec::new(),
             pending: None,
             look: Look::default(),
             font: crate::text::Font::embedded().ok(),
@@ -261,7 +266,7 @@ impl Expression {
     }
 
     /// Forget the stack's picture — the document changed under it.
-    fn invalidate_stack(&mut self) {
+    pub fn invalidate_stack(&mut self) {
         self.stack_cache = None;
     }
 
@@ -315,7 +320,7 @@ impl Expression {
     /// The editor's viewport and the bars, for the box and the state
     /// now. The bars are rebuilt every frame anyway — they are the
     /// state drawn — so this is the one place that sizes anything.
-    fn relayout(&mut self) {
+    pub fn relayout(&mut self) {
         // The stack has no strip and its own, taller ruler.
         let vp = if self.stacked() {
             let ruler = Stack::ruler_h(&self.editor);
@@ -789,6 +794,12 @@ impl Expression {
         true
     }
 
+    /// The actions the keymap named since the last call that the editor
+    /// left to its host, in order.
+    pub fn host_actions(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.host)
+    }
+
     /// A key, by its browser-style name (`"Delete"`, `"ArrowLeft"`,
     /// `"a"`). `true` when the editor took it.
     pub fn key(&mut self, key: &str, mods: Mods) -> bool {
@@ -824,7 +835,11 @@ impl Expression {
             };
             if let Some(action) = action {
                 let (region, anchor) = self.memagic();
-                ran |= keys::dispatch(&mut self.editor, action, region, anchor);
+                if keys::dispatch(&mut self.editor, action, region, anchor) {
+                    ran = true;
+                } else {
+                    self.host.push(action.to_owned());
+                }
             }
         }
         // A spring-loaded tool arms the instant its prefix goes down,

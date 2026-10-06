@@ -295,8 +295,6 @@ impl Edit {
         }
     }
 
-    /// Whether this is about an item rather than a track.
-    #[must_use]
     /// Whether this edit is about the ruler rather than a track or an
     /// item. Its guid field is empty; it is addressed by number.
     #[must_use]
@@ -315,6 +313,8 @@ impl Edit {
         )
     }
 
+    /// Whether this is about an item rather than a track.
+    #[must_use]
     pub const fn is_item(&self) -> bool {
         matches!(
             self,

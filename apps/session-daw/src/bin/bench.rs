@@ -739,6 +739,39 @@ fn editor_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32
         let _ = view.frame(width, height, 1.0);
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    // `FTS_BENCH_EDITOR_ALIGN=1`: line the stack's takes up first, and
+    // say where each lane's first notes moved.
+    if std::env::var_os("FTS_BENCH_EDITOR_ALIGN").is_some() {
+        let firsts = |view: &mut session_daw::editor_view::EditorView| -> Vec<Vec<f64>> {
+            view.editor().map_or_else(Vec::new, |e| {
+                (0..e.editor.tracks.len())
+                    .map(|i| {
+                        let doc = e.editor.tracks.doc_of(i).unwrap_or(&e.editor.doc);
+                        // Past the first take's start: where the takes
+                        // overlap, which is what aligning moves.
+                        doc.notes
+                            .iter()
+                            .filter(|n| n.start >= 0.0)
+                            .take(4)
+                            .map(|n| n.start)
+                            .collect()
+                    })
+                    .collect()
+            })
+        };
+        let before = firsts(&mut view);
+        view.align_takes();
+        let deadline = Instant::now() + std::time::Duration::from_secs(60);
+        while view.aligning() && Instant::now() < deadline {
+            let _ = view.frame(width, height, 1.0);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = view.frame(width, height, 1.0);
+        println!(
+            "  aligned: first notes per lane, before {before:.1?}\n           after  {:.1?}",
+            firsts(&mut view)
+        );
+    }
     if let Some(e) = view.editor() {
         let starts: Vec<f64> = e.editor.doc.notes.iter().map(|n| n.start).collect();
         let max = starts.iter().copied().fold(0.0, f64::max);

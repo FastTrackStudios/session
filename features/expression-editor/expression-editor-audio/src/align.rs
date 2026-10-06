@@ -75,6 +75,103 @@ pub fn align_to_audio(
     )
 }
 
+/// Align `dub` to `reference` where each is an item placed in a song:
+/// `reference_start` and `dub_start` are where the items start, in
+/// seconds on the same clock.
+///
+/// Two takes of one part are rarely cut alike — a double's item may
+/// start two bars before its lead's — and [`align`] matches the takes
+/// from their own first frames, so it would hunt for a shift the size of
+/// the gap between the cuts (past its search range, onto whatever repeat
+/// of the line lies nearest). So the two are cut to the stretch of the
+/// song they share and aligned there, starting together; the answer is
+/// handed back on the dub's own frames, mapped as if the reference began
+/// where the dub does — which is what [`crate::apply_warp`]'s markers on
+/// the dub item mean. Outside the shared stretch the dub stays put.
+///
+/// `None` when the two do not overlap, or either has no frames there.
+pub fn align_placed(
+    reference: &Analysis,
+    reference_start: f64,
+    dub: &Analysis,
+    dub_start: f64,
+    cfg: AlignConfig,
+) -> Option<Alignment> {
+    let rate = dub.align.frame_rate;
+    if rate <= 0.0 || (reference.align.frame_rate - rate).abs() > 1e-9 {
+        return None;
+    }
+    // The shared stretch, in project seconds, then in each take's frames.
+    let end = |a: &Analysis, start: f64| start + a.align.len() as f64 / rate;
+    let from = reference_start.max(dub_start);
+    let to = end(reference, reference_start).min(end(dub, dub_start));
+    if to <= from {
+        return None;
+    }
+    let frames = ((to - from) * rate).floor() as usize;
+    let ref_skip = ((from - reference_start) * rate).round() as usize;
+    let dub_skip = ((from - dub_start) * rate).round() as usize;
+    let cut = |features: &align_dsp::Features, skip: usize| align_dsp::Features {
+        frames: features
+            .frames
+            .iter()
+            .skip(skip)
+            .take(frames)
+            .cloned()
+            .collect(),
+        frame_rate: rate,
+    };
+    let shared = align_dsp::align(
+        &cut(&reference.align, ref_skip),
+        &cut(&dub.align, dub_skip),
+        &cfg,
+    )?;
+    // Back onto the dub's own frames: frame `i` of the stretch is the
+    // dub's `i + dub_skip`, and a reference frame `r` of the stretch is
+    // `r + dub_skip` on a reference that began where the dub does.
+    let skip = dub_skip as f64;
+    let mut map: Vec<f64> = (0..dub.align.len()).map(|i| i as f64).collect();
+    for (i, r) in shared.map.iter().enumerate() {
+        if let Some(slot) = map.get_mut(i + dub_skip) {
+            *slot = r + skip;
+        }
+    }
+    let anchors = shared
+        .anchors
+        .into_iter()
+        .map(|a| Anchor {
+            dub: a.dub + dub_skip,
+            reference: a.reference + skip,
+            ..a
+        })
+        .collect();
+    Some(Alignment {
+        map,
+        anchors,
+        offset: shared.offset,
+        frame_rate: rate,
+    })
+}
+
+/// Where a moment `secs` into a dub plays after `alignment`, in seconds
+/// on the dub's own clock: the map read between frames, held at its last
+/// correction past either end.
+pub fn warped(alignment: &Alignment, secs: f64) -> f64 {
+    let rate = alignment.frame_rate;
+    let map = &alignment.map;
+    let Some(last) = map.len().checked_sub(1) else {
+        return secs;
+    };
+    if rate <= 0.0 {
+        return secs;
+    }
+    let at = (secs * rate).clamp(0.0, last as f64);
+    let i = at.floor() as usize;
+    let shift = |k: usize| map.get(k.min(last)).map_or(0.0, |r| r - k.min(last) as f64);
+    let frac = at - at.floor();
+    secs + frac.mul_add(shift(i + 1) - shift(i), shift(i)) / rate
+}
+
 /// An alignment as warp markers for the dub.
 ///
 /// One marker per anchor: where a moment plays now, and where it played

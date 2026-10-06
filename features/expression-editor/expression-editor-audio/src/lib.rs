@@ -67,7 +67,9 @@ pub mod stretch;
 #[cfg(feature = "daw")]
 pub mod write_dynamics;
 
-pub use align::{AlignConfig, Alignment, Anchor, AnchorKind, Material, align, align_to_audio};
+pub use align::{
+    AlignConfig, Alignment, Anchor, AnchorKind, Material, align, align_placed, align_to_audio,
+};
 pub use align_hits::{HitAlignConfig, align_hits, pair_hits};
 pub use analyze::{Analysis, TakeConfig, analyze_take, to_mono};
 #[cfg(feature = "daw")]

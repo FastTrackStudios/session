@@ -277,6 +277,10 @@ pub struct EditorView {
     /// window and two saves never land out of order.
     saver: Option<tokio::sync::mpsc::UnboundedSender<(String, Content)>>,
     dirty: bool,
+    /// The stack's takes, first the one the others line up on.
+    takes: Vec<Take>,
+    /// An alignment on the engine's runtime, landing on a later frame.
+    aligning: Option<Aligning>,
 }
 
 /// What a read hands back: nothing yet, then the take or `None`.
@@ -288,15 +292,47 @@ type Slot = std::sync::Arc<std::sync::Mutex<Option<Read>>>;
 #[cfg(feature = "native")]
 enum Read {
     Midi(Option<daw::service::midi::MidiTakeSnapshot>),
-    Audio(Option<Box<expression_editor_core::Editor>>),
+    Audio(Option<(Box<expression_editor_core::Editor>, Vec<Take>)>),
 }
+
+/// One take of a stack, as aligning it needs it: its item, where the item
+/// starts in the song, and its analysis.
+#[cfg(feature = "native")]
+#[derive(Clone)]
+struct Take {
+    item: String,
+    start: f64,
+    analysis: std::sync::Arc<expression_editor_audio::Analysis>,
+}
+
+/// The editor action that lines a stack's takes up on its first.
+pub const ALIGN_TAKES: &str = "FTS_EDITOR_TAKES_ALIGN";
+
+/// An alignment in flight: each take aligned, by item, when it lands.
+#[cfg(feature = "native")]
+type Aligning = std::sync::Arc<
+    std::sync::Mutex<Option<Vec<(String, f64, expression_editor_audio::Alignment)>>>,
+>;
 #[cfg(feature = "native")]
 type Content = daw::service::midi::MidiTakeContent;
 
-/// One audio take, analysed through the in-process engine: `None` with
-/// no engine, or a take with no samples.
+/// One audio take's analysis, through the in-process engine: what its
+/// lane draws and what aligning it reads. `None` with no engine, or a
+/// take with no samples.
 #[cfg(feature = "native")]
-fn analysed(item: String, length: f64, volume: f64) -> Option<expression_editor_core::Editor> {
+#[must_use]
+pub fn analysis(item: &str, length: f64, volume: f64) -> Option<expression_editor_audio::Analysis> {
+    session(item.to_owned(), length, volume).map(|s| s.analysis().clone())
+}
+
+/// One audio take loaded and analysed through the in-process engine:
+/// `None` with no engine, or a take with no samples.
+#[cfg(feature = "native")]
+fn session(
+    item: String,
+    length: f64,
+    volume: f64,
+) -> Option<expression_editor_audio::AudioSession> {
     let daw = crate::open::local_engine()?;
     expression_editor_audio::AudioSession::load(
         daw,
@@ -310,7 +346,6 @@ fn analysed(item: String, length: f64, volume: f64) -> Option<expression_editor_
         expression_editor_core::Viewport::new(1000.0, 500.0),
         expression_editor_audio::TakeConfig::default(),
     )
-    .map(|session| session.editor)
 }
 
 /// The first take analysed, with `takes` stacked under it: each analysed
@@ -320,18 +355,29 @@ fn analysed(item: String, length: f64, volume: f64) -> Option<expression_editor_
 fn stacked(
     (item, length, volume, start, name): (String, f64, f64, f64, String),
     takes: &[Target],
-) -> Option<Box<expression_editor_core::Editor>> {
-    let mut editor = analysed(item.clone(), length, volume)?;
+) -> Option<(Box<expression_editor_core::Editor>, Vec<Take>)> {
+    let first = session(item.clone(), length, volume)?;
+    let mut aligned = vec![Take {
+        item: item.clone(),
+        start,
+        analysis: std::sync::Arc::new(first.analysis().clone()),
+    }];
+    let mut editor = first.editor;
     if takes.is_empty() {
-        return Some(Box::new(editor));
+        return Some((Box::new(editor), aligned));
     }
     editor.adopt_track_identity(item, Some(name));
     let ups = editor.doc.time_base.units_per_second(editor.bpm);
     for take in takes {
-        let Some(other) = analysed(take.item.clone(), take.length, take.volume) else {
+        let Some(other) = session(take.item.clone(), take.length, take.volume) else {
             continue;
         };
-        let mut doc = other.doc;
+        aligned.push(Take {
+            item: take.item.clone(),
+            start: take.start,
+            analysis: std::sync::Arc::new(other.analysis().clone()),
+        });
+        let mut doc = other.editor.doc;
         let delta = (take.start - start) * ups;
         if delta.abs() > 1e-9 {
             doc.start += delta;
@@ -344,7 +390,7 @@ fn stacked(
     }
     editor.stacked = true;
     editor.fit_lanes();
-    Some(Box::new(editor))
+    Some((Box::new(editor), aligned))
 }
 
 /// Start the saver on the engine's runtime: each take sent is written
@@ -384,6 +430,8 @@ impl EditorView {
             failed: false,
             saver: saver(),
             dirty: true,
+            takes: Vec::new(),
+            aligning: None,
         }
     }
 
@@ -442,7 +490,8 @@ impl EditorView {
                 (0.0, 0.0),
                 size,
             )),
-            (Some(_), Read::Audio(Some(editor))) => {
+            (Some(_), Read::Audio(Some((editor, takes)))) => {
+                self.takes = takes;
                 Some(Expression::from_audio(*editor, (0.0, 0.0), size))
             }
             _ => None,
@@ -503,11 +552,88 @@ impl EditorView {
             _ => false,
         };
         self.dirty |= changed;
+        if view.host_actions().iter().any(|a| a == ALIGN_TAKES) {
+            self.align_takes();
+        }
         // A gesture finished or a key pressed that changed the take:
         // write it back, so the arrangement and the engine have it.
         if matches!(event, UiEvent::PointerUp(_) | UiEvent::KeyDown(_)) {
             self.save();
         }
+    }
+
+    /// Line the stack's takes up on its first: each aligned over the
+    /// stretch of the song it shares with the first, off the window, its
+    /// stretch markers written to its item; the lanes follow when the
+    /// answers land ([`Self::aligned`]).
+    pub fn align_takes(&mut self) {
+        let (Some((reference, dubs)), Some(runtime)) =
+            (self.takes.split_first(), crate::open::runtime())
+        else {
+            return;
+        };
+        if dubs.is_empty() || self.aligning.is_some() {
+            return;
+        }
+        let (reference, dubs) = (reference.clone(), dubs.to_vec());
+        let slot: Aligning = std::sync::Arc::default();
+        let into = std::sync::Arc::clone(&slot);
+        runtime.spawn_blocking(move || {
+            let done = align_all(&reference, &dubs);
+            if let Ok(mut slot) = into.lock() {
+                *slot = Some(done);
+            }
+        });
+        self.aligning = Some(slot);
+    }
+
+    /// Whether an alignment is still running.
+    #[must_use]
+    pub const fn aligning(&self) -> bool {
+        self.aligning.is_some()
+    }
+
+    /// The alignments that landed, onto the lanes: each take's notes moved
+    /// to where its audio now plays.
+    fn aligned(&mut self) {
+        let Some(done) = self
+            .aligning
+            .as_ref()
+            .and_then(|slot| slot.lock().ok().and_then(|mut s| s.take()))
+        else {
+            return;
+        };
+        self.aligning = None;
+        let (Some(view), Some(reference)) = (self.view.as_mut(), self.takes.first()) else {
+            return;
+        };
+        let editor = &mut view.editor;
+        let ups = editor.doc.time_base.units_per_second(editor.bpm);
+        for (item, start, alignment) in &done {
+            let delta = (start - reference.start) * ups;
+            let warp = |u: f64| {
+                expression_editor_audio::align::warped(alignment, (u - delta) / ups)
+                    .mul_add(ups, delta)
+            };
+            let active = editor
+                .tracks
+                .track(editor.tracks.active())
+                .is_some_and(|t| t.guid == *item);
+            if active {
+                warp_doc(&mut editor.doc, warp);
+            } else if let Some(doc) = editor
+                .tracks
+                .index_of_guid(item)
+                .and_then(|i| editor.tracks.doc_mut(i))
+            {
+                warp_doc(doc, warp);
+            }
+        }
+        // The stack's picture is keyed on the camera and the counts, not
+        // the notes' times: a warp moves notes and changes no count.
+        view.invalidate_stack();
+        view.relayout();
+        self.dirty = true;
     }
 
     /// Write the editor's take back to its item, if it changed.
@@ -595,6 +721,7 @@ impl EditorView {
             self.load();
         }
         self.landed(size);
+        self.aligned();
         // The transport's playhead, and the page following it.
         if let (Some(view), Some(t), Some(transport)) = (
             self.view.as_mut(),
@@ -652,6 +779,57 @@ fn look() -> expression_editor_paint::paint::Look {
 /// A key as the editor names it: a character's text, else the W3C name
 /// (`"Delete"`, `"ArrowLeft"`).
 #[cfg(feature = "native")]
+/// Each of `dubs` aligned to `reference` and its markers written: the
+/// takes that aligned, each with its item's start and its alignment.
+#[cfg(feature = "native")]
+fn align_all(
+    reference: &Take,
+    dubs: &[Take],
+) -> Vec<(String, f64, expression_editor_audio::Alignment)> {
+    let Some(daw) = crate::open::local_engine() else {
+        return Vec::new();
+    };
+    dubs.iter()
+        .filter_map(|dub| {
+            let alignment = expression_editor_audio::align_placed(
+                &reference.analysis,
+                reference.start,
+                &dub.analysis,
+                dub.start,
+                expression_editor_audio::AlignConfig::default(),
+            )?;
+            if let Err(error) = expression_editor_audio::apply_quantize::apply_warp(
+                daw,
+                daw::service::ProjectContext::Current,
+                &[daw::service::ItemRef::Guid(dub.item.clone())],
+                &alignment,
+            ) {
+                tracing::warn!(editor.item = %dub.item, error = ?error, "a take's alignment could not be written");
+                return None;
+            }
+            Some((dub.item.clone(), dub.start, alignment))
+        })
+        .collect()
+}
+
+/// Every note of `doc` moved by `warp` (a unit to a unit): its start and
+/// end, its curves stretched between them.
+#[cfg(feature = "native")]
+fn warp_doc(doc: &mut expression_editor_core::ExpressionDoc, warp: impl Fn(f64) -> f64) {
+    use expression_editor_core::doc::Dimension;
+    for n in &mut doc.notes {
+        let (s, e) = (n.start, n.end);
+        let (s2, e2) = (warp(s), warp(e));
+        n.shift_time(s2 - s);
+        if (e2 - (e + s2 - s)).abs() > 1e-9 {
+            for d in Dimension::ALL {
+                n.curve_mut(d).remap_time(s2, e + s2 - s, s2, e2);
+            }
+            n.end = e2;
+        }
+    }
+}
+
 fn key_name(key: &blitz_traits::events::Key) -> String {
     match key {
         blitz_traits::events::Key::Character(text) => text.clone(),
@@ -668,6 +846,7 @@ impl blitz_dom::node::Widget for EditorView {
     fn needs_redraw(&self) -> bool {
         self.dirty
             || self.loading.is_some()
+            || self.aligning.is_some()
             || crate::engine::moving()
             || self.heard()
             || self.skin != crate::skin::version()

@@ -6,7 +6,7 @@
 //! more — a line that moves, a double that is not quite on it — so the
 //! lead vocals, the BGVs, the choir and the guitars play the song
 //! (`golden_session::song`): the singers its melody, at their part's
-//! interval, a double a little late and a little sharp, drifting; the
+//! interval, a double late, a little sharp, drifting; the
 //! guitars its chords, strummed. One file per performance, shared by
 //! the tracks that captured it (a guitar's mics, a singer's languages),
 //! the length of the song, and each item reads its own stretch of it.
@@ -138,19 +138,17 @@ pub fn render(perf: Perf, shape: &Shape) -> Vec<i16> {
 
 /// The melody, sung: a voice of four harmonics with a vibrato that comes
 /// in after the onset, shaped by a short attack and release; a double
-/// 30 ms late, wandering ±12 ms, 8 cents sharp.
+/// 80 ms late, wandering ±25 ms, 8 cents sharp — a loose double, so
+/// lining it up is plain to see and well over an analysis frame (these
+/// files run at 11 kHz, where a frame is 46 ms).
 fn sing(buf: &mut [f64], shape: &Shape, shift: f64, double: bool) {
     let rate = f64::from(RATE);
-    let (late, sharp) = if double { (0.030, 0.08) } else { (0.0, 0.0) };
+    let sharp = if double { 0.08 } else { 0.0 };
     for (start, len, pitch) in melody_notes(&shape.sections, shape.bars, 60) {
-        let t0 = seconds(start, shape.bpm) + late;
-        let t1 = seconds(start.saturating_add(len), shape.bpm) + late - 0.04;
-        let wander = if double {
-            0.012 * (t0 * 0.7).sin()
-        } else {
-            0.0
-        };
-        let (t0, t1) = (t0 + wander, t1 + wander);
+        let on = seconds(start, shape.bpm);
+        let lag = if double { double_lag(on) } else { 0.0 };
+        let t0 = on + lag;
+        let t1 = seconds(start.saturating_add(len), shape.bpm) + lag - 0.04;
         let note = f64::from(pitch) - 69.0 + shift + sharp;
         let from = (t0 * rate).max(0.0).to_usize().unwrap_or(0);
         let to = (t1 * rate).max(0.0).to_usize().unwrap_or(0).min(buf.len());
@@ -169,6 +167,25 @@ fn sing(buf: &mut [f64], shape: &Shape, shift: f64, double: bool) {
             *out += 0.6 * envelope * voice;
         }
     }
+}
+
+/// How late the double sings a note its lead begins at `on` seconds: 80
+/// ms, wandering ±25 ms over the song. The one truth both the singing and
+/// a test of lining the double back up read.
+#[must_use]
+pub fn double_lag(on: f64) -> f64 {
+    let late = 0.080;
+    0.025f64.mul_add(((on + late) * 0.7).sin(), late)
+}
+
+/// The melody's note onsets for `shape`, in seconds: what a lead sings,
+/// and (each plus [`double_lag`]) its double.
+#[must_use]
+pub fn melody_onsets(shape: &Shape) -> Vec<f64> {
+    melody_notes(&shape.sections, shape.bars, 60)
+        .into_iter()
+        .map(|(start, ..)| seconds(start, shape.bpm))
+        .collect()
 }
 
 /// The chords, strummed: on every beat the bar's chord plucked low to

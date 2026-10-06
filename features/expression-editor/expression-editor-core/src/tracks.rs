@@ -813,6 +813,16 @@ impl Workspace {
         self.tracks.get(i).map(|t| &t.doc)
     }
 
+    /// [`Workspace::doc_of`], to change: a parked track's document. The
+    /// active one is refused for the same reason — the live document is
+    /// the editor's.
+    pub fn doc_mut(&mut self, i: usize) -> Option<&mut ExpressionDoc> {
+        if i == self.active {
+            return None;
+        }
+        self.tracks.get_mut(i).map(|t| &mut t.doc)
+    }
+
     /// Tracks that appear in a stacked view, in order, with indices.
     ///
     /// Unlike [`Workspace::references`] this *includes* the active
