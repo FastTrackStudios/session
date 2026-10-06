@@ -131,6 +131,39 @@ impl Song {
         })
     }
 
+    /// Whether `track` has an audio item.
+    fn has_audio(&self, track: &daw_proto::Track) -> bool {
+        self.items
+            .get(&track.guid)
+            .is_some_and(|items| items.iter().any(|i| !self.midi.contains(&i.guid)))
+    }
+
+    /// `track`'s audio item overlapping `from..to` the most, as a target.
+    fn overlapping(&self, track: &daw_proto::Track, from: f64, to: f64) -> Option<Target> {
+        let overlap = |i: &daw_proto::Item| {
+            let start = i.position.as_seconds();
+            (to.min(start + i.length.as_seconds()) - from.max(start)).max(0.0)
+        };
+        let item = self
+            .items
+            .get(&track.guid)?
+            .iter()
+            .filter(|i| !self.midi.contains(&i.guid))
+            .max_by(|a, b| overlap(a).total_cmp(&overlap(b)))?;
+        Some(Target {
+            track: track.guid.clone(),
+            item: item.guid.clone(),
+            drums: false,
+            bpm: self.bpm,
+            length: item.length.as_seconds(),
+            start: item.position.as_seconds(),
+            audio: true,
+            volume: item.volume,
+            name: track.name.clone(),
+            takes: Vec::new(),
+        })
+    }
+
     /// The tracks directly in `folder`, in order.
     fn children<'a>(&'a self, folder: &'a str) -> impl Iterator<Item = &'a daw_proto::Track> {
         self.tracks
@@ -157,25 +190,34 @@ impl Song {
         // Each child is a take: a track with audio on it, or a folder of
         // its sources (a singer's Main over its EN), whose first source
         // with audio stands for it, named for the take.
-        let mut takes: Vec<Target> = self
+        let sources: Vec<(&daw_proto::Track, &str)> = self
             .children(&folder.guid)
             .filter_map(|c| {
-                let audio = |t: &daw_proto::Track| self.first_midi(t).filter(|x| x.audio);
-                let found = if c.is_folder {
-                    self.leaves(&c.guid).into_iter().find_map(audio)
+                let source = if c.is_folder {
+                    self.leaves(&c.guid).into_iter().find(|l| self.has_audio(l))
                 } else {
-                    audio(c)
+                    Some(c).filter(|c| self.has_audio(c))
                 };
-                found.map(|mut t| {
-                    t.name.clone_from(&c.name);
-                    t
-                })
+                source.map(|s| (s, c.name.as_str()))
             })
             .collect();
-        if takes.len() < 2 {
+        let (first, rest) = sources.split_first()?;
+        if rest.is_empty() {
             return None;
         }
-        let mut first = takes.remove(0);
+        let named = |mut t: Target, name: &str| {
+            name.clone_into(&mut t.name);
+            t
+        };
+        let first = named(self.first_midi(first.0)?, first.1);
+        // The others at the same place in the song: the item that overlaps
+        // the first take's most, so the stack is one stretch of the song.
+        let (from, to) = (first.start, first.start + first.length);
+        let takes: Vec<Target> = rest
+            .iter()
+            .filter_map(|(t, name)| self.overlapping(t, from, to).map(|x| named(x, name)))
+            .collect();
+        let mut first = first;
         first.takes = takes;
         Some(first)
     }

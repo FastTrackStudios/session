@@ -87,6 +87,13 @@ impl Degree {
     }
 
     /// The chord's first `voices` stacked thirds in close position, the
+    /// root at or above `low`, as MIDI pitches.
+    #[must_use]
+    pub fn pitches(self, low: u8, voices: u8) -> Vec<u8> {
+        self.voicing(low, voices)
+    }
+
+    /// The chord's first `voices` stacked thirds in close position, the
     /// root at or above `low`.
     fn voicing(self, low: u8, voices: u8) -> Vec<u8> {
         let mut out: Vec<u8> = Vec::new();
@@ -436,6 +443,21 @@ const PHRASE: [&[(u32, u32, usize)]; 4] = [
 /// A bar of melody over `chord`: chord tones around `low`, a four-bar
 /// phrase that rises, answers, and breathes on its last beat.
 fn melody(m: MidiSourceBuilder, chord: Degree, at: At, low: u8, velocity: u8) -> MidiSourceBuilder {
+    bar_melody(chord, at.bar, low)
+        .into_iter()
+        .fold(m, |m, (beat, len, pitch)| {
+            m.at(plus(at.tick, beats(beat))).note(
+                0,
+                0,
+                pitch,
+                velocity,
+                beats(len).saturating_sub(60),
+            )
+        })
+}
+
+/// One bar of the melody over `chord`: (beat, length in beats, pitch).
+fn bar_melody(chord: Degree, bar: u32, low: u8) -> Vec<(u32, u32, u8)> {
     let tones = chord.voicing(low, 3);
     let pick = |k: usize| {
         let base = tones.get(modulo(k, 3)).copied().unwrap_or(low);
@@ -445,19 +467,28 @@ fn melody(m: MidiSourceBuilder, chord: Degree, at: At, low: u8, velocity: u8) ->
             base
         }
     };
-    let line = PHRASE
-        .get(modulo(usize::try_from(at.bar).unwrap_or(0), 4))
+    PHRASE
+        .get(modulo(usize::try_from(bar).unwrap_or(0), 4))
         .copied()
-        .unwrap_or(&[]);
-    line.iter().fold(m, |m, &(beat, len, k)| {
-        m.at(plus(at.tick, beats(beat))).note(
-            0,
-            0,
-            pick(k),
-            velocity,
-            beats(len).saturating_sub(60),
-        )
-    })
+        .unwrap_or(&[])
+        .iter()
+        .map(|&(beat, len, k)| (beat, len, pick(k)))
+        .collect()
+}
+
+/// The whole song's melody, around `low`: (first beat, beats, pitch) per
+/// note, beats counted from the song's start — what LINES writes and
+/// what the performed vocals sing (`golden_session::perform`).
+#[must_use]
+pub fn melody_notes(sections: &[Section], bars: u32, low: u8) -> Vec<(u32, u32, u8)> {
+    (0..bars)
+        .flat_map(|bar| {
+            let at = bar.saturating_mul(4);
+            bar_melody(chord_at(sections, bar), bar, low)
+                .into_iter()
+                .map(move |(beat, len, pitch)| (at.saturating_add(beat), len, pitch))
+        })
+        .collect()
 }
 
 #[cfg(test)]

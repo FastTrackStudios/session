@@ -17,6 +17,7 @@ pub mod checklist;
 pub mod guid;
 pub mod kind;
 pub mod media;
+pub mod perform;
 pub mod rpp;
 pub mod shape;
 pub mod song;
@@ -69,7 +70,7 @@ pub struct Written {
 pub fn write_media(dir: &Path) -> std::io::Result<Vec<String>> {
     let mut written = Vec::new();
     for shape in fixtures() {
-        written.extend(media::write_all(dir, &build(&shape).tracks)?);
+        written.extend(media::write_all(dir, &build(&shape).tracks, &shape)?);
     }
     Ok(written)
 }
@@ -97,7 +98,9 @@ pub fn write_fixtures(dir: &Path) -> std::io::Result<Written> {
             std::fs::write(dir.join(&file).with_extension("kf"), chart)?;
         }
         written.projects.push(file);
-        written.media.extend(media::write_all(dir, &built.tracks)?);
+        written
+            .media
+            .extend(media::write_all(dir, &built.tracks, &shape)?);
     }
     Ok(written)
 }

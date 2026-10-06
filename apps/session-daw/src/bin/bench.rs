@@ -750,6 +750,18 @@ fn editor_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32
             e.editor.doc.end,
             e.editor.tracks.len()
         );
+        for l in expression_editor_paint::stack::geometry::lanes(&e.editor, 1.8, 0.0) {
+            println!(
+                "  lane {} {:?} y {:.0} h {:.0} notes {} active {}",
+                l.track,
+                l.name,
+                l.y,
+                l.h,
+                l.notes.len(),
+                l.active
+            );
+        }
+        println!("  stacked {} mode {:?}", e.editor.stacked, e.editor.mode);
     }
     let scene = view.frame(width, height, 1.0);
     let mut image = VelloImageRenderer::new(width, height);

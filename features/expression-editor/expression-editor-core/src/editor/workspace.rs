@@ -173,11 +173,9 @@ impl Editor {
     /// generated guid that means nothing next session.
     pub fn adopt_track_identity(&mut self, guid: impl Into<String>, name: Option<String>) {
         let active = self.tracks.active();
-        if let Some(track) = self.tracks.track_mut(active) {
-            track.guid = guid.into();
-            if let Some(name) = name {
-                track.name = name;
-            }
+        self.tracks.set_guid(active, guid);
+        if let (Some(track), Some(name)) = (self.tracks.track_mut(active), name) {
+            track.name = name;
         }
     }
 

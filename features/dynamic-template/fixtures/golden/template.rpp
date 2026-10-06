@@ -11861,9 +11861,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {5CA1EB8F-8837-5333-8AC8-4FDEC46900B2}
       NAME "DI 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-di.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -11877,9 +11878,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {5CA1EA8F-8837-5180-C47D-DC54E4F51840}
       NAME "DI 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-di.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -11893,9 +11895,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {5CA1ED8F-8837-5699-B043-934FCECF8432}
       NAME "DI 8"
+      SOFFS 56
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-di.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -11909,9 +11912,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {5CA1EC8F-8837-54E6-A4EA-82D5170B600C}
       NAME "DI 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-di.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -11925,9 +11929,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {5CA1EF8F-8837-59FF-8A24-F0BBB5479F6A}
       NAME "DI 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-di.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -11941,9 +11946,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {5CA1EE8F-8837-584C-98A0-D103999D7C90}
       NAME "DI 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-di.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -11957,9 +11963,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {5CA1F18F-8837-5D65-E37A-950C6799A32A}
       NAME "DI 15"
+      SOFFS 112
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-di.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
   >
@@ -11988,7 +11995,7 @@
       NAME "Pedalboard 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12002,9 +12009,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {E218153C-60C5-FABF-F553-8BC5C438B37A}
       NAME "Pedalboard 3"
+      SOFFS 16
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12018,9 +12026,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {E218163C-60C5-FC72-1C1B-89ED2958D1C8}
       NAME "Pedalboard 4"
+      SOFFS 24
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12034,9 +12043,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {E218173C-60C5-FE25-7B7D-789FB66817B6}
       NAME "Pedalboard 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12050,9 +12060,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {E218103C-60C5-F240-4EA3-EEBE108DA1C0}
       NAME "Pedalboard 9"
+      SOFFS 64
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12066,9 +12077,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {E218113C-60C5-F3F3-B544-FCBD9A7CE7BA}
       NAME "Pedalboard 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12082,9 +12094,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {E218123C-60C5-F5A6-C6D5-35442A50C070}
       NAME "Pedalboard 15"
+      SOFFS 112
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
   >
@@ -12125,9 +12138,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {FF16C5D8-0CC2-8312-D7BD-BA1A5FBC7BD4}
       NAME "SM57 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12141,9 +12155,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {FF16C6D8-0CC2-84C5-4183-1F078020E896}
       NAME "SM57 3"
+      SOFFS 20
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12157,9 +12172,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {FF16C3D8-0CC2-7FAC-428C-7D58EB2D1E68}
       NAME "SM57 5"
+      SOFFS 36
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12173,9 +12189,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {FF16C4D8-0CC2-815F-A224-5A3B5722CA0E}
       NAME "SM57 9"
+      SOFFS 68
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12189,9 +12206,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {FF16C1D8-0CC2-7C46-7A0B-F88B8E3399F4}
       NAME "SM57 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12205,9 +12223,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {FF16C2D8-0CC2-7DF9-B90D-FB7581B0A87E}
       NAME "SM57 14"
+      SOFFS 108
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
   >
@@ -12237,7 +12256,7 @@
       NAME "Royer 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12251,9 +12270,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {404832C6-F655-E50E-EB71-74DFC413CA8C}
       NAME "Royer 4"
+      SOFFS 24
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12267,9 +12287,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {404831C6-F655-E35B-E2E2-129467303E8C}
       NAME "Royer 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12283,9 +12304,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {404830C6-F655-E1A8-E758-1A1D5D337450}
       NAME "Royer 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12299,9 +12321,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {404837C6-F655-ED8D-CE8C-4708A4393380}
       NAME "Royer 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12315,9 +12338,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {404836C6-F655-EBDA-05B1-B20386A8A7C4}
       NAME "Royer 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12331,9 +12355,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {404835C6-F655-EA27-46F6-5FC447CCDCB4}
       NAME "Royer 15"
+      SOFFS 112
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
   >
@@ -12374,9 +12399,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {1D2357EA-7AA1-CB01-1C30-0A2A6E0F17F6}
       NAME "SM57 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12390,9 +12416,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {1D2356EA-7AA1-C94E-6CA9-88263FDC1C30}
       NAME "SM57 6"
+      SOFFS 44
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12406,9 +12433,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {1D2355EA-7AA1-C79B-3363-2C38E866FECA}
       NAME "SM57 8"
+      SOFFS 60
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12422,9 +12450,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {1D2354EA-7AA1-C5E8-F365-725DA7FEF830}
       NAME "SM57 13"
+      SOFFS 100
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
   >
@@ -12454,7 +12483,7 @@
       NAME "Royer 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12468,9 +12497,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {30CF039E-3386-DCEF-051D-1060FBD261B4}
       NAME "Royer 3"
+      SOFFS 16
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12484,9 +12514,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {30CF049E-3386-DEA2-90B9-83DACB21174C}
       NAME "Royer 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12500,9 +12531,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {30CF059E-3386-E055-4D39-D47D6D3BE200}
       NAME "Royer 11"
+      SOFFS 80
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12516,9 +12548,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {30CEFE9E-3386-D470-3D92-B20AECA94280}
       NAME "Royer 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12532,9 +12565,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {30CEFF9E-3386-D623-810B-758CDA542814}
       NAME "Royer 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
     <ITEM
@@ -12548,9 +12582,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {30CF009E-3386-D7D6-1C0A-F1633EF3CDDC}
       NAME "Royer 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-l.wav"
       >
     >
   >
@@ -12591,9 +12626,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {D8573A34-54C4-F5ED-123E-3927656B78E6}
       NAME "DI 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-di.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12607,9 +12643,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {D8573934-54C4-F43A-BA7D-9BE6ABC0FDE4}
       NAME "DI 7"
+      SOFFS 52
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-di.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12623,9 +12660,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {D8573834-54C4-F287-8042-FFD70FE48206}
       NAME "DI 10"
+      SOFFS 76
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-di.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12639,9 +12677,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {D8573734-54C4-F0D4-99A5-5A3B5F0919B0}
       NAME "DI 14"
+      SOFFS 108
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-di.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
   >
@@ -12668,9 +12707,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {48F9E0BC-87F2-A39A-DC46-E9E2A46DA6B0}
       NAME "Pedalboard 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12684,9 +12724,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {48F9E1BC-87F2-A54D-8FAC-4A3C0CF43932}
       NAME "Pedalboard 4"
+      SOFFS 28
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12700,9 +12741,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {48F9DEBC-87F2-A034-2039-55E0B97DA740}
       NAME "Pedalboard 6"
+      SOFFS 44
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12716,9 +12758,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {48F9DFBC-87F2-A1E7-FD57-ADD50C07008E}
       NAME "Pedalboard 7"
+      SOFFS 52
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12732,9 +12775,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {48F9DCBC-87F2-9CCE-12A9-0C886AEA15E0}
       NAME "Pedalboard 10"
+      SOFFS 76
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12748,9 +12792,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {48F9DDBC-87F2-9E81-3463-B99E2E833F0A}
       NAME "Pedalboard 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12764,9 +12809,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {48F9DABC-87F2-9968-2503-7A349E317EB0}
       NAME "Pedalboard 13"
+      SOFFS 100
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12780,9 +12826,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {48F9DBBC-87F2-9B1B-8BF1-847E49EC1DFE}
       NAME "Pedalboard 15"
+      SOFFS 116
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
   >
@@ -12823,9 +12870,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {B56626D8-508B-01F0-8FDC-04E6A8E90780}
       NAME "SM57 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12839,9 +12887,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {B56627D8-508B-03A3-5075-8560125337B2}
       NAME "SM57 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12855,9 +12904,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {B56628D8-508B-0556-4219-6255F5B74E24}
       NAME "SM57 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12871,9 +12921,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {B56629D8-508B-0709-FF74-E5E0E3AAD61A}
       NAME "SM57 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12887,9 +12938,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {B5662AD8-508B-08BC-580B-50BFDA42D848}
       NAME "SM57 15"
+      SOFFS 112
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
   >
@@ -12917,9 +12969,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {B06A4E2C-1339-B11F-EA5D-FA2A357B3A34}
       NAME "Royer 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12933,9 +12986,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {B06A4D2C-1339-AF6C-62CB-21AA3C4CE800}
       NAME "Royer 3"
+      SOFFS 22
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12949,9 +13003,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {B06A502C-1339-B485-CAF0-9386F06A5210}
       NAME "Royer 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12965,9 +13020,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {B06A4F2C-1339-B2D2-D52D-545B2B19FC44}
       NAME "Royer 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12981,9 +13037,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {B06A4A2C-1339-AA53-CFAE-809D251CE3AC}
       NAME "Royer 12"
+      SOFFS 94
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -12997,9 +13054,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {B06A492C-1339-A8A0-FBD2-E162F70B7D40}
       NAME "Royer 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
   >
@@ -13040,9 +13098,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {7641BE57-ABDC-F6C3-431C-5D08AB858B16}
       NAME "SM57 1"
+      SOFFS 4
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13056,9 +13115,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {7641BD57-ABDC-F510-8EBE-04FA638ECA40}
       NAME "SM57 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13072,9 +13132,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {7641C057-ABDC-FA29-51E8-E8A87223006A}
       NAME "SM57 4"
+      SOFFS 28
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13088,9 +13149,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {7641BF57-ABDC-F876-E873-D4D87E0CDFA0}
       NAME "SM57 7"
+      SOFFS 52
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13104,9 +13166,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {7641C257-ABDC-FD8F-0120-D74608F7616E}
       NAME "SM57 9"
+      SOFFS 68
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13120,9 +13183,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {7641C157-ABDC-FBDC-9B47-4A061E8EC438}
       NAME "SM57 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13136,9 +13200,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {7641C457-ABDD-00F5-F7BA-4E36491031FA}
       NAME "SM57 14"
+      SOFFS 108
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13152,9 +13217,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {7641C357-ABDC-FF42-0E31-FC377482A718}
       NAME "SM57 16"
+      SOFFS 124
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
   >
@@ -13182,9 +13248,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {A96CC70E-177F-554E-B974-2F00F47F491C}
       NAME "Royer 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13198,9 +13265,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {A96CC80E-177F-5701-10A5-7EF7CFD796C8}
       NAME "Royer 4"
+      SOFFS 24
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13214,9 +13282,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {A96CC50E-177F-51E8-5CC2-BA39E75E3AC0}
       NAME "Royer 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13230,9 +13299,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {A96CC60E-177F-539B-6D89-9A91DA7C0C24}
       NAME "Royer 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13246,9 +13316,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {A96CCB0E-177F-5C1A-BF47-17D6467F2C7C}
       NAME "Royer 8"
+      SOFFS 56
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13262,9 +13333,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {A96CCC0E-177F-5DCD-3050-CE2A06FDA820}
       NAME "Royer 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13278,9 +13350,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {A96CC90E-177F-58B4-5A9D-07D08511A078}
       NAME "Royer 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
     <ITEM
@@ -13294,9 +13367,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {A96CCA0E-177F-5A67-E4C0-AE1A3FC482C4}
       NAME "Royer 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-main-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-main-r.wav"
       >
     >
   >
@@ -13351,9 +13425,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {2C9A77E1-8EB6-7754-E842-CCF046295308}
       NAME "DI 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-di.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13367,9 +13442,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {2C9A78E1-8EB6-7907-F867-4BFBBFBAF3E2}
       NAME "DI 5"
+      SOFFS 38
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-di.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13383,9 +13459,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {2C9A79E1-8EB6-7ABA-2EB0-B1967E6DA2AC}
       NAME "DI 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-di.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13399,9 +13476,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {2C9A7AE1-8EB6-7C6D-B5B4-F16D4B7E346A}
       NAME "DI 9"
+      SOFFS 70
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-di.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13415,9 +13493,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {2C9A73E1-8EB6-7088-9A25-049B290E3030}
       NAME "DI 11"
+      SOFFS 86
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-di.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13431,9 +13510,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {2C9A74E1-8EB6-723B-9CAA-F67AE2E9DBD2}
       NAME "DI 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-di.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13447,9 +13527,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {2C9A75E1-8EB6-73EE-3385-1DF6682E9A7C}
       NAME "DI 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-di.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
   >
@@ -13476,9 +13557,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {1F9252C1-F8D4-BF5F-0FEA-86F71BBF723A}
       NAME "Pedalboard 1"
+      SOFFS 2
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13492,9 +13574,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {1F9251C1-F8D4-BDAC-EC54-6B31A4743608}
       NAME "Pedalboard 3"
+      SOFFS 18
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13508,9 +13591,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {1F9254C1-F8D4-C2C5-86EC-7A60425B899E}
       NAME "Pedalboard 8"
+      SOFFS 58
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13524,9 +13608,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {1F9253C1-F8D4-C112-1E65-0EC9B2B3A7F0}
       NAME "Pedalboard 10"
+      SOFFS 74
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13540,9 +13625,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {1F924EC1-F8D4-B893-7195-ED3C432C422A}
       NAME "Pedalboard 12"
+      SOFFS 90
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13556,9 +13642,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {1F924DC1-F8D4-B6E0-1846-EA69C5723280}
       NAME "Pedalboard 14"
+      SOFFS 106
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13572,9 +13659,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {1F9250C1-F8D4-BBF9-254C-137CC2824766}
       NAME "Pedalboard 15"
+      SOFFS 114
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
   >
@@ -13615,9 +13703,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {73673CAC-FE26-03A5-298C-15F539888B2E}
       NAME "SM57 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13631,9 +13720,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {73673BAC-FE26-01F2-06EB-2CB2635A9624}
       NAME "SM57 4"
+      SOFFS 28
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13647,9 +13737,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {73673AAC-FE26-003F-1C70-53C74B5FA056}
       NAME "SM57 8"
+      SOFFS 60
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13663,9 +13754,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {736739AC-FE25-FE8C-A133-3EE2BE40E298}
       NAME "SM57 10"
+      SOFFS 76
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13679,9 +13771,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {736738AC-FE25-FCD9-4D96-08C00BEFDF66}
       NAME "SM57 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13695,9 +13788,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {736737AC-FE25-FB26-8327-EEC30DFA1204}
       NAME "SM57 16"
+      SOFFS 124
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
   >
@@ -13725,9 +13819,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {D881E607-73E3-22B0-E590-F9099D339C80}
       NAME "Royer 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13741,9 +13836,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {D881E707-73E3-2463-AFD4-375ACAE26910}
       NAME "Royer 4"
+      SOFFS 24
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13757,9 +13853,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {D881E807-73E3-2616-FB18-D86155911F40}
       NAME "Royer 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13773,9 +13870,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {D881E907-73E3-27C9-8D2C-ACA5D3BB2BD8}
       NAME "Royer 9"
+      SOFFS 64
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13789,9 +13887,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {D881EA07-73E3-297C-C870-FD8DC5C61610}
       NAME "Royer 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13805,9 +13904,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {D881EB07-73E3-2B2F-0A2E-EAE63E15D5B0}
       NAME "Royer 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13821,9 +13921,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {D881EC07-73E3-2CE2-FA56-BCD71B95EC20}
       NAME "Royer 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
   >
@@ -13864,9 +13965,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {F45936D8-EAEE-3936-41D6-25B242AF99E8}
       NAME "SM57 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13880,9 +13982,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {F45937D8-EAEE-3AE9-1C5D-E6C313B1767E}
       NAME "SM57 5"
+      SOFFS 34
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13896,9 +13999,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {F45934D8-EAEE-35D0-075A-7C3676D51E60}
       NAME "SM57 7"
+      SOFFS 50
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13912,9 +14016,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {F45935D8-EAEE-3783-BB69-A1F10AB69C2A}
       NAME "SM57 12"
+      SOFFS 90
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13928,9 +14033,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {F4593AD8-EAEE-4002-E001-E252B3C4E618}
       NAME "SM57 15"
+      SOFFS 114
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
   >
@@ -13958,9 +14064,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {7ECBCA1E-28D4-5F95-802F-AFEB7DBC3078}
       NAME "Royer 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13974,9 +14081,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {7ECBC91E-28D4-5DE2-7E38-8C48C39CBF20}
       NAME "Royer 3"
+      SOFFS 18
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -13990,9 +14098,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {7ECBC81E-28D4-5C2F-6EBD-41AECD328578}
       NAME "Royer 4"
+      SOFFS 26
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -14006,9 +14115,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {7ECBC71E-28D4-5A7C-851C-AB942776C348}
       NAME "Royer 5"
+      SOFFS 34
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -14022,9 +14132,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {7ECBC61E-28D4-58C9-4B34-42416734FF60}
       NAME "Royer 9"
+      SOFFS 66
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -14038,9 +14149,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {7ECBC51E-28D4-5716-6A4B-B0B1EE64EBB8}
       NAME "Royer 11"
+      SOFFS 82
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -14054,9 +14166,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {7ECBC41E-28D4-5563-C17F-898FC6CC0C50}
       NAME "Royer 13"
+      SOFFS 98
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
     <ITEM
@@ -14070,9 +14183,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {7ECBC31E-28D4-53B0-1B19-A05BB660C400}
       NAME "Royer 15"
+      SOFFS 114
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-l-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-l.wav"
       >
     >
   >
@@ -14113,9 +14227,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {CA74182C-5C92-D0C2-1789-3073A319B59C}
       NAME "DI 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-di.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14129,9 +14244,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {CA74192C-5C92-D275-DADD-AC98750830CE}
       NAME "DI 3"
+      SOFFS 22
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-di.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14145,9 +14261,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {CA74162C-5C92-CD5C-3A64-5ABC778B1730}
       NAME "DI 5"
+      SOFFS 38
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-di.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14161,9 +14278,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {CA74172C-5C92-CF0F-F5E4-CBC9DA7273F6}
       NAME "DI 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-di.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14177,9 +14295,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {CA74142C-5C92-C9F6-DEC5-30DC2F01A4D4}
       NAME "DI 11"
+      SOFFS 86
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-di.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14193,9 +14312,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {CA74152C-5C92-CBA9-0EA6-77CC253794DE}
       NAME "DI 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-di.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
   >
@@ -14222,9 +14342,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {13783418-86C5-CA31-8842-AD3821E30552}
       NAME "Pedalboard 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14238,9 +14359,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {13783318-86C5-C87E-A305-5ED0190259A8}
       NAME "Pedalboard 4"
+      SOFFS 24
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14254,9 +14376,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {13783218-86C5-C6CB-FFE6-4959828A57F6}
       NAME "Pedalboard 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14270,9 +14393,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {13783118-86C5-C518-383F-4DB4009E6270}
       NAME "Pedalboard 9"
+      SOFFS 64
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14286,9 +14410,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {13783818-86C5-D0FD-D897-85931AF094A2}
       NAME "Pedalboard 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14302,9 +14427,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {13783718-86C5-CF4A-1C2E-72DBD1ABE520}
       NAME "Pedalboard 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14318,9 +14444,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {13783618-86C5-CD97-18FD-9D762C66C9DE}
       NAME "Pedalboard 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-pedalboard.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
   >
@@ -14361,9 +14488,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {3CCDFBB9-8185-7E4F-180A-368F9A052902}
       NAME "SM57 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14377,9 +14505,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {3CCDFAB9-8185-7C9C-6065-AD6D9A03BB00}
       NAME "SM57 3"
+      SOFFS 18
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14393,9 +14522,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {3CCDFDB9-8185-81B5-78EB-36C496F1331A}
       NAME "SM57 5"
+      SOFFS 34
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14409,9 +14539,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {3CCDFCB9-8185-8002-3C56-9060A232F574}
       NAME "SM57 8"
+      SOFFS 58
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14425,9 +14556,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {3CCDF7B9-8185-7783-DAEF-5DECE7858E0A}
       NAME "SM57 12"
+      SOFFS 90
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
   >
@@ -14455,9 +14587,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {A319CA32-42DA-F3DA-F9BC-D0B178073B40}
       NAME "Royer 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14471,9 +14604,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {A319CB32-42DA-F58D-2337-89C2F1994618}
       NAME "Royer 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14487,9 +14621,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {A319C832-42DA-F074-542D-F820F8AE85C0}
       NAME "Royer 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14503,9 +14638,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {A319C932-42DA-F227-F41D-53144A51B480}
       NAME "Royer 8"
+      SOFFS 56
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14519,9 +14655,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {A319C632-42DA-ED0E-3053-D9FEDCBE5A90}
       NAME "Royer 11"
+      SOFFS 80
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14535,9 +14672,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {A319C732-42DA-EEC1-C1C8-1359D6DCA3F8}
       NAME "Royer 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14551,9 +14689,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {A319C432-42DA-E9A8-6D4D-86AD4D3D2E80}
       NAME "Royer 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-1-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
   >
@@ -14594,9 +14733,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {21CE2EAD-347D-7D4C-8103-068CB0D6E630}
       NAME "SM57 1"
+      SOFFS 4
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14610,9 +14750,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {21CE2FAD-347D-7EFF-50D7-F777296A218E}
       NAME "SM57 3"
+      SOFFS 20
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14626,9 +14767,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {21CE30AD-347D-80B2-C3EF-161E68AEB828}
       NAME "SM57 5"
+      SOFFS 36
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14642,9 +14784,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {21CE31AD-347D-8265-939A-30DA986F9B7A}
       NAME "SM57 8"
+      SOFFS 60
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14658,9 +14801,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {21CE2AAD-347D-7680-74E1-5C6F68D230C0}
       NAME "SM57 10"
+      SOFFS 76
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14674,9 +14818,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {21CE2BAD-347D-7833-EA75-6EA44366EE1E}
       NAME "SM57 14"
+      SOFFS 108
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14690,9 +14835,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {21CE2CAD-347D-79E6-0E61-78C24D332DE8}
       NAME "SM57 16"
+      SOFFS 124
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-sm57.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
   >
@@ -14720,9 +14866,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {EC8A285C-4FEB-CFBB-9C36-DA2DAB57A280}
       NAME "Royer 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14736,9 +14883,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {EC8A275C-4FEB-CE08-B752-98E8600BC9A0}
       NAME "Royer 5"
+      SOFFS 38
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14752,9 +14900,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {EC8A2A5C-4FEB-D321-B767-807FD4C7FC20}
       NAME "Royer 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14768,9 +14917,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {EC8A295C-4FEB-D16E-7B82-597382975768}
       NAME "Royer 9"
+      SOFFS 70
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14784,9 +14934,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {EC8A2C5C-4FEB-D687-8B59-12482CF5E8A8}
       NAME "Royer 11"
+      SOFFS 86
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14800,9 +14951,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {EC8A2B5C-4FEB-D4D4-CD56-E1655E364AD8}
       NAME "Royer 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
     <ITEM
@@ -14816,9 +14968,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {EC8A2E5C-4FEB-D9ED-A58C-A52F1C4B7B58}
       NAME "Royer 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-rhythm-octave-r-amp-2-royer.wav"
+        FILE "media/perf-electric-rhythm-octave-r.wav"
       >
     >
   >
@@ -14859,9 +15012,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {43F131A3-5220-6F1D-EE32-6A823C62CA36}
       NAME "L 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-l.wav"
+        FILE "media/perf-electric-lead-l.wav"
       >
     >
     <ITEM
@@ -14875,9 +15029,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {43F130A3-5220-6D6A-C774-C059F29057E0}
       NAME "L 4"
+      SOFFS 28
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-l.wav"
+        FILE "media/perf-electric-lead-l.wav"
       >
     >
     <ITEM
@@ -14891,9 +15046,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {43F12FA3-5220-6BB7-16F4-E61E0F4AD782}
       NAME "L 8"
+      SOFFS 60
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-l.wav"
+        FILE "media/perf-electric-lead-l.wav"
       >
     >
     <ITEM
@@ -14907,9 +15063,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {43F12EA3-5220-6A04-DBC7-EDB2836BF378}
       NAME "L 11"
+      SOFFS 84
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-l.wav"
+        FILE "media/perf-electric-lead-l.wav"
       >
     >
     <ITEM
@@ -14923,9 +15080,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {43F12DA3-5220-6851-564E-4E63BA7D5F6E}
       NAME "L 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-l.wav"
+        FILE "media/perf-electric-lead-l.wav"
       >
     >
   >
@@ -14953,9 +15111,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {54AE7FA3-5B71-2B07-3DE3-99BD0802FEA2}
       NAME "R 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-r.wav"
+        FILE "media/perf-electric-lead-r.wav"
       >
     >
     <ITEM
@@ -14969,9 +15128,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {54AE7EA3-5B71-2954-DD84-D47DF847F470}
       NAME "R 3"
+      SOFFS 22
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-r.wav"
+        FILE "media/perf-electric-lead-r.wav"
       >
     >
     <ITEM
@@ -14985,9 +15145,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {54AE81A3-5B71-2E6D-9FD2-859028F5AB6E}
       NAME "R 6"
+      SOFFS 46
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-r.wav"
+        FILE "media/perf-electric-lead-r.wav"
       >
     >
     <ITEM
@@ -15001,9 +15162,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {54AE80A3-5B71-2CBA-F19A-CCFB617CC8C8}
       NAME "R 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-r.wav"
+        FILE "media/perf-electric-lead-r.wav"
       >
     >
     <ITEM
@@ -15017,9 +15179,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {54AE7BA3-5B71-243B-45BB-A96E9884672A}
       NAME "R 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-r.wav"
+        FILE "media/perf-electric-lead-r.wav"
       >
     >
     <ITEM
@@ -15033,9 +15196,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {54AE7AA3-5B71-2288-C0F8-17C9458E94F0}
       NAME "R 12"
+      SOFFS 94
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-r.wav"
+        FILE "media/perf-electric-lead-r.wav"
       >
     >
     <ITEM
@@ -15049,9 +15213,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {54AE7DA3-5B71-27A1-C928-BC498321BB7E}
       NAME "R 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-r.wav"
+        FILE "media/perf-electric-lead-r.wav"
       >
     >
     <ITEM
@@ -15065,9 +15230,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {54AE7CA3-5B71-25EE-E98D-2A824B89B628}
       NAME "R 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-lead-r.wav"
+        FILE "media/perf-electric-lead-r.wav"
       >
     >
   >
@@ -15108,9 +15274,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {7F614A83-6A2B-E677-027E-EFE15CE2CE48}
       NAME "Main 1"
+      SOFFS 4
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-main.wav"
+        FILE "media/perf-electric-solo-main.wav"
       >
     >
     <ITEM
@@ -15124,9 +15291,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {7F614983-6A2B-E4C4-B3B9-23E5DC0DA668}
       NAME "Main 4"
+      SOFFS 28
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-main.wav"
+        FILE "media/perf-electric-solo-main.wav"
       >
     >
     <ITEM
@@ -15140,9 +15308,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {7F614C83-6A2B-E9DD-9986-491D4B002288}
       NAME "Main 7"
+      SOFFS 52
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-main.wav"
+        FILE "media/perf-electric-solo-main.wav"
       >
     >
     <ITEM
@@ -15156,9 +15325,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {7F614B83-6A2B-E82A-5121-112497233520}
       NAME "Main 11"
+      SOFFS 84
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-main.wav"
+        FILE "media/perf-electric-solo-main.wav"
       >
     >
     <ITEM
@@ -15172,9 +15342,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {7F614683-6A2B-DFAB-E9BF-A30341A835D0}
       NAME "Main 14"
+      SOFFS 108
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-main.wav"
+        FILE "media/perf-electric-solo-main.wav"
       >
     >
     <ITEM
@@ -15188,9 +15359,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {7F614583-6A2B-DDF8-5975-4A155C5E16F0}
       NAME "Main 16"
+      SOFFS 124
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-main.wav"
+        FILE "media/perf-electric-solo-main.wav"
       >
     >
   >
@@ -15220,7 +15392,7 @@
       NAME "Harmony 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-harmony.wav"
+        FILE "media/perf-electric-solo-harmony.wav"
       >
     >
     <ITEM
@@ -15234,9 +15406,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {6A6C609B-191E-B7B9-291D-C64C3B4D17F6}
       NAME "Harmony 3"
+      SOFFS 16
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-harmony.wav"
+        FILE "media/perf-electric-solo-harmony.wav"
       >
     >
     <ITEM
@@ -15250,9 +15423,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {6A6C5D9B-191E-B2A0-3A36-E2E0F000A600}
       NAME "Harmony 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-harmony.wav"
+        FILE "media/perf-electric-solo-harmony.wav"
       >
     >
     <ITEM
@@ -15266,9 +15440,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {6A6C5E9B-191E-B453-67CB-1EFAAC9C9B0A}
       NAME "Harmony 8"
+      SOFFS 56
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-harmony.wav"
+        FILE "media/perf-electric-solo-harmony.wav"
       >
     >
     <ITEM
@@ -15282,9 +15457,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {6A6C639B-191E-BCD2-EAC3-32A9655B76A0}
       NAME "Harmony 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-harmony.wav"
+        FILE "media/perf-electric-solo-harmony.wav"
       >
     >
     <ITEM
@@ -15298,9 +15474,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {6A6C649B-191E-BE85-9EB3-CDA5033F3766}
       NAME "Harmony 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-harmony.wav"
+        FILE "media/perf-electric-solo-harmony.wav"
       >
     >
     <ITEM
@@ -15314,9 +15491,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {6A6C619B-191E-B96C-C5AC-B39C321BB200}
       NAME "Harmony 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/electric-solo-harmony.wav"
+        FILE "media/perf-electric-solo-harmony.wav"
       >
     >
   >
@@ -15360,9 +15538,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {CA7A70F9-D099-3325-0C65-3574167F6688}
       NAME "Steel 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-steel.wav"
+        FILE "media/perf-acoustic-steel.wav"
       >
     >
     <ITEM
@@ -15376,9 +15555,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {CA7A6FF9-D099-3172-5D77-B61C91B3B6C0}
       NAME "Steel 5"
+      SOFFS 38
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-steel.wav"
+        FILE "media/perf-acoustic-steel.wav"
       >
     >
     <ITEM
@@ -15392,9 +15572,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {CA7A6EF9-D099-2FBF-8B49-119856E43FB8}
       NAME "Steel 9"
+      SOFFS 70
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-steel.wav"
+        FILE "media/perf-acoustic-steel.wav"
       >
     >
     <ITEM
@@ -15408,9 +15589,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {CA7A6DF9-D099-2E0C-91E0-33A47945F1B0}
       NAME "Steel 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-steel.wav"
+        FILE "media/perf-acoustic-steel.wav"
       >
     >
     <ITEM
@@ -15424,9 +15606,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {CA7A6CF9-D099-2C59-6CC5-D58796B22DA8}
       NAME "Steel 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-steel.wav"
+        FILE "media/perf-acoustic-steel.wav"
       >
     >
   >
@@ -15455,7 +15638,7 @@
       NAME "Nylon 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nylon.wav"
+        FILE "media/perf-acoustic-nylon.wav"
       >
     >
     <ITEM
@@ -15469,9 +15652,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {C1885D71-C6D9-8297-ED9B-91172F43DDE8}
       NAME "Nylon 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nylon.wav"
+        FILE "media/perf-acoustic-nylon.wav"
       >
     >
     <ITEM
@@ -15485,9 +15669,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {C1885E71-C6D9-844A-7754-FABD5A4EBFBC}
       NAME "Nylon 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nylon.wav"
+        FILE "media/perf-acoustic-nylon.wav"
       >
     >
     <ITEM
@@ -15501,9 +15686,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {C1885F71-C6D9-85FD-C507-046B3CAF9544}
       NAME "Nylon 11"
+      SOFFS 80
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nylon.wav"
+        FILE "media/perf-acoustic-nylon.wav"
       >
     >
     <ITEM
@@ -15517,9 +15703,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {C1885871-C6D9-7A18-C068-17557191B8D0}
       NAME "Nylon 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nylon.wav"
+        FILE "media/perf-acoustic-nylon.wav"
       >
     >
     <ITEM
@@ -15533,9 +15720,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {C1885971-C6D9-7BCB-E760-C814CCB43468}
       NAME "Nylon 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nylon.wav"
+        FILE "media/perf-acoustic-nylon.wav"
       >
     >
   >
@@ -15565,7 +15753,7 @@
       NAME "Nashville 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nashville.wav"
+        FILE "media/perf-acoustic-nashville.wav"
       >
     >
     <ITEM
@@ -15579,9 +15767,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {D0123846-6D65-1E67-A79A-6C6D65B5B61C}
       NAME "Nashville 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nashville.wav"
+        FILE "media/perf-acoustic-nashville.wav"
       >
     >
     <ITEM
@@ -15595,9 +15784,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {D0123946-6D65-201A-4C44-C854C6DD466C}
       NAME "Nashville 8"
+      SOFFS 56
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nashville.wav"
+        FILE "media/perf-acoustic-nashville.wav"
       >
     >
     <ITEM
@@ -15611,9 +15801,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {D0123A46-6D65-21CD-2558-91408C6ED328}
       NAME "Nashville 9"
+      SOFFS 64
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nashville.wav"
+        FILE "media/perf-acoustic-nashville.wav"
       >
     >
     <ITEM
@@ -15627,9 +15818,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {D0123346-6D65-15E8-D3CF-701F3EE9BAF0}
       NAME "Nashville 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/acoustic-nashville.wav"
+        FILE "media/perf-acoustic-nashville.wav"
       >
     >
   >
@@ -23369,9 +23561,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {71F79150-78BB-A04E-7882-A34E9F79A8A8}
       NAME "EN 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-en.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23385,9 +23578,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {71F79250-78BB-A201-D0DB-CDEA6409D72C}
       NAME "EN 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-en.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23401,9 +23595,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {71F78F50-78BB-9CE8-E10E-DCDD1E875FC0}
       NAME "EN 6"
+      SOFFS 46
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-en.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23417,9 +23612,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {71F79050-78BB-9E9B-02AC-9A12E4EBC3D4}
       NAME "EN 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-en.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23433,9 +23629,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {71F79550-78BB-A71A-7682-3C78D70895F0}
       NAME "EN 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-en.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
   >
@@ -23462,9 +23659,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {BC09AE50-11AD-F5F5-3DDC-3880BC961244}
       NAME "ES 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-es.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23478,9 +23676,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {BC09AD50-11AD-F442-EF9D-5E01D0AF7C68}
       NAME "ES 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-es.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23494,9 +23693,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {BC09AC50-11AD-F28F-6F12-65DF3EA61134}
       NAME "ES 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-es.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23510,9 +23710,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {BC09AB50-11AD-F0DC-0187-4009A9EEAC68}
       NAME "ES 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-es.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23526,9 +23727,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {BC09AA50-11AD-EF29-EFCA-7C0C10FC6424}
       NAME "ES 15"
+      SOFFS 112
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-es.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
   >
@@ -23556,9 +23758,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {31807A9F-0FA6-4831-BE3C-00C6DF328D1C}
       NAME "PT 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-pt.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23572,9 +23775,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {3180799F-0FA6-467E-4554-8AD820E2E4CC}
       NAME "PT 4"
+      SOFFS 28
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-pt.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23588,9 +23792,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {3180789F-0FA6-44CB-4725-255BDEC96748}
       NAME "PT 9"
+      SOFFS 68
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-pt.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23604,9 +23809,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {3180779F-0FA6-4318-568F-C43961AD5D10}
       NAME "PT 13"
+      SOFFS 100
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-pt.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
     <ITEM
@@ -23620,9 +23826,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {31807E9F-0FA6-4EFD-BF26-AF98DC9E1124}
       NAME "PT 16"
+      SOFFS 124
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-main-pt.wav"
+        FILE "media/perf-vocals-ron-main.wav"
       >
     >
   >
@@ -23663,9 +23870,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {AC5789B2-02F0-1F1B-FB5A-1EA9D00361FA}
       NAME "EN 1"
+      SOFFS 4
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23679,9 +23887,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {AC5788B2-02F0-1D68-59AE-CA46FD90FBF0}
       NAME "EN 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23695,9 +23904,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {AC578BB2-02F0-2281-898E-AAF8D1306206}
       NAME "EN 4"
+      SOFFS 28
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23711,9 +23921,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {AC578AB2-02F0-20CE-70FC-C4E9B8D24A20}
       NAME "EN 6"
+      SOFFS 44
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23727,9 +23938,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {AC578DB2-02F0-25E7-8536-E56E5FBDDBA2}
       NAME "EN 7"
+      SOFFS 52
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23743,9 +23955,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {AC578CB2-02F0-2434-B978-AF626C65A350}
       NAME "EN 8"
+      SOFFS 60
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23759,9 +23972,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {AC578FB2-02F0-294D-4835-A832245CC836}
       NAME "EN 11"
+      SOFFS 84
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23775,9 +23989,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {AC578EB2-02F0-279A-1D9C-D4846396F210}
       NAME "EN 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23791,9 +24006,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {AC5781B2-02F0-1183-7F40-D1B93A7E353A}
       NAME "EN 13"
+      SOFFS 100
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23807,9 +24023,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {AC5780B2-02F0-0FD0-3222-3AC93C33AF40}
       NAME "EN 15"
+      SOFFS 116
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-en.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
   >
@@ -23836,9 +24053,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {4DEF4CB1-CDB6-5194-8FCA-68297CFD53E0}
       NAME "ES 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-es.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23852,9 +24070,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {4DEF4DB1-CDB6-5347-1911-2AC7EC94F6BA}
       NAME "ES 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-es.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23868,9 +24087,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {4DEF4EB1-CDB6-54FA-B4BB-5461C22E82C8}
       NAME "ES 9"
+      SOFFS 64
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-es.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23884,9 +24104,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {4DEF4FB1-CDB6-56AD-08BE-FCC5648C58A6}
       NAME "ES 11"
+      SOFFS 80
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-es.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23900,9 +24121,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {4DEF48B1-CDB6-4AC8-B27E-8839463533E0}
       NAME "ES 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-es.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23916,9 +24138,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {4DEF49B1-CDB6-4C7B-9297-F78B45DB4462}
       NAME "ES 15"
+      SOFFS 112
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-es.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
   >
@@ -23946,9 +24169,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {43F19F11-0B71-DCC0-A10E-986DECAAD4C0}
       NAME "PT 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-pt.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23962,9 +24186,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {43F1A011-0B71-DE73-F39E-128C7B1F0BFA}
       NAME "PT 5"
+      SOFFS 38
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-pt.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23978,9 +24203,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {43F1A111-0B71-E026-E5AA-7BC7A0E43C64}
       NAME "PT 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-pt.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -23994,9 +24220,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {43F1A211-0B71-E1D9-3E67-4D8F0F5C31B2}
       NAME "PT 9"
+      SOFFS 70
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-pt.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -24010,9 +24237,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {43F1A311-0B71-E38C-FEB5-419B1EC8ECB8}
       NAME "PT 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-pt.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
     <ITEM
@@ -24026,9 +24254,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {43F1A411-0B71-E53F-C13B-7E170CA31E6A}
       NAME "PT 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-ron-dbl-pt.wav"
+        FILE "media/perf-vocals-ron-dbl.wav"
       >
     >
   >
@@ -24084,9 +24313,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {9F6B1E71-482D-E549-3BA6-61A9B3A3CF68}
       NAME "EN 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-en.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24100,9 +24330,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {9F6B1D71-482D-E396-A382-B7C807FE1C2C}
       NAME "EN 3"
+      SOFFS 22
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-en.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24116,9 +24347,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {9F6B1C71-482D-E1E3-E5EE-3AEECCF9AAFC}
       NAME "EN 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-en.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24132,9 +24364,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {9F6B1B71-482D-E030-734B-61FBC63BDD00}
       NAME "EN 9"
+      SOFFS 70
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-en.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24148,9 +24381,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {9F6B2271-482D-EC15-D180-2B9897A03BE0}
       NAME "EN 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-en.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24164,9 +24398,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {9F6B2171-482D-EA62-5A7B-ABA1F18DB51C}
       NAME "EN 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-en.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
   >
@@ -24194,9 +24429,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {111D4971-88E3-03DA-AE76-D64C2FB70084}
       NAME "ES 1"
+      SOFFS 4
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-es.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24210,9 +24446,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {111D4A71-88E3-058D-ADDD-07840D9A1128}
       NAME "ES 3"
+      SOFFS 20
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-es.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24226,9 +24463,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {111D4771-88E3-0074-6483-23ACA3FD5CB8}
       NAME "ES 7"
+      SOFFS 52
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-es.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24242,9 +24480,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {111D4871-88E3-0227-BBC0-902D2DB29F5C}
       NAME "ES 10"
+      SOFFS 76
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-es.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24258,9 +24497,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {111D4571-88E2-FD0E-81F8-ECBBEAFD3154}
       NAME "ES 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-es.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24274,9 +24514,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {111D4671-88E2-FEC1-DE04-1B5363166720}
       NAME "ES 13"
+      SOFFS 100
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-es.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
     <ITEM
@@ -24290,9 +24531,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {111D4371-88E2-F9A8-AAA4-3CAD0C2F13F0}
       NAME "ES 15"
+      SOFFS 116
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-main-es.wav"
+        FILE "media/perf-vocals-belen-main.wav"
       >
     >
   >
@@ -24333,9 +24575,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {3A77F8DC-BC30-2F5E-4AEA-26EC96147E88}
       NAME "EN 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-en.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24349,9 +24592,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {3A77F9DC-BC30-3111-CD4D-B8F1BBAC12CE}
       NAME "EN 6"
+      SOFFS 46
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-en.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24365,9 +24609,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {3A77F6DC-BC30-2BF8-AC73-C3DA96567B10}
       NAME "EN 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-en.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24381,9 +24626,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {3A77F7DC-BC30-2DAB-AA35-87821182F8F2}
       NAME "EN 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-en.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24397,9 +24643,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {3A77FCDC-BC30-362A-8A6C-E6B0BF8DCF28}
       NAME "EN 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-en.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24413,9 +24660,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {3A77FDDC-BC30-37DD-E6C9-894DB3DF0FEE}
       NAME "EN 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-en.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24429,9 +24677,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {3A77FADC-BC30-32C4-E067-2A7B11719320}
       NAME "EN 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-en.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
   >
@@ -24459,9 +24708,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {99B935DC-F221-EDA5-4B31-7BD452E6A9AE}
       NAME "ES 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-es.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24475,9 +24725,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {99B934DC-F221-EBF2-4F07-E1A1AEDAA260}
       NAME "ES 3"
+      SOFFS 22
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-es.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24491,9 +24742,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {99B933DC-F221-EA3F-8F1C-6EECAA2DA3C2}
       NAME "ES 6"
+      SOFFS 46
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-es.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24507,9 +24759,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {99B932DC-F221-E88C-AB16-8D9C249ED9D0}
       NAME "ES 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-es.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24523,9 +24776,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {99B931DC-F221-E6D9-698E-9D229536074E}
       NAME "ES 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-es.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24539,9 +24793,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {99B930DC-F221-E526-9FBA-7AC3E91ADCE0}
       NAME "ES 11"
+      SOFFS 86
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-es.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24555,9 +24810,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {99B92FDC-F221-E373-56CD-2F04203E4E1A}
       NAME "ES 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-es.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
     <ITEM
@@ -24571,9 +24827,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {99B92EDC-F221-E1C0-F65C-C373F39FB2C0}
       NAME "ES 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-belen-dbl-es.wav"
+        FILE "media/perf-vocals-belen-dbl.wav"
       >
     >
   >
@@ -24630,9 +24887,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {EA25B414-F2BA-8C5B-38B1-D8921C5F24E4}
       NAME "PT 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-main-pt.wav"
+        FILE "media/perf-vocals-aline-main.wav"
       >
     >
     <ITEM
@@ -24646,9 +24904,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {EA25B314-F2BA-8AA8-8534-7C29E3197020}
       NAME "PT 4"
+      SOFFS 26
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-main-pt.wav"
+        FILE "media/perf-vocals-aline-main.wav"
       >
     >
     <ITEM
@@ -24662,9 +24921,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {EA25B614-F2BA-8FC1-0689-8F0412A248BC}
       NAME "PT 5"
+      SOFFS 34
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-main-pt.wav"
+        FILE "media/perf-vocals-aline-main.wav"
       >
     >
     <ITEM
@@ -24678,9 +24938,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {EA25B514-F2BA-8E0E-1367-FFF650A0F8A8}
       NAME "PT 7"
+      SOFFS 50
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-main-pt.wav"
+        FILE "media/perf-vocals-aline-main.wav"
       >
     >
     <ITEM
@@ -24694,9 +24955,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {EA25B814-F2BA-9327-6E4D-EBD7EA7F8D84}
       NAME "PT 12"
+      SOFFS 90
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-main-pt.wav"
+        FILE "media/perf-vocals-aline-main.wav"
       >
     >
     <ITEM
@@ -24710,9 +24972,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {EA25B714-F2BA-9174-EF21-936C442E5E08}
       NAME "PT 14"
+      SOFFS 106
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-main-pt.wav"
+        FILE "media/perf-vocals-aline-main.wav"
       >
     >
   >
@@ -24754,9 +25017,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {0B7D63A3-D813-94A6-1C6B-EAC521EA4D68}
       NAME "PT 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-dbl-pt.wav"
+        FILE "media/perf-vocals-aline-dbl.wav"
       >
     >
     <ITEM
@@ -24770,9 +25034,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {0B7D64A3-D813-9659-B356-9C8F26EC81F6}
       NAME "PT 4"
+      SOFFS 24
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-dbl-pt.wav"
+        FILE "media/perf-vocals-aline-dbl.wav"
       >
     >
     <ITEM
@@ -24786,9 +25051,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {0B7D61A3-D813-9140-1AEA-F7B6B118F7C0}
       NAME "PT 8"
+      SOFFS 56
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-dbl-pt.wav"
+        FILE "media/perf-vocals-aline-dbl.wav"
       >
     >
     <ITEM
@@ -24802,9 +25068,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {0B7D62A3-D813-92F3-88ED-46F6879325AA}
       NAME "PT 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/vocals-aline-dbl-pt.wav"
+        FILE "media/perf-vocals-aline-dbl.wav"
       >
     >
   >
@@ -26834,7 +27101,7 @@
       NAME "EN 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-en.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -26848,9 +27115,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {2461CB2B-3940-800B-6F8A-47F09B01A6CA}
       NAME "EN 4"
+      SOFFS 24
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-en.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -26864,9 +27132,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {2461CC2B-3940-81BE-274C-2FAD38A6C300}
       NAME "EN 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-en.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -26880,9 +27149,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {2461CD2B-3940-8371-9AC5-1A10D7694C0E}
       NAME "EN 8"
+      SOFFS 56
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-en.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -26896,9 +27166,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {2461CE2B-3940-8524-235E-9D38E6D583B8}
       NAME "EN 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-en.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -26912,9 +27183,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {2461CF2B-3940-86D7-31C9-40D984A440FA}
       NAME "EN 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-en.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -26928,9 +27200,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {2461D02B-3940-888A-C003-D260AC0B07D8}
       NAME "EN 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-en.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
   >
@@ -26957,9 +27230,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {295EAF2A-AB21-7DF7-2BFA-68330640F6E2}
       NAME "ES 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-es.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -26973,9 +27247,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {295EAE2A-AB21-7C44-E30A-33D285AE52D8}
       NAME "ES 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-es.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -26989,9 +27264,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {295EB12A-AB21-815D-CCFF-B0C3DAF187A6}
       NAME "ES 5"
+      SOFFS 38
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-es.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27005,9 +27281,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {295EB02A-AB21-7FAA-F349-218BD334A3E0}
       NAME "ES 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-es.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27021,9 +27298,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {295EAB2A-AB21-772B-2E80-33C7FFF25192}
       NAME "ES 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-es.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27037,9 +27315,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {295EAA2A-AB21-7578-1AAF-9EF041D97550}
       NAME "ES 12"
+      SOFFS 94
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-es.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27053,9 +27332,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {295EAD2A-AB21-7A91-FFB3-A4E349C76B0E}
       NAME "ES 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-es.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
   >
@@ -27083,9 +27363,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {AB5BD8C6-9808-893F-F03A-3B0936028762}
       NAME "PT 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-pt.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27099,9 +27380,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {AB5BD7C6-9808-878C-A035-BC6C98C24278}
       NAME "PT 6"
+      SOFFS 46
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-pt.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27115,9 +27397,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {AB5BDAC6-9808-8CA5-B828-38D19A2F28EA}
       NAME "PT 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-pt.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27131,9 +27414,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {AB5BD9C6-9808-8AF2-D0EA-2D9189315F44}
       NAME "PT 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-pt.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27147,9 +27431,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {AB5BD4C6-9808-8273-7D45-D20CC8CACD62}
       NAME "PT 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-pt.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
     <ITEM
@@ -27163,9 +27448,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {AB5BD3C6-9808-80C0-94C9-E55CB4199CC0}
       NAME "PT 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-up-pt.wav"
+        FILE "media/perf-bgvs-octave-up.wav"
       >
     >
   >
@@ -27206,9 +27492,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {15C7DA34-5DA3-54FB-DBFA-9A6BDB0965DA}
       NAME "EN 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-en.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27222,9 +27509,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {15C7D934-5DA3-5348-4D24-3EDDFA38A820}
       NAME "EN 6"
+      SOFFS 44
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-en.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27238,9 +27526,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {15C7DC34-5DA3-5861-6D98-573509727622}
       NAME "EN 11"
+      SOFFS 84
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-en.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27254,9 +27543,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {15C7DB34-5DA3-56AE-2D57-AB042F3D3334}
       NAME "EN 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-en.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
   >
@@ -27283,9 +27573,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {B5AD1D34-26F8-CC74-640F-0E15CA167CA0}
       NAME "ES 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-es.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27299,9 +27590,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {B5AD1E34-26F8-CE27-2AF0-1B027EE1BF9A}
       NAME "ES 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-es.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27315,9 +27607,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {B5AD1F34-26F8-CFDA-2E09-5C1DE75DDE04}
       NAME "ES 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-es.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27331,9 +27624,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {B5AD2034-26F8-D18D-C49C-02DF0D570EFA}
       NAME "ES 9"
+      SOFFS 70
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-es.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27347,9 +27641,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {B5AD1934-26F8-C5A8-2DB0-DF0DA2DBF670}
       NAME "ES 11"
+      SOFFS 86
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-es.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27363,9 +27658,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {B5AD1A34-26F8-C75B-939F-D62D993FD0C2}
       NAME "ES 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-es.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27379,9 +27675,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {B5AD1B34-26F8-C90E-CD32-8B6B5580E9DC}
       NAME "ES 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-es.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
   >
@@ -27409,9 +27706,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {AD626F93-6625-EC20-89E9-831A1217A280}
       NAME "PT 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-pt.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27425,9 +27723,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {AD627093-6625-EDD3-CF86-11F0C8D87D8A}
       NAME "PT 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-pt.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27441,9 +27740,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {AD627193-6625-EF86-668F-05BB022BDC90}
       NAME "PT 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-pt.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27457,9 +27757,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {AD627293-6625-F139-E8D4-736F1CD90CB6}
       NAME "PT 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-pt.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
     <ITEM
@@ -27473,9 +27774,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {AD627393-6625-F2EC-5116-249BD591E2C8}
       NAME "PT 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-octave-down-pt.wav"
+        FILE "media/perf-bgvs-octave-down.wav"
       >
     >
   >
@@ -27516,9 +27818,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {BB7284C7-A5A3-0FCC-F348-13406FD25788}
       NAME "EN 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-en.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27532,9 +27835,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {BB7285C7-A5A3-117F-E83B-8BD6A74BCF50}
       NAME "EN 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-en.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27548,9 +27852,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {BB7286C7-A5A3-1332-BF37-9B0ED46C81FC}
       NAME "EN 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-en.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27564,9 +27869,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {BB7287C7-A5A3-14E5-7617-C893C65557DC}
       NAME "EN 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-en.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27580,9 +27886,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {BB7280C7-A5A3-0900-32CA-BF319EB73AC0}
       NAME "EN 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-en.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
   >
@@ -27609,9 +27916,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {A47251C8-295C-91A3-3831-E51A3918A688}
       NAME "ES 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-es.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27625,9 +27933,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {A47250C8-295C-8FF0-EAC9-7BDDF3ECB040}
       NAME "ES 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-es.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27641,9 +27950,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {A47253C8-295C-9509-9F68-57AD041B9054}
       NAME "ES 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-es.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27657,9 +27967,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {A47252C8-295C-9356-164B-CE7960EF92A4}
       NAME "ES 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-es.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27673,9 +27984,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {A47255C8-295C-986F-A9FE-FF1FB85253F0}
       NAME "ES 11"
+      SOFFS 86
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-es.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27689,9 +28001,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {A47254C8-295C-96BC-9E3E-D37E8CE28358}
       NAME "ES 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-es.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27705,9 +28018,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {A47257C8-295C-9BD5-4EB6-6DEE4D0D9F44}
       NAME "ES 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-es.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
   >
@@ -27735,9 +28049,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {C14E7219-391E-4A9B-CDE7-E2F17A0DC4FC}
       NAME "PT 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-pt.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27751,9 +28066,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {C14E7119-391E-48E8-6D22-A6ECB9234A50}
       NAME "PT 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-pt.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27767,9 +28083,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {C14E7419-391E-4E01-84A4-BEAE53DEEF24}
       NAME "PT 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-pt.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27783,9 +28100,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {C14E7319-391E-4C4E-316F-A5D75488A578}
       NAME "PT 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-pt.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27799,9 +28117,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {C14E7619-391E-5167-289D-20C85166710C}
       NAME "PT 11"
+      SOFFS 86
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-pt.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27815,9 +28134,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {C14E7519-391E-4FB4-54EE-9558AECC4AB8}
       NAME "PT 12"
+      SOFFS 94
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-pt.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
     <ITEM
@@ -27831,9 +28151,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {C14E7819-391E-54CD-9C00-9F3F280180C4}
       NAME "PT 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-higher-harmony-pt.wav"
+        FILE "media/perf-bgvs-higher-harmony.wav"
       >
     >
   >
@@ -27874,9 +28195,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {63C88D4B-60CB-66DA-0D58-1A530F9ADF00}
       NAME "EN 1"
+      SOFFS 2
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-en.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -27890,9 +28212,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {63C88E4B-60CB-688D-9358-25ED4BC71816}
       NAME "EN 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-en.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -27906,9 +28229,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {63C88B4B-60CB-6374-0ADA-ED3EC7810FE0}
       NAME "EN 5"
+      SOFFS 34
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-en.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -27922,9 +28246,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {63C88C4B-60CB-6527-CD64-3C05AB408C62}
       NAME "EN 6"
+      SOFFS 42
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-en.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -27938,9 +28263,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {63C8894B-60CB-600E-4853-F44E4DCA5620}
       NAME "EN 8"
+      SOFFS 58
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-en.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -27954,9 +28280,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {63C88A4B-60CB-61C1-8862-F604E884E766}
       NAME "EN 12"
+      SOFFS 90
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-en.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -27970,9 +28297,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {63C8874B-60CB-5CA8-051E-02A3CE855D80}
       NAME "EN 13"
+      SOFFS 98
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-en.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -27986,9 +28314,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {63C8884B-60CB-5E5B-0C87-A2EBD78DB8CA}
       NAME "EN 15"
+      SOFFS 114
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-en.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
   >
@@ -28015,9 +28344,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {F216624B-2016-4849-D929-D174E11CEEC6}
       NAME "ES 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-es.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28031,9 +28361,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {F216614B-2016-4696-D8C0-03D1DEA8B738}
       NAME "ES 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-es.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28047,9 +28378,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {F216604B-2016-44E3-F17C-D52DFAA7ABF2}
       NAME "ES 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-es.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28063,9 +28395,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {F2165F4B-2016-4330-6E85-5A3A71A4A0C0}
       NAME "ES 9"
+      SOFFS 64
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-es.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28079,9 +28412,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {F216664B-2016-4F15-ED60-36DE47A45ED6}
       NAME "ES 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-es.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28095,9 +28429,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {F216654B-2016-4D62-233C-5393723DAF18}
       NAME "ES 15"
+      SOFFS 112
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-es.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28111,9 +28446,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {F216644B-2016-4BAF-BFF9-CD2418D1147A}
       NAME "ES 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-es.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
   >
@@ -28141,9 +28477,10 @@
       FADEOUT 1 0.5 0 1 0 0 0
       IGUID {56C567EC-A6C8-4DA5-D7AA-142B07A1B3CA}
       NAME "PT 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-pt.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28157,9 +28494,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {56C566EC-A6C8-4BF2-676F-7B878AAF6A3C}
       NAME "PT 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-pt.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28173,9 +28511,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {56C565EC-A6C8-4A3F-A5DE-B1923B1E475A}
       NAME "PT 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-pt.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28189,9 +28528,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {56C564EC-A6C8-488C-0511-B7BE4B5DE298}
       NAME "PT 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-pt.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28205,9 +28545,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {56C563EC-A6C8-46D9-C51E-87F099D6C90A}
       NAME "PT 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-pt.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
     <ITEM
@@ -28221,9 +28562,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {56C562EC-A6C8-4526-43D1-8DE31D53718C}
       NAME "PT 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-lower-harmony-pt.wav"
+        FILE "media/perf-bgvs-lower-harmony.wav"
       >
     >
   >
@@ -28264,9 +28606,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {F06228D3-2C51-706C-1805-682B22778768}
       NAME "All 1 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-1.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28280,9 +28623,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {F06229D3-2C51-721F-98E1-3755B22DFA80}
       NAME "All 1 7"
+      SOFFS 50
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-1.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28296,9 +28640,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {F0622AD3-2C51-73D2-4538-45D946551374}
       NAME "All 1 9"
+      SOFFS 66
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-1.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28312,9 +28657,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {F0622BD3-2C51-7585-5575-2C95AEED8FCC}
       NAME "All 1 10"
+      SOFFS 74
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-1.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28328,9 +28674,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {F06224D3-2C51-69A0-CB56-9AA9F4865680}
       NAME "All 1 11"
+      SOFFS 82
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-1.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28344,9 +28691,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {F06225D3-2C51-6B53-6CB2-B861B04F4378}
       NAME "All 1 14"
+      SOFFS 106
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-1.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28360,9 +28708,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {F06226D3-2C51-6D06-2046-C37F2A7C4944}
       NAME "All 1 16"
+      SOFFS 122
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-1.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
   >
@@ -28389,9 +28738,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {F8F75FD3-3128-5281-709F-0D99FAAB0ABC}
       NAME "All 2 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-2.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28405,9 +28755,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {F8F75ED3-3128-50CE-8D62-0E0BDA84BF94}
       NAME "All 2 6"
+      SOFFS 46
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-2.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28421,9 +28772,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {F8F75DD3-3128-4F1B-4326-A118817883F8}
       NAME "All 2 8"
+      SOFFS 62
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-2.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28437,9 +28789,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {F8F75CD3-3128-4D68-6EBF-47854409B670}
       NAME "All 2 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-2.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28453,9 +28806,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {F8F763D3-3128-594D-9020-04CD6C895A64}
       NAME "All 2 12"
+      SOFFS 94
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-2.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28469,9 +28823,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {F8F762D3-3128-579A-24F9-6A7336F7207C}
       NAME "All 2 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-2.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28485,9 +28840,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {F8F761D3-3128-55E7-0993-C91ADAAD0808}
       NAME "All 2 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-2.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
   >
@@ -28514,9 +28870,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {0265F6D3-36B7-C876-3DB1-3B06194CFC84}
       NAME "All 3 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-3.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28530,9 +28887,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {0265F7D3-36B7-CA29-C2C3-82AE288C151C}
       NAME "All 3 3"
+      SOFFS 18
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-3.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28546,9 +28904,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {0265F4D3-36B7-C510-08EA-6C58A948D200}
       NAME "All 3 6"
+      SOFFS 42
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-3.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28562,9 +28921,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {0265F5D3-36B7-C6C3-F44A-CBB47A294378}
       NAME "All 3 8"
+      SOFFS 58
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-3.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28578,9 +28938,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {0265FAD3-36B7-CF42-38C2-635F8EAAE9AC}
       NAME "All 3 11"
+      SOFFS 82
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-3.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28594,9 +28955,10 @@
       FADEOUT 1 1 0 1 0 0 0
       IGUID {0265FBD3-36B7-D0F5-0D88-E62BB8ECFB24}
       NAME "All 3 13"
+      SOFFS 98
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-3.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
   >
@@ -28623,9 +28985,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {0AFAADD3-3B8D-D10B-3C19-6EF78CDEF238}
       NAME "All 4 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-4.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28639,9 +29002,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {0AFAACD3-3B8D-CF58-B69B-E551B0396610}
       NAME "All 4 3"
+      SOFFS 16
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-4.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28655,9 +29019,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {0AFAAFD3-3B8D-D471-0DF5-5C4397347D84}
       NAME "All 4 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-4.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28671,9 +29036,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {0AFAAED3-3B8D-D2BE-7A90-02579B07F07C}
       NAME "All 4 9"
+      SOFFS 64
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-4.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28687,9 +29053,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {0AFAB1D3-3B8D-D7D7-CF77-4F126664DBA0}
       NAME "All 4 11"
+      SOFFS 80
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-4.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28703,9 +29070,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {0AFAB0D3-3B8D-D624-87BD-B141AAC93AB8}
       NAME "All 4 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-4.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28719,9 +29087,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {0AFAB3D3-3B8D-DB3D-0B94-17B9C258DF44}
       NAME "All 4 13"
+      SOFFS 96
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-4.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
   >
@@ -28748,9 +29117,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {12B644D3-3FAB-B280-216F-F8B0CCEF2140}
       NAME "All 5 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-5.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28764,9 +29134,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {12B645D3-3FAB-B433-80E8-1F989AA18AB8}
       NAME "All 5 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-5.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28780,9 +29151,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {12B646D3-3FAB-B5E6-6074-CBA117E96B6C}
       NAME "All 5 5"
+      SOFFS 38
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-5.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28796,9 +29168,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {12B647D3-3FAB-B799-0804-AA51AEAA5CA4}
       NAME "All 5 9"
+      SOFFS 70
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-5.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28812,9 +29185,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {12B648D3-3FAB-B94C-F9EE-CBC0EF06CC88}
       NAME "All 5 13"
+      SOFFS 102
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-5.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28828,9 +29202,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {12B649D3-3FAB-BAFF-9B71-11DB41B28460}
       NAME "All 5 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-5.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28844,9 +29219,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {12B64AD3-3FAB-BCB2-BCAA-350D23291ECC}
       NAME "All 5 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-5.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
   >
@@ -28873,9 +29249,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {1BB87BD3-44DF-6675-93E9-446CF1E72BEC}
       NAME "All 6 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-6.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28889,9 +29266,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {1BB87AD3-44DF-64C2-CA83-0876632F5624}
       NAME "All 6 4"
+      SOFFS 26
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-6.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28905,9 +29283,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {1BB879D3-44DF-630F-4B87-A34451B13CA8}
       NAME "All 6 5"
+      SOFFS 34
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-6.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28921,9 +29300,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {1BB878D3-44DF-615C-ED41-3F21B70308E0}
       NAME "All 6 7"
+      SOFFS 50
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-6.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28937,9 +29317,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {1BB877D3-44DF-5FA9-013E-1C461E3190A4}
       NAME "All 6 9"
+      SOFFS 66
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-6.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28953,9 +29334,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {1BB876D3-44DF-5DF6-6A28-649E048CBFBC}
       NAME "All 6 10"
+      SOFFS 74
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-6.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -28969,9 +29351,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {1BB875D3-44DF-5C43-163A-E676CA971AE8}
       NAME "All 6 15"
+      SOFFS 114
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-6.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
   >
@@ -28998,9 +29381,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {244D32D3-49B5-6F0A-7E7C-7A03F793F1D4}
       NAME "All 7 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-7.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29014,9 +29398,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {244D33D3-49B5-70BD-FD9A-145C6BCEAE2C}
       NAME "All 7 4"
+      SOFFS 24
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-7.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29030,9 +29415,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {244D30D3-49B5-6BA4-7572-B03927EB9FD0}
       NAME "All 7 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-7.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29046,9 +29432,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {244D31D3-49B5-6D57-AC02-1E09D9D9E5E8}
       NAME "All 7 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-7.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29062,9 +29449,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {244D2ED3-49B5-683E-4583-E94F0473486C}
       NAME "All 7 11"
+      SOFFS 80
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-7.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29078,9 +29466,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {244D2FD3-49B5-69F1-C6E5-733AF6397A04}
       NAME "All 7 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-7.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
   >
@@ -29108,9 +29497,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {2DBBC9D3-4F44-E4FF-9165-E53DC1EB04E0}
       NAME "All 8 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-8.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29124,9 +29514,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {2DBBC8D3-4F44-E34C-DDDF-CF2364D8F198}
       NAME "All 8 5"
+      SOFFS 38
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-8.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29140,9 +29531,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {2DBBCBD3-4F44-E865-D4EA-E8C92DF720FC}
       NAME "All 8 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-8.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29156,9 +29548,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {2DBBCAD3-4F44-E6B2-2C0C-E06FE834C4B4}
       NAME "All 8 12"
+      SOFFS 94
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-8.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29172,9 +29565,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {2DBBC5D3-4F44-DE33-F49B-B0A68C0071A8}
       NAME "All 8 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-8.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
     <ITEM
@@ -29188,9 +29582,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {2DBBC4D3-4F44-DC80-84D2-B9BEB5594140}
       NAME "All 8 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/bgvs-hey-all-8.wav"
+        FILE "media/perf-bgvs-hey.wav"
       >
     >
   >
@@ -29246,9 +29641,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {BADFD875-4188-A0E0-4BEF-9CFB865AD4C0}
       NAME "EN 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-en.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29262,9 +29658,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {BADFD975-4188-A293-BAA7-09E7F9C38568}
       NAME "EN 3"
+      SOFFS 16
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-en.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29278,9 +29675,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {BADFDA75-4188-A446-328D-883E424496A0}
       NAME "EN 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-en.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29294,9 +29692,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {BADFDB75-4188-A5F9-163C-5267DE41DE50}
       NAME "EN 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-en.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29310,9 +29709,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {BADFDC75-4188-A7AC-ECCF-68D7E07C20F8}
       NAME "EN 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-en.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29326,9 +29726,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {BADFDD75-4188-A95F-58EB-C40366C05B50}
       NAME "EN 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-en.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
   >
@@ -29355,9 +29756,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {5EC9ED75-9E2F-F32F-F81D-96EAAAA22990}
       NAME "ES 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-es.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29371,9 +29773,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {5EC9EC75-9E2F-F17C-A23A-6783E45D8788}
       NAME "ES 5"
+      SOFFS 36
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-es.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29387,9 +29790,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {5EC9EF75-9E2F-F695-8DA2-DF2FC84EF170}
       NAME "ES 7"
+      SOFFS 52
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-es.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29403,9 +29807,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {5EC9EE75-9E2F-F4E2-7163-7591B76F97E0}
       NAME "ES 9"
+      SOFFS 68
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-es.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29419,9 +29824,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {5EC9E975-9E2F-EC63-E84B-931E2E58B6D8}
       NAME "ES 10"
+      SOFFS 76
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-es.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29435,9 +29841,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {5EC9E875-9E2F-EAB0-473E-BEF8FA8B1160}
       NAME "ES 13"
+      SOFFS 100
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-es.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29451,9 +29858,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {5EC9EB75-9E2F-EFC9-0EA2-7ADFC6EE6D18}
       NAME "ES 15"
+      SOFFS 116
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-es.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
   >
@@ -29481,9 +29889,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {CC049710-EE73-C497-9229-F7E2B7782234}
       NAME "PT 1"
+      SOFFS 6
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-pt.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29497,9 +29906,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {CC049610-EE73-C2E4-7A27-05C24462E968}
       NAME "PT 3"
+      SOFFS 22
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-pt.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29513,9 +29923,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {CC049910-EE73-C7FD-2655-BB58FD75A5C0}
       NAME "PT 7"
+      SOFFS 54
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-pt.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29529,9 +29940,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {CC049810-EE73-C64A-EAB7-5347D1CCAB84}
       NAME "PT 12"
+      SOFFS 94
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-pt.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29545,9 +29957,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {CC049310-EE73-BDCB-8741-F360D2B81364}
       NAME "PT 14"
+      SOFFS 110
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-pt.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
     <ITEM
@@ -29561,9 +29974,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {CC049210-EE73-BC18-A610-FE02FF022610}
       NAME "PT 15"
+      SOFFS 118
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-soprano-pt.wav"
+        FILE "media/perf-choir-soprano.wav"
       >
     >
   >
@@ -29604,9 +30018,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {216937D6-E3C0-369E-96E4-E31555EEE548}
       NAME "EN 2"
+      SOFFS 12
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-en.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29620,9 +30035,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {216938D6-E3C0-3851-0AF4-45345610048E}
       NAME "EN 4"
+      SOFFS 28
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-en.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29636,9 +30052,10 @@
       FADEOUT 2 2 0 1 0 0 0
       IGUID {216935D6-E3C0-3338-E25E-16D5CC8E06C0}
       NAME "EN 6"
+      SOFFS 44
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-en.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29652,9 +30069,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {216936D6-E3C0-34EB-25EB-CD311A14C2C2}
       NAME "EN 10"
+      SOFFS 76
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-en.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29668,9 +30086,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {21693BD6-E3C0-3D6A-1037-8D9C4B7BC008}
       NAME "EN 11"
+      SOFFS 84
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-en.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29684,9 +30103,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {21693CD6-E3C0-3F1D-F83A-2A278DBDC05E}
       NAME "EN 13"
+      SOFFS 100
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-en.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29700,9 +30120,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {216939D6-E3C0-3A04-93A3-848886EF6B60}
       NAME "EN 15"
+      SOFFS 116
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-en.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
   >
@@ -29729,9 +30150,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {80AA74D7-19B1-F4E5-53B6-0181E50B69EE}
       NAME "ES 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-es.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29745,9 +30167,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {80AA73D7-19B1-F332-1388-DAFCCDF10010}
       NAME "ES 4"
+      SOFFS 26
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-es.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29761,9 +30184,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {80AA72D7-19B1-F17F-65F4-1CDAA502DB22}
       NAME "ES 6"
+      SOFFS 42
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-es.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29777,9 +30201,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {80AA71D7-19B1-EFCC-F2B0-10C7FE9090C0}
       NAME "ES 8"
+      SOFFS 58
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-es.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29793,9 +30218,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {80AA70D7-19B1-EE19-79F5-68E00E6C3D9E}
       NAME "ES 13"
+      SOFFS 98
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-es.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29809,9 +30235,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {80AA6FD7-19B1-EC66-3374-9B9C81BF7FB0}
       NAME "ES 14"
+      SOFFS 106
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-es.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29825,9 +30252,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {80AA6ED7-19B1-EAB3-B3ED-2D7D485F2C9A}
       NAME "ES 15"
+      SOFFS 114
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-es.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
   >
@@ -29855,9 +30283,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {73BA4234-8BA9-5581-5809-D9BAB514A76A}
       NAME "PT 2"
+      SOFFS 14
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-pt.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29871,9 +30300,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {73BA4134-8BA9-53CE-6A3B-61DFA91CAE2C}
       NAME "PT 4"
+      SOFFS 30
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-pt.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29887,9 +30317,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {73BA4034-8BA9-521B-52BE-4680B3CDEB32}
       NAME "PT 6"
+      SOFFS 46
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-pt.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29903,9 +30334,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {73BA3F34-8BA9-5068-A68A-F723C0BCEF10}
       NAME "PT 10"
+      SOFFS 78
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-pt.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29919,9 +30351,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {73BA4634-8BA9-5C4D-3A38-8F12E3562D2A}
       NAME "PT 12"
+      SOFFS 94
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-pt.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
     <ITEM
@@ -29935,9 +30368,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {73BA4534-8BA9-5A9A-EE7B-5236B1EA763C}
       NAME "PT 16"
+      SOFFS 126
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-alto-pt.wav"
+        FILE "media/perf-choir-alto.wav"
       >
     >
   >
@@ -29978,9 +30412,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {CC7D6184-F86D-597E-898F-0A10C4A36464}
       NAME "EN 2"
+      SOFFS 8
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-en.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -29994,9 +30429,10 @@
       FADEOUT 2 0.1 0 1 0 0 0
       IGUID {CC7D6284-F86D-5B31-3143-CAB37A22E5D0}
       NAME "EN 5"
+      SOFFS 32
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-en.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30010,9 +30446,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {CC7D5F84-F86D-5618-7595-21347BE68650}
       NAME "EN 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-en.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30026,9 +30463,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {CC7D6084-F86D-57CB-A2B0-FED7F12F9A3C}
       NAME "EN 8"
+      SOFFS 56
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-en.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30042,9 +30480,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {CC7D6584-F86D-604A-ED4E-F5EA6AB781BC}
       NAME "EN 10"
+      SOFFS 72
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-en.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30058,9 +30497,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {CC7D6684-F86D-61FD-9202-49F9ADB2BB90}
       NAME "EN 14"
+      SOFFS 104
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-en.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
   >
@@ -30087,9 +30527,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {2BBF1E85-2E5F-F145-691D-A7049DFFF398}
       NAME "ES 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-es.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30103,9 +30544,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {2BBF1D85-2E5F-EF92-19C7-B2C819E5AE64}
       NAME "ES 3"
+      SOFFS 18
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-es.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30119,9 +30561,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {2BBF1C85-2E5F-EDDF-B5F8-8F9C7D3B3654}
       NAME "ES 4"
+      SOFFS 26
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-es.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30135,9 +30578,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {2BBF1B85-2E5F-EC2C-E067-13BF54D33FC0}
       NAME "ES 8"
+      SOFFS 58
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-es.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30151,9 +30595,10 @@
       FADEOUT 5 0.1 0 1 0 0 0
       IGUID {2BBF1A85-2E5F-EA79-D3FD-14D5395EBC18}
       NAME "ES 10"
+      SOFFS 74
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-es.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30167,9 +30612,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {2BBF1985-2E5F-E8C6-8532-487331BDC65C}
       NAME "ES 12"
+      SOFFS 90
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-es.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30183,9 +30629,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {2BBF1885-2E5F-E713-3D8F-DDABD26A4ACC}
       NAME "ES 16"
+      SOFFS 122
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-es.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
   >
@@ -30213,9 +30660,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {CBC3EBE0-2DC8-B761-DF82-D7D7B1D78428}
       NAME "PT 1"
+      SOFFS 4
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-pt.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30229,9 +30677,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {CBC3EAE0-2DC8-B5AE-7816-15300A90AE00}
       NAME "PT 6"
+      SOFFS 44
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-pt.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30245,9 +30694,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {CBC3E9E0-2DC8-B3FB-AF4D-2C515D116AE0}
       NAME "PT 8"
+      SOFFS 60
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-pt.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
     <ITEM
@@ -30261,9 +30711,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {CBC3E8E0-2DC8-B248-D416-39D76492CD20}
       NAME "PT 12"
+      SOFFS 92
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-tenor-pt.wav"
+        FILE "media/perf-choir-tenor.wav"
       >
     >
   >
@@ -30304,9 +30755,10 @@
       FADEOUT 5 1 0 1 0 0 0
       IGUID {79247C19-78FC-E397-EBCF-C41C9B0CFD4A}
       NAME "EN 2"
+      SOFFS 10
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-en.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30320,9 +30772,10 @@
       FADEOUT 5 2 0 1 0 0 0
       IGUID {79247B19-78FC-E1E4-2253-58221060FD00}
       NAME "EN 5"
+      SOFFS 34
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-en.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30336,9 +30789,10 @@
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {79247E19-78FC-E6FD-6A12-01FA304CFFAA}
       NAME "EN 7"
+      SOFFS 50
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-en.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30352,9 +30806,10 @@
       FADEOUT 1 2 0 1 0 0 0
       IGUID {79247D19-78FC-E54A-D6D1-03AE0255A20C}
       NAME "EN 9"
+      SOFFS 66
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-en.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30368,9 +30823,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {79247819-78FC-DCCB-9432-8DE239C4DCB2}
       NAME "EN 13"
+      SOFFS 98
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-en.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
   >
@@ -30399,7 +30855,7 @@
       NAME "ES 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-es.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30413,9 +30869,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {7428181A-071C-BF2B-BCA3-AC19B0589D2A}
       NAME "ES 3"
+      SOFFS 16
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-es.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30429,9 +30886,10 @@
       FADEOUT 0 0.1 0 1 0 0 0
       IGUID {7428191A-071C-C0DE-10DD-B77D4717E87C}
       NAME "ES 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-es.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30445,9 +30903,10 @@
       FADEOUT 5 0.5 0 1 0 0 0
       IGUID {74281A1A-071C-C291-EF1E-90447674C1B2}
       NAME "ES 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-es.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30461,9 +30920,10 @@
       FADEOUT 2 1 0 1 0 0 0
       IGUID {74281B1A-071C-C444-518C-FC5340E66A10}
       NAME "ES 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-es.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
   >
@@ -30493,7 +30953,7 @@
       NAME "PT 1"
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-pt.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30507,9 +30967,10 @@
       FADEOUT 1 0.1 0 1 0 0 0
       IGUID {B9D952C0-1AFE-4627-9E30-7949CA2B67D2}
       NAME "PT 6"
+      SOFFS 40
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-pt.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30523,9 +30984,10 @@
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {B9D953C0-1AFE-47DA-64CF-E329E9DAD170}
       NAME "PT 7"
+      SOFFS 48
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-pt.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30539,9 +31001,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {B9D954C0-1AFE-498D-ED9F-AFD2B1217046}
       NAME "PT 11"
+      SOFFS 80
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-pt.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30555,9 +31018,10 @@
       FADEOUT 0 1 0 1 0 0 0
       IGUID {B9D94DC0-1AFE-3DA8-CA66-F0649E6004B0}
       NAME "PT 12"
+      SOFFS 88
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-pt.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
     <ITEM
@@ -30571,9 +31035,10 @@
       FADEOUT 0 2 0 1 0 0 0
       IGUID {B9D94EC0-1AFE-3F5B-69E9-6B14121A69C2}
       NAME "PT 16"
+      SOFFS 120
       CHANMODE 0
       <SOURCE WAVE
-        FILE "media/choir-bass-pt.wav"
+        FILE "media/perf-choir-bass.wav"
       >
     >
   >

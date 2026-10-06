@@ -297,6 +297,17 @@ impl LaneLayout {
         self.lanes.len() - 1
     }
 
+    /// Every reference to the track `old` now names `new`.
+    fn rename(&mut self, old: &str, new: &str) {
+        for lane in &mut self.lanes {
+            for g in &mut lane.tracks {
+                if g == old {
+                    new.clone_into(g);
+                }
+            }
+        }
+    }
+
     /// Which lane holds this track.
     pub fn lane_of(&self, guid: &str) -> Option<usize> {
         self.lanes.iter().position(|l| l.contains(guid))
@@ -747,6 +758,19 @@ impl Workspace {
 
     pub fn track_mut(&mut self, i: usize) -> Option<&mut Track> {
         self.tracks.get_mut(i)
+    }
+
+    /// Give track `i` the host's identity. The lane layout names tracks
+    /// by guid, so it is renamed with them — changing the track's guid
+    /// alone left its lane naming a track that no longer existed, and the
+    /// track vanished from a stacked view.
+    pub fn set_guid(&mut self, i: usize, guid: impl Into<String>) {
+        let guid = guid.into();
+        let Some(track) = self.tracks.get_mut(i) else {
+            return;
+        };
+        let old = std::mem::replace(&mut track.guid, guid.clone());
+        self.layout.rename(&old, &guid);
     }
 
     pub fn names(&self) -> Vec<&str> {

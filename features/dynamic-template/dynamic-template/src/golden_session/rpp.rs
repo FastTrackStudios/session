@@ -102,7 +102,19 @@ impl Flat {
     /// The media file this track's items play, relative to the project.
     #[must_use]
     pub fn media_file(&self) -> Option<String> {
-        (self.has_items() && !self.is_midi()).then(|| format!("media/{}.wav", slug(&self.path)))
+        (self.has_items() && !self.is_midi()).then(|| {
+            // A performed track shares its performance's file.
+            let name = super::perform::performance(&self.path)
+                .map_or_else(|| slug(&self.path), |(key, _)| key);
+            format!("media/{name}.wav")
+        })
+    }
+
+    /// Whether the track's items read a performance the song's length,
+    /// each from where it starts (`golden_session::perform`).
+    #[must_use]
+    pub fn performed(&self) -> bool {
+        self.has_items() && !self.is_midi() && super::perform::performance(&self.path).is_some()
     }
 }
 
@@ -552,6 +564,7 @@ fn with_items(mut builder: TrackBuilder, track: &Flat, context: &TrackContext) -
     let name = track.name.clone();
     let media = track.media_file();
     let midi = track.is_midi();
+    let performed = track.performed();
     // A part of the song (the Keyflow folder, the keys, the synths):
     // its MIDI is the song's, and the Keyflow tracks are laid out by it —
     // one key, an item a chord, an item a section.
@@ -622,6 +635,11 @@ fn with_items(mut builder: TrackBuilder, track: &Flat, context: &TrackContext) -
                     item = item.midi(|m| pattern.write(m, length_beats));
                 } else if let Some(file) = media {
                     item = item.source_wave(file);
+                    // A performance is the whole song: the item plays its
+                    // own stretch of it.
+                    if performed {
+                        item = item.slip_offset(f64::from(placed.bar) * context.secs_per_bar);
+                    }
                 }
                 item
             },
