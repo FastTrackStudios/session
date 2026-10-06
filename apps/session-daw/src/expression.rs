@@ -1434,9 +1434,7 @@ pub fn look_fields(look: &mut Look) -> [(&'static str, &mut vello::peniko::Color
 /// that says nothing leaves the editor reading as the arrangement.
 fn themed(look: &mut Look) {
     let Some(theme) = crate::skin::loaded() else {
-        if let Ok(mut slot) = NOTE_PALETTES.write() {
-            *slot = None;
-        }
+        store_palettes(None);
         return;
     };
     let colour = |name: &str| {
@@ -1486,9 +1484,7 @@ fn themed(look: &mut Look) {
         .map(|(n, hex)| (n.to_owned(), hex))
         .into_iter(),
     );
-    if let Ok(mut slot) = NOTE_PALETTES.write() {
-        *slot = Some((pitches, drums));
-    }
+    store_palettes(Some((pitches, drums)));
 }
 
 /// The theme's recolouring of the notes' palettes: by pitch class, by
@@ -1497,18 +1493,52 @@ type Palettes = (
     std::collections::HashMap<String, vello::peniko::Color>,
     std::collections::HashMap<String, vello::peniko::Color>,
 );
+#[cfg(not(test))]
 static NOTE_PALETTES: std::sync::RwLock<Option<Palettes>> = std::sync::RwLock::new(None);
+#[cfg(test)]
+thread_local! {
+    // Per test thread, as `skin`'s theme is: tests that load a theme and
+    // tests that clear it run side by side.
+    static NOTE_PALETTES: std::sync::RwLock<Option<Palettes>> = const { std::sync::RwLock::new(None) };
+}
+
+/// Store the theme's palettes (`None`: the palettes as they are).
+fn store_palettes(palettes: Option<Palettes>) {
+    let put = |slot: &std::sync::RwLock<Option<Palettes>>| {
+        *slot
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = palettes;
+    };
+    #[cfg(not(test))]
+    put(&NOTE_PALETTES);
+    #[cfg(test)]
+    NOTE_PALETTES.with(put);
+}
+
+/// The theme's recolouring for what `space` shows: the kit's table for
+/// drum lanes, the pitch classes' otherwise.
+fn palette_for(
+    space: &RowSpace,
+) -> Option<std::collections::HashMap<String, vello::peniko::Color>> {
+    let pick = |slot: &std::sync::RwLock<Option<Palettes>>| {
+        slot.read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(|(pitches, drums)| match space {
+                RowSpace::Drums(_) => drums.clone(),
+                _ => pitches.clone(),
+            })
+    };
+    #[cfg(not(test))]
+    return pick(&NOTE_PALETTES);
+    #[cfg(test)]
+    NOTE_PALETTES.with(pick)
+}
 
 /// Hand the painter the theme's palette for what `space` shows: the
 /// kit's for drum lanes, the pitch classes' otherwise.
 fn note_palette(space: &RowSpace) {
-    let table = NOTE_PALETTES.read().ok().and_then(|p| {
-        p.as_ref().map(|(pitches, drums)| match space {
-            RowSpace::Drums(_) => drums.clone(),
-            _ => pitches.clone(),
-        })
-    });
-    expression_editor_paint::paint::set_recolour(table);
+    expression_editor_paint::paint::set_recolour(palette_for(space));
 }
 
 /// How far a press may travel and still be a click, in pixels.
@@ -2122,19 +2152,19 @@ mod theme_tests {
                 .expect("the tokens load");
         crate::skin::set(Some(std::sync::Arc::new(theme)));
         let _ = look_of(&palette);
+        // The tables, not the painter's recolour: that one is the
+        // process's, and the tests beside this one set it too.
         let drums = RowSpace::Drums(DrumMap::fts());
-        note_palette(&drums);
-        let kick = paint::color(DRUM_KICK_COLOR);
+        let key = DRUM_KICK_COLOR.to_ascii_lowercase();
+        let kick = palette_for(&drums).and_then(|t| t.get(&key).copied());
         // The same red as a pitch class (C) is not the kick's on a piano.
-        note_palette(&RowSpace::Pitch);
-        let c = paint::color(DRUM_KICK_COLOR);
+        let c = palette_for(&RowSpace::Pitch).and_then(|t| t.get(&key).copied());
         crate::skin::set(None);
         let _ = look_of(&palette);
-        note_palette(&drums);
-        let back = paint::color(DRUM_KICK_COLOR);
-        assert_eq!(kick, vello::peniko::Color::from_rgba8(0, 255, 0, 255));
+        let back = palette_for(&drums);
+        assert_eq!(kick, Some(vello::peniko::Color::from_rgba8(0, 255, 0, 255)));
         assert_ne!(c, kick, "C keeps its colour");
-        assert_ne!(back, kick, "no theme, the kit's own red");
+        assert_eq!(back, None, "no theme, the kit's own red");
     }
 
     /// The console theme draws the editor's bars; with no theme, or a
