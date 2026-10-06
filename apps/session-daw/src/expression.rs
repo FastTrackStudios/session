@@ -434,6 +434,8 @@ impl Expression {
         });
         painter.append_scene(bar, Affine::translate((ox, oy)));
         if self.stacked() {
+            // A theme with a lane header draws each lane's name and rail.
+            self.stack.host_lanes = themes_stack_lanes();
             let key = self.stack.view_key(&self.editor);
             let at = Affine::translate((ox, oy + TOOLBAR_H));
             let fresh = self.stack_cache.as_ref().is_none_or(|(k, _)| *k != key);
@@ -445,6 +447,11 @@ impl Expression {
                 for cmd in &scene.commands {
                     stack::submit(painter, cmd, at);
                 }
+            }
+            if self.stack.host_lanes
+                && let Some(lanes) = themed_stack_lanes(&self.editor, self.font.as_ref())
+            {
+                painter.append_scene(lanes, at);
             }
             let playhead = self.playhead_secs();
             let over = self.stack.overlays(&self.editor, playhead, &self.look);
@@ -1179,6 +1186,56 @@ const ROLL_CHROME: [&str; 6] = [
     "editor.tick",
     "editor.marker",
 ];
+
+/// Whether the loaded theme draws the stacked view's lane headers.
+fn themes_stack_lanes() -> bool {
+    crate::skin::loaded().is_some_and(|t| t.has_role("editor.lane"))
+}
+
+/// The stacked view's lane headers, drawn by the loaded theme over the
+/// gutter from the lanes the stack lays out (`Stack::lane_views`): the
+/// take's name, the rail down the one being edited, the reference
+/// mark. `None` when the theme does not draw them.
+fn themed_stack_lanes(ed: &Editor, font: Option<&crate::text::Font>) -> Option<anyrender::Scene> {
+    use theme_runtime::{Rgba, Value};
+    let theme = crate::skin::loaded().filter(|t| t.has_role("editor.lane"))?;
+    let font = font?;
+    let ruler_h = Stack::ruler_h(ed);
+    let mut scene = anyrender::Scene::new();
+    // Under the ruler only: a lane scrolled up past it is hidden there.
+    scene.push_clip_layer(
+        Affine::IDENTITY,
+        &vello::kurbo::Rect::new(0.0, ruler_h, canvas::GUTTER_W, ruler_h + ed.viewport.h),
+    );
+    {
+        let mut host = crate::skin::canvas::Host {
+            scene: &mut scene,
+            font,
+        };
+        for lane in Stack::lane_views(ed) {
+            let tint = lane.role_color.map_or(Value::Missing, |hex| {
+                let [r, g, b, a] = paint::color(hex).to_rgba8().to_u8_array();
+                Value::Color(Rgba::from_rgba8(r, g, b, a))
+            });
+            let fields = crate::skin::values(&[
+                ("lane.name", Value::text(&lane.name)),
+                ("lane.active", Value::Bool(lane.active)),
+                ("lane.reference", Value::Bool(lane.reference)),
+                ("lane.tinted", Value::Bool(lane.role_color.is_some())),
+                ("lane.tint", tint),
+            ]);
+            theme.record(
+                "editor.lane",
+                (canvas::GUTTER_W, lane.h),
+                &fields,
+                &mut host,
+                Affine::translate((0.0, ruler_h + lane.y)),
+            );
+        }
+    }
+    scene.pop_layer();
+    Some(scene)
+}
 
 /// Whether the loaded theme draws the roll's keyboard and ruler.
 fn themes_roll_chrome() -> bool {
@@ -2198,6 +2255,11 @@ mod theme_tests {
         let themed_menu = themed_menu(&menu, Some(&font));
         let strips = themes_strip();
         let lets_it = themes_roll_chrome();
+        let mut stacked = ed.clone();
+        stacked.stacked = true;
+        let lanes = themes_stack_lanes()
+            .then(|| themed_stack_lanes(&stacked, Some(&font)))
+            .flatten();
         crate::skin::set(None);
         assert!(drawn.is_some_and(|s| !s.commands.is_empty()));
         assert!(
@@ -2207,8 +2269,14 @@ mod theme_tests {
         assert!(chrome.is_some_and(|s| !s.commands.is_empty()));
         assert!(strips && strip.is_some_and(|s| !s.commands.is_empty()));
         assert!(themed_menu.is_some_and(|s| !s.commands.is_empty()));
+        assert!(
+            lanes.is_some_and(|s| !s.commands.is_empty()),
+            "the stack's lane headers are the theme's"
+        );
         // Negative control: no theme, and the roll draws its own.
         assert!(!themes_roll_chrome());
+        assert!(!themes_stack_lanes());
+        assert!(themed_stack_lanes(&stacked, Some(&font)).is_none());
     }
 }
 

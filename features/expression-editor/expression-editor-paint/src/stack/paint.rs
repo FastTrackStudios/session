@@ -62,6 +62,8 @@ pub struct StackChrome<'a> {
     pub mic_menu_w: f64,
     /// How far past a lane's edges a hit is still drawn.
     pub hit_margin: f64,
+    /// Whether the host draws the lanes' headers (`Stack::host_lanes`).
+    pub host_lanes: bool,
 }
 
 /// Draw the stack into a scene sized `w` x `h` in CSS pixels.
@@ -118,7 +120,7 @@ pub fn stack_scene(
     // everything drawn before it (the ruler's section band vanished).
     // Paint order is the clip, so paint in order.
     for lane in lanes {
-        lane_ground(&mut scene, look, lane, w, down);
+        lane_ground(&mut scene, look, lane, w, down, chrome.host_lanes);
         timebase(&mut scene, look, lane, chrome, lane_space);
         lane_material(
             &mut scene, look, lane, chrome, w, gutter, down, lane_space, labels,
@@ -254,7 +256,7 @@ fn ruler(
 
 /// A lane's ground: its band, the rule along its top, and the armed
 /// rail down its gutter edge.
-fn lane_ground(scene: &mut Scene, look: &Look, lane: &LaneView, w: f64, at: Affine) {
+fn lane_ground(scene: &mut Scene, look: &Look, lane: &LaneView, w: f64, at: Affine, hosted: bool) {
     // A lane's own background, so the active one reads as the foreground
     // even when a neighbour is busier. Opaque, which is also what clips
     // the previous lane's overflow — see `stack_scene`.
@@ -276,7 +278,7 @@ fn lane_ground(scene: &mut Scene, look: &Look, lane: &LaneView, w: f64, at: Affi
     // The armed-lane rail: the one bright fixture, down the gutter edge
     // of the lane you are editing — a console's channel-select, not a
     // second highlight fighting the hits.
-    if lane.active {
+    if lane.active && !hosted {
         let accent = lane.role_color.map_or(look.accent, color);
         scene.fill(
             Fill::NonZero,
@@ -464,8 +466,12 @@ fn hits(
             tri.line_to((n.x, gy + gh));
             tri.close_path();
             if n.grace { &mut faded } else { &mut bodies }.add(ink, &tri);
-        } else {
-            let body = RoundedRect::new(n.x, gy, n.x + n.w, gy + gh, 1.0);
+        } else if n.x + n.w > 0.0 {
+            // Trimmed at the lane's left edge: a note that began before
+            // the view would otherwise run on into the gutter, under
+            // the lane's name. (Nothing clips this scene — see
+            // `stack_scene` — so the geometry has to stop itself.)
+            let body = RoundedRect::new(n.x.max(0.0), gy, n.x + n.w, gy + gh, 1.0);
             if n.grace { &mut faded } else { &mut bodies }.add(ink, &body);
         }
         // The engraver's slash through the grace note's stem.
@@ -504,7 +510,9 @@ fn lane_labels(
     at: Affine,
     labels: &mut Labeller,
 ) {
-    if lane.is_role {
+    if chrome.host_lanes {
+        // The host's header carries the name.
+    } else if lane.is_role {
         // A role lane's name is an eyebrow — small caps, spaced, quiet —
         // because the label is furniture and the audio is the content.
         let ink = lane.role_color.map_or(

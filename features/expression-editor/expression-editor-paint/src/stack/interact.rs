@@ -105,6 +105,11 @@ pub struct Stack {
     pub editable: bool,
     /// Fill regions, in seconds, drawn behind the lanes.
     pub fills: Vec<(f64, f64)>,
+    /// Whether the host draws each lane's header — its name and the
+    /// armed rail — from [`Stack::lane_views`] (a themed host does).
+    /// The mic chip, the sub-lane names and the hand mark stay here:
+    /// they answer this stack's clicks, so this stack draws them.
+    pub host_lanes: bool,
 }
 
 /// What a cached [`Stack::scene`] was built for. Equal keys, same
@@ -120,6 +125,7 @@ pub struct ViewKey {
     notes: usize,
     mic_menu: Option<usize>,
     fills: usize,
+    host_lanes: bool,
 }
 
 /// The chrome the ruler is drawn from, resolved once per frame and
@@ -147,6 +153,13 @@ impl Stack {
     #[must_use]
     pub fn ruler_h(ed: &Editor) -> f64 {
         CHROME_ROW_H.mul_add(num::coord(chrome_shelves(ed).len().max(1)), RULER_TICKS_H)
+    }
+
+    /// The lanes as [`Stack::scene`] lays them out, in the stack's lane
+    /// space: y from under the ruler ([`Stack::ruler_h`]).
+    #[must_use]
+    pub fn lane_views(ed: &Editor) -> Vec<LaneView> {
+        Self::lanes_of(ed)
     }
 
     fn lanes_of(ed: &Editor) -> Vec<LaneView> {
@@ -265,6 +278,7 @@ impl Stack {
             mic_item_h: MIC_ITEM_H,
             mic_menu_w: MIC_MENU_W,
             hit_margin: HIT_MARGIN,
+            host_lanes: self.host_lanes,
         };
         let w = vp.w + canvas::GUTTER_W;
         let h = vp.h + chrome.ruler_h;
@@ -288,6 +302,7 @@ impl Stack {
             notes: ed.doc.notes.len(),
             mic_menu: self.mic_menu,
             fills: self.fills.len(),
+            host_lanes: self.host_lanes,
         }
     }
 

@@ -33,6 +33,20 @@
       <Text name="Name" x=5 w=46 h=12 size=9 bind:y="h / 2 - 5.5" bind:text="group.label" bind:fill="$editor.text_dim">T1</Text>
     </Frame>
   </Page>
+  <Page name="editor.lane">
+    <!-- A take's header in the stacked view, over the gutter: no ground
+         of its own (the lane's is under it, and the mic chip on that),
+         a rail down the take being edited, the name, and a mark on the
+         take the others are aligned against. -->
+    <Frame name="Lane" w=54 h=120>
+      <Rectangle name="Rail" w=3 h=120 bind:h="h" bind:visible="lane.active" bind:fill="lane.tinted ? lane.tint : $accent" />
+      <Rectangle name="Glow" x=3 w=6 h=120 opacity=0.18 bind:h="h" bind:visible="lane.active" bind:fill="lane.tinted ? lane.tint : $accent" />
+      <Rectangle name="Edge" x=53 w=1 h=120 bind:h="h" bind:fill="$editor.panel_border" />
+      <Text name="Name" x=8 y=5 w=44 h=12 size=9 weight=600 bind:text="lane.name" bind:fill="lane.active ? $editor.text_bright : $editor.text_dim">Main</Text>
+      <Rectangle name="Reference" x=8 y=20 w=24 h=11 radius=2 bind:visible="lane.reference" bind:fill="$editor.gold" />
+      <Text name="Ref" x=8 y=20 w=24 h=11 size=7 weight=700 text-align="center" bind:visible="lane.reference" bind:fill="$editor.gutter_bg">REF</Text>
+    </Frame>
+  </Page>
   <Page name="editor.ruler">
     <Frame name="Ruler" w=1200 h=28>
       <Rectangle name="Ground" w=1200 h=28 bind:w="w" bind:h="h" bind:fill="$editor.surface_bar" />
