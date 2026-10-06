@@ -267,6 +267,10 @@ pub struct Drawn {
 }
 
 /// The arrangement, as a widget.
+/// A quantize's hits on their way back from the engine: `(row, hits)`
+/// per folded row, `None` until they arrive.
+type QuantizeHits = std::sync::Arc<std::sync::Mutex<Option<Vec<(String, Vec<f64>)>>>>;
+
 pub struct ArrangementWidget {
     /// The tool the panel holds and the pointer's shape — see
     /// [`crate::tool`].
@@ -437,6 +441,9 @@ pub struct ArrangementWidget {
     /// asking about. A queue would show you the reply to a drag you had
     /// already given up on.
     notice: Option<crate::notice::Notice>,
+    /// A quantize's hits, read off the kit's peaks away from the frame
+    /// and applied on the next one: `(row, hits)` per folded row.
+    quantized: QuantizeHits,
     /// The scene the rows were planned by before an overview took over,
     /// to go back to: `Some(previous)` while one is up.
     scene_before: Option<Option<&'static str>>,
@@ -583,6 +590,7 @@ impl ArrangementWidget {
             renaming: None,
             keys: crate::keys::Keys::load(),
             notice: None,
+            quantized: std::sync::Arc::default(),
             scene_before: None,
             last_name: None,
             turning: None,
@@ -743,6 +751,81 @@ impl ArrangementWidget {
     /// Lay the rows out as `slug` (an overview); pressed again, or the
     /// other overview's key pressed in this one's, go back to the scene
     /// before. `false` with no planner.
+    /// Shift+Q: read the selected folded rows' hits off their kits' peaks,
+    /// off the frame; [`Self::settle_quantize`] cuts and moves them when
+    /// they arrive. False when no folded row is selected.
+    fn quantize_drums(&self) -> bool {
+        let rows = self.editor.selected_folds(&self.project);
+        if rows.is_empty() {
+            return false;
+        }
+        let snapshot = self.project.clone();
+        let out = std::sync::Arc::clone(&self.quantized);
+        let fallback = self.palette.text_faint;
+        let work = async move {
+            let Some(daw) = daw::rpc::Daw::try_get() else {
+                return;
+            };
+            let Ok(project) = daw.current_project().await else {
+                return;
+            };
+            let wanted: Vec<(String, crate::folder_item::GroupBy)> = rows
+                .iter()
+                .map(|(_, folder, ..)| (folder.clone(), crate::folder_item::GroupBy::Role))
+                .collect();
+            let (folders, _) =
+                crate::folder_item::load::load(&project, &snapshot, &wanted, fallback).await;
+            let found: Vec<(String, Vec<f64>)> = rows
+                .iter()
+                .filter_map(|(row, folder, from, to)| {
+                    let kit = folders.iter().find(|f| f.guid == *folder)?;
+                    Some((
+                        row.clone(),
+                        crate::folder_item::hits::hits(kit, 0, *from, *to),
+                    ))
+                })
+                .collect();
+            *out.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(found);
+        };
+        #[cfg(feature = "native")]
+        {
+            let Some(runtime) = crate::open::runtime() else {
+                return false;
+            };
+            runtime.spawn(work);
+        }
+        #[cfg(not(feature = "native"))]
+        wasm_bindgen_futures::spawn_local(work);
+        true
+    }
+
+    /// A quantize whose hits have arrived, carried out: every mic cut
+    /// before each hit and the slices moved onto the sixteenths.
+    fn settle_quantize(&mut self) {
+        let Some(rows) = self
+            .quantized
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        else {
+            return;
+        };
+        let step = 60.0 / self.scene.bpm.max(1.0) / 4.0;
+        let mut effects = Vec::new();
+        crate::arrange_edit::Editor::quantize(&mut self.project, &rows, step, 1.0, &mut effects);
+        self.settle(effects);
+        self.dirty.set(true);
+    }
+
+    /// Whether a quantize's hits are waiting to be applied.
+    fn quantize_ready(&self) -> bool {
+        self.quantized
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+    }
+
     fn toggle_scene(&mut self, slug: &'static str) -> bool {
         let Some((planner, raw)) = self.replan.as_mut() else {
             return false;
@@ -1310,6 +1393,10 @@ impl ArrangementWidget {
                 handled |= self.toggle_scene(slug);
                 continue;
             }
+            if action == crate::keys::Action::QuantizeDrums {
+                handled |= self.quantize_drums();
+                continue;
+            }
             if action == crate::keys::Action::ToggleMixer {
                 if let Some(links) = &self.mixer {
                     links.toggle.set(true);
@@ -1586,6 +1673,7 @@ impl Widget for ArrangementWidget {
         // `dirty` — nothing is going to set it. Nor can a read-back the
         // engine asked for.
         self.dirty.get()
+            || self.quantize_ready()
             || crate::studio::resync_pending()
             || self
                 .notice
@@ -1676,6 +1764,7 @@ impl ArrangementWidget {
     /// The picture at `width` x `height`: what Blitz's `Widget::paint`
     /// returns, and what the web host draws into its canvas.
     pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+        self.settle_quantize();
         self.dirty.set(false);
         let generation = self.previews.generation();
         if generation != self.previews_seen {

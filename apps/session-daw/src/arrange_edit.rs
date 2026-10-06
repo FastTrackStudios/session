@@ -1360,6 +1360,7 @@ impl Editor {
             Action::View(_)
             | Action::Visibility(_)
             | Action::ToggleScene(_)
+            | Action::QuantizeDrums
             | Action::ToggleMixer
             | Action::ToggleFx
             | Action::FxFull => {
@@ -1523,37 +1524,10 @@ impl Editor {
         mine: &HashSet<String>,
         effects: &mut Vec<Effect>,
     ) -> bool {
-        let mut splits = Vec::new();
-        for lane in project.items.values_mut() {
-            let mut halves = Vec::new();
-            for item in lane.iter_mut() {
-                let start = item.position.as_seconds();
-                let end = start + item.length.as_seconds();
-                if !mine.contains(&item.guid) || at <= start + 1e-3 || at >= end - 1e-3 {
-                    continue;
-                }
-                let mut right = item.clone();
-                right.guid = format!("{}-split@{at:.3}", item.guid);
-                right.position = daw_proto::primitives::PositionInSeconds::from_seconds(at);
-                right.length = daw_proto::primitives::Duration::from_seconds(end - at);
-                right.fade_in_length = daw_proto::primitives::Duration::from_seconds(0.0);
-                item.length = daw_proto::primitives::Duration::from_seconds(at - start);
-                item.fade_out_length = daw_proto::primitives::Duration::from_seconds(0.0);
-                splits.push(Edit::SplitItem(item.guid.clone(), at, right.guid.clone()));
-                halves.push(right);
-            }
-            lane.extend(halves);
-            lane.sort_by(|a, b| {
-                a.position
-                    .as_seconds()
-                    .partial_cmp(&b.position.as_seconds())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
+        let splits = cut(project, at, mine);
         if splits.is_empty() {
             return false;
         }
-        project.item_count = project.items.values().map(Vec::len).sum();
         let from = effects.len();
         for edit in splits {
             effects.push(Effect::Send(edit));
@@ -1563,6 +1537,153 @@ impl Editor {
         true
     }
 
+    /// The folded rows selected, each as `(row, folder, from, to)`: what
+    /// a quantize reads the hits of.
+    #[must_use]
+    pub fn selected_folds(&self, project: &Project) -> Vec<(String, String, f64, f64)> {
+        project
+            .folds
+            .iter()
+            .flat_map(|(folder, fold)| {
+                fold.items
+                    .iter()
+                    .filter(|i| self.selected.contains(&i.guid))
+                    .map(|i| {
+                        let start = i.position.as_seconds();
+                        (
+                            i.guid.clone(),
+                            folder.clone(),
+                            start,
+                            start + i.length.as_seconds(),
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    /// Quantize the kit under each of `rows` (a folded row and its hits): cut every mic a
+    /// moment before each of `hits`, then move each slice so its hit
+    /// lands `strength` of the way to the nearest `step` (seconds) —
+    /// Beat Detective's two passes, on every mic at once, so the kit
+    /// stays in phase with itself. One undo step.
+    ///
+    /// The slice before the first hit stays put; a slice moved later
+    /// leaves a gap behind it and one moved earlier overlaps, as any
+    /// item move does.
+    pub fn quantize(
+        project: &mut Project,
+        rows: &[(String, Vec<f64>)],
+        step: f64,
+        strength: f64,
+        effects: &mut Vec<Effect>,
+    ) {
+        if step <= 0.0 {
+            return;
+        }
+        let from = effects.len();
+        for (row, hits) in rows {
+            let Some(mics) = targets(project, row, true, effects) else {
+                continue;
+            };
+            let spans: Vec<(f64, f64)> = project
+                .items
+                .values()
+                .flatten()
+                .filter(|i| mics.contains(&i.guid))
+                .map(|i| {
+                    let start = i.position.as_seconds();
+                    (start, start + i.length.as_seconds())
+                })
+                .collect();
+            let Some(start) = spans.iter().map(|s| s.0).reduce(f64::min) else {
+                continue;
+            };
+            let end = spans.iter().map(|s| s.1).fold(start, f64::max);
+            // Each mic's slices, by where they start: the mic's own guid
+            // and every piece a cut has made of it.
+            let of_mics = |guid: &str| mics.iter().any(|m| guid.starts_with(m.as_str()));
+            for &hit in hits {
+                let at = hit - QUANTIZE_PRE_ROLL;
+                if at <= start + QUANTIZE_PRE_ROLL || at >= end - QUANTIZE_PRE_ROLL {
+                    continue;
+                }
+                let mine: HashSet<String> = project
+                    .items
+                    .values()
+                    .flatten()
+                    .filter(|i| of_mics(&i.guid))
+                    .map(|i| i.guid.clone())
+                    .collect();
+                effects.extend(cut(project, at, &mine).into_iter().map(Effect::Send));
+                let to = (hit / step).round().mul_add(step, 0.0);
+                let shift = (to - hit) * strength.clamp(0.0, 1.0);
+                if shift.abs() < 1e-4 {
+                    continue;
+                }
+                for item in project.items.values_mut().flatten() {
+                    let pos = item.position.as_seconds();
+                    if of_mics(&item.guid) && (pos - at).abs() < 1e-6 {
+                        let moved = at + shift;
+                        item.position =
+                            daw_proto::primitives::PositionInSeconds::from_seconds(moved);
+                        effects.push(Effect::Send(Edit::MoveItem(item.guid.clone(), moved)));
+                    }
+                }
+            }
+        }
+        if effects.len() > from {
+            project.item_count = project.items.values().map(Vec::len).sum();
+            as_one_step("Quantize drums", from, effects);
+            effects.push(Effect::ReRecord);
+        }
+    }
+}
+
+/// How far before a hit a quantize cuts: the stick's attack is in the
+/// slice it moves, not left behind in the one before.
+pub const QUANTIZE_PRE_ROLL: f64 = 0.005;
+
+/// Cut every item in `mine` that `at` falls inside: the item keeps the
+/// left half and a new one — named `{guid}-split@{t}`, the name the
+/// engine remembers it by — takes the right. The edits that say so.
+fn cut(project: &mut Project, at: f64, mine: &HashSet<String>) -> Vec<Edit> {
+    let mut splits = Vec::new();
+    for lane in project.items.values_mut() {
+        let mut halves = Vec::new();
+        for item in lane.iter_mut() {
+            let start = item.position.as_seconds();
+            let end = start + item.length.as_seconds();
+            if !mine.contains(&item.guid) || at <= start + 1e-3 || at >= end - 1e-3 {
+                continue;
+            }
+            let mut right = item.clone();
+            right.guid = format!("{}-split@{at:.3}", item.guid);
+            right.position = daw_proto::primitives::PositionInSeconds::from_seconds(at);
+            right.length = daw_proto::primitives::Duration::from_seconds(end - at);
+            right.fade_in_length = daw_proto::primitives::Duration::from_seconds(0.0);
+            // As far into the source as the cut is into the item: the
+            // right half plays on from where the left stopped.
+            right.start_offset = daw_proto::primitives::Duration::from_seconds(
+                item.start_offset.as_seconds() + (at - start),
+            );
+            item.length = daw_proto::primitives::Duration::from_seconds(at - start);
+            item.fade_out_length = daw_proto::primitives::Duration::from_seconds(0.0);
+            splits.push(Edit::SplitItem(item.guid.clone(), at, right.guid.clone()));
+            halves.push(right);
+        }
+        lane.extend(halves);
+        lane.sort_by(|a, b| {
+            a.position
+                .as_seconds()
+                .partial_cmp(&b.position.as_seconds())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+    project.item_count = project.items.values().map(Vec::len).sum();
+    splits
+}
+
+impl Editor {
     /// Split at a time: the selected items that contain it, or every
     /// item that does when nothing is selected — REAPER's rule for the
     /// split key. Each becomes two here, and the engine is told.
@@ -2810,6 +2931,68 @@ mod tests {
     /// A slip on a folded row slips every mic under it. Slipping some
     /// of them would put the kit out of phase with itself, which is the
     /// one thing a multi-mic fold exists to prevent.
+    /// A quantize on a folded row cuts every mic before each hit and
+    /// moves each slice onto the grid together — one undo step, the
+    /// other take untouched, and each slice still playing its own audio.
+    #[test]
+    fn quantizing_a_folded_row_moves_every_mic_together() {
+        let mut project = folded_project();
+        let row = project.folds.values().next().expect("the fold").items[0]
+            .guid
+            .clone();
+        // The selection names the folder whose kit is read, and the span.
+        let mut editor = Editor::default();
+        editor.selected.insert(row.clone());
+        let folds = editor.selected_folds(&project);
+        assert_eq!(folds.len(), 1);
+        assert_eq!((folds[0].2, folds[0].3), (2.0, 6.0));
+        assert_eq!(folds[0].1, project.tracks[0].guid);
+        let mut effects = Vec::new();
+        Editor::quantize(
+            &mut project,
+            &[(row, vec![3.02, 4.49])],
+            0.5,
+            1.0,
+            &mut effects,
+        );
+        let sent = sends(&effects);
+        assert!(matches!(sent.first(), Some(Edit::BeginUndo(l)) if l == "Quantize drums"));
+        assert!(matches!(sent.last(), Some(Edit::EndUndo(_))));
+        let splits = sent
+            .iter()
+            .filter(|e| matches!(e, Edit::SplitItem(..)))
+            .count();
+        assert_eq!(splits, 4, "two mics, two cuts: {sent:?}");
+        let mut moved: Vec<(String, f64)> = sent
+            .iter()
+            .filter_map(|e| match e {
+                Edit::MoveItem(g, at) => Some((g.clone(), (at * 1000.0).round() / 1000.0)),
+                _ => None,
+            })
+            .collect();
+        moved.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            moved,
+            vec![
+                ("in1-split@3.015".to_owned(), 2.995),
+                ("in1-split@3.015-split@4.485".to_owned(), 4.495),
+                ("out1-split@3.015".to_owned(), 2.995),
+                ("out1-split@3.015-split@4.485".to_owned(), 4.495),
+            ]
+        );
+        // The slice plays on from where the one before it was cut.
+        let slice = project.items["in"]
+            .iter()
+            .find(|i| i.guid == "in1-split@3.015")
+            .expect("the slice");
+        assert!((slice.start_offset.as_seconds() - 1.015).abs() < 1e-9);
+        // The second take was not selected and did not move.
+        assert!(
+            sent.iter()
+                .all(|e| !e.guid().starts_with("in2") && !e.guid().starts_with("out2"))
+        );
+    }
+
     #[test]
     fn slipping_a_folded_row_slips_every_mic() {
         let mut s = Stage::folded();

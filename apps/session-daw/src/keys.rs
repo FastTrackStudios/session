@@ -38,6 +38,9 @@ pub enum Action {
     /// Split the selected items at the edit cursor — or, with nothing
     /// selected, every item under it.
     SplitAtCursor,
+    /// Quantize the kit under the selected folded rows: cut every mic
+    /// before each hit and move the slices onto the grid together.
+    QuantizeDrums,
     DeleteSelectedItems,
     SelectAllItems,
     /// Escape: no time selection, nothing selected.
@@ -89,6 +92,7 @@ pub fn action_of(id: &str) -> Action {
         "40073" => Action::PlayPause,
         "40042" => Action::GoToStart,
         "40757" | "40012" => Action::SplitAtCursor,
+        "FTS_QUANTIZE_DRUMS" => Action::QuantizeDrums,
         "40006" | "40697" => Action::DeleteSelectedItems,
         "40035" | "40182" => Action::SelectAllItems,
         "40020" => Action::ClearSelection,
@@ -380,6 +384,7 @@ const BUILTIN: &str = r#"{
       "0": "40042",
       "s": "40757",
       "d": "40006",
+      "Shift+q": "FTS_QUANTIZE_DRUMS",
       "Delete": "40697",
       "Backspace": "40697",
       "Escape": "40020",
@@ -533,9 +538,38 @@ mod tests {
             keys.press(KeyCode::Character("a".into()), ctrl),
             vec![Action::SelectAllItems]
         );
+        assert_eq!(
+            keys.press(KeyCode::Character("q".into()), shift()),
+            vec![Action::QuantizeDrums]
+        );
         assert!(
-            keys.press(KeyCode::Character("q".into()), Modifiers::NONE)
+            keys.press(KeyCode::Character("y".into()), Modifiers::NONE)
                 .is_empty()
+        );
+    }
+
+    fn shift() -> Modifiers {
+        Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        }
+    }
+
+    /// The profile the app ships binds Shift+Q to the drum quantize (a
+    /// bare `q` records a macro).
+    #[test]
+    fn the_shipped_profile_quantizes_on_q() {
+        let profile = input_keybinds::embedded::fasttrackstudio().expect("the embedded profile");
+        let mut keys = Keys {
+            processor: InputProcessor::from_config(profile.keymap).expect("a processor"),
+            context: ActionContext::new(),
+            source: "test".into(),
+            labels: HashMap::new(),
+            pending: Vec::new(),
+        };
+        assert_eq!(
+            keys.press(KeyCode::Character("q".into()), shift()),
+            vec![Action::QuantizeDrums]
         );
     }
 

@@ -1058,6 +1058,70 @@ impl Applier {
     }
 }
 
+/// The items the window named before the engine made them: its guid for
+/// a split's right half or a copy, and the real one. Edits run one at a
+/// time, in order (see `Engine::send`), so a name is always remembered
+/// before an edit that uses it.
+static MADE: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
+fn remember(predicted: &str, real: &str) {
+    MADE.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get_or_insert_with(std::collections::HashMap::new)
+        .insert(predicted.to_owned(), real.to_owned());
+}
+
+/// The real guid of an item the window may have named itself.
+fn made(guid: &str) -> String {
+    MADE.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .and_then(|m| m.get(guid).cloned())
+        .unwrap_or_else(|| guid.to_owned())
+}
+
+/// Split `item` at `split_at`, keeping the audio on both sides (see
+/// `Edit::SplitItem`).
+async fn split(item: &daw::rpc::ItemHandle, split_at: f64, new_guid: &str) -> daw::rpc::Result<()> {
+    let secs = daw_proto::primitives::Duration::from_seconds;
+    let info = item.info().await?;
+    let start = info.position.as_seconds();
+    let end = start + info.length.as_seconds();
+    if split_at <= start || split_at >= end {
+        return Ok(());
+    }
+    let right = item.duplicate().await?;
+    remember(new_guid, right.guid());
+    right
+        .set_position(daw_proto::primitives::PositionInSeconds::from_seconds(
+            split_at,
+        ))
+        .await?;
+    right.set_length(secs(end - split_at)).await?;
+    right
+        .takes()
+        .active()
+        .await?
+        .set_start_offset(secs(info.start_offset.as_seconds() + (split_at - start)))
+        .await?;
+    right.set_fade_in(secs(0.0), info.fade_in_shape).await?;
+    item.set_fade_out(secs(0.0), info.fade_out_shape).await?;
+    item.set_length(secs(split_at - start)).await
+}
+
+/// One edit, against the engine, waited for: what a test or a tool that
+/// needs the result before going on does instead of the queue. False when
+/// there is no runtime to run it on.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn apply_now(edit: &Edit) -> bool {
+    crate::open::runtime().is_some_and(|runtime| {
+        runtime.block_on(apply(edit));
+        true
+    })
+}
+
 /// One edit, against the engine.
 async fn apply(edit: &Edit) {
     let Some(daw) = daw::rpc::Daw::try_get() else {
@@ -1097,7 +1161,7 @@ async fn apply(edit: &Edit) {
             }
             return;
         }
-        let Ok(Some(item)) = project.items().by_guid(edit.guid()).await else {
+        let Ok(Some(item)) = project.items().by_guid(&made(edit.guid())).await else {
             return;
         };
         let secs = daw_proto::primitives::Duration::from_seconds;
@@ -1124,47 +1188,21 @@ async fn apply(edit: &Edit) {
                 Ok(()) => item.set_length(secs(*length)).await,
                 Err(error) => Err(error),
             },
-            // The engine has no split of its own yet: the left half is
-            // the item shortened, the right a new item on the same
-            // track — the window's copy did the same and named the new
-            // half, so a later edit finds it. The new item has no
-            // source until the standalone grows a split that carries
-            // one; it says so here rather than pretending.
-            Edit::SplitItem(_, split_at, _new_guid) => {
-                let (Ok(position), Ok(length)) = (item.position().await, item.length().await)
-                else {
-                    return;
-                };
-                let (start, end) = (
-                    position.as_seconds(),
-                    position.as_seconds() + length.as_seconds(),
-                );
-                if *split_at <= start || *split_at >= end {
-                    return;
-                }
-                match item.set_length(secs(split_at - start)).await {
-                    Ok(()) => {
-                        let Ok(Some(track)) = project
-                            .tracks()
-                            .by_guid(&item_track(&project, edit.guid()).await)
-                            .await
-                        else {
-                            return;
-                        };
-                        track
-                            .items()
-                            .add(at(*split_at), secs(end - split_at))
-                            .await
-                            .map(|_| ())
-                    }
-                    Err(error) => Err(error),
-                }
-            }
+            // The engine has no split of its own: the right half is the
+            // item duplicated — source, take, fades and all — moved to
+            // the cut and slipped as far into its source, and the left
+            // is the item shortened. The window named the right half;
+            // the name is remembered against the real one, so a later
+            // edit (a quantize moves every slice it cut) finds it.
+            Edit::SplitItem(_, split_at, new_guid) => split(&item, *split_at, new_guid).await,
             // The copy the engine makes is its own, with its own guid:
-            // the one in the edit was the window's prediction and has
-            // already done its job on screen.
-            Edit::CopyItem(_, to, _) => match item.duplicate().await {
-                Ok(copy) => copy.set_position(at(*to)).await,
+            // the one in the edit was the window's prediction, and it is
+            // remembered against the real one for a later edit.
+            Edit::CopyItem(_, to, new_guid) => match item.duplicate().await {
+                Ok(copy) => {
+                    remember(new_guid, copy.guid());
+                    copy.set_position(at(*to)).await
+                }
                 Err(error) => Err(error),
             },
             Edit::DeleteItem(_) => item.delete().await,
@@ -1347,19 +1385,6 @@ async fn set_tempo(project: &daw_control::Project, at: f64, bpm: f64) -> daw_con
 fn ordered(a: f64, b: f64) -> (f64, f64) {
     let (from, to) = if a <= b { (a, b) } else { (b, a) };
     (from.max(0.0), to.max(0.0))
-}
-
-/// The track an item is on, by guid — the facade's item list carries
-/// it, and a split needs the track to add the new half to.
-async fn item_track(project: &daw_control::Project, item_guid: &str) -> String {
-    project
-        .items()
-        .all()
-        .await
-        .ok()
-        .and_then(|items| items.into_iter().find(|i| i.guid == item_guid))
-        .map(|i| i.track_guid)
-        .unwrap_or_default()
 }
 
 /// Do something to one of a track's routes.
