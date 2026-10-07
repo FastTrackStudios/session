@@ -54,9 +54,11 @@ pub static GROUPING: Option = Option::new(true);
 /// Locked, nothing is moved by a drag: an arrangement's items stay put
 /// and the drag scrolls the view; a mixer's faders, pans and rack
 /// controls stay put and the drag scrolls the mixer. Presses still
-/// press — mute, solo, arm, select. On by default: on a touchscreen a
+/// press — mute, solo, arm, select. On by default where the pointer is a
+/// finger (`shell::Pins::new` sets it from `touch::detected`): there a
 /// finger meant to scroll or zoom is the common case, and moving a take
-/// by accident mid-service is the costly one.
+/// by accident mid-service is the costly one. Off at a desk, where a
+/// mouse drag is meant to edit.
 ///
 /// Off under test: every editing test would otherwise be a test of the
 /// lock. The lock's own tests turn it on.

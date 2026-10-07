@@ -341,7 +341,10 @@ impl Pins {
         Self {
             progress: Signal::new(false),
             transport: Signal::new(false),
-            lock: Signal::new(crate::options::LOCKING.get()),
+            // Locked where the pointer is a finger, where a drag meant
+            // to scroll is the common case; unlocked at a desk, where
+            // a mouse drag is meant to edit.
+            lock: Signal::new(!cfg!(test) && crate::touch::detected()),
             inspector: Signal::new(true),
             navigator: Signal::new(false),
         }
