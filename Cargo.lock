@@ -14292,6 +14292,7 @@ dependencies = [
  "adaptive-grid",
  "anyrender 0.11.1",
  "anyrender_vello 0.12.0",
+ "anyrender_vello_cpu",
  "anyrender_vello_hybrid",
  "architect",
  "auth-client",

@@ -18,6 +18,7 @@
 
 pub mod canvas;
 pub mod chrome;
+pub mod cursor;
 pub mod demo;
 pub mod guitar;
 pub mod interaction;

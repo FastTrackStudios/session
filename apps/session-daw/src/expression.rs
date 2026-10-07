@@ -822,6 +822,63 @@ impl Expression {
         true
     }
 
+    /// The pointer's glyph: what a press here would do
+    /// (`expression_editor_paint::cursor::cursor_at` — `[` and `]` on a
+    /// note's ends, the magnifier with `z` held, the hand…), the closed
+    /// hand while a pan is under way, `][` on the end two butted notes
+    /// share, and `None` off the roll, where the window keeps its own
+    /// shape.
+    #[must_use]
+    pub fn pointer(&self, mods: Mods) -> Option<crate::window_cursor::Glyph> {
+        use crate::window_cursor::Glyph;
+        use expression_editor_core::cursor::Cursor;
+        if matches!(self.drag, Drag::Pan { .. }) {
+            return Some(Glyph::Editor(Cursor::HandClosed));
+        }
+        let (x, y) = self.hover_at?;
+        // A held z owns the mouse wherever it is — on a note's edge too.
+        if self.editor.tool == Tool::Zoom && self.spring_from.is_some() {
+            return Some(Glyph::Editor(Cursor::Zoom));
+        }
+        if self.stacked() {
+            // The stack's gestures are its own; it shows its tools.
+            return Some(Glyph::Editor(if keys::zoom_prefix_held() {
+                Cursor::Zoom
+            } else {
+                Cursor::Arrow
+            }));
+        }
+        let cursor =
+            expression_editor_paint::cursor::cursor_at(&self.editor, x, y, mods_of(mods), false);
+        if matches!(cursor, Cursor::EdgeLeft | Cursor::EdgeRight) && self.on_a_seam(x, y) {
+            return Some(Glyph::Seam);
+        }
+        Some(Glyph::Editor(if self.drag.is_active() {
+            cursor.while_dragging()
+        } else {
+            cursor
+        }))
+    }
+
+    /// Whether the note edge at roll `(x, y)` is one another note on the
+    /// same row butts against — the end of one where the next begins.
+    fn on_a_seam(&self, x: f64, y: f64) -> bool {
+        let ed = &self.editor;
+        let Hit::NoteEdge { id, start_edge } = ed.hit_test(x, y) else {
+            return false;
+        };
+        let Some(note) = ed.doc.note(id) else {
+            return false;
+        };
+        let at = if start_edge { note.start } else { note.end };
+        // Half a unit (a tick, a frame): two edges written to meet do.
+        ed.doc.notes.iter().any(|other| {
+            other.id != id
+                && other.row == note.row
+                && ((if start_edge { other.end } else { other.start }) - at).abs() <= 0.5
+        })
+    }
+
     /// The actions the keymap named since the last call that the editor
     /// left to its host, in order.
     pub fn host_actions(&mut self) -> Vec<String> {
@@ -1762,6 +1819,46 @@ mod tests {
             x + canvas::GUTTER_W + ORIGIN.0,
             y + canvas::RULER_H + ORIGIN.1 + TOOLBAR_H,
         )
+    }
+
+    /// The pointer says what a press would do: `]` on a note's end, `][`
+    /// once another note butts against it, the magnifier with `z` held,
+    /// nothing off the roll.
+    #[test]
+    fn the_pointer_shows_the_edge_the_seam_and_the_tool() {
+        use crate::window_cursor::Glyph;
+        use expression_editor_core::cursor::Cursor;
+        let ed = demo::editor(demo::Scene::Phrase, viewport_for(SIZE, DEFAULT_STRIP));
+        let mut v = Expression::from_audio(ed, ORIGIN, SIZE);
+        let note = v.editor.doc.notes.first().expect("a note").clone();
+        let end = |v: &Expression| {
+            let ed = &v.editor;
+            (
+                ed.camera.x(note.end) - 1.0 + canvas::GUTTER_W + ORIGIN.0,
+                ed.camera.y(f64::from(note.row), ed.viewport)
+                    + canvas::RULER_H
+                    + ORIGIN.1
+                    + TOOLBAR_H,
+            )
+        };
+        let (x, y) = end(&v);
+        v.moved(x, y, plain());
+        assert_eq!(v.pointer(plain()), Some(Glyph::Editor(Cursor::EdgeRight)));
+        // Another note begins where this one ends: the seam.
+        let mut next = note.clone();
+        next.id = expression_editor_core::NoteId(9_999);
+        next.start = note.end;
+        next.end = note.end + (note.end - note.start);
+        v.editor.doc.notes.push(next);
+        v.moved(x, y, plain());
+        assert_eq!(v.pointer(plain()), Some(Glyph::Seam));
+        // A held z is the magnifier wherever it is.
+        assert!(v.key("z", plain()));
+        assert_eq!(v.pointer(plain()), Some(Glyph::Editor(Cursor::Zoom)));
+        v.key_up("z", plain());
+        // Off the roll, the window keeps its own shape.
+        v.moved(ORIGIN.0 + 5.0, ORIGIN.1 + 5.0, plain());
+        assert_eq!(v.pointer(plain()), None);
     }
 
     #[test]

@@ -445,9 +445,11 @@ pub fn WebArrangement(engine: crate::web_engine::EngineRef) -> Element {
     let element = use_hook(|| Rc::new(RefCell::new(None::<web_sys::HtmlElement>)));
     let sink: crate::tool::Sink = {
         let element = Rc::clone(&element);
-        Rc::new(move |icon: cursor_icon::CursorIcon| {
+        // A browser canvas takes no painted cursor here: each glyph's
+        // nearest CSS shape.
+        Rc::new(move |shape: crate::window_cursor::Shape| {
             if let Some(el) = element.borrow().as_ref() {
-                let _ = el.style().set_property("cursor", icon.name());
+                let _ = el.style().set_property("cursor", shape.icon().name());
             }
         })
     };

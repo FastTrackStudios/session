@@ -1867,6 +1867,40 @@ impl ArrangementWidget {
         }
     }
 
+    /// Which kind of item edge `hit` is on: a seam another item's edge
+    /// sits on, which fade, or neither — what the pointer's shape needs
+    /// and the mouse-map context does not say.
+    fn edge_of(&self, hit: crate::hit::Hit) -> crate::tool::Edge {
+        use crate::arrangement::ItemZone;
+        use crate::tool::Edge;
+        let crate::hit::Target::Item {
+            row, index, zone, ..
+        } = hit.target
+        else {
+            return Edge::Plain;
+        };
+        match zone {
+            ItemZone::FadeIn => Edge::FadeIn,
+            ItemZone::FadeOut => Edge::FadeOut,
+            ItemZone::Body => Edge::Plain,
+            ItemZone::LeftEdge | ItemZone::RightEdge => {
+                let Some(item) = self.scene.item(index) else {
+                    return Edge::Plain;
+                };
+                let at = if zone == ItemZone::LeftEdge {
+                    item.x0
+                } else {
+                    item.x1
+                };
+                if self.scene.edges_at(row, at, &item.guid).is_empty() {
+                    Edge::Plain
+                } else {
+                    Edge::Seam
+                }
+            }
+        }
+    }
+
     /// Tell [`crate::tool::Pointing`] what the pointer is over and what it
     /// is doing, and put the matching shape on the window.
     fn point(&self, event: &UiEvent, pressed: Option<crate::mousemap::Action>) {
@@ -1881,6 +1915,7 @@ impl ArrangementWidget {
             _ => return,
         };
         let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        let mut edge = crate::tool::Edge::Plain;
         let over = if self.turning.is_some() {
             // A knob mid-turn keeps its shape off the knob, as it keeps
             // the pointer.
@@ -1893,7 +1928,8 @@ impl ArrangementWidget {
             }
         } else {
             self.hit(x, y).map_or(crate::tool::Over::Nothing, |hit| {
-                crate::tool::Over::Map(self.editor.context_at(hit))
+                edge = self.edge_of(hit);
+                crate::tool::Over::Map(self.editor.context_at(hit), edge)
             })
         };
         let mut pointing = self.pointing.borrow_mut();
@@ -1903,7 +1939,7 @@ impl ArrangementWidget {
         if !self.holding {
             pointing.gesture = None;
         } else if pressed.is_some() {
-            pointing.gesture = pressed;
+            pointing.gesture = pressed.map(|action| (action, edge));
         }
         pointing.apply();
     }
@@ -2970,7 +3006,9 @@ mod tests {
         );
         assert_eq!(
             widget.pointing.borrow().icon(),
-            cursor_icon::CursorIcon::ZoomIn
+            crate::window_cursor::Shape::Glyph(crate::window_cursor::Glyph::Editor(
+                expression_editor_core::cursor::Cursor::Zoom
+            ))
         );
     }
 
@@ -2999,7 +3037,8 @@ mod tests {
         let (x, y) = at(&widget, 1, C::Volume);
         widget.handle_event(&UiEvent::PointerMove(pointer(x, y)));
         assert_eq!(widget.pointing.borrow().over, Over::Knob);
-        assert_eq!(widget.pointing.borrow().icon(), CursorIcon::NsResize);
+        let icon = crate::window_cursor::Shape::Icon;
+        assert_eq!(widget.pointing.borrow().icon(), icon(CursorIcon::NsResize));
 
         let (x, y) = at(&widget, 1, C::Mute);
         widget.handle_event(&UiEvent::PointerMove(pointer(x, y)));
@@ -3010,11 +3049,11 @@ mod tests {
         lane.mods = blitz_traits::events::Modifiers::CONTROL;
         widget.handle_event(&UiEvent::PointerMove(lane));
         assert!(
-            matches!(widget.pointing.borrow().over, Over::Map(_)),
+            matches!(widget.pointing.borrow().over, Over::Map(..)),
             "{:?}",
             widget.pointing.borrow().over
         );
-        assert_eq!(widget.pointing.borrow().icon(), CursorIcon::Crosshair);
+        assert_eq!(widget.pointing.borrow().icon(), icon(CursorIcon::Crosshair));
     }
 
     /// `z` then `t`, with a track selected: the popup shows, then goes,

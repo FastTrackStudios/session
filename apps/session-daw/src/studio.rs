@@ -577,8 +577,8 @@ pub fn Arrangement() -> Element {
     use crate::panel::{Button, PanelEvent, WHEEL_LINE};
     let window = dioxus_native::use_window();
     let win = window.clone();
-    let sink: crate::tool::Sink =
-        Rc::new(move |icon| window.set_cursor(winit::cursor::Cursor::Icon(icon)));
+    // The pointer's shapes, the painted glyphs among them (`window_cursor`).
+    let sink: crate::tool::Sink = crate::window_cursor::use_cursor_sink();
     let applier = use_hook(|| Rc::new(crate::engine::Applier::start()));
     let engine: crate::panel::Engine = {
         let applier = Rc::clone(&applier);

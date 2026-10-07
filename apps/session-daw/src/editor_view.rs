@@ -232,7 +232,10 @@ pub fn EditorPanel() -> Element {
     let song = Song::of(&session.project.0);
     #[cfg(feature = "native")]
     {
-        let widget = use_hook(|| dioxus_native_dom::CustomWidgetAttr::new(EditorView::new(song)));
+        let sink = crate::window_cursor::use_cursor_sink();
+        let widget = use_hook(|| {
+            dioxus_native_dom::CustomWidgetAttr::new(EditorView::new(song).with_cursor(sink))
+        });
         rsx! {
             object {
                 style: "position:absolute; left:0; top:0; width:100%; height:100%; background:#0b0c0e;",
@@ -281,6 +284,8 @@ pub struct EditorView {
     takes: Vec<Take>,
     /// An alignment on the engine's runtime, landing on a later frame.
     aligning: Option<Aligning>,
+    /// Where the pointer's shape goes: the window's cursor.
+    cursor: Option<crate::window_cursor::Sink>,
 }
 
 /// What a read hands back: nothing yet, then the take or `None`.
@@ -432,6 +437,7 @@ impl EditorView {
             dirty: true,
             takes: Vec::new(),
             aligning: None,
+            cursor: None,
         }
     }
 
@@ -557,11 +563,48 @@ impl EditorView {
         if view.host_actions().iter().any(|a| a == ALIGN_TAKES) {
             self.align_takes();
         }
+        self.show_pointer(event);
         // A gesture finished or a key pressed that changed the take:
         // write it back, so the arrangement and the engine have it.
         if matches!(event, UiEvent::PointerUp(_) | UiEvent::KeyDown(_)) {
             self.save();
         }
+    }
+
+    /// Point the pointer's shape at `sink` (the window's cursor).
+    #[must_use]
+    pub fn with_cursor(mut self, sink: crate::window_cursor::Sink) -> Self {
+        self.cursor = Some(sink);
+        self
+    }
+
+    /// Put the Editor's glyph for the pointer on the window: on every
+    /// pointer event over it, and on a key while the pointer is over the
+    /// roll (a held `z` turns the arrow into the magnifier in place).
+    fn show_pointer(&self, event: &UiEvent) {
+        use crate::window_cursor::{Glyph, Shape};
+        use expression_editor_core::cursor::Cursor;
+        let (Some(sink), Some(view)) = (&self.cursor, &self.view) else {
+            return;
+        };
+        let mods = match event {
+            UiEvent::PointerMove(e) | UiEvent::PointerDown(e) | UiEvent::PointerUp(e) => {
+                crate::widget::mods(e.mods)
+            }
+            UiEvent::KeyDown(e) | UiEvent::KeyUp(e) => crate::widget::mods(e.modifiers),
+            _ => return,
+        };
+        let pointer = view.pointer(mods);
+        let key = matches!(event, UiEvent::KeyDown(_) | UiEvent::KeyUp(_));
+        if key && pointer.is_none() {
+            return;
+        }
+        sink(match pointer {
+            None | Some(Glyph::Editor(Cursor::Arrow)) => {
+                Shape::Icon(cursor_icon::CursorIcon::Default)
+            }
+            Some(glyph) => Shape::Glyph(glyph),
+        });
     }
 
     /// Line the stack's takes up on its first: each aligned over the

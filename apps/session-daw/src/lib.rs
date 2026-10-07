@@ -188,4 +188,5 @@ pub mod web_engine;
 pub mod web_host;
 pub mod which_key;
 pub mod widget;
+pub mod window_cursor;
 pub mod zoom;
