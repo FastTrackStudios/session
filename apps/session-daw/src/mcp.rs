@@ -287,6 +287,14 @@ pub struct Mixer {
     pub skin: Option<std::sync::Arc<theme_runtime::Theme>>,
     /// `skin::version()` when recorded: a different one is a stale mixer.
     pub skin_version: u64,
+    /// Each strip not recorded yet, and what recording it needs — see
+    /// [`Mixer::record`]. `None` once recorded.
+    jobs: Vec<Option<Job>>,
+    /// The rack, whether it is drawn live, and the settings the strips
+    /// were laid out with: what a strip recorded later is recorded with.
+    rack: Vec<crate::tone::Which>,
+    live_racks: bool,
+    settings: crate::settings::Settings,
     /// Which strips the theme drew. One it cannot draw yet — a live or
     /// touch strip, a strip with its rack beside it — is the painters'.
     themed: Vec<bool>,
@@ -329,6 +337,39 @@ impl Mixer {
         // reserves the rack's HEIGHT and draws nothing in it, so the
         // strip's layout is unchanged and the commands are paid for
         // once.
+        live_racks: bool,
+        settings: crate::settings::Settings,
+        tone_settings: &crate::tone::Store,
+    ) -> Self {
+        let mut mixer = Self::lay_out(
+            palette,
+            font,
+            project,
+            rows,
+            height,
+            layout,
+            rack,
+            live_racks,
+            settings,
+            tone_settings,
+        );
+        mixer.record(0..mixer.count, palette, font, tone_settings, None);
+        mixer
+    }
+
+    /// [`Mixer::build`] without the recording: every strip laid out, none
+    /// recorded until [`Mixer::record`] asks for it. A session of two
+    /// hundred strips shows fifteen; recording all of them held the
+    /// mixer's opening frame ~150 ms for strips nobody saw.
+    #[must_use]
+    pub fn lay_out(
+        palette: &Palette,
+        font: &Font,
+        project: &ProjectRef,
+        rows: &RowsRef,
+        height: f64,
+        layout: crate::layout::Layout,
+        rack: &[crate::tone::Which],
         live_racks: bool,
         settings: crate::settings::Settings,
         tone_settings: &crate::tone::Store,
@@ -437,6 +478,7 @@ impl Mixer {
         let skin = crate::skin::current();
 
         let mut themed_rows = Vec::with_capacity(rows.len());
+        let mut jobs: Vec<Option<Job>> = Vec::with_capacity(rows.len());
         let mut x = 0.0_f64;
         for (ordinal, (track, depth)) in rows.iter().enumerate() {
             let depth = usize::try_from(*depth).unwrap_or(0);
@@ -484,11 +526,6 @@ impl Mixer {
             // someone else's — `Store::seed` runs before this, so the
             // miss is a track that arrived between the two. Nor does one
             // whose rack the live pass will draw.
-            let tone = if live_racks {
-                None
-            } else {
-                tone_settings.get(&track.guid)
-            };
             // The theme draws the stacked desktop strip; the rest is still
             // the painters'.
             let stacked = crate::strip::Strip::laid_out(
@@ -511,48 +548,18 @@ impl Mixer {
                     .and_then(theme_runtime::Value::truthy)
                     .unwrap_or(false)
             };
-            match skin.as_ref().filter(|t| {
+            let by_theme = skin.as_ref().is_some_and(|t| {
                 stacked && (!live || says(t, "strip.live")) && (!touch || says(t, "strip.touch"))
-            }) {
-                Some(theme) => {
-                    let shown = crate::skin::Shown {
-                        label: labels.last().map(|(l, size)| (l.as_str(), *size)),
-                        depth,
-                        collapsed,
-                        width: w,
-                        mixer_h: height - rack_h,
-                        rack: rack_h > 0.0,
-                        font: Some(font),
-                        mixing: settings.mixing,
-                        recording: settings.recording,
-                        ..crate::skin::Shown::default()
-                    };
-                    themed(
-                        &mut strips,
-                        theme,
-                        palette,
-                        font,
-                        track,
-                        slot,
-                        (rack, tone),
-                        (&ancestors, shown),
-                    );
-                    themed_rows.push(true);
-                }
-                None => {
-                    strip(
-                        &mut strips,
-                        palette,
-                        font,
-                        track,
-                        slot,
-                        rack,
-                        tone,
-                        &ancestors,
-                    );
-                    themed_rows.push(false);
-                }
-            }
+            });
+            themed_rows.push(by_theme);
+            let job = Job {
+                track: track.clone(),
+                slot,
+                ancestors,
+                depth,
+                collapsed,
+            };
+            jobs.push(Some(job));
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
         }
@@ -578,7 +585,55 @@ impl Mixer {
             themed: themed_rows,
             mixing: settings.mixing,
             recording: settings.recording,
+            jobs,
+            rack: rack.to_vec(),
+            live_racks,
+            settings,
         }
+    }
+
+    /// Record the strips in `rows` that are not recorded yet — those
+    /// [`Mixer::lay_out`] left until they were drawn — left to
+    /// right, until `until` (if given) passes. `true` when some in `rows`
+    /// are still to do: the host draws again. Cheap when they all are.
+    pub fn record(
+        &mut self,
+        rows: std::ops::Range<usize>,
+        palette: &Palette,
+        font: &Font,
+        tone_settings: &crate::tone::Store,
+        until: Option<web_time::Instant>,
+    ) -> bool {
+        let end = rows.end;
+        for row in rows {
+            // Out of time: the ones before this are done, so what is left
+            // is this one on.
+            if until.is_some_and(|at| web_time::Instant::now() >= at) {
+                return (row..end).any(|r| self.jobs.get(r).is_some_and(Option::is_some));
+            }
+            let Some(job) = self.jobs.get_mut(row).and_then(Option::take) else {
+                continue;
+            };
+            let by_theme = self.themed.get(row).copied().unwrap_or(false);
+            let ctx = Record {
+                palette,
+                font,
+                skin: self.skin.as_deref().filter(|_| by_theme),
+                rack: &self.rack,
+                tone: (!self.live_racks).then_some(tone_settings),
+                height: self.height,
+                rack_h: self.rack_h,
+                settings: self.settings,
+            };
+            let label = self.labels.get(row).map(|(l, size)| (l.as_str(), *size));
+            let from = u32::try_from(self.strips.commands.len()).unwrap_or(u32::MAX);
+            ctx.strip(&mut self.strips, &job, label);
+            let to = u32::try_from(self.strips.commands.len()).unwrap_or(u32::MAX);
+            if let Some(span) = self.index.get_mut(row) {
+                *span = from..to;
+            }
+        }
+        false
     }
 
     /// The theme `row` was drawn with, if it was.
@@ -828,6 +883,77 @@ fn themed(
 /// REAPER's own thresholds — the same model the DOM mixer uses, so the
 /// two collapse at the same heights rather than at two sets of numbers
 /// that happen to agree today.
+/// One strip, laid out and not yet recorded.
+struct Job {
+    track: Track,
+    slot: Slot,
+    ancestors: Vec<Color>,
+    depth: usize,
+    collapsed: bool,
+}
+
+/// What recording a strip takes beyond the strip itself.
+struct Record<'a> {
+    palette: &'a Palette,
+    font: &'a Font,
+    /// The theme, when it draws this strip.
+    skin: Option<&'a theme_runtime::Theme>,
+    rack: &'a [crate::tone::Which],
+    /// The racks' settings, when the recording draws the racks (rather
+    /// than the live pass).
+    tone: Option<&'a crate::tone::Store>,
+    height: f64,
+    rack_h: f64,
+    settings: crate::settings::Settings,
+}
+
+impl Record<'_> {
+    /// Record `job`'s strip into `scene`, its label `label`.
+    fn strip(&self, scene: &mut Scene, job: &Job, label: Option<(&str, f32)>) {
+        // A track with no settings yet gets none drawn rather than
+        // someone else's — `Store::seed` runs before this, so the miss
+        // is a track that arrived between the two. Nor does one whose
+        // rack the live pass will draw.
+        let tone = self.tone.and_then(|store| store.get(&job.track.guid));
+        match self.skin {
+            Some(theme) => {
+                let shown = crate::skin::Shown {
+                    label,
+                    depth: job.depth,
+                    collapsed: job.collapsed,
+                    width: job.slot.width,
+                    mixer_h: self.height - self.rack_h,
+                    rack: self.rack_h > 0.0,
+                    font: Some(self.font),
+                    mixing: self.settings.mixing,
+                    recording: self.settings.recording,
+                    ..crate::skin::Shown::default()
+                };
+                themed(
+                    scene,
+                    theme,
+                    self.palette,
+                    self.font,
+                    &job.track,
+                    job.slot,
+                    (self.rack, tone),
+                    (&job.ancestors, shown),
+                );
+            }
+            None => strip(
+                scene,
+                self.palette,
+                self.font,
+                &job.track,
+                job.slot,
+                self.rack,
+                tone,
+                &job.ancestors,
+            ),
+        }
+    }
+}
+
 /// Where one strip sits, and the mixer's shared button line.
 #[derive(Clone, Copy)]
 struct Slot {
@@ -1638,6 +1764,101 @@ fn fill(scene: &mut Scene, color: Color, rect: Rect) {
 
 #[cfg(test)]
 mod selection_tests {
+    /// A mixer laid out whole and recorded as it is drawn records each
+    /// strip exactly as one built eagerly — and nothing until asked; a
+    /// past deadline records none and says some are left.
+    #[test]
+    fn a_lazily_recorded_mixer_draws_what_an_eager_one_does() {
+        use super::{Font, Mixer, Palette};
+        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = Font::embedded().expect("the embedded font");
+        let tracks: Vec<Track> = (0..40)
+            .map(|i| Track {
+                guid: format!("t{i}"),
+                name: format!("Track {i}"),
+                ..Track::default()
+            })
+            .collect();
+        let rows = RowsRef(std::sync::Arc::new(
+            tracks.iter().cloned().map(|t| (t, 0)).collect(),
+        ));
+        let project =
+            daw_ui::studio::ProjectRef(std::sync::Arc::new(daw_ui::studio::Project::default()));
+        let store = crate::tone::Store::default();
+        let build = |lazy: bool| {
+            let args = (
+                &palette,
+                &font,
+                &project,
+                &rows,
+                600.0,
+                crate::layout::Layout::default(),
+            );
+            if lazy {
+                Mixer::lay_out(
+                    args.0,
+                    args.1,
+                    args.2,
+                    args.3,
+                    args.4,
+                    args.5,
+                    &[],
+                    false,
+                    crate::settings::Settings::default(),
+                    &store,
+                )
+            } else {
+                Mixer::build(
+                    args.0,
+                    args.1,
+                    args.2,
+                    args.3,
+                    args.4,
+                    args.5,
+                    &[],
+                    false,
+                    crate::settings::Settings::default(),
+                    &store,
+                )
+            }
+        };
+        let eager = build(false);
+        let mut lazy = build(true);
+        let spans = |m: &Mixer| {
+            m.index
+                .iter()
+                .map(ExactSizeIterator::len)
+                .collect::<Vec<_>>()
+        };
+        assert!(lazy.strips.commands.is_empty(), "nothing recorded at build");
+        assert_eq!(
+            lazy.content_width().to_bits(),
+            eager.content_width().to_bits(),
+            "laid out whole"
+        );
+        let late = web_time::Instant::now();
+        assert!(
+            lazy.record(0..5, &palette, &font, &store, Some(late)),
+            "a spent budget leaves them"
+        );
+        let shown = lazy.visible(0.0, 600.0);
+        assert!(!lazy.record(shown.clone(), &palette, &font, &store, None));
+        for row in 0..40 {
+            let want = if shown.contains(&row) {
+                spans(&eager)[row]
+            } else {
+                0
+            };
+            assert_eq!(spans(&lazy)[row], want, "strip {row}");
+        }
+        assert!(!lazy.record(0..40, &palette, &font, &store, None));
+        assert_eq!(
+            spans(&lazy),
+            spans(&eager),
+            "every strip as the eager build drew it"
+        );
+    }
+
     use super::widths;
     use crate::layout::Layout;
     use daw_proto::Track;

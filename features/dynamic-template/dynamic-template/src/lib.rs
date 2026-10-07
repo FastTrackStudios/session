@@ -66,6 +66,18 @@ impl DynamicTemplate {
     }
 }
 
+/// [`default_config`], built once and shared.
+///
+/// Building it constructs every group and its patterns, and the hot
+/// paths — reading a track's name for its dimensions, once per track per
+/// plan — asked for a fresh one each time: a mixer of 234 strips spent
+/// ~100 ms of its opening frame rebuilding the same config.
+#[must_use]
+pub fn shared_config() -> &'static DynamicTemplateConfig {
+    static CONFIG: std::sync::OnceLock<DynamicTemplateConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(default_config)
+}
+
 /// Creates a default configuration for the dynamic template system
 #[must_use]
 pub fn default_config() -> DynamicTemplateConfig {

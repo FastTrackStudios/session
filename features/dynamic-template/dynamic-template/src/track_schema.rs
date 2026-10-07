@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use monarchy::{FieldName, Group, Parser};
 
 use crate::item_metadata::{ItemMetadata, ItemMetadataField};
-use crate::{default_config, DynamicTemplateConfig};
+use crate::DynamicTemplateConfig;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrackDimension {
     Channel,
     Layer,
@@ -41,7 +41,7 @@ pub struct TrackClassification {
 
 #[must_use]
 pub fn classify_track(name: &str) -> TrackClassification {
-    let config = default_config();
+    let config = crate::shared_config();
     classify_track_with_config(name, &config)
 }
 
@@ -69,7 +69,7 @@ pub fn classify_track_with_config(
 
 #[must_use]
 pub fn track_is_in_visibility_group(name: &str, group: &str) -> bool {
-    let config = default_config();
+    let config = crate::shared_config();
     classify_track_with_config(name, &config)
         .visibility_groups
         .iter()
@@ -78,7 +78,7 @@ pub fn track_is_in_visibility_group(name: &str, group: &str) -> bool {
 
 #[must_use]
 pub fn classify_track_dimension(name: &str, context: &[String]) -> TrackDimension {
-    let config = default_config();
+    let config = crate::shared_config();
     classify_track_dimension_with_config(name, context, &config)
 }
 
@@ -132,7 +132,7 @@ pub fn configured_values_for_dimension(
     dimension: TrackDimension,
     context: &[String],
 ) -> Vec<String> {
-    let config = default_config();
+    let config = crate::shared_config();
     configured_values_for_dimension_with_config(dimension, context, &config)
 }
 
@@ -276,7 +276,35 @@ pub fn dimension_value(
     context: &[String],
     dimension: TrackDimension,
 ) -> Option<String> {
-    let config = default_config();
+    // Remembered: a name's dimension never changes, and a plan asks it of
+    // every track — two full parses each, ~0.3 ms, every time a view is
+    // planned. Asked again, it is a lookup.
+    type Key = (String, Vec<String>, TrackDimension);
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Key, Option<String>>>> =
+        std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    let key = (name.to_owned(), context.to_vec(), dimension);
+    if let Some(known) = seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+    {
+        return known.clone();
+    }
+    let found = parse_dimension_value(name, context, dimension);
+    seen.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(key, found.clone());
+    found
+}
+
+/// [`dimension_value`], worked out.
+fn parse_dimension_value(
+    name: &str,
+    context: &[String],
+    dimension: TrackDimension,
+) -> Option<String> {
+    let config = crate::shared_config();
     // The name is part of its own group context here: a top-level part
     // track named "GTR E Rhythm" is the only thing saying it is an
     // electric, and the electric's arrangement list is the one that has
@@ -448,6 +476,7 @@ fn normalize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::default_config;
 
     #[test]
     #[ignore = "pre-existing failure (predates hygiene migration): classify_track_dimension(\"In\") returns Arrangement, test expects Other — revisit classification config"]

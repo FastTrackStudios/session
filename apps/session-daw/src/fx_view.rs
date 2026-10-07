@@ -1850,6 +1850,7 @@ impl DeviceRow {
         // shader is not drawn small and scaled up.
         let pictures = std::mem::take(&mut hits.pictures);
         self.animating.set(ctx.is_some() && !pictures.is_empty());
+        self.painters.begin_frame();
         for (key, picture, at, clip) in pictures {
             let size = (
                 crate::num::index(at.width * scale)
@@ -1872,6 +1873,10 @@ impl DeviceRow {
             anyrender::PaintScene::push_clip_layer(&mut drawn, Affine::IDENTITY, &clip);
             anyrender::PaintScene::append_scene(&mut drawn, painted, place);
             anyrender::PaintScene::pop_layer(&mut drawn);
+        }
+        // A face still waiting to be got ready draws next frame.
+        if self.painters.waiting() {
+            self.animating.set(true);
         }
         *self.hits.borrow_mut() = hits;
         let mut out = Scene::new();

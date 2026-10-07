@@ -882,6 +882,14 @@ impl crate::ghosts::Anchor for MixerAnchor {
     }
 }
 
+/// How far past the edges, in content pixels, strips are recorded ahead
+/// of being scrolled to — a couple of strips, so a scroll does not
+/// arrive at an unrecorded one.
+const NEAR: f64 = 240.0;
+
+/// How long a frame may spend recording strips it has not recorded yet.
+const RECORD_BUDGET: std::time::Duration = std::time::Duration::from_millis(10);
+
 impl MixerWidget {
     fn new(
         links: Links,
@@ -2236,7 +2244,9 @@ impl MixerWidget {
                 }
             }
             let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(rows));
-            self.mixer = Some(crate::mcp::Mixer::build(
+            // Laid out whole, recorded as it is drawn: below, a frame's
+            // worth at a time.
+            self.mixer = Some(crate::mcp::Mixer::lay_out(
                 &self.palette,
                 &self.font,
                 &project,
@@ -2264,6 +2274,18 @@ impl MixerWidget {
                 },
                 &store,
             ));
+        }
+        // The strips on screen (and a couple either side) not recorded
+        // yet: as many as fit this frame's budget, the rest next frame.
+        // The mixer opens at once and fills in over a few frames, rather
+        // than holding the window while a hundred strips are recorded.
+        if let Some(mixer) = self.mixer.as_mut() {
+            let at = (self.scroll.get() / zoom).max(0.0);
+            let near = mixer.visible((at - NEAR).max(0.0), NEAR.mul_add(2.0, w));
+            let until = web_time::Instant::now().checked_add(RECORD_BUDGET);
+            if mixer.record(near, &self.palette, &self.font, &store, until) {
+                self.dirty.set(true);
+            }
         }
         let Some(mixer) = self.mixer.as_ref() else {
             return out;

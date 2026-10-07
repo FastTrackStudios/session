@@ -800,6 +800,17 @@ pub struct Painters {
         ),
     >,
     frames: std::collections::HashMap<String, Live>,
+    /// The first-time work this frame may still do: opening a design,
+    /// attaching it to the GPU, its first render — ~30 ms a face, which a
+    /// panel of sixteen paid all in its opening frame. Spread instead:
+    /// each frame does what fits ([`FIRST_TIME_BUDGET`]), the faces not
+    /// yet ready wait a frame or two, and the panel opens at once.
+    first_time: Option<web_time::Instant>,
+    /// Some face waited this frame: draw again.
+    waiting: bool,
+    /// When this frame's first re-render (of a face already up) began:
+    /// they stop at [`RERENDER_BUDGET`].
+    rerender: Option<web_time::Instant>,
     mods: std::collections::HashMap<
         String,
         (
@@ -818,6 +829,9 @@ pub struct Live {
     /// the size it was registered at), or `Failed` — vectors from then.
     #[cfg(feature = "native")]
     gpu: Gpu,
+    /// When it was last rendered on the GPU: a face is re-rendered at
+    /// most [`GPU_FPS`] times a second however often its values move.
+    rendered: Option<web_time::Instant>,
 }
 
 /// A frame face's GPU state.
@@ -834,7 +848,82 @@ enum Gpu {
     Failed,
 }
 
+/// How long a frame may spend re-rendering faces already up.
+const RERENDER_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// How long a frame may spend getting faces ready for the first time.
+const FIRST_TIME_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
+
 impl Painters {
+    /// A new frame: its budget for first-time work starts now.
+    pub const fn begin_frame(&mut self) {
+        self.first_time = None;
+        self.rerender = None;
+        self.waiting = false;
+    }
+
+    /// Whether a face is still waiting to be got ready — the host draws
+    /// again until none is.
+    #[must_use]
+    pub const fn waiting(&self) -> bool {
+        self.waiting
+    }
+
+    /// Whether this frame may do first-time work for one more face. The
+    /// first face of a frame always may (so every frame makes headway);
+    /// the rest while the budget lasts.
+    fn may_start(&mut self) -> bool {
+        match self.first_time {
+            None => {
+                self.first_time = Some(web_time::Instant::now());
+                true
+            }
+            Some(began) if began.elapsed() < FIRST_TIME_BUDGET => true,
+            Some(_) => {
+                self.waiting = true;
+                false
+            }
+        }
+    }
+
+    /// Device `key`'s last picture, kept up rather than rendered again:
+    /// when it was rendered within the pace — its values move every frame
+    /// while a meter does, and a face re-rendered sixteen times a frame
+    /// held the panel at 25 fps — or when this frame's re-renders are
+    /// spent. `None` to render it now (and that render is counted).
+    #[cfg(feature = "native")]
+    fn hold_frame(&mut self, key: &str, face: &FrameFace, size: (u32, u32)) -> Option<Scene> {
+        // Its values brought up to date first, which is what says whether
+        // it has anything new to show.
+        self.live(key, face)?;
+        let live = self.frames.get_mut(key)?;
+        let Gpu::Attached(Some((id, at))) = live.gpu else {
+            return None;
+        };
+        if at != size || !live.surface.needs_redraw() {
+            return None;
+        }
+        let pace = std::time::Duration::from_secs_f64(1.0 / f64::from(GPU_FPS));
+        let paced = live.rendered.is_some_and(|at| at.elapsed() < pace);
+        let spent = self
+            .rerender
+            .is_some_and(|began| began.elapsed() >= RERENDER_BUDGET);
+        if paced || spent {
+            self.waiting = true;
+            return Some(texture_fill(id, size.0, size.1));
+        }
+        self.rerender.get_or_insert_with(web_time::Instant::now);
+        None
+    }
+
+    /// Whether device `key`'s face has first-time work still to do.
+    #[cfg(feature = "native")]
+    fn fresh(&self, key: &str) -> bool {
+        self.frames
+            .get(key)
+            .is_none_or(|live| !matches!(live.gpu, Gpu::Attached(Some(_)) | Gpu::Failed))
+    }
+
     /// Device `key`'s frame face, open, for the pointer.
     pub fn frame_mut(&mut self, key: &str) -> Option<&mut frame_live::LiveSurface> {
         self.frames.get_mut(key).map(|live| &mut live.surface)
@@ -906,6 +995,7 @@ impl Painters {
         {
             return texture_fill(id, width, height);
         }
+        live.rendered = Some(web_time::Instant::now());
         let (texture, fresh) = match live.surface.render(width, height, scale) {
             Ok(rendered) => rendered,
             Err(error) => {
@@ -959,6 +1049,7 @@ impl Painters {
                             shown: None,
                             #[cfg(feature = "native")]
                             gpu: Gpu::Untried,
+                            rendered: None,
                         },
                     );
                 }
@@ -991,7 +1082,17 @@ impl Painters {
         if let Picture::Frame(face) = picture {
             #[cfg(feature = "native")]
             if let Some(ctx) = ctx {
+                // Not ready yet and the frame's budget spent: next frame.
+                if self.fresh(key) && !self.may_start() {
+                    return Scene::new();
+                }
+                if let Some(held) = self.hold_frame(key, face, (width, height)) {
+                    return held;
+                }
                 return self.paint_frame_gpu(ctx, key, face, (width, height), scale);
+            }
+            if !self.frames.contains_key(key) && !self.may_start() {
+                return Scene::new();
             }
             return self.paint_frame(key, face, (width, height), scale);
         }
