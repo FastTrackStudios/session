@@ -2240,6 +2240,13 @@ impl ArrangementWidget {
                     // A razor is the one drag here that is a rectangle,
                     // so it is the one that needs the row as well as
                     // the time.
+                    // A marquee spans heights, not rows: rows are not one
+                    // height, and the box follows the pointer exactly.
+                    if self.editor.marquee_in_flight().is_some() {
+                        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+                        let content_y = (y - ruler::ruler_h() + view.scroll_y) / zoom;
+                        return self.editor.marquee_moved(seconds, content_y);
+                    }
                     if self.editor.razor_in_flight().is_some() {
                         let row = self
                             .scene
@@ -2327,8 +2334,21 @@ impl ArrangementWidget {
                     let seconds = self.seconds_at(x, view);
                     let mut effects = Vec::new();
                     let mut project = core::mem::take(&mut self.project);
-                    self.editor
-                        .release(Some(seconds), mods(e.mods), &mut project, &mut effects);
+                    if self.editor.marquee_in_flight().is_some() {
+                        self.editor.marquee_released(
+                            &self.scene,
+                            &view,
+                            &mut project,
+                            &mut effects,
+                        );
+                    } else {
+                        self.editor.release(
+                            Some(seconds),
+                            mods(e.mods),
+                            &mut project,
+                            &mut effects,
+                        );
+                    }
                     self.project = project;
                     self.settle(effects);
                     return true;
@@ -2499,6 +2519,13 @@ impl ArrangementWidget {
             lanes_at,
             &self.editor.razor,
             self.editor.razor_in_flight(),
+        );
+        crate::arrangement::marquee_overlay(
+            &mut out,
+            &self.palette,
+            view,
+            lanes_at,
+            self.editor.marquee_in_flight(),
         );
         spent.titles = since(&mut mark);
         let panel = self
@@ -3373,7 +3400,7 @@ mod tests {
             .expect("a hit")
             .target
         {
-            Target::Lane { row, seconds } => (row, seconds),
+            Target::Lane { row, seconds, .. } => (row, seconds),
             other => panic!("{past} px past the panel is {other:?}"),
         };
         let full = lane_at(&widget, 50.0);

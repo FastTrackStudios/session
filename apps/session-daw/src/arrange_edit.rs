@@ -135,11 +135,26 @@ pub struct FadeDrag {
     pub fades: Fades,
 }
 
+/// A marquee across empty lanes: the Editor's marquee over notes, over
+/// items (`view_gestures`). Kept in session units — seconds across, and
+/// height from the top of the lanes, since rows are not one height — and
+/// judged a click by its travel on screen.
+#[derive(Clone, Debug)]
+struct MarqueeDrag {
+    from: (f64, f64),
+    to: (f64, f64),
+    mode: view_gestures::MarqueeMode,
+    /// What was selected at the press, which the mode combines with.
+    base: HashSet<String>,
+}
+
 /// The arrangement's editing state.
 #[derive(Debug, Default)]
 pub struct Editor {
     /// The zoom tool's drag, while `z` is held and the button is down.
     pub zoom: Option<ZoomTool>,
+    /// A marquee across empty lanes, while the button is down.
+    marquee: Option<MarqueeDrag>,
     /// The selected items, by guid.
     pub selected: HashSet<String>,
     /// The edit cursor and the time selection.
@@ -439,7 +454,23 @@ impl Editor {
                 }
                 true
             }
-            Target::Lane { seconds, .. } => {
+            Target::Lane { seconds, y, .. } => {
+                // A drag across empty lanes is a marquee; until it moves
+                // it is the click below, decided on release.
+                let mode = match mousemap::resolve(hit.context, Gesture::Drag, keys).action {
+                    mousemap::Action::MarqueeSelect => Some(view_gestures::MarqueeMode::Replace),
+                    mousemap::Action::MarqueeAdd => Some(view_gestures::MarqueeMode::Add),
+                    _ => None,
+                };
+                if let Some(mode) = mode {
+                    self.marquee = Some(MarqueeDrag {
+                        from: (seconds, y),
+                        to: (seconds, y),
+                        mode,
+                        base: self.selected.clone(),
+                    });
+                    return true;
+                }
                 if mousemap::resolve(hit.context, Gesture::Click, keys).action
                     != mousemap::Action::SetEditCursor
                 {
@@ -551,7 +582,7 @@ impl Editor {
     /// both. `None` anywhere a razor cannot be.
     fn where_in_lanes(target: Target) -> Option<(f64, i32)> {
         let (row, seconds) = match target {
-            Target::Lane { row, seconds } | Target::Item { row, seconds, .. } => (row, seconds),
+            Target::Lane { row, seconds, .. } | Target::Item { row, seconds, .. } => (row, seconds),
             _ => return None,
         };
         Some((seconds, i32::try_from(row).unwrap_or(i32::MAX)))
@@ -591,6 +622,88 @@ impl Editor {
             }
         };
         drag.area != was
+    }
+
+    /// The marquee follows the pointer, to `seconds` and the height `y`
+    /// (session units from the top of the lanes). `true` when it moved.
+    pub fn marquee_moved(&mut self, seconds: f64, y: f64) -> bool {
+        let Some(drag) = self.marquee.as_mut() else {
+            return false;
+        };
+        let was = drag.to;
+        drag.to = (seconds, y);
+        drag.to != was
+    }
+
+    /// The marquee being swept, `(from, to)` in seconds and session-unit
+    /// heights, while one is.
+    #[must_use]
+    pub fn marquee_in_flight(&self) -> Option<((f64, f64), (f64, f64))> {
+        self.marquee.as_ref().map(|m| (m.from, m.to))
+    }
+
+    /// The marquee let go: the items its box touches, combined with the
+    /// selection at the press by its mode (`view_gestures::combine`). A
+    /// box that never went anywhere on screen is a click on empty lanes:
+    /// the cursor goes there, and with Replace the selection clears.
+    pub fn marquee_released(
+        &mut self,
+        scene: &Arrangement,
+        view: &Viewport,
+        project: &mut Project,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        let Some(drag) = self.marquee.take() else {
+            return false;
+        };
+        let zoom_y = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        let travel = (drag.to.0 - drag.from.0)
+            .abs()
+            .mul_add(view.pps, (drag.to.1 - drag.from.1).abs() * zoom_y);
+        let click = travel <= view_gestures::SLOP;
+        let span = view_gestures::Span::new(drag.from, drag.to);
+        let hits = scene.item_boxes().iter().filter_map(|item| {
+            let (top, height) = scene.row_box(item.row)?;
+            span.touches(item.x0, item.x1, top, top + height)
+                .then(|| item.guid.clone())
+        });
+        let chosen = view_gestures::combine(drag.mode, &drag.base, hits, click);
+        // Nothing to say when nothing changed — a click on empty lanes
+        // with nothing selected is only the cursor.
+        if chosen != self.selected {
+            self.set_selection(&chosen, project, effects);
+        }
+        if click {
+            self.cursor.click(drag.from.0);
+            effects.push(Effect::Transport(Move::Seek, drag.from.0));
+        }
+        true
+    }
+
+    /// Make `chosen` the selection — rows' folded items standing for the
+    /// mics under them, as a click on one does — and tell the engine.
+    fn set_selection(
+        &mut self,
+        chosen: &HashSet<String>,
+        project: &mut Project,
+        effects: &mut Vec<Effect>,
+    ) {
+        let real: HashSet<String> = chosen
+            .iter()
+            .flat_map(|guid| targets(project, guid, false, effects).unwrap_or_default())
+            .collect();
+        self.selected.clone_from(chosen);
+        for item in project.items.values_mut().flatten() {
+            item.selected = real.contains(&item.guid) || chosen.contains(&item.guid);
+        }
+        let from = effects.len();
+        effects.push(Effect::Send(Edit::DeselectAllItems(String::new())));
+        let mut ordered: Vec<&String> = real.iter().collect();
+        ordered.sort();
+        for guid in ordered {
+            effects.push(Effect::Send(Edit::SelectItem(guid.clone(), false)));
+        }
+        as_one_step("Select items", from, effects);
     }
 
     /// Whether a razor drag is in flight, and the area it would leave.
@@ -673,6 +786,16 @@ impl Editor {
                 press.slipped = Some(snap(base - dx).max(0.0));
             }
             return true;
+        }
+        // The ruler's bars sweep a time selection — the Editor's ruler
+        // too. Live, so it is drawn as it is dragged.
+        if let (Some(from), Some(true)) = (
+            self.time_drag,
+            self.ruler_press
+                .as_ref()
+                .map(|p| matches!(p.on, crate::ruler::On::Bars)),
+        ) {
+            self.cursor.drag(from, at);
         }
         if let Some(press) = self.ruler_press.as_mut() {
             use crate::ruler::{On, Zone};
@@ -761,6 +884,14 @@ impl Editor {
             };
         }
         if let Some(press) = self.ruler_press.take() {
+            // A drag across the bars is a time selection; a click is just
+            // the cursor, which the press already placed.
+            if let Some(from) = self.time_drag.take()
+                && matches!(press.on, crate::ruler::On::Bars)
+                && let Some(to) = at
+            {
+                self.cursor.drag(from, to);
+            }
             use crate::ruler::{MARKS_ROW, On, Zone, lane_of};
             match (press.on, press.ghost) {
                 // A drag that never became one. On a mark or a band
@@ -2619,6 +2750,52 @@ mod tests {
 
     /// A ctrl-drag over the lanes draws an area and leaves it in the
     /// set. The plain drag it shares a shape with still selects time.
+    /// A drag across empty lanes is the Editor's marquee, over items: it
+    /// selects what its box touches; Shift adds; a click clears and moves
+    /// the cursor.
+    #[test]
+    fn a_marquee_selects_the_items_its_box_touches() {
+        let mut s = Stage::new();
+        let shift = Mods {
+            shift: true,
+            ..Mods::default()
+        };
+        let sweep = |s: &mut Stage, from: (usize, f64), to: (usize, f64), keys: Mods| {
+            let (x, y) = s.point(from.0, from.1, 10.0);
+            assert!(s.press(x, y, keys).0, "the empty lane takes the press");
+            let (top, _) = s.scene.row_box(to.0).expect("a row");
+            s.editor.marquee_moved(to.1, top + 10.0);
+            let view = s.view();
+            let mut effects = Vec::new();
+            s.editor
+                .marquee_released(&s.scene, &view, &mut s.project, &mut effects);
+            effects
+        };
+        let selected = |s: &Stage| {
+            let mut got: Vec<String> = s.editor.selected.iter().cloned().collect();
+            got.sort();
+            got
+        };
+        // From before k1 on the kick to past k1's end on the snare: k1 and
+        // s1, not k2 (it starts at 10).
+        let effects = sweep(&mut s, (0, 1.0), (1, 7.0), Mods::default());
+        assert_eq!(selected(&s), ["k1", "s1"]);
+        assert!(sends(&effects).contains(&&Edit::SelectItem("k1".into(), false)));
+        assert!(s.item("s1").selected && !s.item("k2").selected);
+        // Shift adds k2.
+        sweep(&mut s, (0, 9.0), (0, 11.0), shift);
+        assert_eq!(selected(&s), ["k1", "k2", "s1"]);
+        // A click on empty lane: nothing selected, the cursor there.
+        let effects = sweep(&mut s, (0, 8.0), (0, 8.0), Mods::default());
+        assert!(selected(&s).is_empty(), "a click clears");
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Transport(Move::Seek, at) if (at - 8.0).abs() < 1e-9)),
+            "and moves the cursor"
+        );
+    }
+
     #[test]
     fn a_ctrl_drag_draws_a_razor_area_and_a_plain_one_does_not() {
         let mut s = Stage::new();
@@ -3428,12 +3605,28 @@ mod tests {
         assert!((s.editor.cursor.at - 1.5).abs() < 1e-9);
         s.key(Action::GoToStart);
         assert_eq!(s.editor.cursor.at, 0.0);
-        // An empty lane: press places and seeks, a drag selects.
+        // An empty lane: a click places the cursor and seeks — on the
+        // release, since until then it may be a marquee.
         let (x, y) = s.point(0, 20.0, 15.0);
-        let (taken, effects) = s.press(x, y, Mods::default());
+        let (taken, _) = s.press(x, y, Mods::default());
         assert!(taken);
+        let view = s.view();
+        let mut effects = Vec::new();
+        s.editor
+            .marquee_released(&s.scene, &view, &mut s.project, &mut effects);
         assert_eq!(effects, vec![Effect::Transport(Move::Seek, 20.0)]);
         assert!((s.editor.cursor.at - 20.0).abs() < 1e-9);
+        // The ruler's bars: a drag selects time, as the Editor's ruler.
+        let hit = Hit {
+            target: Target::Ruler {
+                seconds: 20.0,
+                on: crate::ruler::On::Bars,
+            },
+            context: input_config_proto::MouseModifierContext::Ruler,
+        };
+        let mut effects = Vec::new();
+        s.editor
+            .press(Some(hit), Mods::default(), &s.scene, &mut effects);
         s.drag_to(x + 3.0 * PPS, Mods::default());
         s.release(x + 3.0 * PPS, Mods::default());
         let span = s.editor.cursor.selection.expect("a time selection");

@@ -193,6 +193,9 @@ fn dragging(action: Action, edge: Edge) -> Shape {
         Action::SlipItem => icon(CursorIcon::EwResize),
         // The Editor's razor: the same blade cuts in both.
         Action::RazorArea => Shape::Glyph(Glyph::Editor(Cursor::Razor)),
+        // The Editor's marquee pointers, on the same gesture.
+        Action::MarqueeSelect => Shape::Glyph(Glyph::Editor(Cursor::Crosshair)),
+        Action::MarqueeAdd => Shape::Glyph(Glyph::Editor(Cursor::MarqueeAdd)),
         Action::SetEditCursor
         | Action::TimeSelection
         | Action::SelectItem

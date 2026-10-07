@@ -17,7 +17,7 @@
 //! Screen points are `(x, y)` in the surface's own pixels.
 
 use std::collections::HashSet;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 
 /// How far a press may travel and still be a click, in pixels — the
 /// line between "I clicked" and "I meant to drag a box".
@@ -187,21 +187,35 @@ impl Marquee {
     /// selects nothing new: with Replace it clears, otherwise it leaves
     /// the selection as it was.
     #[must_use]
-    pub fn select<K: Eq + Hash + Clone>(
+    pub fn select<K: Eq + Hash + Clone, S: BuildHasher + Default>(
         &self,
-        base: &HashSet<K>,
+        base: &HashSet<K, S>,
         hits: impl IntoIterator<Item = K>,
-    ) -> HashSet<K> {
-        let hits: HashSet<K> = if self.is_click() {
-            HashSet::new()
-        } else {
-            hits.into_iter().collect()
-        };
-        match self.mode {
-            MarqueeMode::Replace => hits,
-            MarqueeMode::Add => base.union(&hits).cloned().collect(),
-            MarqueeMode::Toggle => base.symmetric_difference(&hits).cloned().collect(),
-        }
+    ) -> HashSet<K, S> {
+        combine(self.mode, base, hits, self.is_click())
+    }
+}
+
+/// A marquee's rule, for a surface that keeps its box in its own units.
+///
+/// `base` combined with `hits` by `mode`, and a `click` (a box that never
+/// went anywhere) selecting nothing new — with Replace it clears.
+#[must_use]
+pub fn combine<K: Eq + Hash + Clone, S: BuildHasher + Default>(
+    mode: MarqueeMode,
+    base: &HashSet<K, S>,
+    hits: impl IntoIterator<Item = K>,
+    click: bool,
+) -> HashSet<K, S> {
+    let hits: HashSet<K, S> = if click {
+        HashSet::default()
+    } else {
+        hits.into_iter().collect()
+    };
+    match mode {
+        MarqueeMode::Replace => hits,
+        MarqueeMode::Add => base.union(&hits).cloned().collect(),
+        MarqueeMode::Toggle => base.symmetric_difference(&hits).cloned().collect(),
     }
 }
 

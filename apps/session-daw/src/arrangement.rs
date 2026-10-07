@@ -1437,6 +1437,43 @@ pub fn razor_overlay(
     }
 }
 
+/// The marquee being swept: `(from, to)` in seconds and session-unit
+/// heights from the top of the lanes. Drawn as the Editor draws its own —
+/// a wash of the accent, edged in it.
+pub fn marquee_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    view: Viewport,
+    origin: (f64, f64),
+    marquee: Option<((f64, f64), (f64, f64))>,
+) {
+    let Some(((t0, y0), (t1, y1))) = marquee else {
+        return;
+    };
+    let (ox, oy) = origin;
+    let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+    let r = Rect::new(
+        t0.min(t1).mul_add(view.pps, ox),
+        y0.min(y1).mul_add(zoom, oy),
+        t0.max(t1).mul_add(view.pps, ox),
+        y0.max(y1).mul_add(zoom, oy),
+    );
+    painter.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.accent.multiply_alpha(0.15),
+        None,
+        &r,
+    );
+    painter.stroke(
+        &vello::kurbo::Stroke::new(1.0),
+        Affine::IDENTITY,
+        palette.accent,
+        None,
+        &r,
+    );
+}
+
 pub fn selection_overlay(
     painter: &mut impl PaintScene,
     palette: &Palette,

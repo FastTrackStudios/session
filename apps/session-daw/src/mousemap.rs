@@ -77,6 +77,12 @@ pub enum Action {
     /// Add the item to the selection, or take it out again — the
     /// modified click, for building a selection up a piece at a time.
     ToggleItemSelection,
+    /// Sweep a box over empty lanes, selecting the items it touches —
+    /// the Editor's marquee over notes, with the same rules
+    /// (`view_gestures::Marquee`).
+    MarqueeSelect,
+    /// The same, adding to the selection.
+    MarqueeAdd,
     /// Draw a razor area out of the drag.
     RazorArea,
     /// Move a razor area already drawn, by its edge or its middle.
@@ -159,10 +165,13 @@ fn verb(context: Context, gesture: Gesture, mods: Mods) -> Action {
         // The ruler: a click places the cursor, a drag selects time.
         (Context::Ruler, G::Click) => Action::SetEditCursor,
         (Context::Ruler, G::Drag) => Action::TimeSelection,
-        // The empty arrange area does the same — the ruler is just
-        // where the numbers are.
+        // The empty arrange area: a click places the cursor, as on the
+        // ruler; a drag is a marquee, as on the Editor's empty roll —
+        // Shift adds to the selection, Ctrl (above) cuts a razor. Time
+        // is selected on the ruler, in both.
         (Context::ArrangeView, G::Click) => Action::SetEditCursor,
-        (Context::ArrangeView, G::Drag) => Action::TimeSelection,
+        (Context::ArrangeView, G::Drag) if mods.shift => Action::MarqueeAdd,
+        (Context::ArrangeView, G::Drag) => Action::MarqueeSelect,
         // A fade's handle: drag its length; with Ctrl, its shape.
         //
         // Ctrl and not Shift, which is where this started: Shift is
@@ -258,7 +267,7 @@ mod tests {
         // And without Ctrl, everything still means what it did.
         assert_eq!(
             resolve(Context::ArrangeView, Gesture::Drag, Mods::default()).action,
-            Action::TimeSelection
+            Action::MarqueeSelect
         );
         assert_eq!(
             resolve(Context::MediaItemBottomHalf, Gesture::Drag, Mods::default()).action,
@@ -373,18 +382,33 @@ mod tests {
         );
     }
 
+    /// A click on the ruler or on empty lanes places the cursor; a drag
+    /// on the ruler selects time, on empty lanes it is a marquee (Shift
+    /// adds) — the Editor's ruler and empty roll, the same.
     #[test]
-    fn the_ruler_and_the_empty_area_agree() {
+    fn the_ruler_selects_time_and_empty_lanes_sweep_a_marquee() {
         for context in [Context::Ruler, Context::ArrangeView] {
             assert_eq!(
                 resolve(context, Gesture::Click, Mods::default()).action,
                 Action::SetEditCursor
             );
-            assert_eq!(
-                resolve(context, Gesture::Drag, Mods::default()).action,
-                Action::TimeSelection
-            );
         }
+        assert_eq!(
+            resolve(Context::Ruler, Gesture::Drag, Mods::default()).action,
+            Action::TimeSelection
+        );
+        assert_eq!(
+            resolve(Context::ArrangeView, Gesture::Drag, Mods::default()).action,
+            Action::MarqueeSelect
+        );
+        let shift = Mods {
+            shift: true,
+            ..Mods::default()
+        };
+        assert_eq!(
+            resolve(Context::ArrangeView, Gesture::Drag, shift).action,
+            Action::MarqueeAdd
+        );
     }
 
     #[test]

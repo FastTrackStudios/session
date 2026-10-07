@@ -45,8 +45,9 @@ pub enum Target {
     Ruler { seconds: f64, on: crate::ruler::On },
     /// A track's row in the panel, or its strip in the mixer.
     Track { row: usize },
-    /// The lane area of a row, at a time.
-    Lane { row: usize, seconds: f64 },
+    /// The lane area of a row, at a time and a height (in session units
+    /// from the top of the lanes — what a marquee spans).
+    Lane { row: usize, seconds: f64, y: f64 },
     /// An item on a row, by the arrangement's index, and which part.
     Item {
         row: usize,
@@ -158,7 +159,14 @@ pub fn arrangement(
             context,
         );
     }
-    Hit::new(Target::Lane { row, seconds }, Context::ArrangeView)
+    Hit::new(
+        Target::Lane {
+            row,
+            seconds,
+            y: content_y,
+        },
+        Context::ArrangeView,
+    )
 }
 
 /// The time at a horizontal position in the content.
