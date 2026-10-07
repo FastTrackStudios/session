@@ -1252,11 +1252,8 @@ impl ArrangementWidget {
             // A fold is an edit to the VIEW and not to a track: the
             // window's folds (`crate::folds`), which plan the rows again.
             C::Folder => {
-                let open = self
-                    .rows
-                    .get(spot.row + 1)
-                    .zip(self.rows.get(spot.row))
-                    .is_some_and(|((_, next), (_, this))| next > this);
+                // Shut, a click opens it; open, it shuts.
+                let open = !crate::folds::shut(&self.rows, spot.row);
                 crate::folds::toggle(&guid, open);
                 return;
             }

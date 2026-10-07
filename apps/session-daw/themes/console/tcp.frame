@@ -9,8 +9,12 @@
         <Rectangle name="Rail" w=20 h=70 bind:x="row.indent" bind:h="h" bind:fill="track.band" />
         <Rectangle name="Rule" x=20 w=1 h=70 bind:x="row.indent + 20" bind:h="h" fill="#27272a" />
         <Rectangle name="Edge" x=341 w=1 h=70 bind:x="w - 2" bind:h="h" fill="#27272a" />
-        <Frame name="Folder mark" w=9 h=7 bind:x="row.indent + (20 - 9 * clamp(h / 18, 0.4, 1)) / 2" bind:y="2 * clamp(h / 18, 0.4, 1)" bind:visible="track.folder" bind:scale="clamp(h / 18, 0.4, 1)">
-          <Vector w=9 h=7 geometry="M0,0 L4,0 L4,2 L9,2 L9,7 L0,7 Z" fill="#a1a1aa" />
+        <Frame name="Fold" w=14 h=12 bind:x="row.indent + (20 - 14 * clamp(h / 24, 0.55, 1)) / 2" bind:y="3 * clamp(h / 24, 0.4, 1)" bind:visible="track.folder" bind:scale="clamp(h / 24, 0.55, 1)">
+          <!-- The fold button: the folder open (its children showing) or
+               shut (folded away), in the band's own ink. The whole rail
+               is the button (`@folder`). -->
+          <Vector name="Open" w=14 h=12 geometry="M0,1 L5,1 L6.5,2.5 L12,2.5 L12,4.5 L3.5,4.5 L1.2,11 L0,11 Z M4.2,5.5 L14,5.5 L11.6,11 L1.8,11 Z" bind:visible="!track.collapsed" bind:fill="(luma(track.band) > 0.179 ? #18181b : #e4e4e7)" />
+          <Vector name="Shut" w=14 h=12 geometry="M0,1 L5,1 L6.5,2.5 L13,2.5 L13,11 L0,11 Z" bind:visible="track.collapsed" bind:fill="(luma(track.band) > 0.179 ? #18181b : #e4e4e7)" />
         </Frame>
         <Text name="Number" w=400 h=15 size=11 bind:x="row.number_x - 1" bind:y="row.number_baseline - 0.8 * row.number_size - 1" bind:size="row.number_size" bind:text="row.number" bind:fill="(luma(track.band) > 0.179 ? #000000 : #e8e8ea)" bind:visible="row.has_number">1</Text>
         <Frame name="%icon" w=16 h=16 bind:x="row.icon_x" bind:y="row.icon_y" bind:w="row.icon_size" bind:h="row.icon_size" bind:visible="row.icon" />

@@ -75,6 +75,17 @@ pub fn generation() -> u64 {
     GENERATION.load(Ordering::Relaxed)
 }
 
+/// Whether the folder at `index` in `rows` (track, depth) shows shut:
+/// a folder whose next row is not one of its own. What its fold button
+/// draws, and what a click on it undoes.
+#[must_use]
+pub fn shut(rows: &[(daw_proto::Track, u32)], index: usize) -> bool {
+    let Some((track, depth)) = rows.get(index) else {
+        return false;
+    };
+    track.is_folder && !rows.get(index + 1).is_some_and(|(_, next)| next > depth)
+}
+
 /// Open the folder `guid` if it is shut (`open` = whether it shows open
 /// now), shut it if it is open.
 pub fn toggle(guid: &str, open: bool) {
@@ -134,6 +145,32 @@ pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)>
 
 #[cfg(test)]
 mod tests {
+    /// A folder shows shut when the row after it is not one of its own;
+    /// a track that is not a folder never does.
+    #[test]
+    fn a_folder_is_shut_when_its_children_are_not_under_it() {
+        let row = |name: &str, folder: bool, depth: u32| {
+            (
+                daw_proto::Track {
+                    guid: name.to_owned(),
+                    is_folder: folder,
+                    ..daw_proto::Track::default()
+                },
+                depth,
+            )
+        };
+        let rows = [
+            row("drums", true, 0),
+            row("kick", true, 1),
+            row("snare", false, 1),
+            row("bass", true, 0),
+        ];
+        assert!(!super::shut(&rows, 0), "the kick is under it: open");
+        assert!(super::shut(&rows, 1), "the snare is beside it: shut");
+        assert!(!super::shut(&rows, 2), "not a folder");
+        assert!(super::shut(&rows, 3), "nothing after it: shut");
+    }
+
     use super::*;
 
     fn row(name: &str, folder: bool, depth: u32) -> (daw_proto::Track, u32) {

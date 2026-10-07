@@ -596,7 +596,8 @@ fn record_panel(
     let mut bar_spans = Vec::with_capacity(rows.len());
     let mut lineage: Vec<Color> = Vec::new();
     let mut y = 0.0_f64;
-    for (track, depth) in rows {
+    for (index, (track, depth)) in rows.iter().enumerate() {
+        let collapsed = crate::folds::shut(rows, index);
         let level = usize::try_from(*depth).unwrap_or(0);
         lineage.truncate(level);
         let ancestors = lineage.clone();
@@ -617,6 +618,7 @@ fn record_panel(
                     height: body,
                     font: Some(font),
                     idle: !tcp.recording,
+                    collapsed,
                     ..crate::skin::RowShown::default()
                 },
             );

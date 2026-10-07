@@ -229,6 +229,8 @@ pub struct RowShown<'a> {
     /// row has no arm (`ui.recording` false). Off by default — a row
     /// asked for with nothing said is a recording one, as it always was.
     pub idle: bool,
+    /// A folder whose children are folded away (`track.collapsed`).
+    pub collapsed: bool,
 }
 
 /// A row control's name in a theme: its `@name`, its `ui.hover`.
@@ -287,7 +289,14 @@ pub fn row_hit_fields(depth: i32) -> StripFields {
 pub fn row_fields(palette: &Palette, track: &Track, shown: RowShown<'_>) -> StripFields {
     let tcp = crate::tcp::Tcp::FULL;
     let indent = (f64::from(shown.depth.max(0)) * tcp.indent()).min(tcp.max_indent());
-    let mut out = fields(palette, track, Shown::default());
+    let mut out = fields(
+        palette,
+        track,
+        Shown {
+            collapsed: shown.collapsed,
+            ..Shown::default()
+        },
+    );
     let mut set = |name: &str, v: Value| {
         if let Some(at) = SCHEMA
             .slot(name)

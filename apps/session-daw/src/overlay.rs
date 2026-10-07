@@ -1797,6 +1797,7 @@ fn control_row(
                 hover: all.into_iter().find(|c| look(*c) == Interaction::Hover),
                 pressed: all.into_iter().find(|c| look(*c) == Interaction::Pressed),
                 idle: !row.tcp.recording,
+                collapsed: crate::folds::shut(rows, index),
             },
         );
         theme.live(
