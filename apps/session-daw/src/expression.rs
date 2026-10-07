@@ -84,6 +84,10 @@ pub struct Expression {
     menu: Option<Menu>,
     /// The tool before a spring-loaded one was armed by a held key.
     spring_from: Option<Tool>,
+    /// The spring-loaded tool was used (a press while its key was held):
+    /// letting the key go ends its sequence, rather than leaving `z`
+    /// pending for whatever key comes next.
+    spring_used: bool,
     /// Actions the keymap named that the editor does not do itself —
     /// the host's (aligning a stack's takes needs their audio), handed
     /// over by [`Expression::host_actions`].
@@ -254,6 +258,7 @@ impl Expression {
             hover_at: None,
             menu: None,
             spring_from: None,
+            spring_used: false,
             host: Vec::new(),
             pending: None,
             look: Look::default(),
@@ -592,6 +597,9 @@ impl Expression {
     /// A button press. `button` is 0 left, 1 middle, 2 right. `true`
     /// when the view took it.
     pub fn press(&mut self, x: f64, y: f64, mods: Mods, button: u16) -> bool {
+        if self.spring_from.is_some() {
+            self.spring_used = true;
+        }
         // An open menu owns the next press: on an item it runs it, and
         // anywhere else it closes without doing anything — a click
         // that both dismissed a menu and moved a note would be two
@@ -790,7 +798,27 @@ impl Expression {
             return self.stack.wheel(&mut self.editor, dx, dy, mods_of(mods));
         }
         let (rx, ry) = self.roll_point(x, y);
-        interaction::wheel(&mut self.editor, rx, ry, dx, dy, mods_of(mods));
+        // The arrangement's wheel (`crate::panel`), so the two read alike:
+        // a wheel scrolls, Shift scrolls sideways; with `z` held it zooms
+        // time, and with Shift the rows. Its units too — pixels, a notch
+        // forty — where the editor's own was tuned for a notch of one and
+        // took this host's forty as a forty-fold zoom. `dx`/`dy` arrive
+        // the browser's way round, the arrangement's are winit's.
+        if keys::zoom_prefix_held() {
+            if self.spring_from.is_some() {
+                self.spring_used = true;
+            }
+            let factor = crate::panel::factor(-(dx + dy) * 2.0);
+            if mods.shift {
+                self.editor.zoom_pitch_at(ry, factor);
+            } else {
+                self.editor.zoom_time_at(rx, factor);
+            }
+        } else if mods.shift {
+            self.editor.pan_px(-(dx + dy), 0.0);
+        } else {
+            self.editor.pan_px(-dx, -dy);
+        }
         true
     }
 
@@ -896,6 +924,11 @@ impl Expression {
         {
             self.editor.tool = previous;
             changed = true;
+            // Held and used, the key was the tool: it starts no sequence.
+            // Tapped, it is still the prefix (`z x`).
+            if std::mem::take(&mut self.spring_used) {
+                keys::cancel();
+            }
         }
         if changed {
             self.relayout();

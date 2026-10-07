@@ -714,12 +714,22 @@ pub fn use_window_transport_keys() {
             }
             // The Editor half way through one of its own sequences (`g e`,
             // `a x`): the key is its, not a pane's. This hook runs before
-            // the document hands the key on, so the Editor still shows
-            // the sequence pending.
-            if expression_editor_paint::keys::is_pending() {
-                return;
-            }
+            // the document hands the key on, so the Editor still shows the
+            // sequence pending. Only the panes stand aside — the transport
+            // never does, or a sequence left pending would take Space.
+            let editors = expression_editor_paint::keys::is_pending();
             for action in keys.borrow_mut().press(code, held.get()) {
+                if editors
+                    && matches!(
+                        action,
+                        Action::ToggleMixer
+                            | Action::ToggleFx
+                            | Action::FxFull
+                            | Action::ToggleEditor
+                    )
+                {
+                    continue;
+                }
                 use crate::engine::{Move, transport};
                 match action {
                     Action::PlayStop | Action::PlayPause => transport(Move::PlayStop, 0.0),

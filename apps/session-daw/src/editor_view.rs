@@ -502,6 +502,8 @@ impl EditorView {
             return;
         };
         view.set_look(self.look);
+        view.relayout();
+        frame_item(&mut view);
         self.view = Some(view);
         self.dirty = true;
     }
@@ -779,6 +781,18 @@ fn look() -> expression_editor_paint::paint::Look {
 /// A key as the editor names it: a character's text, else the W3C name
 /// (`"Delete"`, `"ArrowLeft"`).
 #[cfg(feature = "native")]
+/// Frame what was just opened: the whole item across, its notes top to
+/// bottom — the editor's "fit item" (`z i`), MeMagic's fixed framing. A
+/// stack frames its own lanes.
+#[cfg(feature = "native")]
+fn frame_item(view: &mut Expression) {
+    if view.stacked() {
+        return;
+    }
+    use expression_editor_core::actions;
+    actions::run(&mut view.editor, actions::view::FIT_ITEM.id);
+}
+
 /// Each of `dubs` aligned to `reference` and its markers written: the
 /// takes that aligned, each with its item's start and its alignment.
 #[cfg(feature = "native")]
