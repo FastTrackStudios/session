@@ -400,7 +400,9 @@ struct DeviceRow {
     hover: Option<(String, Which, Grip)>,
     dirty: Cell<bool>,
     /// The effects' own painters, one per face.
-    painters: crate::faces::Painters,
+    painters: std::rc::Rc<RefCell<crate::faces::Painters>>,
+    /// Whether this panel has painted yet — see `Painters::begin_frame`.
+    painted: bool,
     /// The rigs the guitar tracks play, by track: what their lanes are.
     rigs: RefCell<std::collections::HashMap<String, crate::rig::Rig>>,
     /// frame's rig faces manifest.
@@ -456,7 +458,8 @@ impl DeviceRow {
             turning: None,
             hover: None,
             dirty: Cell::new(true),
-            painters: crate::faces::Painters::default(),
+            painters: crate::faces::shared(),
+            painted: false,
             rigs: RefCell::new(rigs),
             rig_faces: crate::rig::Faces::load(),
             animating: Cell::new(false),
@@ -642,10 +645,13 @@ impl DeviceRow {
 
     /// Hand what the face at `key` edited to its track's settings.
     fn face_edits(&mut self, key: &str, guid: &str, target: &Target) {
-        let Some(surface) = self.painters.frame_mut(key) else {
-            return;
+        let edits = {
+            let mut painters = self.painters.borrow_mut();
+            let Some(surface) = painters.frame_mut(key) else {
+                return;
+            };
+            surface.take_edits()
         };
-        let edits = surface.take_edits();
         if edits.is_empty() {
             return;
         }
@@ -707,7 +713,7 @@ impl DeviceRow {
             .find(|(.., at)| at.contains(x, y))
             .cloned();
         if let Some((key, guid, target, at)) = face {
-            if let Some(surface) = self.painters.frame_mut(&key) {
+            if let Some(surface) = self.painters.borrow_mut().frame_mut(&key) {
                 surface.pointer_down(x - at.x, y - at.y, face_mods(e));
             }
             self.face_edits(&key, &guid, &target);
@@ -756,7 +762,7 @@ impl DeviceRow {
         if let Some((id, key, guid, target, at)) = self.playing.clone()
             && id == e.id
         {
-            if let Some(surface) = self.painters.frame_mut(&key) {
+            if let Some(surface) = self.painters.borrow_mut().frame_mut(&key) {
                 surface.pointer_move(x - at.x, y - at.y, face_mods(e));
             }
             self.face_edits(&key, &guid, &target);
@@ -823,7 +829,7 @@ impl DeviceRow {
                 if let Some((_, key, guid, target, _)) =
                     self.playing.take_if(|(id, ..)| *id == e.id)
                 {
-                    if let Some(surface) = self.painters.frame_mut(&key) {
+                    if let Some(surface) = self.painters.borrow_mut().frame_mut(&key) {
                         surface.pointer_up();
                     }
                     self.face_edits(&key, &guid, &target);
@@ -1850,7 +1856,9 @@ impl DeviceRow {
         // shader is not drawn small and scaled up.
         let pictures = std::mem::take(&mut hits.pictures);
         self.animating.set(ctx.is_some() && !pictures.is_empty());
-        self.painters.begin_frame();
+        let mut painters = self.painters.borrow_mut();
+        painters.begin_frame(!self.painted && ctx.is_some());
+        self.painted |= ctx.is_some();
         for (key, picture, at, clip) in pictures {
             let size = (
                 crate::num::index(at.width * scale)
@@ -1863,21 +1871,35 @@ impl DeviceRow {
             if size.0 < 2 || size.1 < 2 {
                 continue;
             }
-            let painted = self.painters.paint(
+            let painted = painters.paint(
                 ctx.as_mut().map(|c| reborrow(&mut **c)),
                 &key,
                 &picture,
                 (size.0, size.1, scale),
             );
             let place = Affine::scale(1.0 / scale).then_translate((at.x, at.y).into());
-            anyrender::PaintScene::push_clip_layer(&mut drawn, Affine::IDENTITY, &clip);
+            let alpha = painters.opacity(&key);
+            if alpha < 1.0 {
+                anyrender::PaintScene::push_layer(
+                    &mut drawn,
+                    vello::peniko::Mix::Normal,
+                    alpha,
+                    Affine::IDENTITY,
+                    &clip,
+                    None,
+                    None,
+                );
+            } else {
+                anyrender::PaintScene::push_clip_layer(&mut drawn, Affine::IDENTITY, &clip);
+            }
             anyrender::PaintScene::append_scene(&mut drawn, painted, place);
             anyrender::PaintScene::pop_layer(&mut drawn);
         }
         // A face still waiting to be got ready draws next frame.
-        if self.painters.waiting() {
+        if painters.waiting() {
             self.animating.set(true);
         }
+        drop(painters);
         *self.hits.borrow_mut() = hits;
         let mut out = Scene::new();
         anyrender::PaintScene::append_scene(&mut out, drawn, Affine::scale(scale));

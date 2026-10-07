@@ -808,6 +808,9 @@ pub struct Painters {
     first_time: Option<web_time::Instant>,
     /// Some face waited this frame: draw again.
     waiting: bool,
+    /// This frame is its panel's first: a face shown in it is simply
+    /// there; one shown later fades in.
+    opening: bool,
     /// When this frame's first re-render (of a face already up) began:
     /// they stop at [`RERENDER_BUDGET`].
     rerender: Option<web_time::Instant>,
@@ -832,6 +835,9 @@ pub struct Live {
     /// When it was last rendered on the GPU: a face is re-rendered at
     /// most [`GPU_FPS`] times a second however often its values move.
     rendered: Option<web_time::Instant>,
+    /// When it was first shown, and whether it fades in — see
+    /// [`Painters::opacity`].
+    appeared: Option<(web_time::Instant, bool)>,
 }
 
 /// A frame face's GPU state.
@@ -848,18 +854,68 @@ enum Gpu {
     Failed,
 }
 
+/// How long a face ready after its panel opened takes to fade in.
+const FADE: std::time::Duration = std::time::Duration::from_millis(180);
+
 /// How long a frame may spend re-rendering faces already up.
 const RERENDER_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
 
 /// How long a frame may spend getting faces ready for the first time.
 const FIRST_TIME_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
 
+thread_local! {
+    static SHARED: std::rc::Rc<std::cell::RefCell<Painters>> = std::rc::Rc::default();
+}
+
+/// The window's painters: one set for every panel that shows faces.
+///
+/// A face is opened, attached to the GPU and rendered once, ~20 ms of
+/// work; owned by the panel, all of it was thrown away when the panel
+/// closed and paid again — sixteen faces' worth — when it opened. Shared,
+/// the FX opens a second time with every face already up, and the docked
+/// strip and the FX view show the same faces rather than two copies.
+#[must_use]
+pub fn shared() -> std::rc::Rc<std::cell::RefCell<Painters>> {
+    SHARED.with(std::rc::Rc::clone)
+}
+
 impl Painters {
-    /// A new frame: its budget for first-time work starts now.
-    pub const fn begin_frame(&mut self) {
+    /// A new frame — `opening`, its panel's first: its budget for
+    /// first-time work starts now.
+    pub const fn begin_frame(&mut self, opening: bool) {
         self.first_time = None;
         self.rerender = None;
         self.waiting = false;
+        self.opening = opening;
+    }
+
+    /// How opaque device `key`'s face is drawn this frame.
+    ///
+    /// A face ready after its panel opened fades in over [`FADE`] rather
+    /// than appearing whole in one frame beside ones already up: the panel
+    /// fills in, it does not flicker in. One there from the first frame,
+    /// or still open from the last time the panel was, is opaque.
+    pub fn opacity(&mut self, key: &str) -> f32 {
+        let Some((at, true)) = self.frames.get(key).and_then(|live| live.appeared) else {
+            return 1.0;
+        };
+        let t = at.elapsed().as_secs_f32() / FADE.as_secs_f32();
+        if t >= 1.0 {
+            return 1.0;
+        }
+        self.waiting = true;
+        // Smoothstep: no snap at either end.
+        t * t * 2.0f32.mul_add(-t, 3.0)
+    }
+
+    /// Note that device `key`'s face has been shown, the first time.
+    fn shown(&mut self, key: &str) {
+        let opening = self.opening;
+        if let Some(live) = self.frames.get_mut(key)
+            && live.appeared.is_none()
+        {
+            live.appeared = Some((web_time::Instant::now(), !opening));
+        }
     }
 
     /// Whether a face is still waiting to be got ready — the host draws
@@ -996,6 +1052,7 @@ impl Painters {
             return texture_fill(id, width, height);
         }
         live.rendered = Some(web_time::Instant::now());
+
         let (texture, fresh) = match live.surface.render(width, height, scale) {
             Ok(rendered) => rendered,
             Err(error) => {
@@ -1050,6 +1107,7 @@ impl Painters {
                             #[cfg(feature = "native")]
                             gpu: Gpu::Untried,
                             rendered: None,
+                            appeared: None,
                         },
                     );
                 }
@@ -1089,12 +1147,16 @@ impl Painters {
                 if let Some(held) = self.hold_frame(key, face, (width, height)) {
                     return held;
                 }
-                return self.paint_frame_gpu(ctx, key, face, (width, height), scale);
+                let scene = self.paint_frame_gpu(ctx, key, face, (width, height), scale);
+                self.shown(key);
+                return scene;
             }
             if !self.frames.contains_key(key) && !self.may_start() {
                 return Scene::new();
             }
-            return self.paint_frame(key, face, (width, height), scale);
+            let scene = self.paint_frame(key, face, (width, height), scale);
+            self.shown(key);
+            return scene;
         }
         let Some(ctx) = ctx else {
             let mut scene = Scene::new();
@@ -1150,5 +1212,47 @@ impl Painters {
                 widget.paint_frame(ctx, width, height, 1.0)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod fade_tests {
+    use super::{FrameFace, Painters, Picture};
+
+    fn face() -> Picture {
+        Picture::Frame(FrameFace {
+            design: "comp/01-fet-black".to_owned(),
+            values: Vec::new(),
+            texts: Vec::new(),
+            responsive: false,
+        })
+    }
+
+    /// A face shown in its panel's first frame is simply there; one shown
+    /// later fades in, and keeps the host drawing until it has; a face
+    /// still open from before is there at once when the panel reopens.
+    #[test]
+    fn only_a_face_that_arrives_late_fades_in() {
+        let mut painters = Painters::default();
+        painters.begin_frame(true);
+        let _ = painters.paint(None, "early", &face(), (120, 80, 1.0));
+        assert!((painters.opacity("early") - 1.0).abs() < f32::EPSILON);
+        assert!(!painters.waiting(), "nothing fading in the opening frame");
+
+        painters.begin_frame(false);
+        let _ = painters.paint(None, "late", &face(), (120, 80, 1.0));
+        let alpha = painters.opacity("late");
+        assert!(alpha < 0.5, "a late face starts faint, got {alpha}");
+        assert!(painters.waiting(), "the host draws again while it fades");
+
+        // Reopened: both were shown before, neither fades again.
+        painters.begin_frame(true);
+        let _ = painters.paint(None, "early", &face(), (120, 80, 1.0));
+        assert!((painters.opacity("early") - 1.0).abs() < f32::EPSILON);
+        std::thread::sleep(super::FADE);
+        assert!(
+            (painters.opacity("late") - 1.0).abs() < f32::EPSILON,
+            "faded in by now"
+        );
     }
 }
