@@ -351,6 +351,7 @@ pub fn WidgetCanvas(
             },
             onkeydown: move |e| {
                 if e.code() == dioxus::prelude::Code::KeyZ {
+                    crate::tool::set_zoom_held(true);
                     to_panel(PanelEvent::ZKey { pressed: true, repeat: e.is_auto_repeating() });
                 }
                 to_panel(PanelEvent::Modifiers(mods(e.modifiers())));
@@ -363,6 +364,7 @@ pub fn WidgetCanvas(
             },
             onkeyup: move |e| {
                 if e.code() == dioxus::prelude::Code::KeyZ {
+                    crate::tool::set_zoom_held(false);
                     to_panel(PanelEvent::ZKey { pressed: false, repeat: false });
                 }
                 to_panel(PanelEvent::Modifiers(mods(e.modifiers())));

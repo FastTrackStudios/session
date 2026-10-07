@@ -342,6 +342,11 @@ pub struct EditorView {
     aligning: Option<Aligning>,
     /// Where the pointer's shape goes: the window's cursor.
     cursor: Option<crate::window_cursor::Sink>,
+    /// The keys held at the last event, and the zoom key as last shown:
+    /// the zoom key going down turns the pointer into the magnifier at
+    /// once, as in the arrangement, with no event of the Editor's own.
+    mods: std::cell::Cell<crate::mousemap::Mods>,
+    zoom_shown: std::cell::Cell<bool>,
 }
 
 /// What a read hands back: nothing yet, then the take or `None`.
@@ -496,6 +501,8 @@ impl EditorView {
             takes: Vec::new(),
             aligning: None,
             cursor: None,
+            mods: std::cell::Cell::default(),
+            zoom_shown: std::cell::Cell::new(false),
         }
     }
 
@@ -650,8 +657,6 @@ impl EditorView {
     /// pointer event over it, and on a key while the pointer is over the
     /// roll (a held `z` turns the arrow into the magnifier in place).
     fn show_pointer(&self, event: &UiEvent) {
-        use crate::window_cursor::{Glyph, Shape};
-        use expression_editor_core::cursor::Cursor;
         let (Some(sink), Some(view)) = (&self.cursor, &self.view) else {
             return;
         };
@@ -662,9 +667,24 @@ impl EditorView {
             UiEvent::KeyDown(e) | UiEvent::KeyUp(e) => crate::widget::mods(e.modifiers),
             _ => return,
         };
-        let pointer = view.pointer(mods);
+        self.mods.set(mods);
         let key = matches!(event, UiEvent::KeyDown(_) | UiEvent::KeyUp(_));
-        if key && pointer.is_none() {
+        Self::put_pointer(sink, view, mods, key);
+    }
+
+    /// The glyph for the pointer with `mods`, onto the window; `quiet`
+    /// leaves the window's own shape when the pointer is off the roll
+    /// (a key, or the zoom key, that the Editor did not see it over).
+    fn put_pointer(
+        sink: &crate::window_cursor::Sink,
+        view: &Expression,
+        mods: crate::mousemap::Mods,
+        quiet: bool,
+    ) {
+        use crate::window_cursor::{Glyph, Shape};
+        use expression_editor_core::cursor::Cursor;
+        let pointer = view.pointer(mods);
+        if quiet && pointer.is_none() {
             return;
         }
         sink(match pointer {
@@ -835,6 +855,9 @@ impl EditorView {
 
     /// Whether the engine has said anything since the last frame.
     fn heard(&self) -> bool {
+        if crate::tool::zoom_held() != self.zoom_shown.get() {
+            return true;
+        }
         if picked_count() != self.picked_seen {
             return true;
         }
@@ -855,6 +878,13 @@ impl EditorView {
         }
         self.landed(size);
         self.aligned();
+        // The zoom key went down or up at the window: the pointer follows.
+        let zoom = crate::tool::zoom_held();
+        if zoom != self.zoom_shown.replace(zoom)
+            && let (Some(sink), Some(view)) = (&self.cursor, &self.view)
+        {
+            Self::put_pointer(sink, view, self.mods.get(), true);
+        }
         // The transport's playhead, and the page following it.
         if let (false, Some(view), Some(t), Some(transport)) = (
             self.stale,

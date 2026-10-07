@@ -30,6 +30,37 @@ use input_config_proto::MouseModifierContext as Context;
 
 use crate::mousemap::{self, Action, Gesture, Mods};
 
+/// Whether the zoom key (`z`, by the physical key) is held down — read
+/// at the window, whatever has the keyboard focus, so the arrangement and
+/// the Editor answer one held key the same way and at once: drag zooms,
+/// the wheel zooms time, with Shift the rows. Kept here rather than by
+/// either surface, because a docked Editor without the focus never hears
+/// the key itself.
+#[cfg(not(test))]
+static ZOOM_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+thread_local! {
+    // Per test thread: tests that hold the key run beside tests that do not.
+    static ZOOM_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The window saw the zoom key go down (`true`) or up.
+pub fn set_zoom_held(held: bool) {
+    #[cfg(not(test))]
+    ZOOM_HELD.store(held, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    ZOOM_HELD.with(|z| z.set(held));
+}
+
+/// Whether the zoom key is held.
+#[must_use]
+pub fn zoom_held() -> bool {
+    #[cfg(not(test))]
+    return ZOOM_HELD.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    ZOOM_HELD.with(std::cell::Cell::get)
+}
+
 /// A mode that owns the mouse while it is up.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tool {

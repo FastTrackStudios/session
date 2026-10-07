@@ -654,8 +654,20 @@ impl Expression {
                     _ => None,
                 };
                 self.pressed = (button == 0).then_some(((rx, ry), under));
+                // The zoom key held at the window: this press is the zoom
+                // tool's, at once — the arrangement's rule. The tool is
+                // the Editor's only for the press; the drag it opens
+                // carries on by itself.
+                let armed = button == 0 && crate::tool::zoom_held();
+                let before = self.editor.tool;
+                if armed {
+                    self.editor.tool = Tool::Zoom;
+                }
                 let drag =
                     interaction::pointer_down(&mut self.editor, rx, ry, mods_of(mods), button);
+                if armed {
+                    self.editor.tool = before;
+                }
                 // A right-click resolves to a menu request rather than
                 // a drag. Opened here, so the core pointer path stays
                 // free of UI state — the same split as the Dioxus roll.
@@ -804,7 +816,9 @@ impl Expression {
         // forty — where the editor's own was tuned for a notch of one and
         // took this host's forty as a forty-fold zoom. `dx`/`dy` arrive
         // the browser's way round, the arrangement's are winit's.
-        let zooming = keys::zoom_prefix_held();
+        // The window's zoom key, as the arrangement reads it: held is
+        // held, focus or none (`tool::zoom_held`).
+        let zooming = crate::tool::zoom_held() || keys::zoom_prefix_held();
         if zooming && self.spring_from.is_some() {
             self.spring_used = true;
         }
@@ -831,7 +845,9 @@ impl Expression {
         }
         let (x, y) = self.hover_at?;
         // A held z owns the mouse wherever it is — on a note's edge too.
-        if self.editor.tool == Tool::Zoom && self.spring_from.is_some() {
+        if crate::tool::zoom_held()
+            || (self.editor.tool == Tool::Zoom && self.spring_from.is_some())
+        {
             return Some(Glyph::Editor(Cursor::Zoom));
         }
         if self.stacked() {
@@ -2256,6 +2272,55 @@ mod tests {
 
     /// Hold `z`, drag right and up: time and rows both zoom in, anchored
     /// on the press; let go of `z` and the tool springs back.
+    /// The zoom key held at the window — the Editor never hearing it, as
+    /// when it is docked without the focus — zooms at once, as in the
+    /// arrangement: a drag zooms, the wheel zooms time, with Shift the
+    /// rows; let go, the wheel scrolls again.
+    #[test]
+    fn a_zoom_key_held_at_the_window_zooms_the_editor_at_once() {
+        let mut v = view();
+        let (x, y) = (ORIGIN.0 + 400.0, ORIGIN.1 + TOOLBAR_H + 200.0);
+        v.moved(x, y, plain());
+        crate::tool::set_zoom_held(true);
+        let upp = v.editor.camera.units_per_px;
+        assert!(v.wheel(x, y, 0.0, -40.0, plain()));
+        assert!(
+            v.editor.camera.units_per_px < upp,
+            "the wheel zooms time in"
+        );
+        let ppr = v.editor.camera.vertical.px_per_row;
+        let upp = v.editor.camera.units_per_px;
+        let shift = Mods {
+            shift: true,
+            ..plain()
+        };
+        v.wheel(x, y, 0.0, -40.0, shift);
+        assert!(
+            v.editor.camera.vertical.px_per_row > ppr,
+            "with Shift, the rows"
+        );
+        assert!(
+            (v.editor.camera.units_per_px - upp).abs() < 1e-12,
+            "and not time"
+        );
+        // A press is the zoom tool's, with no key event in between.
+        let upp = v.editor.camera.units_per_px;
+        assert!(v.press(x, y, plain(), 0));
+        v.moved(x + 200.0, y, plain());
+        v.release(x + 200.0, y, plain());
+        assert!(
+            v.editor.camera.units_per_px < upp,
+            "a drag right zooms time in"
+        );
+        crate::tool::set_zoom_held(false);
+        let upp = v.editor.camera.units_per_px;
+        v.wheel(x, y, 0.0, -40.0, plain());
+        assert!(
+            (v.editor.camera.units_per_px - upp).abs() < 1e-12,
+            "let go, it scrolls"
+        );
+    }
+
     #[test]
     fn holding_z_makes_a_drag_zoom_both_axes() {
         let mut v = view();

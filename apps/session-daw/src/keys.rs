@@ -696,7 +696,16 @@ pub fn use_window_transport_keys() {
                 meta: state.meta_key(),
             });
         }
+        // The window letting go of the keyboard lets go of the keys.
+        WindowEvent::Focused(false) => crate::tool::set_zoom_held(false),
         WindowEvent::KeyboardInput { event, .. } => {
+            // The zoom key, by the physical key (with Shift the character
+            // is "Z"), for both surfaces — see `tool::zoom_held`.
+            if event.physical_key
+                == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyZ)
+            {
+                crate::tool::set_zoom_held(event.state.is_pressed());
+            }
             let (named, text): (Option<String>, Option<String>) = match &event.logical_key {
                 Key::Named(named) => (Some(format!("{named:?}")), None),
                 Key::Character(c) => (None, Some(c.to_string())),
