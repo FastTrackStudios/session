@@ -272,6 +272,9 @@ struct Hits {
     bypasses: Vec<(String, Target, Panel)>,
     /// The lane being drawn's clip: what scrolls stays right of its strip.
     clip: vello::kurbo::Rect,
+    /// Each track strip drawn: whose, and its left and top — a press on
+    /// one is the strip's.
+    strips: Vec<(String, f64, f64)>,
     /// The faces' pictures, painted after the rest (`paint_scene`): the
     /// device's key, what to paint, where, and the lane's clip.
     pictures: Vec<(String, crate::faces::Picture, Panel, vello::kurbo::Rect)>,
@@ -367,8 +370,29 @@ fn grouped(panels: &[Which]) -> Vec<(MixPhase, Vec<Which>)> {
 }
 
 /// Tracks' processors, side by side: one lane, or several stacked.
+/// A press on a track strip, until it lets go.
+enum StripHold {
+    /// A fader or a pan knob, turned from where it was when pressed.
+    Turn {
+        control: crate::mcp::Control,
+        from_y: f64,
+        travel: f64,
+        was: Box<daw_proto::Track>,
+    },
+    /// A button: it acts if let go over itself.
+    Press {
+        guid: String,
+        control: Option<crate::mcp::Control>,
+        add: bool,
+    },
+}
+
 struct DeviceRow {
     tone: Rc<Shared>,
+    /// Where the strips' edits go: the engine.
+    applier: Option<crate::engine::Applier>,
+    /// A strip being pressed or turned, by which pointer.
+    strip_hold: Option<(BlitzPointerId, StripHold)>,
     /// The session's tracks, kept up with the engine's changes — which is
     /// selected is where the lanes start.
     tracks: Vec<daw_proto::Track>,
@@ -437,6 +461,8 @@ impl DeviceRow {
             }
         }
         Self {
+            applier: crate::engine::Applier::start(),
+            strip_hold: None,
             tone,
             tracks: rows.into_iter().map(|(t, _)| t).collect(),
             depths,
@@ -573,8 +599,128 @@ impl DeviceRow {
             events.extend(watch.drain());
         }
         for event in &events {
+            // The value a fader is being dragged to is the drag's: the
+            // engine's echo of an older position would pull it back.
+            if let Some(guid) = crate::engine::continuous_for(event)
+                && matches!(&self.strip_hold, Some((_, StripHold::Turn { was, .. })) if was.guid == guid)
+            {
+                continue;
+            }
             crate::engine::apply_event(&mut self.tracks, event);
         }
+    }
+
+    /// The track strip control at a window point: whose strip, and which
+    /// control (`None` on its ground). `None` off every strip.
+    fn strip_at(
+        &self,
+        x: f64,
+        y: f64,
+    ) -> Option<(daw_proto::Track, Option<crate::mcp::Control>, f64)> {
+        let hits = self.hits.borrow();
+        let strips = self.strips.borrow();
+        hits.strips.iter().find_map(|(guid, left, top)| {
+            let mixer = &strips.get(guid)?.mixer;
+            let (x0, width, height) = mixer.strip_box(0)?;
+            let (cx, cy) = (x - left, y - top);
+            if !(x0..x0 + width).contains(&cx) || !(0.0..=height).contains(&cy) {
+                return None;
+            }
+            let track = self.tracks.iter().find(|t| t.guid == *guid)?;
+            let control = crate::mcp::control_in(
+                mixer,
+                0,
+                (&self.palette, &self.font),
+                &widened(track),
+                (cx - x0, cy),
+            );
+            Some((track.clone(), control, height))
+        })
+    }
+
+    /// An edit from a strip: shown at once, and sent to the engine.
+    fn commit(&mut self, edit: crate::engine::Edit) {
+        crate::mixer_panel::predict(&mut self.tracks, &edit);
+        if let Some(applier) = &self.applier {
+            applier.send(edit);
+        }
+    }
+
+    /// A press on a track strip: a fader or knob taken hold of, or a
+    /// button waiting to be let go of.
+    fn press_strip(&mut self, e: &BlitzPointerEvent, x: f64, y: f64) -> bool {
+        let Some((track, control, height)) = self.strip_at(x, y) else {
+            return false;
+        };
+        let hold = match control {
+            // Locked, faders and knobs stay where they are.
+            Some(c) if c.is_continuous() && crate::options::LOCKING.get() => return true,
+            Some(c) if c.is_continuous() => StripHold::Turn {
+                control: c,
+                from_y: y,
+                travel: height * 0.4,
+                was: Box::new(track),
+            },
+            control => StripHold::Press {
+                guid: track.guid,
+                control,
+                add: e.mods.shift() || e.mods.meta() || e.mods.ctrl(),
+            },
+        };
+        self.strip_hold = Some((e.id, hold));
+        true
+    }
+
+    /// A pointer moving with a strip's fader or knob in hand.
+    fn turn_strip(&mut self, e: &BlitzPointerEvent, y: f64) -> bool {
+        let Some((
+            id,
+            StripHold::Turn {
+                control,
+                from_y,
+                travel,
+                was,
+            },
+        )) = &self.strip_hold
+        else {
+            return false;
+        };
+        if *id != e.id {
+            return false;
+        }
+        let fraction = crate::gesture::drag_fraction(y - from_y, *travel);
+        let edit = crate::engine::drag(*control, &was.guid, was, fraction);
+        if let Some(edit) = edit {
+            self.commit(edit);
+        }
+        true
+    }
+
+    /// A pointer let go of a strip: a button acts if it is let go over
+    /// itself; a press on the strip's ground selects its track.
+    fn release_strip(&mut self, e: &BlitzPointerEvent) -> bool {
+        let Some((_, hold)) = self.strip_hold.take_if(|(id, _)| *id == e.id) else {
+            return false;
+        };
+        let StripHold::Press { guid, control, add } = hold else {
+            return true;
+        };
+        let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        let Some((track, up, _)) = self.strip_at(x, y).filter(|(t, ..)| t.guid == guid) else {
+            return true;
+        };
+        if up != control {
+            return true;
+        }
+        let edit = match control {
+            Some(control) => crate::engine::click(control, &guid, &track, add),
+            None if add => Some(crate::engine::Edit::AddToSelection(guid)),
+            None => Some(crate::engine::Edit::Select(guid)),
+        };
+        if let Some(edit) = edit {
+            self.commit(edit);
+        }
+        true
     }
 
     /// Whether the engine has said anything since the last frame.
@@ -677,6 +823,9 @@ impl DeviceRow {
 
     fn press(&mut self, e: &BlitzPointerEvent) -> bool {
         let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        if self.press_strip(e, x, y) {
+            return true;
+        }
         let bypass = self
             .hits
             .borrow()
@@ -759,6 +908,9 @@ impl DeviceRow {
 
     fn moved(&mut self, e: &BlitzPointerEvent) -> bool {
         let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        if self.turn_strip(e, y) {
+            return true;
+        }
         if let Some((id, key, guid, target, at)) = self.playing.clone()
             && id == e.id
         {
@@ -834,8 +986,9 @@ impl DeviceRow {
                     }
                     self.face_edits(&key, &guid, &target);
                 }
+                let stripped = self.release_strip(e);
                 let turned = self.turning.take_if(|(id, ..)| *id == e.id).is_some();
-                self.hold.take_if(|(id, ..)| *id == e.id).is_some() || turned
+                self.hold.take_if(|(id, ..)| *id == e.id).is_some() || turned || stripped
             }
             _ => false,
         };
@@ -849,6 +1002,7 @@ impl DeviceRow {
     fn strip(
         &self,
         scene: &mut Scene,
+        hits: &mut Hits,
         track: &daw_proto::Track,
         x: f64,
         top: f64,
@@ -893,6 +1047,7 @@ impl DeviceRow {
         let Some(strip) = strips.get(&track.guid) else {
             return 0.0;
         };
+        hits.strips.push((track.guid.clone(), x, top));
         let mixer = &strip.mixer;
         let width = mixer.content_width();
         let at = Affine::translate((x, top));
@@ -1721,7 +1876,7 @@ impl DeviceRow {
             };
             let strip_w = self.layout.width_of(widened(ret).width);
             if lane.sees(x, strip_w) {
-                self.strip(scene, ret, x, lane.top, lane.height);
+                self.strip(scene, hits, ret, x, lane.top, lane.height);
             }
             x += strip_w + GAP;
             if shut {
@@ -1751,7 +1906,7 @@ impl DeviceRow {
         hits.lanes.push((track.guid.clone(), top, height));
         // The track's own strip, standing still while its chain
         // scrolls past it.
-        let start = self.strip(scene, &track, 0.0, top, height) + GAP;
+        let start = self.strip(scene, hits, &track, 0.0, top, height) + GAP;
         // A phase is an edge and a tint, not a bar over it: the devices
         // get the height.
         let lane = Lane {
@@ -2153,5 +2308,111 @@ impl crate::web_host::Hosted for DeviceRow {
     }
     fn event(&mut self, event: &UiEvent) {
         DeviceRow::event(self, event);
+    }
+}
+
+#[cfg(test)]
+mod strip_tests {
+    use super::{DeviceRow, Shared};
+    use crate::mcp::Control;
+    use blitz_traits::events::{
+        BlitzPointerEvent, BlitzPointerId, Modifiers, MouseEventButton, MouseEventButtons, Point,
+        PointerCoords, PointerDetails, UiEvent,
+    };
+    use std::rc::Rc;
+
+    /// A mouse at a window point (whole pixels).
+    fn mouse((x, y): (f64, f64)) -> BlitzPointerEvent {
+        let whole = |v: f64| f32::from(u16::try_from(crate::num::index(v)).unwrap_or(0));
+        let (x, y) = (whole(x), whole(y));
+        BlitzPointerEvent {
+            id: BlitzPointerId::Mouse,
+            is_primary: true,
+            coords: PointerCoords {
+                page_x: x,
+                page_y: y,
+                screen_x: x,
+                screen_y: y,
+                client_x: x,
+                client_y: y,
+            },
+            button: MouseEventButton::Main,
+            buttons: MouseEventButtons::Primary,
+            mods: Modifiers::default(),
+            details: PointerDetails::default(),
+            element: Point { x, y },
+            active_pointers: std::sync::Arc::default(),
+        }
+    }
+
+    /// A row of one lane over two tracks, painted once so its strips are
+    /// where a press can find them.
+    fn row() -> DeviceRow {
+        let tracks: Vec<(daw_proto::Track, u32)> = (0..2)
+            .map(|i| {
+                (
+                    daw_proto::Track {
+                        guid: format!("t{i}"),
+                        name: format!("Track {i}"),
+                        selected: i == 0,
+                        volume: 0.5,
+                        ..daw_proto::Track::default()
+                    },
+                    0,
+                )
+            })
+            .collect();
+        let font = crate::text::Font::embedded().expect("the embedded font");
+        let mut row = DeviceRow::new(Rc::new(Shared::default()), tracks, 1, font);
+        row.watch = None;
+        let _ = row.paint_scene(
+            None,
+            1600,
+            u32::try_from(crate::num::index(super::LANE_H)).unwrap_or(400),
+            1.0,
+        );
+        row
+    }
+
+    /// The window point at the middle of the first lane strip's `control`.
+    fn at(row: &DeviceRow, control: Control) -> (f64, f64) {
+        let hits = row.hits.borrow();
+        let (guid, left, top) = hits.strips.first().expect("a strip drawn");
+        let strips = row.strips.borrow();
+        let mixer = &strips.get(guid).expect("its recording").mixer;
+        let (x0, ..) = mixer.strip_box(0).expect("its box");
+        let rect = mixer
+            .strip(0)
+            .and_then(|s| s.rect(control))
+            .expect("the control drawn");
+        (left + x0 + rect.center().x, top + rect.center().y)
+    }
+
+    fn track<'a>(row: &'a DeviceRow, guid: &str) -> &'a daw_proto::Track {
+        row.tracks
+            .iter()
+            .find(|t| t.guid == guid)
+            .expect("the track")
+    }
+
+    /// A click on a lane strip's mute mutes its track; a drag up its
+    /// fader raises it — the strip in the FX is the mixer's, to use.
+    #[test]
+    fn a_lane_strip_mutes_and_its_fader_moves() {
+        let mut row = row();
+        let guid = row.hits.borrow().strips[0].0.clone();
+        assert!(!track(&row, &guid).muted);
+
+        let mute = mouse(at(&row, Control::Mute));
+        row.event(&UiEvent::PointerDown(mute.clone()));
+        row.event(&UiEvent::PointerUp(mute));
+        assert!(track(&row, &guid).muted, "the mute is pressed");
+
+        let was = track(&row, &guid).volume;
+        let (x, y) = at(&row, Control::Volume);
+        row.event(&UiEvent::PointerDown(mouse((x, y))));
+        row.event(&UiEvent::PointerMove(mouse((x, y - 40.0))));
+        row.event(&UiEvent::PointerUp(mouse((x, y - 40.0))));
+        assert!(track(&row, &guid).volume > was, "the fader went up");
     }
 }

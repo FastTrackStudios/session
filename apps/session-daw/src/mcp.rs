@@ -1058,6 +1058,37 @@ pub fn control_at(mixer: &Mixer, row: usize, x: f64, y: f64) -> Option<Control> 
     mixer.strip(row)?.control_at(x, y)
 }
 
+/// Which control of `row`'s strip is at a content point (`x` from the
+/// strip's left, `y` from the mixer's top), `track` being what it shows.
+///
+/// A strip a theme drew is hit where the theme drew it (below the rack,
+/// which is still the painters'); the rest by the strip's own geometry.
+/// One answer for every view that shows a strip — the mixer and the FX.
+#[must_use]
+pub fn control_in(
+    mixer: &Mixer,
+    row: usize,
+    (palette, font): (&Palette, &Font),
+    track: &Track,
+    (x, y): (f64, f64),
+) -> Option<Control> {
+    let (_, width, height) = mixer.strip_box(row)?;
+    match mixer.themed(row) {
+        Some(theme) if y >= mixer.rack_h => {
+            let fields = crate::skin::fields(palette, track, mixer.shown(row, font));
+            theme
+                .hit(
+                    crate::skin::STRIP,
+                    (width, height - mixer.rack_h),
+                    &fields,
+                    vello::kurbo::Point::new(x, y - mixer.rack_h),
+                )
+                .and_then(|name| crate::skin::control(&name))
+        }
+        _ => control_at(mixer, row, x, y),
+    }
+}
+
 /// How far a strip may be lent down.
 ///
 /// Not to the absolute floor: to the bottom of the TIER it is already

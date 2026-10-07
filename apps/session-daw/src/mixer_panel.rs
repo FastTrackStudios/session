@@ -1143,23 +1143,16 @@ impl MixerWidget {
         let (content_x, content_y) = self.content(x, y);
         let mixer = self.mixer.as_ref()?;
         let row = mixer.strip_at(content_x)?;
-        let (left, width, height) = mixer.strip_box(row)?;
-        let control = match (mixer.themed(row), self.track_at(row)) {
-            // A theme's strip is hit where the theme drew it — below the
-            // rack, which is still the painters'.
-            (Some(theme), Some(track)) if content_y >= mixer.rack_h => {
-                let fields =
-                    crate::skin::fields(&self.palette, track, mixer.shown(row, &self.font));
-                theme
-                    .hit(
-                        crate::skin::STRIP,
-                        (width, height - mixer.rack_h),
-                        &fields,
-                        vello::kurbo::Point::new(content_x - left, content_y - mixer.rack_h),
-                    )
-                    .and_then(|name| crate::skin::control(&name))?
-            }
-            _ => crate::mcp::control_at(mixer, row, content_x - left, content_y)?,
+        let (left, _, _) = mixer.strip_box(row)?;
+        let control = match self.track_at(row) {
+            Some(track) => crate::mcp::control_in(
+                mixer,
+                row,
+                (&self.palette, &self.font),
+                track,
+                (content_x - left, content_y),
+            )?,
+            None => crate::mcp::control_at(mixer, row, content_x - left, content_y)?,
         };
         Some(Spot { row, control })
     }
@@ -2079,7 +2072,7 @@ const INSPECTOR_STRIP: u32 = 60;
 
 /// What an edit does to the track it names, predicted here rather than
 /// waited for (the engine is in-process but not instant).
-fn predict(tracks: &mut [daw_proto::Track], edit: &Edit) {
+pub(crate) fn predict(tracks: &mut [daw_proto::Track], edit: &Edit) {
     // Selection is of the set, not one track: the chosen one on, and —
     // unless added to — every other off.
     match edit {
