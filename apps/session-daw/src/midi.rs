@@ -90,6 +90,104 @@ impl Wave {
     }
 }
 
+/// One child item under a folded item (a shut folder's row): where it
+/// sits, and what it holds — see [`fold_waves`] and [`fold_notes`].
+pub struct Child<'a> {
+    /// Its position and length, in seconds.
+    pub at: f64,
+    pub length: f64,
+    /// Its waveform, if it is audio and its peaks are read.
+    pub wave: Option<&'a Wave>,
+    /// Its notes, if it is MIDI and they are read.
+    pub notes: Option<&'a [Note]>,
+}
+
+/// The most points a folded waveform holds, however long its span.
+const FOLDED_POINTS: usize = 1 << 16;
+
+/// A shut folder's item, `start..end` seconds, as the envelope of the
+/// audio under it: per point, the loudest of every child sounding there.
+///
+/// At the finest of the children's resolutions, so folding loses nothing
+/// a child showed open. `None` where no child under it has a waveform.
+#[must_use]
+pub fn fold_waves(start: f64, end: f64, children: &[Child<'_>]) -> Option<Wave> {
+    let waves: Vec<(f64, &Wave)> = children
+        .iter()
+        .filter_map(|c| {
+            c.wave
+                .filter(|w| w.step > 0.0 && !w.points.is_empty())
+                .map(|w| (c.at, w))
+        })
+        .collect();
+    let finest = waves
+        .iter()
+        .map(|(_, w)| w.step)
+        .fold(f64::INFINITY, f64::min);
+    let span = end - start;
+    if !finest.is_finite() || span <= 0.0 {
+        return None;
+    }
+    let count = crate::num::index((span / finest).ceil()).clamp(1, FOLDED_POINTS);
+    let step = span / crate::num::coord(count);
+    let points = (0..count)
+        .map(|k| {
+            let from = crate::num::coord(k).mul_add(step, start);
+            let to = from + step;
+            waves
+                .iter()
+                .fold((0.0_f32, 0.0_f32), |(max, min), (at, wave)| {
+                    if to <= *at {
+                        return (max, min);
+                    }
+                    // The child's points across `from..to` (`index` floors a
+                    // point before the child's start to its first).
+                    let first = crate::num::index((from - at) / wave.step);
+                    let last =
+                        crate::num::index(((to - at) / wave.step).ceil()).min(wave.points.len());
+                    wave.points
+                        .get(first..last.max(first))
+                        .unwrap_or_default()
+                        .iter()
+                        .fold((max, min), |(max, min), (hi, lo)| {
+                            (max.max(*hi), min.min(*lo))
+                        })
+                })
+        })
+        .collect();
+    Some(Wave { step, points })
+}
+
+/// A shut folder's item, `start..end` seconds, as the notes under it: each
+/// child's notes placed where they sound and cut to the span, as fractions
+/// of it. `None` where no child under it has notes there.
+#[must_use]
+pub fn fold_notes(start: f64, end: f64, children: &[Child<'_>]) -> Option<Vec<Note>> {
+    let span = end - start;
+    if span <= 0.0 {
+        return None;
+    }
+    let mut out = Vec::new();
+    for child in children {
+        for note in child.notes.unwrap_or_default() {
+            let from = f64::from(note.at).mul_add(child.length, child.at);
+            let to = f64::from(note.len).mul_add(child.length, from);
+            if to <= start || from >= end {
+                continue;
+            }
+            let (from, to) = (from.max(start), to.min(end));
+            out.push(Note {
+                at: crate::num::narrow((from - start) / span),
+                // Never zero: a note with no length cannot be seen.
+                len: crate::num::narrow((to - from) / span).max(f32::MIN_POSITIVE),
+                pitch: note.pitch,
+                velocity: note.velocity,
+            });
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 /// Samples per point a lane asks the engine for: about forty points a
 /// second at 44.1 kHz, finer than the pixels at the zoom a session opens
 /// at and coarse enough to fold from the peaks cache's mipmap rather
@@ -307,5 +405,96 @@ mod wave_tests {
             ..daw_proto::TakePeakData::default()
         };
         assert_eq!(Wave::from_peaks(&data), None);
+    }
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::{Child, Note, Wave, fold_notes, fold_waves};
+
+    fn flat(level: f32, points: usize) -> Wave {
+        Wave {
+            step: 0.1,
+            points: vec![(level, -level); points],
+        }
+    }
+
+    fn child<'a>(
+        at: f64,
+        length: f64,
+        wave: Option<&'a Wave>,
+        notes: Option<&'a [Note]>,
+    ) -> Child<'a> {
+        Child {
+            at,
+            length,
+            wave,
+            notes,
+        }
+    }
+
+    /// A shut folder's item is the loudest of the children sounding at
+    /// each moment, placed where each child sits — silent where none is.
+    #[test]
+    fn a_folded_wave_is_the_loudest_child_where_it_sounds() {
+        let quiet = flat(0.2, 10); // 0..1 s
+        let loud = flat(0.8, 10); // 2..3 s
+        let both = flat(0.5, 30); // 0..3 s
+        let wave = fold_waves(
+            0.0,
+            3.0,
+            &[
+                child(0.0, 1.0, Some(&quiet), None),
+                child(2.0, 1.0, Some(&loud), None),
+                child(0.0, 3.0, Some(&both), None),
+            ],
+        )
+        .expect("a wave");
+        let at = |secs: f64| wave.points[crate::num::index(secs / wave.step)];
+        let near = |got: f32, want: f32| (got - want).abs() < 1e-6;
+        assert!(
+            near(at(0.45).0, 0.5),
+            "the louder of the two over the first second"
+        );
+        assert!(near(at(1.5).0, 0.5), "only the long child in the middle");
+        let (max, min) = at(2.5);
+        assert!(
+            near(max, 0.8) && near(min, -0.8),
+            "the loud one where it sounds"
+        );
+        assert!(fold_waves(0.0, 1.0, &[child(0.0, 1.0, None, None)]).is_none());
+    }
+
+    /// Notes land where they sound in time, as fractions of the folded
+    /// span; a note outside it is left out, one across its edge is cut.
+    #[test]
+    fn folded_notes_land_where_they_sound() {
+        let notes = [
+            Note {
+                at: 0.0,
+                len: 0.25,
+                pitch: 60,
+                velocity: 100,
+            },
+            Note {
+                at: 0.5,
+                len: 0.25,
+                pitch: 64,
+                velocity: 100,
+            },
+        ];
+        // The child is 4 s long at 2 s: notes at 2..3 s and 4..5 s.
+        let folded = fold_notes(2.0, 6.0, &[child(2.0, 4.0, None, Some(&notes))]).expect("notes");
+        assert_eq!(folded.len(), 2);
+        assert!(
+            (folded[1].at - 0.5).abs() < 1e-6,
+            "4 s is half way through 2..6 s"
+        );
+        let cut = fold_notes(2.5, 4.0, &[child(2.0, 4.0, None, Some(&notes))]).expect("notes");
+        assert_eq!(cut.len(), 1, "the note at 4 s starts at the span's end");
+        assert!(
+            (cut[0].len - (0.5 / 1.5)).abs() < 1e-6,
+            "cut to its half inside"
+        );
     }
 }

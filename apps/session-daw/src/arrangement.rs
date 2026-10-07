@@ -713,6 +713,19 @@ impl Arrangement {
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         let mut y = 0.0_f64;
         let keys = keys_of(project);
+        // Every item by guid, for the shut folders' rows to find what is
+        // under them — built only when some folder is shut.
+        let by_guid: std::collections::HashMap<&str, &daw_proto::Item> = if project.folds.is_empty()
+        {
+            std::collections::HashMap::new()
+        } else {
+            project
+                .items
+                .values()
+                .flatten()
+                .map(|item| (item.guid.as_str(), item))
+                .collect()
+        };
         for (row, (track, depth)) in rows.iter().enumerate() {
             // A folder closes simply by the next row being shallower,
             // so the truncate IS the close.
@@ -800,37 +813,38 @@ impl Arrangement {
                 // block is drawn plain rather than filled with a fake
                 // shape, because a wrong picture that later corrects
                 // itself is worse than an honest empty one.
-                let wave = previews.wave(&item.guid);
-                match previews.get(&item.guid) {
-                    Some(notes) => {
-                        if let Some(roll) = midi_preview(&notes, x0, x1, top, bottom) {
-                            lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &roll);
-                            index.x.push((x0, x1));
-                        }
-                    }
-                    // Audio: the take's own peaks, once they have been
-                    // read — plain until then, for the same reason.
-                    None => {
-                        if let Some(wave) = wave
-                            .clone()
-                            .filter(|w| w.step > 0.0 && !w.points.is_empty())
-                        {
-                            // Over the body just recorded, drawn at replay.
-                            let body = command_index(&lanes).saturating_sub(1);
-                            index.waves.insert(
-                                body,
-                                LaneWave {
-                                    gain: wave_gain(&wave),
-                                    wave,
-                                    x0,
-                                    x1,
-                                    top,
-                                    bottom,
-                                    color,
-                                },
-                            );
-                        }
-                    }
+                //
+                // A shut folder's item holds what is under it: the
+                // children's audio as one envelope, their notes over it.
+                let (notes, wave) = folded_contents(project, &by_guid, previews, &item.guid)
+                    .unwrap_or_else(|| (previews.get(&item.guid), previews.wave(&item.guid)));
+                // Audio: the take's own peaks, once they have been read —
+                // plain until then, for the same reason.
+                if let Some(wave) = wave
+                    .clone()
+                    .filter(|w| w.step > 0.0 && !w.points.is_empty())
+                {
+                    // Over the body just recorded, drawn at replay.
+                    let body = command_index(&lanes).saturating_sub(1);
+                    index.waves.insert(
+                        body,
+                        LaneWave {
+                            gain: wave_gain(&wave),
+                            wave,
+                            x0,
+                            x1,
+                            top,
+                            bottom,
+                            color,
+                        },
+                    );
+                }
+                if let Some(roll) = notes
+                    .as_deref()
+                    .and_then(|notes| midi_preview(notes, x0, x1, top, bottom))
+                {
+                    lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &roll);
+                    index.x.push((x0, x1));
                 }
                 // The fades, as the part of the item they take away:
                 // the region over the gain curve, darkened, from each
@@ -1766,6 +1780,43 @@ const MIN_NOTE_SECS: f64 = 0.02;
 /// One path for every note, because a lane of a hundred notes is a
 /// hundred fills otherwise, and the index has to carry an extent per
 /// command.
+/// A shut folder's item's contents: its children's notes and envelope.
+type Held = (
+    Option<Vec<crate::midi::Note>>,
+    Option<std::sync::Arc<crate::midi::Wave>>,
+);
+
+/// What a shut folder's item `guid` holds — the notes and the envelope of
+/// the children under its span — or `None` when `guid` is not one.
+fn folded_contents(
+    project: &ProjectRef,
+    by_guid: &std::collections::HashMap<&str, &daw_proto::Item>,
+    previews: &crate::midi::Previews,
+    guid: &str,
+) -> Option<Held> {
+    let (folder, index) = daw_ui::studio::folded::parse_guid(guid)?;
+    let span = project.folds.get(folder)?.spans.get(index)?;
+    let held: Vec<_> = span
+        .from
+        .iter()
+        .filter_map(|child| by_guid.get(child.as_str()))
+        .map(|item| (item, previews.wave(&item.guid), previews.get(&item.guid)))
+        .collect();
+    let children: Vec<crate::midi::Child<'_>> = held
+        .iter()
+        .map(|(item, wave, notes)| crate::midi::Child {
+            at: item.position.as_seconds(),
+            length: item.length.as_seconds(),
+            wave: wave.as_deref(),
+            notes: notes.as_deref(),
+        })
+        .collect();
+    Some((
+        crate::midi::fold_notes(span.start, span.end, &children),
+        crate::midi::fold_waves(span.start, span.end, &children).map(std::sync::Arc::new),
+    ))
+}
+
 fn midi_preview(
     notes: &[crate::midi::Note],
     x0: f64,

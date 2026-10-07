@@ -454,7 +454,7 @@ impl Mixer {
             + f64::from(shared.input_band)
             + 4.0;
 
-        let mut strips = Scene::new();
+        let strips = Scene::new();
         let mut index = Vec::with_capacity(rows.len());
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         // Every strip's width, resolved together — an opened strip
