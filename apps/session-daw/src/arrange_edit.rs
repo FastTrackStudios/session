@@ -148,11 +148,19 @@ struct MarqueeDrag {
     base: HashSet<String>,
 }
 
+/// How near an area's edge, on screen, a press takes the edge.
+const RAZOR_EDGE_PX: f64 = 6.0;
+/// The narrowest an edge drag leaves an area, in seconds.
+const RAZOR_MIN_SECS: f64 = 0.01;
+
 /// The arrangement's editing state.
 #[derive(Debug, Default)]
 pub struct Editor {
     /// The zoom tool's drag, while `z` is held and the button is down.
     pub zoom: Option<ZoomTool>,
+    /// Pixels a second, as the window last drew: what tells a razor
+    /// area's edge from its body. Zero until drawn — no edges then.
+    pub pps: f64,
     /// A marquee across empty lanes, while the button is down.
     marquee: Option<MarqueeDrag>,
     /// The selected items, by guid.
@@ -184,24 +192,12 @@ pub struct Editor {
     razor_drag: Option<RazorDrag>,
 }
 
-/// A razor area under the hand.
-///
-/// One struct for drawing and for moving, because they are the same
-/// gesture with a different origin: drawing anchors the far corner at
-/// the press, moving carries a whole rectangle. `moving` says which,
-/// and is the index into the set so a move can take the original out
-/// rather than leaving a copy behind.
+/// A razor area under the hand: the Editor's razor gesture
+/// (`razor::RazorGesture` — drawing, moving, resizing an edge), with what
+/// only the arrangement adds to it.
 #[derive(Clone, Debug)]
 struct RazorDrag {
-    /// Where the press landed — the anchored corner when drawing, the
-    /// grab point when moving.
-    from: (f64, i32),
-    /// The area as it stands this frame.
-    area: RazorArea,
-    /// The area as it was at the press, for a move to be relative to.
-    was: RazorArea,
-    /// `Some(index)` when an existing area is being moved.
-    moving: Option<usize>,
+    gesture: razor::RazorGesture,
     /// Whether the edges land on the grid — resolved at the press and
     /// obeyed for the rest of the gesture, like every other drag here.
     snap: bool,
@@ -312,10 +308,23 @@ impl Editor {
     /// answers for itself (the same rule [`Self::press`] follows).
     #[must_use]
     pub fn context_at(&self, hit: Hit) -> input_config_proto::MouseModifierContext {
-        match Self::where_in_lanes(hit.target) {
-            Some((at, row)) if self.razor.at(at, row).is_some() => mousemap::RAZOR_AREA,
-            _ => hit.context,
+        let Some((at, row)) = Self::where_in_lanes(hit.target) else {
+            return hit.context;
+        };
+        match self.razor.at(at, row) {
+            // Within a few pixels of either end: the edge, as the
+            // Editor's razor has one.
+            Some((_, area)) if self.on_razor_edge(area, at) => mousemap::RAZOR_EDGE,
+            Some(_) => mousemap::RAZOR_AREA,
+            None => hit.context,
         }
+    }
+
+    /// Whether `at` is within reach of either edge of `area`, on screen.
+    fn on_razor_edge(&self, area: RazorArea, at: f64) -> bool {
+        self.pps > 0.0
+            && ((at - area.t0).abs() * self.pps <= RAZOR_EDGE_PX
+                || (at - area.t1).abs() * self.pps <= RAZOR_EDGE_PX)
     }
 
     /// The pointer went down on `hit`, with `keys` held. `true` if the
@@ -522,24 +531,28 @@ impl Editor {
         let Some((at, row)) = Self::where_in_lanes(hit.target) else {
             return false;
         };
-        // An area already under the pointer answers for itself.
+        // An area already under the pointer answers for itself: its body
+        // moves it, its edge resizes it.
         if let Some((index, area)) = self.razor.at(at, row) {
-            return match mousemap::resolve(mousemap::RAZOR_AREA, Gesture::Drag, keys).action {
-                mousemap::Action::MoveRazorArea => {
-                    self.razor_drag = Some(RazorDrag {
-                        from: (at, row),
-                        area,
-                        was: area,
-                        moving: Some(index),
-                        snap: mousemap::resolve(mousemap::RAZOR_AREA, Gesture::Drag, keys).snap,
-                        // A click on an area takes it out, which
-                        // `razor_released` does rather than this.
-                        on_click: None,
-                    });
-                    true
-                }
-                _ => false,
+            let bound = mousemap::resolve(self.context_at(hit), Gesture::Drag, keys);
+            let gesture = match bound.action {
+                mousemap::Action::MoveRazorArea => razor::RazorGesture::grab(index, area, at, row),
+                mousemap::Action::ResizeRazorArea => razor::RazorGesture::edge(
+                    index,
+                    area,
+                    razor::RazorGesture::nearer_start(area, at),
+                    RAZOR_MIN_SECS,
+                ),
+                _ => return false,
             };
+            self.razor_drag = Some(RazorDrag {
+                gesture,
+                snap: bound.snap,
+                // A click on an area takes it out, which the gesture's
+                // release does rather than this.
+                on_click: None,
+            });
+            return true;
         }
         let bound = mousemap::resolve(hit.context, Gesture::Drag, keys);
         if bound.action != mousemap::Action::RazorArea {
@@ -548,12 +561,8 @@ impl Editor {
         // Zero-width until the pointer moves. An area that sprang into
         // existence a beat wide on mousedown would be a click that
         // edits, and a razor is never that.
-        let area = RazorArea::new(at, at, row, row);
         self.razor_drag = Some(RazorDrag {
-            from: (at, row),
-            area,
-            was: area,
-            moving: None,
+            gesture: razor::RazorGesture::draw(at, row),
             snap: bound.snap,
             on_click: Self::click_instead(hit, at, keys, scene),
         });
@@ -608,20 +617,7 @@ impl Editor {
                 t
             }
         };
-        let was = drag.area;
-        drag.area = match drag.moving {
-            // Drawing: the press is one corner, the pointer the other.
-            None => RazorArea::new(snapped(drag.from.0), snapped(at), drag.from.1, row),
-            // Moving: the whole rectangle travels, keeping its size.
-            // Measured from where it WAS rather than from the last
-            // frame, so a slow drag and a fast one land in the same
-            // place.
-            Some(_) => {
-                let dt = snapped(at) - snapped(drag.from.0);
-                drag.was.translated(dt, row - drag.from.1)
-            }
-        };
-        drag.area != was
+        drag.gesture.moved(at, row, snapped)
     }
 
     /// The marquee follows the pointer, to `seconds` and the height `y`
@@ -709,36 +705,17 @@ impl Editor {
     /// Whether a razor drag is in flight, and the area it would leave.
     #[must_use]
     pub fn razor_in_flight(&self) -> Option<RazorArea> {
-        self.razor_drag.as_ref().map(|drag| drag.area)
+        self.razor_drag.as_ref().map(|drag| drag.gesture.area)
     }
 
-    /// The razor drag let go of. `true` when the set changed.
+    /// The razor drag let go of. `true` when the set changed: an area
+    /// drawn, moved or resized, or a grab that went nowhere — a click,
+    /// which takes the area out.
     fn razor_released(&mut self) -> bool {
         let Some(drag) = self.razor_drag.take() else {
             return false;
         };
-        // A press that never became a drag is a click, and a click on an
-        // area takes it out. On empty ground it is nothing — the press
-        // already did what a click there means.
-        if drag.area.is_empty() && drag.moving.is_none() {
-            return false;
-        }
-        if let Some(index) = drag.moving {
-            // Out before in, so `add`'s merging sees the set WITHOUT
-            // the area being moved. Leaving it in would merge the area
-            // with the hole it came from and undo the move.
-            if index < self.razor.areas.len() {
-                self.razor.areas.remove(index);
-            }
-            // A grab that went nowhere was a click, and a click on an
-            // area takes it out — the table says so, and it is the only
-            // way to be rid of one area without losing the rest.
-            if drag.area == drag.was {
-                return true;
-            }
-        }
-        self.razor.add(drag.area);
-        true
+        drag.gesture.release(&mut self.razor) != razor::Released::Nothing
     }
 
     /// The pointer moved to the time `at` (if it is over the timeline).
@@ -866,7 +843,7 @@ impl Editor {
         // still zero-wide means the press never became a drag, and then
         // the gesture was the click the press was also standing in for.
         if let Some(drag) = self.razor_drag.take() {
-            if drag.moving.is_some() || !drag.area.is_empty() {
+            if drag.gesture.grab != razor::Grab::Draw || !drag.gesture.area.is_empty() {
                 self.razor_drag = Some(drag);
                 return self.razor_released();
             }
@@ -2794,6 +2771,28 @@ mod tests {
                 .any(|e| matches!(e, Effect::Transport(Move::Seek, at) if (at - 8.0).abs() < 1e-9)),
             "and moves the cursor"
         );
+    }
+
+    /// A razor area's edge resizes it, as the Editor's does: the edge
+    /// under the press moves, the other stays; its body still moves it.
+    #[test]
+    fn a_razor_areas_edge_resizes_it() {
+        let mut s = Stage::new();
+        s.razor((0, 2.0), (0, 4.0));
+        assert_eq!(s.editor.razor.areas, vec![RazorArea::new(2.0, 4.0, 0, 0)]);
+        s.editor.pps = PPS;
+        // On the end edge: the resize glyph's context, then a drag.
+        let (x, y) = s.point(0, 4.0, 15.0);
+        assert_eq!(s.editor.context_at(s.hit(x, y)), mousemap::RAZOR_EDGE);
+        assert!(s.press(x, y, Mods::default()).0);
+        s.editor.razor_moved(6.0, 0, s.project.bpm);
+        let mut effects = Vec::new();
+        s.editor
+            .release(Some(6.0), Mods::default(), &mut s.project, &mut effects);
+        assert_eq!(s.editor.razor.areas, vec![RazorArea::new(2.0, 6.0, 0, 0)]);
+        // Mid-body is still the area, which a drag moves.
+        let (x, y) = s.point(0, 4.0, 15.0);
+        assert_eq!(s.editor.context_at(s.hit(x, y)), mousemap::RAZOR_AREA);
     }
 
     #[test]

@@ -1746,6 +1746,9 @@ impl ArrangementWidget {
         // the touch zoom.
         let scaled = in_units(event, self.ui.get());
         let event = &scaled;
+        // The zoom the event is read at: what tells a razor area's edge
+        // from its body (`arrange_edit::Editor::pps`).
+        self.editor.pps = self.viewport(self.size.0, self.size.1).pps;
         // What a press here would do, asked BEFORE the press is taken: a
         // razor starts as an area under the pointer, which would then
         // answer as the area rather than as the razor being drawn.

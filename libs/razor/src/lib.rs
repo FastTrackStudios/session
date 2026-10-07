@@ -167,9 +167,168 @@ impl RazorSet {
     }
 }
 
+/// What a razor gesture took hold of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grab {
+    /// Nothing: a new area, drawn from the press.
+    Draw,
+    /// The area at `index` in the set, whole.
+    Move { index: usize },
+    /// One edge of the area at `index` — its start, or its end.
+    Edge { index: usize, start: bool },
+}
+
+/// How a razor gesture ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Released {
+    /// It never became anything: a press that drew nothing.
+    Nothing,
+    /// The set changed: an area drawn, moved or resized.
+    Changed,
+    /// An area was taken out: a grab that went nowhere is a click, and a
+    /// click on an area removes it.
+    Removed,
+}
+
+/// A razor gesture: drawing, moving or resizing an area — the same hand
+/// over notes and over items.
+///
+/// Geometry only. What happens to whatever is inside the area as it
+/// moves is the surface's: the arrangement carries the rectangle, the
+/// Editor can carry its notes, copy them, stretch them. Each asks this
+/// where the area is now, and does its own verb with the answer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RazorGesture {
+    /// Where the press landed: the anchored corner when drawing, the grab
+    /// point when moving.
+    pub from: (f64, i32),
+    /// The area as it stands now.
+    pub area: RazorArea,
+    /// The area as it was at the press: a move and a resize are relative
+    /// to it, so a slow drag and a fast one land in the same place.
+    pub was: RazorArea,
+    pub grab: Grab,
+    /// The narrowest an edge drag may leave the area.
+    min_width: f64,
+}
+
+impl RazorGesture {
+    /// Drawing a new area from `(t, row)`. Zero-wide until the pointer
+    /// moves: an area that sprang into existence on a press would be a
+    /// click that edits, and a razor never is.
+    #[must_use]
+    pub fn draw(t: f64, row: i32) -> Self {
+        let area = RazorArea::new(t, t, row, row);
+        Self {
+            from: (t, row),
+            area,
+            was: area,
+            grab: Grab::Draw,
+            min_width: 0.0,
+        }
+    }
+
+    /// Moving the area `index` (`area` as it is) from `(t, row)`.
+    #[must_use]
+    pub const fn grab(index: usize, area: RazorArea, t: f64, row: i32) -> Self {
+        Self {
+            from: (t, row),
+            area,
+            was: area,
+            grab: Grab::Move { index },
+            min_width: 0.0,
+        }
+    }
+
+    /// Resizing the area `index` by its start or end edge, never narrower
+    /// than `min_width`.
+    #[must_use]
+    pub const fn edge(index: usize, area: RazorArea, start: bool, min_width: f64) -> Self {
+        let t = if start { area.t0 } else { area.t1 };
+        Self {
+            from: (t, area.row_lo),
+            area,
+            was: area,
+            grab: Grab::Edge { index, start },
+            min_width,
+        }
+    }
+
+    /// The edge nearer `t` of `area`: `true` for its start.
+    #[must_use]
+    pub fn nearer_start(area: RazorArea, t: f64) -> bool {
+        (t - area.t0).abs() <= (t - area.t1).abs()
+    }
+
+    /// The pointer at `(t, row)`, every time snapped by `snap`. `true`
+    /// when the area changed.
+    pub fn moved(&mut self, t: f64, row: i32, snap: impl Fn(f64) -> f64) -> bool {
+        let before = self.area;
+        let was = self.was;
+        self.area = match self.grab {
+            // Drawing: the press is one corner, the pointer the other.
+            Grab::Draw => RazorArea::new(snap(self.from.0), snap(t), self.from.1, row),
+            // Moving: the whole rectangle travels, keeping its size.
+            Grab::Move { .. } => {
+                let dt = snap(t) - snap(self.from.0);
+                was.translated(dt, row.saturating_sub(self.from.1))
+            }
+            // Resizing: the dragged edge, which may not cross the fixed
+            // one — an inverted area is not a smaller area, it is a
+            // broken one.
+            Grab::Edge { start: true, .. } => RazorArea::new(
+                snap(t).min(was.t1 - self.min_width),
+                was.t1,
+                was.row_lo,
+                was.row_hi,
+            ),
+            Grab::Edge { start: false, .. } => RazorArea::new(
+                was.t0,
+                snap(t).max(was.t0 + self.min_width),
+                was.row_lo,
+                was.row_hi,
+            ),
+        };
+        self.area != before
+    }
+
+    /// How far the area has travelled from where it was: `(time, rows)`.
+    #[must_use]
+    pub const fn delta(&self) -> (f64, i32) {
+        (
+            self.area.t0 - self.was.t0,
+            self.area.row_lo.saturating_sub(self.was.row_lo),
+        )
+    }
+
+    /// Let go, into `set`.
+    pub fn release(self, set: &mut RazorSet) -> Released {
+        match self.grab {
+            Grab::Draw if self.area.is_empty() => Released::Nothing,
+            Grab::Draw => {
+                set.add(self.area);
+                Released::Changed
+            }
+            Grab::Move { index } | Grab::Edge { index, .. } => {
+                // Out before in, so `add`'s merging sees the set WITHOUT
+                // the area being moved; left in, it would merge with the
+                // hole it came from and undo the move.
+                if index < set.areas.len() {
+                    set.areas.remove(index);
+                }
+                if matches!(self.grab, Grab::Move { .. }) && self.area == self.was {
+                    return Released::Removed;
+                }
+                set.add(self.area);
+                Released::Changed
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{RazorArea, RazorSet};
+    use super::{Grab, RazorArea, RazorGesture, RazorSet, Released};
 
     #[test]
     fn an_area_is_normalised_whichever_way_it_was_drawn() {
@@ -237,5 +396,64 @@ mod tests {
         set.add(RazorArea::new(0.0, 2.0, 0, 0));
         set.add(RazorArea::new(0.0, 3.0, 1, 1));
         assert!((set.total_span() - 5.0).abs() < f64::EPSILON);
+    }
+
+    fn on_the_beat(t: f64) -> f64 {
+        (t / 0.5).round() * 0.5
+    }
+
+    /// Drawing anchors the press, snaps both ends, spans the rows.
+    #[test]
+    fn a_draw_spans_from_the_press_to_the_pointer() {
+        let mut g = RazorGesture::draw(1.1, 2);
+        assert!(g.area.is_empty(), "nothing until it moves");
+        assert!(g.moved(2.9, 4, on_the_beat));
+        assert_eq!(g.area, RazorArea::new(1.0, 3.0, 2, 4));
+        let mut set = RazorSet::default();
+        assert_eq!(g.release(&mut set), Released::Changed);
+        assert_eq!(set.areas, vec![RazorArea::new(1.0, 3.0, 2, 4)]);
+        let still = RazorGesture::draw(1.0, 0);
+        assert_eq!(still.release(&mut set), Released::Nothing);
+    }
+
+    /// A move carries the rectangle, relative to where it was; a grab
+    /// that went nowhere takes the area out.
+    #[test]
+    fn a_move_carries_the_area_and_a_still_grab_removes_it() {
+        let area = RazorArea::new(2.0, 4.0, 1, 1);
+        let mut set = RazorSet { areas: vec![area] };
+        let mut g = RazorGesture::grab(0, area, 3.0, 1);
+        g.moved(4.0, 3, |t| t);
+        assert_eq!(g.area, RazorArea::new(3.0, 5.0, 3, 3));
+        assert_eq!(g.delta(), (1.0, 2));
+        assert_eq!(g.release(&mut set), Released::Changed);
+        assert_eq!(set.areas, vec![RazorArea::new(3.0, 5.0, 3, 3)]);
+        let still = RazorGesture::grab(0, set.areas[0], 4.0, 3);
+        assert_eq!(still.release(&mut set), Released::Removed);
+        assert!(set.is_empty());
+    }
+
+    /// An edge moves alone and never crosses the other.
+    #[test]
+    fn an_edge_resizes_and_never_crosses() {
+        let area = RazorArea::new(2.0, 4.0, 0, 1);
+        let mut end = RazorGesture::edge(0, area, false, 0.25);
+        end.moved(6.2, 9, on_the_beat);
+        assert_eq!(end.area, RazorArea::new(2.0, 6.0, 0, 1), "rows stay");
+        end.moved(0.0, 0, on_the_beat);
+        assert_eq!(
+            end.area,
+            RazorArea::new(2.0, 2.25, 0, 1),
+            "not past the start"
+        );
+        let mut start = RazorGesture::edge(0, area, true, 0.25);
+        start.moved(1.0, 0, |t| t);
+        assert_eq!(start.area, RazorArea::new(1.0, 4.0, 0, 1));
+        assert!(RazorGesture::nearer_start(area, 2.4));
+        assert!(!RazorGesture::nearer_start(area, 3.6));
+        let mut set = RazorSet { areas: vec![area] };
+        assert_eq!(start.release(&mut set), Released::Changed);
+        assert_eq!(set.areas, vec![RazorArea::new(1.0, 4.0, 0, 1)]);
+        let _ = Grab::Draw;
     }
 }

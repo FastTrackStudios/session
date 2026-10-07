@@ -85,8 +85,10 @@ pub enum Action {
     MarqueeAdd,
     /// Draw a razor area out of the drag.
     RazorArea,
-    /// Move a razor area already drawn, by its edge or its middle.
+    /// Move a razor area already drawn, by its middle.
     MoveRazorArea,
+    /// Resize a razor area by one edge.
+    ResizeRazorArea,
     /// Take a razor area out of the set.
     RemoveRazorArea,
     /// Nothing bound here.
@@ -102,6 +104,9 @@ pub enum Action {
 /// click, area edge — so the shape matches what a profile will
 /// eventually load into.
 pub const RAZOR_AREA: Context = Context::Custom("razor-area");
+
+/// The context for a razor area's edge — the Editor's `RazorEdge`.
+pub const RAZOR_EDGE: Context = Context::Custom("razor-edge");
 
 /// The FTS default: what each context does under each gesture.
 ///
@@ -161,7 +166,10 @@ fn verb(context: Context, gesture: Gesture, mods: Mods) -> Action {
         // click takes it out. No modifier on either — by the time the
         // pointer is over an area there is nothing else it could mean.
         (RAZOR_AREA, G::Drag) => Action::MoveRazorArea,
-        (RAZOR_AREA, G::Click) => Action::RemoveRazorArea,
+        // Its edge resizes it, the other edge staying put.
+        (RAZOR_EDGE, G::Drag) => Action::ResizeRazorArea,
+        // A click on either takes the area out.
+        (RAZOR_AREA | RAZOR_EDGE, G::Click) => Action::RemoveRazorArea,
         // The ruler: a click places the cursor, a drag selects time.
         (Context::Ruler, G::Click) => Action::SetEditCursor,
         (Context::Ruler, G::Drag) => Action::TimeSelection,

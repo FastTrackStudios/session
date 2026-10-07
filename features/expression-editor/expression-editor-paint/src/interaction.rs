@@ -538,7 +538,7 @@ fn resolve_razor(
     // In pixels, so the threshold means the same thing at every zoom.
     // A time threshold would be unreachable when zoomed out and
     // trivially exceeded when zoomed in.
-    if (current.0 - origin.0).abs() < 3.0 {
+    if (current.0 - origin.0).abs() < view_gestures::SLOP {
         return None;
     }
     let t0 = ed.camera.t_at(origin.0);
@@ -546,13 +546,18 @@ fn resolve_razor(
     let r0 = ed.camera.pitch_at(origin.1, ed.viewport).round() as i32;
     let r1 = ed.camera.pitch_at(current.1, ed.viewport).round() as i32;
     // Shift is the escape from the grid, matching every other snapped
-    // gesture on the surface.
-    let (t0, t1) = if ed.grid.enabled && !mods.shift {
-        (ed.snap_time(t0), ed.snap_time(t1))
-    } else {
-        (t0, t1)
+    // gesture on the surface. The geometry is the arrangement's razor
+    // too (`razor::RazorGesture`).
+    let snap = |t: f64| {
+        if ed.grid.enabled && !mods.shift {
+            ed.snap_time(t)
+        } else {
+            t
+        }
     };
-    let area = RazorArea::new(t0, t1, r0, r1);
+    let mut gesture = razor::RazorGesture::draw(t0, r0);
+    gesture.moved(t1, r1, snap);
+    let area = gesture.area;
     // Snapping can collapse a short sweep onto one grid line. That is a
     // real outcome of the gesture, not an error, but an empty area is
     // still nothing worth committing or drawing.
@@ -1995,19 +2000,18 @@ pub fn pointer_move(ed: &mut Editor, drag: &mut Drag, x: f64, y: f64, mods: Mods
             base,
         } => {
             let area = *base;
-            let raw = ed.camera.t_at(x);
-            let t = if ed.grid.enabled && !mods.shift {
-                ed.snap_time(raw)
-            } else {
-                raw
+            // The arrangement's razor edge too (`razor::RazorGesture`):
+            // the dragged edge, never across the fixed one.
+            let snap = |t: f64| {
+                if ed.grid.enabled && !mods.shift {
+                    ed.snap_time(t)
+                } else {
+                    t
+                }
             };
-            // The dragged edge may not cross the fixed one; an inverted
-            // area is not a smaller area, it is a broken one.
-            let next = if *start_edge {
-                RazorArea::new(t.min(area.t1 - 1.0), area.t1, area.row_lo, area.row_hi)
-            } else {
-                RazorArea::new(area.t0, t.max(area.t0 + 1.0), area.row_lo, area.row_hi)
-            };
+            let mut gesture = razor::RazorGesture::edge(*index, area, *start_edge, 1.0);
+            gesture.moved(ed.camera.t_at(x), area.row_lo, snap);
+            let next = gesture.area;
             if *stretch {
                 // Same reason as the move above: `stretch_contents`
                 // carves, so re-running it against an already-stretched

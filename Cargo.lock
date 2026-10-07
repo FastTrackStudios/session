@@ -5734,6 +5734,7 @@ dependencies = [
  "kurbo 0.13.1",
  "parley 0.10.0",
  "peniko 0.6.1",
+ "razor",
  "tracing",
  "view-gestures",
 ]
