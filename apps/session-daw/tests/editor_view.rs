@@ -231,7 +231,10 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
         let _ = widget.frame(1200, 700, 1.0);
-        if widget.editor().is_some_and(|e| e.item() == Some(arp.as_str())) {
+        if widget
+            .editor()
+            .is_some_and(|e| e.item() == Some(arp.as_str()))
+        {
             break;
         }
         assert!(
@@ -240,7 +243,10 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert!(!widget.editor().expect("landed").stacked(), "a MIDI item, on the roll");
+    assert!(
+        !widget.editor().expect("landed").stacked(),
+        "a MIDI item, on the roll"
+    );
 }
 
 fn song_of(project: &daw_ui::studio::project::Project) -> session_daw::editor_view::Song {

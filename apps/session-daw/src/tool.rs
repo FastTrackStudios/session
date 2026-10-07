@@ -191,7 +191,8 @@ fn dragging(action: Action, edge: Edge) -> Shape {
         Action::MoveItem | Action::MoveRazorArea => icon(CursorIcon::Move),
         Action::CopyItem => icon(CursorIcon::Copy),
         Action::SlipItem => icon(CursorIcon::EwResize),
-        Action::RazorArea => icon(CursorIcon::Crosshair),
+        // The Editor's razor: the same blade cuts in both.
+        Action::RazorArea => Shape::Glyph(Glyph::Editor(Cursor::Razor)),
         Action::SetEditCursor
         | Action::TimeSelection
         | Action::SelectItem
@@ -257,7 +258,7 @@ mod tests {
         );
         assert_eq!(
             icon_for(Tool::Map, None, body, CTRL),
-            Shape::Icon(CursorIcon::Crosshair)
+            Shape::Glyph(Glyph::Editor(Cursor::Razor))
         );
         let chord = Mods {
             shift: false,
@@ -271,7 +272,7 @@ mod tests {
         let empty = Over::Map(Context::ArrangeView, Edge::Plain);
         assert_eq!(
             icon_for(Tool::Map, None, empty, CTRL),
-            Shape::Icon(CursorIcon::Crosshair)
+            Shape::Glyph(Glyph::Editor(Cursor::Razor))
         );
     }
 

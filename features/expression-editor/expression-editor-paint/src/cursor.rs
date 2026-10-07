@@ -156,7 +156,9 @@ pub fn hotspot(cursor: Cursor) -> (f64, f64) {
         | Cursor::RazorEdge => (c, c),
         // Tip-anchored: the drawing tools aim with their point, which is
         // drawn at the bottom-left of the box.
-        Cursor::Pencil | Cursor::Curve | Cursor::Brush | Cursor::Razor => (2.0, SIZE - 2.0),
+        Cursor::Pencil | Cursor::Curve | Cursor::Brush => (2.0, SIZE - 2.0),
+        // The razor cuts where its line crosses its bar: the centre.
+        Cursor::Razor => (c, c),
         // Everything else aims from its top-left, like an arrow.
         _ => (2.0, 2.0),
     }
@@ -369,14 +371,35 @@ fn shape(scene: &mut Scene, cursor: Cursor, at: Affine, color: Color, w: f64) {
             }
         }
         Cursor::Razor => {
-            // A blade: the rectangle is the handle, the line is the cut.
-            scene.stroke(&s, at, color, None, &Rect::new(6.0, 4.0, SIZE - 3.0, 11.0));
+            // The cut first: a line down through the hotspot, the time it
+            // cuts at, crossed by a short bar so the eye finds the point.
+            scene.stroke(&s, at, color, None, &Line::new((c, c - 9.0), (c, c + 9.0)));
+            scene.stroke(&s, at, color, None, &Line::new((c - 3.5, c), (c + 3.5, c)));
+            // Then the blade, up and to the right of it, clear of the
+            // cut: a double-edged blade, its slot down the middle.
+            // The notches in its short ends are what make it read as a
+            // blade rather than a pill.
+            let (l, r, t, b) = (c + 3.0, c + 12.5, c - 11.5, c - 4.5);
+            let mid = (t + b) * 0.5;
+            let mut blade = BezPath::new();
+            blade.move_to((l, t));
+            blade.line_to((r, t));
+            blade.line_to((r, mid - 1.5));
+            blade.line_to((r - 1.8, mid));
+            blade.line_to((r, mid + 1.5));
+            blade.line_to((r, b));
+            blade.line_to((l, b));
+            blade.line_to((l, mid + 1.5));
+            blade.line_to((l + 1.8, mid));
+            blade.line_to((l, mid - 1.5));
+            blade.close_path();
+            scene.stroke(&s, at, color, None, &blade);
             scene.stroke(
                 &s,
                 at,
                 color,
                 None,
-                &Line::new(Point::new(2.0, SIZE - 2.0), Point::new(SIZE - 3.0, 11.0)),
+                &Line::new((l + 3.5, mid), (r - 3.5, mid)),
             );
         }
 

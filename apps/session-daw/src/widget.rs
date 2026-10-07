@@ -3059,7 +3059,12 @@ mod tests {
             "{:?}",
             widget.pointing.borrow().over
         );
-        assert_eq!(widget.pointing.borrow().icon(), icon(CursorIcon::Crosshair));
+        assert_eq!(
+            widget.pointing.borrow().icon(),
+            crate::window_cursor::Shape::Glyph(crate::window_cursor::Glyph::Editor(
+                expression_editor_core::cursor::Cursor::Razor
+            ))
+        );
     }
 
     /// `z` then `t`, with a track selected: the popup shows, then goes,
