@@ -76,22 +76,41 @@ impl Song {
     /// first item as audio.
     fn first_midi(&self, track: &daw_proto::Track) -> Option<Target> {
         let items = self.items.get(&track.guid)?;
-        items
+        let item = items
             .iter()
             .find(|i| self.midi.contains(&i.guid))
-            .or_else(|| items.first())
-            .map(|item| Target {
-                audio: !self.midi.contains(&item.guid),
-                volume: item.volume,
-                name: track.name.clone(),
-                takes: Vec::new(),
-                track: track.guid.clone(),
-                item: item.guid.clone(),
-                drums: self.is_drums(track),
-                bpm: self.bpm,
-                length: item.length.as_seconds(),
-                start: item.position.as_seconds(),
-            })
+            .or_else(|| items.first())?;
+        Some(self.target_of(track, item))
+    }
+
+    /// The item `guid`, wherever it is, as the editor's target: what a
+    /// click on it in the arrangement opens.
+    #[must_use]
+    pub fn item(&self, guid: &str) -> Option<Target> {
+        self.tracks.iter().find_map(|track| {
+            let item = self
+                .items
+                .get(&track.guid)?
+                .iter()
+                .find(|i| i.guid == guid)?;
+            Some(self.target_of(track, item))
+        })
+    }
+
+    /// `item` on `track`, as a target.
+    fn target_of(&self, track: &daw_proto::Track, item: &daw_proto::Item) -> Target {
+        Target {
+            audio: !self.midi.contains(&item.guid),
+            volume: item.volume,
+            name: track.name.clone(),
+            takes: Vec::new(),
+            track: track.guid.clone(),
+            item: item.guid.clone(),
+            drums: self.is_drums(track),
+            bpm: self.bpm,
+            length: item.length.as_seconds(),
+            start: item.position.as_seconds(),
+        }
     }
 
     /// Whether `track` is a drum's: by its name, or by a folder it is in
@@ -223,6 +242,38 @@ impl Song {
     }
 }
 
+/// The item last clicked in the arrangement, and how many clicks there
+/// have been: the Editor opens what you click, as REAPER's does. Written
+/// by the arrangement ([`picked`]), read by the Editor each frame.
+static PICKED: std::sync::Mutex<(u64, Option<String>)> = std::sync::Mutex::new((0, None));
+
+/// The arrangement picked `item` (a plain click selects it alone).
+pub fn picked(item: &str) {
+    let mut slot = PICKED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    slot.0 = slot.0.wrapping_add(1);
+    slot.1 = Some(item.to_owned());
+}
+
+/// How many items have been picked.
+fn picked_count() -> u64 {
+    PICKED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .0
+}
+
+/// The item picked since `seen`, with the count it was picked at.
+fn picked_since(seen: u64) -> Option<(u64, String)> {
+    let slot = PICKED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    (slot.0 != seen)
+        .then(|| slot.1.clone().map(|g| (slot.0, g)))
+        .flatten()
+}
+
 /// The Editor view, on the session's selected track.
 #[component]
 pub fn EditorPanel() -> Element {
@@ -280,6 +331,8 @@ pub struct EditorView {
     /// window and two saves never land out of order.
     saver: Option<tokio::sync::mpsc::UnboundedSender<(String, Content)>>,
     dirty: bool,
+    /// The last item click followed ([`picked`]'s count).
+    picked_seen: u64,
     /// The stack's takes, first the one the others line up on.
     takes: Vec<Take>,
     /// An alignment on the engine's runtime, landing on a later frame.
@@ -435,6 +488,7 @@ impl EditorView {
             failed: false,
             saver: saver(),
             dirty: true,
+            picked_seen: picked_count(),
             takes: Vec::new(),
             aligning: None,
             cursor: None,
@@ -706,6 +760,13 @@ impl EditorView {
     /// MIDI item is the editor's next item (a track with none leaves it
     /// where it is). `true` when the item changed.
     fn follow(&mut self) -> bool {
+        // An item clicked in the arrangement: that item, MIDI or audio.
+        if let Some((count, guid)) = picked_since(self.picked_seen) {
+            self.picked_seen = count;
+            if let Some(next) = self.song.item(&guid) {
+                return self.retarget(next);
+            }
+        }
         let mut events = std::mem::take(&mut *self.pending.borrow_mut());
         if let Some(watch) = &self.watch {
             events.extend(watch.drain());
@@ -719,6 +780,11 @@ impl EditorView {
         let Some(next) = self.song.selected() else {
             return false;
         };
+        self.retarget(next)
+    }
+
+    /// Move the editor onto `next`, unless it is already there.
+    fn retarget(&mut self, next: Target) -> bool {
         if self.target.as_ref().is_some_and(|t| t.item == next.item) {
             return false;
         }
@@ -750,6 +816,9 @@ impl EditorView {
 
     /// Whether the engine has said anything since the last frame.
     fn heard(&self) -> bool {
+        if picked_count() != self.picked_seen {
+            return true;
+        }
         let Some(watch) = &self.watch else {
             return false;
         };

@@ -1437,7 +1437,13 @@ impl ArrangementWidget {
         let mut recut = false;
         for effect in effects {
             match effect {
-                Effect::Send(edit) => self.edits.borrow_mut().push(edit),
+                Effect::Send(edit) => {
+                    // A plain click on an item: the Editor follows it.
+                    if let crate::engine::Edit::SelectItem(item, true) = &edit {
+                        crate::editor_view::picked(item);
+                    }
+                    self.edits.borrow_mut().push(edit);
+                }
                 Effect::ReRecord => recut = true,
                 // Straight to the engine, fire and forget, as the
                 // painted window does: dropping this is why space did

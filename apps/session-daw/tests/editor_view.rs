@@ -215,6 +215,32 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
     let view = widget.editor().expect("landed");
     assert!(view.stacked(), "the takes are stacked");
     assert_eq!(view.editor.tracks.len(), 2, "a lane a take");
+
+    // An item clicked in the arrangement: the Editor moves onto it, the
+    // way REAPER's MIDI editor follows the item selection.
+    let arp = project
+        .tracks
+        .iter()
+        .find(|t| t.name == "Arp")
+        .and_then(|t| project.items.get(&t.guid))
+        .and_then(|items| items.iter().find(|i| project.midi.contains(&i.guid)))
+        .expect("an Arp MIDI item")
+        .guid
+        .clone();
+    session_daw::editor_view::picked(&arp);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let _ = widget.frame(1200, 700, 1.0);
+        if widget.editor().is_some_and(|e| e.item() == Some(arp.as_str())) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the Editor never followed the click"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(!widget.editor().expect("landed").stacked(), "a MIDI item, on the roll");
 }
 
 fn song_of(project: &daw_ui::studio::project::Project) -> session_daw::editor_view::Song {
