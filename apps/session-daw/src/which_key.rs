@@ -68,10 +68,14 @@ pub fn Panel(showing: Option<WhichKey>, colors: daw_ui::studio::lanes::Colors) -
             (entry.key, label, ink)
         })
         .collect();
+    let bottom = crate::shell::BOTTOM_H + 16.0;
     rsx! {
         div {
             "data-testid": "which-key",
-            style: "display:{display}; position:absolute; right:22px; bottom:22px; \
+            // The window's corner, not the arrangement's: the popup sits
+            // in the same place whichever pane the keys are typed over,
+            // and clear of the bottom bar.
+            style: "display:{display}; position:fixed; right:22px; bottom:{bottom}px; z-index:50; \
                     min-width:240px; padding:6px 0; border-radius:6px; \
                     border:1px solid {colors.divider}; background:{colors.surface}; \
                     color:{colors.text}; font-size:12px; \
