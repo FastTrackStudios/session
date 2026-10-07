@@ -80,10 +80,18 @@ pub enum Drag {
     Pan {
         last: (f64, f64),
     },
+    /// The ruler, swept: a time selection from `from` (where the press
+    /// put the playhead) to the pointer.
+    TimeSelect {
+        from: f64,
+    },
     Marquee {
         origin: (f64, f64),
         current: (f64, f64),
-        additive: bool,
+        /// Replace, add or toggle (`view_gestures::MarqueeMode`).
+        mode: view_gestures::MarqueeMode,
+        /// The notes selected at the press, which the mode combines with.
+        base: Vec<NoteId>,
     },
     /// Freehand: samples accumulate at pointer resolution and commit
     /// continuously, so the stroke feels like spraypaint rather than
@@ -411,6 +419,17 @@ const CC_EVENT_PX: f64 = 5.0;
 /// inside it must operate on the region, not on whatever note happens
 /// to be under the pointer.
 pub fn context_at(ed: &Editor, x: f64, y: f64) -> Context {
+    // The chrome, outside the roll's own coordinates: the ruler above it
+    // and the keys to its left. A host that routes these presses itself
+    // (the dioxus roll) never asks; one that hands every press here (the
+    // session's Editor) needs them to be what they are, or a press on
+    // the ruler reads as empty roll.
+    if y < 0.0 {
+        return Context::Ruler;
+    }
+    if x < 0.0 {
+        return Context::Keys;
+    }
     let t = ed.camera.t_at(x);
     let row = ed.camera.pitch_at(y, ed.viewport).round() as i32;
 
@@ -883,13 +902,20 @@ fn run_action(ed: &mut Editor, action: Action, x: f64, y: f64, mods: Mods) -> Op
             Some(drag)
         }
         Action::MarqueeSelect | Action::MarqueeAdd | Action::MarqueeToggle => {
-            if action == Action::MarqueeSelect {
-                ed.selection.clear();
-            }
+            let base = ed.selection.notes.clone();
+            let mode = match action {
+                Action::MarqueeAdd => view_gestures::MarqueeMode::Add,
+                Action::MarqueeToggle => view_gestures::MarqueeMode::Toggle,
+                _ => {
+                    ed.selection.clear();
+                    view_gestures::MarqueeMode::Replace
+                }
+            };
             Some(Drag::Marquee {
                 origin: (x, y),
                 current: (x, y),
-                additive: action != Action::MarqueeSelect,
+                mode,
+                base,
             })
         }
         Action::MovePlayhead | Action::MovePlayheadNoSnap => {
@@ -899,6 +925,14 @@ fn run_action(ed: &mut Editor, action: Action, x: f64, y: f64, mods: Mods) -> Op
                 t
             });
             Some(Drag::None)
+        }
+        // Click to place, drag to select: the press is a click on the
+        // ruler until the pointer moves.
+        Action::TimeSelect => {
+            let from = if mods.shift { t } else { ed.snap_time(t) };
+            ed.playhead = Some(from);
+            ed.time_selection = None;
+            Some(Drag::TimeSelect { from })
         }
         Action::SelectRow => {
             ed.selection.notes = ed
@@ -1564,13 +1598,18 @@ fn legacy_pointer_down(ed: &mut Editor, x: f64, y: f64, mods: Mods, button: u16)
                     axis: Axis::Both,
                 }
             } else {
-                if !mods.shift {
+                let base = ed.selection.notes.clone();
+                let mode = if mods.shift {
+                    view_gestures::MarqueeMode::Add
+                } else {
                     ed.selection.clear();
-                }
+                    view_gestures::MarqueeMode::Replace
+                };
                 Drag::Marquee {
                     origin: (x, y),
                     current: (x, y),
-                    additive: mods.shift,
+                    mode,
+                    base,
                 }
             }
         }
@@ -1672,6 +1711,17 @@ pub fn pointer_move(ed: &mut Editor, drag: &mut Drag, x: f64, y: f64, mods: Mods
             *last = (x, y);
         }
         Drag::Marquee { current, .. } => *current = (x, y),
+        Drag::TimeSelect { from } => {
+            let t = ed.camera.t_at(x);
+            let to = if mods.shift { t } else { ed.snap_time(t) };
+            ed.time_selection = ((to - *from).abs() > f64::EPSILON).then(|| {
+                if *from <= to {
+                    (*from, to)
+                } else {
+                    (to, *from)
+                }
+            });
+        }
         Drag::Pen {
             notes,
             start,
@@ -2298,16 +2348,20 @@ pub fn pointer_up(ed: &mut Editor, drag: Drag, x: f64, y: f64, mods: Mods) -> Dr
         Drag::Marquee {
             origin,
             current,
-            additive,
+            mode,
+            base,
         } => {
-            let moved = (current.0 - origin.0).abs() + (current.1 - origin.1).abs();
-            if moved > 3.0 {
-                let mut sel = ed.selection.clone();
-                sel.marquee(&ed.doc, &ed.camera, ed.viewport, origin, current, additive);
-                ed.selection = sel;
-            } else if !mods.shift {
-                ed.selection.clear();
-            }
+            // The arrangement's marquee too (`view_gestures::Marquee`):
+            // what the box touches, combined with the selection at the
+            // press; a click selects nothing new.
+            let marquee = view_gestures::Marquee {
+                origin,
+                current,
+                mode,
+            };
+            let mut sel = ed.selection.clone();
+            sel.marquee(&ed.doc, &ed.camera, ed.viewport, &marquee, &base);
+            ed.selection = sel;
             Drag::None
         }
         // The Curve gesture survives release, and so does its CC twin —

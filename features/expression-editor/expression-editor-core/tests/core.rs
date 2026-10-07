@@ -1080,8 +1080,27 @@ fn marquee_selects_the_notes_it_covers() {
     let x1 = ed.camera.x(PPQ * 1.95);
     let y0 = ed.camera.y(70.0, ed.viewport);
     let y1 = ed.camera.y(58.0, ed.viewport);
-    sel.marquee(&ed.doc, &ed.camera, ed.viewport, (x0, y0), (x1, y1), false);
+    let mut box_ = view_gestures::Marquee::press((x0, y0), view_gestures::MarqueeMode::Replace);
+    box_.moved((x1, y1));
+    sel.marquee(&ed.doc, &ed.camera, ed.viewport, &box_, &[]);
     assert_eq!(sel.notes.len(), 2, "the first two notes only");
+    let first_two = sel.notes.clone();
+
+    // Toggle flips what it touches against what was selected at the
+    // press: the first two come out, a third goes in.
+    let third = ed.doc.notes.get(2).expect("a third note").id;
+    let mut toggle = view_gestures::Marquee::press((x0, y0), view_gestures::MarqueeMode::Toggle);
+    toggle.moved((x1, y1));
+    let mut base = first_two.clone();
+    base.push(third);
+    sel.marquee(&ed.doc, &ed.camera, ed.viewport, &toggle, &base);
+    assert_eq!(sel.notes, vec![third], "toggled, only the third is left");
+
+    // Add keeps what was there.
+    let mut add = view_gestures::Marquee::press((x0, y0), view_gestures::MarqueeMode::Add);
+    add.moved((x1, y1));
+    sel.marquee(&ed.doc, &ed.camera, ed.viewport, &add, &[third]);
+    assert_eq!(sel.notes.len(), 3, "the two, and the third kept");
 }
 
 #[test]

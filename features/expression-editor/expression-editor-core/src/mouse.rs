@@ -213,6 +213,9 @@ pub enum Action {
     ZoomAnchored,
     MovePlayhead,
     MovePlayheadNoSnap,
+    /// The ruler, dragged: the playhead where it was pressed, and a time
+    /// selection swept from there — the arrangement's ruler too.
+    TimeSelect,
     SelectRow,
     ContextMenu,
     /// Sound the note under the pointer without editing it.
@@ -297,6 +300,7 @@ impl Action {
                 | Action::ZoomAnchored
                 | Action::MovePlayhead
                 | Action::MovePlayheadNoSnap
+                | Action::TimeSelect
                 | Action::SelectRow
                 | Action::ContextMenu
                 | Action::Audition
@@ -634,7 +638,7 @@ impl MouseMap {
                 b(C::Keys, G::Click, AL, A::Audition),
                 b(C::Ruler, G::Click, N, A::MovePlayhead),
                 b(C::Ruler, G::Click, AL, A::MovePlayheadNoSnap),
-                b(C::Ruler, G::Drag, N, A::MovePlayhead),
+                b(C::Ruler, G::Drag, N, A::TimeSelect),
                 // ── razor ────────────────────────────────────────────
                 // Creating a razor is a deliberate modifier gesture, so
                 // it never steals a plain drag from marquee select.

@@ -5659,6 +5659,7 @@ dependencies = [
  "facet",
  "keyflow-proto",
  "razor",
+ "view-gestures",
 ]
 
 [[package]]

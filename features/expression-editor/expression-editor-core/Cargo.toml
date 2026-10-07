@@ -31,6 +31,8 @@ adaptive-grid = { workspace = true }
 # IS. Dependency-free, so it costs the wasm build nothing — the same
 # bargain `adaptive-grid` makes.
 razor = { workspace = true }
+# The marquee it shares with the arrangement.
+view-gestures = { workspace = true }
 # The editor's commands are `#[architect::actions]` traits — see
 # `actions.rs`. `architect`'s `default = []` and its `action` module is
 # ungated, so this is metadata and a derive, not the RPC stack: no vox,

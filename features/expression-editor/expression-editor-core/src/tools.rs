@@ -345,27 +345,38 @@ impl Selection {
         }
     }
 
-    /// Marquee select every note intersecting the rectangle.
+    /// The selection `marquee` leaves, from `base` (the notes selected
+    /// when it was pressed): the notes it touches, combined by its mode —
+    /// replace, add or toggle — the arrangement's marquee over items too
+    /// (`view_gestures::Marquee`). A note sits on the band half a row
+    /// either side of its row; a touch at all counts.
     pub fn marquee(
         &mut self,
         doc: &ExpressionDoc,
         camera: &Camera,
         vp: Viewport,
-        (x0, y0): (f64, f64),
-        (x1, y1): (f64, f64),
-        additive: bool,
+        marquee: &view_gestures::Marquee,
+        base: &[NoteId],
     ) {
-        if !additive {
-            self.clear();
-        }
-        let (t0, t1) = min_max(camera.t_at(x0), camera.t_at(x1));
-        let (p0, p1) = min_max(camera.pitch_at(y0, vp), camera.pitch_at(y1, vp));
-        for n in &doc.notes {
-            let row = n.row as f64;
-            if n.start <= t1 && n.end >= t0 && row >= p0 - 0.5 && row <= p1 + 0.5 {
-                self.add(n.id);
-            }
-        }
+        let ((x0, y0), (x1, y1)) = marquee.rect();
+        let span = view_gestures::Span::new(
+            (camera.t_at(x0), camera.pitch_at(y0, vp)),
+            (camera.t_at(x1), camera.pitch_at(y1, vp)),
+        );
+        let hits = doc.notes.iter().filter_map(|n| {
+            let row = f64::from(n.row);
+            span.touches(n.start, n.end, row - 0.5, row + 0.5)
+                .then_some(n.id)
+        });
+        let base: std::collections::HashSet<NoteId> = base.iter().copied().collect();
+        let chosen = marquee.select(&base, hits);
+        // In the document's order, as a selection built note by note is.
+        self.notes = doc
+            .notes
+            .iter()
+            .map(|n| n.id)
+            .filter(|id| chosen.contains(id))
+            .collect();
     }
 }
 

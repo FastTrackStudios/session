@@ -1855,6 +1855,30 @@ mod tests {
         assert_eq!(v.pointer(plain()), None);
     }
 
+    /// The ruler, as the arrangement's: a click places the playhead, a
+    /// drag sweeps a time selection from there.
+    #[test]
+    fn the_ruler_places_the_playhead_and_sweeps_a_time_selection() {
+        let ed = demo::editor(demo::Scene::Phrase, viewport_for(SIZE, DEFAULT_STRIP));
+        let mut v = Expression::from_audio(ed, ORIGIN, SIZE);
+        let on_ruler = ORIGIN.1 + TOOLBAR_H + canvas::RULER_H * 0.5;
+        let at = |x: f64| ORIGIN.0 + canvas::GUTTER_W + x;
+        assert!(v.press(at(100.0), on_ruler, plain(), 0));
+        v.release(at(100.0), on_ruler, plain());
+        assert!(v.editor.playhead.is_some(), "a click places the playhead");
+        assert_eq!(v.editor.time_selection, None, "and selects no time");
+
+        assert!(v.press(at(100.0), on_ruler, plain(), 0));
+        v.moved(at(400.0), on_ruler, plain());
+        v.release(at(400.0), on_ruler, plain());
+        let (t0, t1) = v.editor.time_selection.expect("a drag selects time");
+        assert!(t1 > t0);
+        assert!(
+            v.editor.playhead.is_some_and(|p| (p - t0).abs() < 1e-9),
+            "from where the press put the playhead"
+        );
+    }
+
     #[test]
     fn the_demo_is_a_kit_on_lanes() {
         let v = view();

@@ -355,7 +355,9 @@ impl Cursor {
             // ── navigation ───────────────────────────────────────────
             Action::Pan => Cursor::Hand,
             Action::ZoomAnchored => Cursor::Zoom,
-            Action::MovePlayhead | Action::MovePlayheadNoSnap => Cursor::Playhead,
+            Action::MovePlayhead | Action::MovePlayheadNoSnap | Action::TimeSelect => {
+                Cursor::Playhead
+            }
             Action::ContextMenu => Cursor::Arrow,
             Action::Audition => Cursor::Audition,
         }
