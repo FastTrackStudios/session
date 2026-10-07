@@ -614,6 +614,22 @@ pub mod view {
     }
 }
 
+/// A stack of takes. Run by the host, not here: lining takes up reads
+/// their audio, which an `&mut Editor` does not have — so [`run`] passes
+/// these over and the host carries them out.
+pub mod takes {
+    #[architect::actions(namespace = "FTS_EDITOR_TAKES")]
+    pub trait TakesActions {
+        #[action(
+            description = "Line the stack's takes up on the first",
+            category = "Expression Editor",
+            group = "Takes",
+            shortcut = "t a"
+        )]
+        fn align(&self);
+    }
+}
+
 /// Run an action against an editor, by its architect id.
 ///
 /// The seam between the declarations above and a surface holding an
@@ -886,6 +902,7 @@ pub fn all() -> Vec<&'static architect::action::ActionMeta> {
         .chain(razor::RazorActionsActions::all())
         .chain(velocity::VelocityActionsActions::all())
         .chain(view::ViewActionsActions::all())
+        .chain(takes::TakesActionsActions::all())
         .collect()
 }
 

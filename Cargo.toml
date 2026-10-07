@@ -10,6 +10,7 @@ resolver = "3"
 members = [
     "apps/session-reaper-xtask",
     "libs/razor",
+    "libs/view-gestures",
     "libs/vendor/anyrender_vello",
     "libs/vendor/anyrender_vello_hybrid",
     "libs/vendor/dioxus-native-dom",
@@ -72,6 +73,7 @@ repository = "https://github.com/FastTrackStudios/session"
 # it. Dependency-free and shared by the expression editor and the
 # arrangement, so the two cannot disagree about what an area is.
 razor = { path = "libs/razor" }
+view-gestures = { path = "libs/view-gestures" }
 # ── Internal — every moved crate, path declared ONCE here ─────────────
 fts-chrome = { path = "../daw/libs/fts-chrome" }
 # These two moved from `daw` to `processor` on the September 2026 FX

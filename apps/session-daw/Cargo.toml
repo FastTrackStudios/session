@@ -153,6 +153,7 @@ adaptive-grid = { workspace = true }
 # `razor` crate for why the rectangle is shared and the operations on
 # its contents are not.
 razor = { workspace = true }
+view-gestures = { workspace = true }
 winit = { version = "0.31.0-beta.2", optional = true }
 # The pointer shapes, which winit re-exports; named directly so the web
 # host (CSS `cursor`) shares them.

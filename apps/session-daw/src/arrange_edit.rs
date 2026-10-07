@@ -36,17 +36,16 @@ use crate::mousemap::{self, Gesture, Mods};
 /// e-fold, eight hundred with Shift for the fine control.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ZoomTool {
-    /// Where the press was, in window pixels.
-    origin: (f64, f64),
-    current: (f64, f64),
+    /// The drag itself, in window pixels — the Editor's too
+    /// (`view_gestures::ZoomDrag`): how far a drag zooms, which way, and
+    /// when a sweep is still a click.
+    drag: view_gestures::ZoomDrag,
     /// The second under the press, and the content row under it at a
     /// vertical zoom of one.
     anchor_t: f64,
     anchor_y: f64,
     base_pps: f64,
     base_zoom_y: f64,
-    /// Alt: a sweep to frame rather than a continuous zoom.
-    marquee: bool,
 }
 
 /// Where the lanes start in the window: the rails' corner plus the
@@ -996,13 +995,11 @@ impl Editor {
         }
         let zoom_y = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
         self.zoom = Some(ZoomTool {
-            origin: at,
-            current: at,
+            drag: view_gestures::ZoomDrag::press(at, keys.alt),
             anchor_t: (x - lanes.0 + view.scroll_x) / view.pps.max(f64::EPSILON),
             anchor_y: (y - lanes.1 + view.scroll_y) / zoom_y,
             base_pps: view.pps,
             base_zoom_y: zoom_y,
-            marquee: keys.alt,
         });
         true
     }
@@ -1019,20 +1016,14 @@ impl Editor {
         keys: Mods,
     ) -> Option<Viewport> {
         let z = self.zoom.as_mut()?;
-        z.current = at;
-        if z.marquee {
-            return None;
-        }
-        let gain = if keys.shift { 800.0 } else { 200.0 };
-        let dx = at.0 - z.origin.0;
-        let dy = z.origin.1 - at.1;
-        // Right and up zoom in, which is the direction the content
-        // grows in both cases.
-        let pps = (z.base_pps * (dx / gain).exp()).clamp(PPS_RANGE.0, PPS_RANGE.1);
-        let zoom_y = (z.base_zoom_y * (dy / gain).exp()).clamp(ZOOM_Y_RANGE.0, ZOOM_Y_RANGE.1);
+        z.drag.moved(at);
+        let (time, rows) = z.drag.factors(keys.shift)?;
+        let pps = (z.base_pps * time).clamp(PPS_RANGE.0, PPS_RANGE.1);
+        let zoom_y = (z.base_zoom_y * rows).clamp(ZOOM_Y_RANGE.0, ZOOM_Y_RANGE.1);
         // Put what was under the press back under it, on both axes.
-        let scroll_x = z.anchor_t.mul_add(pps, lanes.0 - z.origin.0);
-        let scroll_y = z.anchor_y.mul_add(zoom_y, lanes.1 - z.origin.1);
+        let origin = z.drag.origin;
+        let scroll_x = z.anchor_t.mul_add(pps, lanes.0 - origin.0);
+        let scroll_y = z.anchor_y.mul_add(zoom_y, lanes.1 - origin.1);
         Some(Viewport {
             scroll_x,
             scroll_y,
@@ -1049,18 +1040,9 @@ impl Editor {
     /// show, if the release changes it.
     pub fn zoom_release(&mut self, view: &Viewport, lanes: LanesOrigin) -> Option<Viewport> {
         let z = self.zoom.take()?;
-        if !z.marquee {
-            return None;
-        }
-        let moved = (z.current.0 - z.origin.0).abs() + (z.current.1 - z.origin.1).abs();
-        // A sweep that never moved is a click, and framing a click
-        // would zoom to the maximum for what looked like a misclick.
-        if moved <= 3.0 {
-            return None;
-        }
+        // A sweep that went somewhere; a click frames nothing.
+        let ((x0, y0), (x1, y1)) = z.drag.release()?;
         let zoom_y = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
-        let (x0, x1) = (z.origin.0.min(z.current.0), z.origin.0.max(z.current.0));
-        let (y0, y1) = (z.origin.1.min(z.current.1), z.origin.1.max(z.current.1));
         let t0 = (x0 - lanes.0 + view.scroll_x) / view.pps.max(f64::EPSILON);
         let t1 = (x1 - lanes.0 + view.scroll_x) / view.pps.max(f64::EPSILON);
         let r0 = (y0 - lanes.1 + view.scroll_y) / zoom_y;
@@ -1083,9 +1065,7 @@ impl Editor {
     /// The Alt sweep's box, in window pixels, while one is being drawn.
     #[must_use]
     pub fn zoom_marquee(&self) -> Option<((f64, f64), (f64, f64))> {
-        self.zoom
-            .filter(|z| z.marquee)
-            .map(|z| (z.origin, z.current))
+        self.zoom.and_then(|z| z.drag.sweep_box())
     }
 
     /// Whether a drag is in flight — what the edge autoscroll asks.

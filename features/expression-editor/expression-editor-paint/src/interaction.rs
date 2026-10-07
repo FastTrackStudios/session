@@ -2040,21 +2040,19 @@ pub fn pointer_move(ed: &mut Editor, drag: &mut Drag, x: f64, y: f64, mods: Mods
             current,
         } => {
             *current = (x, y);
-            if *marquee {
-                // Sweeping a box; nothing moves until release.
+            // The arrangement's drag too (`view_gestures::ZoomDrag`):
+            // direction is the axis, right and up zoom in, Shift is the
+            // fine control; a sweep moves nothing until release.
+            let drag = view_gestures::ZoomDrag {
+                origin: *origin,
+                current: *current,
+                sweep: *marquee,
+            };
+            let Some((time, rows)) = drag.factors(mods.shift) else {
                 return;
-            }
-            // Direction is the axis. Shift is the fine control: the same
-            // travel asks for a quarter as much, so a gesture that
-            // overshot can be repeated slowly rather than undone.
-            let gain = if mods.shift { 800.0 } else { 200.0 };
-            let dx = x - origin.0;
-            let dy = origin.1 - y;
-
-            // Right and up zoom *in*, which is the direction the content
-            // grows in both cases.
-            ed.camera.units_per_px = (*base_units_per_px / (dx / gain).exp()).max(1e-9);
-            ed.camera.vertical.px_per_row = (*base_px_per_row * (dy / gain).exp()).max(1e-6);
+            };
+            ed.camera.units_per_px = (*base_units_per_px / time).max(1e-9);
+            ed.camera.vertical.px_per_row = (*base_px_per_row * rows).max(1e-6);
             // Put what was under the press back under it, on both axes.
             //
             // Both lines invert the camera's own mapping, so they have
@@ -2279,21 +2277,21 @@ pub fn pointer_up(ed: &mut Editor, drag: Drag, x: f64, y: f64, mods: Mods) -> Dr
             ..
         } => {
             // Only the Alt sweep has anything left to do: the continuous
-            // drag already zoomed on the way.
-            if marquee {
-                let moved = (current.0 - origin.0).abs() + (current.1 - origin.1).abs();
-                // A sweep that never moved is a click, and framing a
-                // click would zoom to the maximum for what looked like a
-                // misclick.
-                if moved > 3.0 {
-                    let vp = ed.viewport;
-                    ed.zoom_to_box(
-                        ed.camera.t_at(origin.0),
-                        ed.camera.t_at(current.0),
-                        ed.camera.pitch_at(origin.1, vp),
-                        ed.camera.pitch_at(current.1, vp),
-                    );
-                }
+            // drag already zoomed on the way. A sweep that never moved is
+            // a click, and frames nothing (`view_gestures::ZoomDrag`).
+            let drag = view_gestures::ZoomDrag {
+                origin,
+                current,
+                sweep: marquee,
+            };
+            if let Some((a, b)) = drag.release() {
+                let vp = ed.viewport;
+                ed.zoom_to_box(
+                    ed.camera.t_at(a.0),
+                    ed.camera.t_at(b.0),
+                    ed.camera.pitch_at(a.1, vp),
+                    ed.camera.pitch_at(b.1, vp),
+                );
             }
             Drag::None
         }

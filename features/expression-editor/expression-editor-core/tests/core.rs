@@ -4996,8 +4996,12 @@ fn every_declared_action_is_wired_up() {
             meta.id,
         );
 
-        let ours =
-            !meta.id.starts_with("FTS_EDITOR_VELOCITY") && meta.id != actions::view::MEMAGIC.id;
+        // The velocity group, MeMagic and the takes are the host's: each
+        // needs something an `&mut Editor` has not (a live shape, the
+        // pointer, the takes' audio).
+        let ours = !meta.id.starts_with("FTS_EDITOR_VELOCITY")
+            && !meta.id.starts_with("FTS_EDITOR_TAKES")
+            && meta.id != actions::view::MEMAGIC.id;
         if !ours {
             continue;
         }

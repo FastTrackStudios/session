@@ -133,7 +133,7 @@ pub fn zoom_about(at: f64, scroll: f64, was: f64, to: f64) -> f64 {
 /// benchmark that sweeps a drag zooms by what a hand would.
 #[must_use]
 pub fn factor(pixels: f64) -> f64 {
-    (pixels / 200.0).exp()
+    view_gestures::zoom_factor(pixels)
 }
 
 /// Where edits go: the engine, however this host reaches it.
@@ -669,26 +669,24 @@ impl ArrangementPanel {
                 let ((x0, x1), (y0, y1)) = self.limits(r);
                 if input.zooming {
                     self.pointing.borrow_mut().tool_used = true;
-                    // `z` zooms time, the common one; with shift, the rows.
-                    // Either axis of the wheel counts: macOS turns a shifted
-                    // wheel sideways, so the notch arrives in `dx`.
-                    let notch = (dx + dy) * 2.0;
-                    let to = if input.shift {
-                        (zx, (zy * factor(notch)).clamp(y0, y1))
-                    } else {
-                        ((zx * factor(notch)).clamp(x0, x1), zy)
-                    };
-                    self.rezoom(to, input.pointer);
-                } else {
-                    let (ex, ey) = self.extent(r, zx, zy);
-                    if input.shift {
+                }
+                // The Editor's wheel too (`view_gestures::wheel`). Either
+                // axis of the wheel counts for a zoom: macOS turns a
+                // shifted wheel sideways, so the notch arrives in `dx`.
+                // winit's deltas are the other way round to a browser's.
+                match view_gestures::wheel(-dx, -dy, input.zooming, input.shift) {
+                    view_gestures::Wheel::ZoomTime(by) => {
+                        self.rezoom(((zx * by).clamp(x0, x1), zy), input.pointer);
+                    }
+                    view_gestures::Wheel::ZoomRows(by) => {
+                        self.rezoom((zx, (zy * by).clamp(y0, y1)), input.pointer);
+                    }
+                    view_gestures::Wheel::Scroll(sx, sy) => {
+                        let (ex, ey) = self.extent(r, zx, zy);
                         let across = *scroll.peek();
-                        scroll.set((across - dx - dy).clamp(0.0, ex));
-                    } else {
-                        let across = *scroll.peek();
-                        scroll.set((across - dx).clamp(0.0, ex));
+                        scroll.set((across + sx).clamp(0.0, ex));
                         let deep = *down.peek();
-                        down.set((deep - dy).clamp(0.0, ey));
+                        down.set((deep + sy).clamp(0.0, ey));
                     }
                 }
             }

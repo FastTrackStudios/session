@@ -804,20 +804,14 @@ impl Expression {
         // forty — where the editor's own was tuned for a notch of one and
         // took this host's forty as a forty-fold zoom. `dx`/`dy` arrive
         // the browser's way round, the arrangement's are winit's.
-        if keys::zoom_prefix_held() {
-            if self.spring_from.is_some() {
-                self.spring_used = true;
-            }
-            let factor = crate::panel::factor(-(dx + dy) * 2.0);
-            if mods.shift {
-                self.editor.zoom_pitch_at(ry, factor);
-            } else {
-                self.editor.zoom_time_at(rx, factor);
-            }
-        } else if mods.shift {
-            self.editor.pan_px(-(dx + dy), 0.0);
-        } else {
-            self.editor.pan_px(-dx, -dy);
+        let zooming = keys::zoom_prefix_held();
+        if zooming && self.spring_from.is_some() {
+            self.spring_used = true;
+        }
+        match view_gestures::wheel(dx, dy, zooming, mods.shift) {
+            view_gestures::Wheel::ZoomTime(by) => self.editor.zoom_time_at(rx, by),
+            view_gestures::Wheel::ZoomRows(by) => self.editor.zoom_pitch_at(ry, by),
+            view_gestures::Wheel::Scroll(sx, sy) => self.editor.pan_px(-sx, -sy),
         }
         true
     }

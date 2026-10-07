@@ -367,7 +367,7 @@ struct Take {
 }
 
 /// The editor action that lines a stack's takes up on its first.
-pub const ALIGN_TAKES: &str = "FTS_EDITOR_TAKES_ALIGN";
+pub const ALIGN_TAKES: &str = expression_editor_core::actions::takes::ALIGN.id;
 
 /// An alignment in flight: each take aligned, by item, when it lands.
 #[cfg(feature = "native")]

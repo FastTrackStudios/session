@@ -8,6 +8,9 @@ description = "The expression editor as an anyrender scene, plus its pointer and
 
 [dependencies]
 expression-editor-core = { workspace = true }
+# The view gestures it shares with the arrangement: the zoom drag, the
+# wheel, the marquee.
+view-gestures = { workspace = true }
 # The shared scroll/wheel and key bindings, resolved from the same keymap
 # the arrange view and REAPER use.
 input.workspace = true
