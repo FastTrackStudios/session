@@ -62,6 +62,9 @@ pub enum Action {
     Visibility(Visibility),
     /// Show or hide the docked mixer.
     ToggleMixer,
+    /// The Editor: docked under the arrangement, or a view of its own
+    /// (`e`, the profile's `FTS_EXPRESSION_EDITOR_OPEN`).
+    ToggleEditor,
     /// Show or hide the FX (`f`): the selected track's effects as devices.
     ToggleFx,
     /// The FX's own view, full size (`F`): several tracks' chains.
@@ -120,6 +123,7 @@ pub fn action_of(id: &str) -> Action {
         "40173" => Action::Marker(1),
         "1013" => Action::ToggleRecord,
         "40078" => Action::ToggleMixer,
+        "FTS_EXPRESSION_EDITOR_OPEN" => Action::ToggleEditor,
         "FTS_TOGGLE_FX" => Action::ToggleFx,
         "FTS_FX_FULL" => Action::FxFull,
         "FTS_SCENE_OVERVIEW" => Action::ToggleScene("overview"),
@@ -384,6 +388,7 @@ const BUILTIN: &str = r#"{
       "0": "40042",
       "s": "40757",
       "d": "40006",
+      "e": "FTS_EXPRESSION_EDITOR_OPEN",
       "Shift+q": "FTS_QUANTIZE_DRUMS",
       "Delete": "40697",
       "Backspace": "40697",
@@ -542,6 +547,10 @@ mod tests {
             keys.press(KeyCode::Character("q".into()), shift()),
             vec![Action::QuantizeDrums]
         );
+        assert_eq!(
+            keys.press(KeyCode::Character("e".into()), Modifiers::NONE),
+            vec![Action::ToggleEditor]
+        );
         assert!(
             keys.press(KeyCode::Character("y".into()), Modifiers::NONE)
                 .is_empty()
@@ -553,6 +562,23 @@ mod tests {
             shift: true,
             ..Modifiers::NONE
         }
+    }
+
+    /// The profile the app ships toggles the Editor on `e`.
+    #[test]
+    fn the_shipped_profile_toggles_the_editor_on_e() {
+        let profile = input_keybinds::embedded::fasttrackstudio().expect("the embedded profile");
+        let mut keys = Keys {
+            processor: InputProcessor::from_config(profile.keymap).expect("a processor"),
+            context: ActionContext::new(),
+            source: "test".into(),
+            labels: HashMap::new(),
+            pending: Vec::new(),
+        };
+        assert_eq!(
+            keys.press(KeyCode::Character("e".into()), Modifiers::NONE),
+            vec![Action::ToggleEditor]
+        );
     }
 
     /// The profile the app ships binds Shift+Q to the drum quantize (a
@@ -658,6 +684,7 @@ pub fn use_window_transport_keys() {
     // to hand its keys to.
     let mixer = dioxus::prelude::try_use_context::<crate::shell::MixerToggle>();
     let fx = dioxus::prelude::try_use_context::<crate::shell::FxToggle>();
+    let editor = dioxus::prelude::try_use_context::<crate::shell::EditorPane>();
     let held = dioxus::prelude::use_hook(|| Rc::new(Cell::new(Modifiers::NONE)));
     dioxus_native::use_window_event(move |event, _| match event {
         WindowEvent::ModifiersChanged(modifiers) => {
@@ -685,6 +712,13 @@ pub fn use_window_transport_keys() {
             if event.repeat || typing() {
                 return;
             }
+            // The Editor half way through one of its own sequences (`g e`,
+            // `a x`): the key is its, not a pane's. This hook runs before
+            // the document hands the key on, so the Editor still shows
+            // the sequence pending.
+            if expression_editor_paint::keys::is_pending() {
+                return;
+            }
             for action in keys.borrow_mut().press(code, held.get()) {
                 use crate::engine::{Move, transport};
                 match action {
@@ -696,6 +730,11 @@ pub fn use_window_transport_keys() {
                     Action::ToggleMixer => {
                         if let Some(mixer) = mixer {
                             mixer.press();
+                        }
+                    }
+                    Action::ToggleEditor => {
+                        if let Some(editor) = editor {
+                            editor.press();
                         }
                     }
                     Action::ToggleFx => {

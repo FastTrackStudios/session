@@ -297,8 +297,20 @@ impl std::ops::Deref for FxToggle {
     }
 }
 
-/// Provide the window's [`MixerToggle`] and [`FxToggle`] over `view`, for
-/// a shell.
+/// The Editor's [`Pane`]: pinned under the arrangement — the selected
+/// track's notes or audio, up close, under where it sits in the song.
+#[derive(Clone, Copy, PartialEq)]
+pub struct EditorPane(pub Pane);
+
+impl std::ops::Deref for EditorPane {
+    type Target = Pane;
+    fn deref(&self) -> &Pane {
+        &self.0
+    }
+}
+
+/// Provide the window's [`MixerToggle`], [`FxToggle`] and [`EditorPane`]
+/// over `view`, for a shell.
 pub fn use_mixer_toggle(view: Signal<View>) -> MixerToggle {
     // The FX starts docked: on a desktop it is a strip under whatever you
     // are working in, and a view of its own when you ask (right-click).
@@ -307,6 +319,14 @@ pub fn use_mixer_toggle(view: Signal<View>) -> MixerToggle {
         let mut docked = pane.docked;
         docked.set(true);
         FxToggle(pane)
+    });
+    // The Editor starts docked too, under the arrangement: you edit a
+    // part where it is in the song.
+    use_context_provider(|| {
+        let pane = Pane::new(view, View::Editor, &[View::Daw]);
+        let mut docked = pane.docked;
+        docked.set(true);
+        EditorPane(pane)
     });
     use_context_provider(|| MixerToggle(Pane::new(view, View::Mixer, &[View::Daw])))
 }
@@ -460,10 +480,12 @@ pub fn BottomBar(
     }));
     let mixer = try_use_context::<MixerToggle>().map(|m| m.0);
     let fx = try_use_context::<FxToggle>().map(|f| f.0);
+    let editor = try_use_context::<EditorPane>().map(|e| e.0);
     // The pane a view's button is, when it is one.
     let pane = move |each: View| match each {
         View::Mixer => mixer,
         View::Fx => fx,
+        View::Editor => editor,
         _ => None,
     };
     // A pane's right-click menu: pinned or a view of its own, on a screen

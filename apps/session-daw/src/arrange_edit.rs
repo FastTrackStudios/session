@@ -1362,6 +1362,7 @@ impl Editor {
             | Action::ToggleScene(_)
             | Action::QuantizeDrums
             | Action::ToggleMixer
+            | Action::ToggleEditor
             | Action::ToggleFx
             | Action::FxFull => {
                 return false;

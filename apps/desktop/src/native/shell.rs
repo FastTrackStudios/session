@@ -454,10 +454,16 @@ fn SongViews(
     // up its bottom to it.
     let fx = try_use_context::<session_daw::shell::FxToggle>();
     let fx_docked = fx.is_some_and(|f| (f.docked)() && (f.open)() && f.hosts.contains(&view()));
-    let view_bottom = if fx_docked {
-        format!("{FX_DOCK_H}px")
+    // The Editor, pinned under the arrangement (above the FX when both
+    // are): the lower part of the window, the arrangement keeping the top.
+    let editor = try_use_context::<session_daw::shell::EditorPane>();
+    let editor_docked =
+        editor.is_some_and(|e| (e.docked)() && (e.open)() && e.hosts.contains(&view()));
+    let fx_h = if fx_docked { FX_DOCK_H } else { 0.0 };
+    let view_bottom = if editor_docked {
+        format!("calc({EDITOR_DOCK_SHARE}% + {fx_h}px)")
     } else {
-        "0px".to_owned()
+        format!("{fx_h}px")
     };
     rsx! {
         session_daw::shell::PinnedProgress { view: view() }
@@ -495,6 +501,13 @@ fn SongViews(
                 },
             }
             }
+            if editor_docked {
+                div {
+                    style: "position:absolute; left:0; right:0; bottom:{fx_h}px; \
+                            height:{EDITOR_DOCK_SHARE}%; border-top:1px solid #000;",
+                    session_daw::editor_view::EditorPanel {}
+                }
+            }
             if fx_docked {
                 div {
                     style: "position:absolute; left:0; right:0; bottom:0; height:{FX_DOCK_H}px; \
@@ -506,6 +519,9 @@ fn SongViews(
         session_daw::shell::PinnedTransport { view: view() }
     }
 }
+
+/// How much of the view the Editor takes, pinned under the arrangement.
+const EDITOR_DOCK_SHARE: f64 = 45.0;
 
 /// How tall the FX is, pinned under the arrangement or the mixer: one
 /// lane of its full-size view, so a track's chain is the same in both.
