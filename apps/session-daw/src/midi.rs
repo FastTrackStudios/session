@@ -194,6 +194,9 @@ pub fn fold_notes(start: f64, end: f64, children: &[Child<'_>]) -> Option<Vec<No
 /// than read the audio.
 pub const WAVE_BLOCK: u32 = 1024;
 
+/// How many items' peaks are read at once.
+const WAVE_READS: usize = 16;
+
 #[derive(Clone, Default)]
 pub struct Previews {
     known: Arc<Mutex<HashMap<String, Vec<Note>>>>,
@@ -253,8 +256,15 @@ impl Previews {
 
     /// [`Self::fill_waves`] for `project`, whichever is current.
     pub async fn fill_waves_in(&self, project: &daw_control::Project, guids: Vec<String>) {
-        for guid in guids {
-            let Some(wave) = read_wave(project, &guid).await else {
+        use futures_util::StreamExt as _;
+        // Several at once: each is a decode or a peaks-file read the engine
+        // answers on its own, and a song of nine hundred items read one at
+        // a time held its opening for half a second.
+        let mut reads = futures_util::stream::iter(guids)
+            .map(|guid| async move { (read_wave(project, &guid).await, guid) })
+            .buffer_unordered(WAVE_READS);
+        while let Some((wave, guid)) = reads.next().await {
+            let Some(wave) = wave else {
                 continue;
             };
             if let Ok(mut waves) = self.waves.lock() {

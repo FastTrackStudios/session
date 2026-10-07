@@ -265,7 +265,7 @@ pub struct Index {
     /// way as `lanes.commands`. In seconds, like the recording.
     x: Vec<(f64, f64)>,
     /// The audio items' waveforms, by the command of the item body they
-    /// are drawn over: built at replay ([`lane_wave_path`]), at about a
+    /// are drawn over: built at replay ([`lane_wave_paths`]), at about a
     /// point a pixel and only where on screen, never recorded. Recorded,
     /// every envelope's every point was a path element at the lanes' one
     /// pixel a second — tens of megabytes a song, most of a browser
@@ -284,6 +284,143 @@ struct LaneWave {
     color: Color,
     /// Display gain: the take's loudest peak reaches the band's edge.
     gain: f64,
+    /// The envelope folded for the last zoom drawn — see [`Runs`].
+    runs: std::cell::RefCell<Option<std::rc::Rc<Runs>>>,
+}
+
+/// A waveform folded to one zoom's resolution: every run of `fold` points
+/// as its middle (seconds) and its loudest each way, over the whole item.
+///
+/// Folding is most of what drawing a waveform cost, and it changes only
+/// with the zoom: kept, a pan draws from it rather than folding the
+/// thousands of points under a long item again every frame.
+struct Runs {
+    fold: usize,
+    /// Seconds between one run and the next.
+    pitch: f64,
+    columns: Vec<(f64, f32, f32)>,
+    /// Each [`CHUNK`] of runs as the path it draws, once drawn: a pan
+    /// draws the pieces it has rather than building any.
+    chunks: std::cell::RefCell<Vec<Option<std::rc::Rc<BezPath>>>>,
+}
+
+/// How many runs one kept piece of a waveform's path holds.
+const CHUNK: usize = 256;
+
+/// How far, in pixels, a point may sit off the line through its
+/// neighbours and still be left out: a flat stretch (the silence between
+/// hits) is drawn by its ends, not by a point a pixel.
+const FLAT: f64 = 0.25;
+
+/// How many [`CHUNK`]s `runs` makes.
+const fn runs_len(runs: &[(f64, f32, f32)]) -> usize {
+    runs.len().div_ceil(CHUNK)
+}
+
+/// `points` without those on the flat between their neighbours (within
+/// [`FLAT`]): the ends of every flat stretch stay, so the outline is the
+/// same one.
+fn unflat(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut out: Vec<(f64, f64)> = Vec::with_capacity(points.len());
+    for (i, &point) in points.iter().enumerate() {
+        let flat = match (out.last(), points.get(i.saturating_add(1))) {
+            (Some(&(_, before)), Some(&(_, after))) => {
+                (point.1 - before).abs() < FLAT && (after - point.1).abs() < FLAT
+            }
+            _ => false,
+        };
+        if !flat {
+            out.push(point);
+        }
+    }
+    out
+}
+
+impl LaneWave {
+    /// Where a run's loudest reaches, above (`max`) and below (`min`)
+    /// the band's middle.
+    fn ys(&self, max: f32, min: f32) -> (f64, f64) {
+        let half = (self.bottom - self.top) / 2.0;
+        let mid = f64::midpoint(self.top, self.bottom);
+        let edge = half - 1.0;
+        let reach = edge * self.gain;
+        (
+            mid - (f64::from(max.max(0.0)) * reach).clamp(HAIR, edge.max(HAIR)),
+            mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR)),
+        )
+    }
+
+    /// Chunk `k` of `folded` as the closed outline it draws: its runs (and
+    /// the next chunk's first, so neighbours meet) across the top and back
+    /// along the bottom. Built the first time it is asked for.
+    fn chunk(&self, folded: &Runs, k: usize) -> Option<std::rc::Rc<BezPath>> {
+        if let Some(Some(kept)) = folded.chunks.borrow().get(k) {
+            return Some(std::rc::Rc::clone(kept));
+        }
+        let from = k.checked_mul(CHUNK)?;
+        let to = from.saturating_add(CHUNK + 1).min(folded.columns.len());
+        let runs = folded.columns.get(from..to).filter(|r| !r.is_empty())?;
+        let (tops, bottoms): (Vec<_>, Vec<_>) = runs
+            .iter()
+            .map(|&(x, max, min)| {
+                let (top, bottom) = self.ys(max, min);
+                ((x, top), (x, bottom))
+            })
+            .unzip();
+        let mut path = BezPath::new();
+        for (i, point) in unflat(&tops).into_iter().enumerate() {
+            if i == 0 {
+                path.move_to(point);
+            } else {
+                path.line_to(point);
+            }
+        }
+        for point in unflat(&bottoms).into_iter().rev() {
+            path.line_to(point);
+        }
+        path.close_path();
+        let path = std::rc::Rc::new(path);
+        if let Some(slot) = folded.chunks.borrow_mut().get_mut(k) {
+            *slot = Some(std::rc::Rc::clone(&path));
+        }
+        Some(path)
+    }
+
+    /// The envelope folded `fold` points to a run, folded now if the last
+    /// zoom drawn was another.
+    fn runs(&self, fold: usize) -> std::rc::Rc<Runs> {
+        let mut kept = self.runs.borrow_mut();
+        if let Some(runs) = kept.as_ref().filter(|r| r.fold == fold) {
+            return std::rc::Rc::clone(runs);
+        }
+        let wave = &self.wave;
+        let runs: Vec<(f64, f32, f32)> = wave
+            .points
+            .chunks(fold)
+            .enumerate()
+            .map(|(r, run)| {
+                let (max, min) = run.iter().fold((0.0_f32, 0.0_f32), |(mx, mn), &(a, b)| {
+                    (mx.max(a), mn.min(b))
+                });
+                let at =
+                    crate::num::coord(r.saturating_mul(fold)) + crate::num::coord(run.len()) / 2.0;
+                (
+                    at.mul_add(wave.step, self.x0).clamp(self.x0, self.x1),
+                    max,
+                    min,
+                )
+            })
+            .collect();
+        let chunks = std::cell::RefCell::new(vec![None; runs_len(&runs)]);
+        let runs = std::rc::Rc::new(Runs {
+            fold,
+            pitch: wave.step * crate::num::coord(fold),
+            columns: runs,
+            chunks,
+        });
+        *kept = Some(std::rc::Rc::clone(&runs));
+        runs
+    }
 }
 
 /// The display gain for `wave`: its loudest peak to the lane's edge, so a
@@ -313,59 +450,27 @@ const HAIR: f64 = 0.6;
 /// about a point for each of `pps` pixels a second: the envelope's points
 /// folded (loudest of each run kept) until there is one per pixel. `None`
 /// when none of it is in view, or the band is too thin to show one.
-fn lane_wave_path(lane: &LaneWave, left: f64, right: f64, pps: f64) -> Option<BezPath> {
+fn lane_wave_paths(lane: &LaneWave, left: f64, right: f64, pps: f64) -> Vec<std::rc::Rc<BezPath>> {
     let wave = &lane.wave;
     let half = (lane.bottom - lane.top) / 2.0;
     let (from, to) = (lane.x0.max(left), lane.x1.min(right));
     if half < 1.5 || wave.step <= 0.0 || from >= to || wave.points.is_empty() {
-        return None;
+        return Vec::new();
     }
-    // Points folded per drawn point, and the runs aligned to it so a
-    // scroll does not shimmer.
-    let fold = crate::num::index((1.0 / (wave.step * pps.max(1e-9))).floor().max(1.0)).max(1);
-    let last = wave.points.len();
-    let first = (crate::num::index(((from - lane.x0) / wave.step).floor().max(0.0)) / fold) * fold;
-    let end = crate::num::index(((to - lane.x0) / wave.step).ceil().max(0.0))
-        .saturating_add(fold)
-        .min(last);
-    if first >= end {
-        return None;
-    }
-    let runs: Vec<(f64, f32, f32)> = wave.points[first..end]
-        .chunks(fold)
-        .enumerate()
-        .map(|(r, run)| {
-            let (max, min) = run.iter().fold((0.0_f32, 0.0_f32), |(mx, mn), &(a, b)| {
-                (mx.max(a), mn.min(b))
-            });
-            let at = crate::num::coord(first + r * fold) + crate::num::coord(run.len()) / 2.0;
-            (
-                at.mul_add(wave.step, lane.x0).clamp(lane.x0, lane.x1),
-                max,
-                min,
-            )
-        })
-        .collect();
-    let mid = (lane.top + lane.bottom) / 2.0;
-    let edge = half - 1.0;
-    let reach = edge * lane.gain;
-    let mut path = BezPath::new();
-    for (i, &(x, max, _)) in runs.iter().enumerate() {
-        let y = mid - (f64::from(max.max(0.0)) * reach).clamp(HAIR, edge.max(HAIR));
-        if i == 0 {
-            path.move_to((x, y));
-        } else {
-            path.line_to((x, y));
-        }
-    }
-    for &(x, _, min) in runs.iter().rev() {
-        path.line_to((
-            x,
-            mid + (-f64::from(min.min(0.0)) * reach).clamp(HAIR, edge.max(HAIR)),
-        ));
-    }
-    path.close_path();
-    Some(path)
+    // Points folded per drawn point — a power of two, so a zoom moving a
+    // little keeps the runs it has — at most a point a pixel. The runs
+    // are the whole item's, aligned to its start, so a scroll does not
+    // shimmer.
+    let fold = crate::num::index((1.0 / (wave.step * pps.max(1e-9))).floor().max(1.0))
+        .max(1)
+        .next_power_of_two();
+    let folded = lane.runs(fold);
+    let at = |t: f64| crate::num::index(((t - lane.x0) / folded.pitch).floor().max(0.0));
+    let last = folded.columns.len().saturating_sub(1);
+    let (first, end) = (at(from).min(last), at(to).min(last));
+    (first / CHUNK..=end / CHUNK)
+        .filter_map(|k| lane.chunk(&folded, k))
+        .collect()
 }
 
 impl Arrangement {
@@ -829,6 +934,7 @@ impl Arrangement {
                     index.waves.insert(
                         body,
                         LaneWave {
+                            runs: std::cell::RefCell::default(),
                             gain: wave_gain(&wave),
                             wave,
                             x0,
@@ -2090,11 +2196,11 @@ impl Arrangement {
                 }
                 // An item body with a waveform over it: the part on
                 // screen, a point a pixel.
-                if let Some(lane) = u32::try_from(i).ok().and_then(|i| self.index.waves.get(&i))
-                    && let Some(path) = lane_wave_path(lane, left, right, view.pps)
-                {
-                    painter.fill(Fill::NonZero, transform, lane.color, None, &path);
-                    counts.submitted = counts.submitted.saturating_add(1);
+                if let Some(lane) = u32::try_from(i).ok().and_then(|i| self.index.waves.get(&i)) {
+                    for path in lane_wave_paths(lane, left, right, view.pps) {
+                        painter.fill(Fill::NonZero, transform, lane.color, None, &*path);
+                        counts.submitted = counts.submitted.saturating_add(1);
+                    }
                 }
             }
         }
@@ -2505,16 +2611,24 @@ mod waveform_tests {
 
 #[cfg(test)]
 mod lane_wave_tests {
-    use super::{LaneWave, lane_wave_path};
+    use super::{CHUNK, LaneWave, lane_wave_paths};
     use crate::midi::Wave;
     use vello::peniko::Color;
 
-    fn lane(points: usize) -> LaneWave {
-        // Forty points a second over 100 s.
+    /// Forty points a second over 100 s, a spike at 50 s; `busy`, every
+    /// point a little different from the last (as audio is), else flat.
+    fn lane(points: usize, busy: bool) -> LaneWave {
         let wave = Wave {
             step: 0.025,
             points: (0..points)
-                .map(|i| if i == 2000 { (0.9, -0.9) } else { (0.1, -0.1) })
+                .map(|i| {
+                    let level = if busy && i % 2 == 0 { 0.3 } else { 0.1 };
+                    if i == 2000 {
+                        (0.9, -0.9)
+                    } else {
+                        (level, -level)
+                    }
+                })
                 .collect(),
         };
         LaneWave {
@@ -2525,45 +2639,66 @@ mod lane_wave_tests {
             bottom: 40.0,
             color: Color::WHITE,
             gain: 1.0,
+            runs: std::cell::RefCell::default(),
         }
     }
 
-    fn points_of(path: &vello::kurbo::BezPath) -> usize {
-        path.elements().len()
+    fn elements(lane: &LaneWave, left: f64, right: f64, pps: f64) -> usize {
+        lane_wave_paths(lane, left, right, pps)
+            .iter()
+            .map(|p| p.elements().len())
+            .sum()
     }
 
     #[test]
-    fn a_waveform_is_drawn_a_point_a_pixel_and_only_where_on_screen() {
-        let lane = lane(4000);
+    fn a_waveform_is_drawn_at_most_a_point_a_pixel_and_near_the_screen() {
+        let lane = lane(4000, true);
         // Fitted: 100 s across 200 px — two pixels a second, ~200 points
-        // each way, not 4000.
-        let fitted = lane_wave_path(&lane, 0.0, 100.0, 2.0).expect("a path");
+        // each way at most, not 4000.
+        let fitted = elements(&lane, 0.0, 100.0, 2.0);
+        assert!(fitted < 2 * 210, "{fitted} elements");
+        // Zoomed in on 10 s at 100 px a second: those seconds at the
+        // envelope's own resolution (40 a second is under a pixel's
+        // worth), and at most a kept piece past either edge.
+        let near = elements(&lane, 45.0, 55.0, 100.0);
         assert!(
-            points_of(&fitted) < 2 * 210,
-            "{} elements",
-            points_of(&fitted)
-        );
-        // Zoomed in on 10 s at 100 px a second: only those seconds, at the
-        // envelope's own resolution (40 a second is under a pixel's worth).
-        let near = lane_wave_path(&lane, 45.0, 55.0, 100.0).expect("a path");
-        assert!(
-            points_of(&near) < 2 * 420 && points_of(&near) > 2 * 380,
-            "{} elements",
-            points_of(&near)
+            near > 2 * 380 && near < 2 * (400 + 2 * CHUNK) + 8,
+            "{near} elements"
         );
         // Out of view: nothing.
-        assert!(lane_wave_path(&lane, 200.0, 300.0, 2.0).is_none());
+        assert!(lane_wave_paths(&lane, 200.0, 300.0, 2.0).is_empty());
+    }
+
+    /// A flat stretch is drawn by its ends: the quiet between hits costs
+    /// nothing a pixel. (The busy lane above is the control: the same
+    /// span keeps its points.)
+    #[test]
+    fn a_flat_stretch_is_drawn_by_its_ends() {
+        let flat = elements(&lane(4000, false), 45.0, 55.0, 100.0);
+        assert!(flat < 40, "{flat} elements");
+    }
+
+    /// A pan draws the pieces it already has: the same path, not a new one.
+    #[test]
+    fn a_pan_reuses_the_pieces_it_has() {
+        let lane = lane(4000, true);
+        let before = lane_wave_paths(&lane, 40.0, 50.0, 100.0);
+        let after = lane_wave_paths(&lane, 41.0, 51.0, 100.0);
+        assert!(std::rc::Rc::ptr_eq(&before[0], &after[0]));
     }
 
     #[test]
     fn a_fold_keeps_a_peak_it_passes_over() {
-        let lane = lane(4000);
-        let fitted = lane_wave_path(&lane, 0.0, 100.0, 2.0).expect("a path");
+        let lane = lane(4000, false);
         // The spike at point 2000 (50 s) reaches near the band's top edge.
-        let top = fitted
-            .elements()
+        let top = lane_wave_paths(&lane, 0.0, 100.0, 2.0)
             .iter()
-            .filter_map(|e| e.end_point())
+            .flat_map(|p| {
+                p.elements()
+                    .iter()
+                    .filter_map(vello::kurbo::PathEl::end_point)
+                    .collect::<Vec<_>>()
+            })
             .map(|p| p.y)
             .fold(f64::MAX, f64::min);
         assert!(top < 5.0, "the spike survives the fold: top at {top}");
