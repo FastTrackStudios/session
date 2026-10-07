@@ -331,6 +331,9 @@ pub struct EditorView {
     /// window and two saves never land out of order.
     saver: Option<tokio::sync::mpsc::UnboundedSender<(String, Content)>>,
     dirty: bool,
+    /// The view on screen is the previous take's, kept up while the next
+    /// one loads ([`Self::retarget`]).
+    stale: bool,
     /// The last item click followed ([`picked`]'s count).
     picked_seen: u64,
     /// The stack's takes, first the one the others line up on.
@@ -489,6 +492,7 @@ impl EditorView {
             saver: saver(),
             dirty: true,
             picked_seen: picked_count(),
+            stale: false,
             takes: Vec::new(),
             aligning: None,
             cursor: None,
@@ -502,6 +506,10 @@ impl EditorView {
         self.failed = false;
         let (Some(t), Some(runtime)) = (&self.target, crate::open::runtime()) else {
             self.failed = self.target.is_some();
+            // Nothing will land to replace the previous take's picture.
+            if std::mem::take(&mut self.stale) {
+                self.view = None;
+            }
             return;
         };
         let slot: Slot = std::sync::Arc::default();
@@ -556,8 +564,11 @@ impl EditorView {
             }
             _ => None,
         };
+        // Whatever lands, the previous take's picture goes.
+        self.stale = false;
         let Some(mut view) = view else {
             tracing::warn!("the editor's take could not be read, or has nothing to edit");
+            self.view = None;
             self.failed = true;
             return;
         };
@@ -569,6 +580,9 @@ impl EditorView {
     }
 
     fn event(&mut self, event: &UiEvent) {
+        if self.stale {
+            return;
+        }
         let Some(view) = self.view.as_mut() else {
             return;
         };
@@ -791,7 +805,12 @@ impl EditorView {
         // Whatever is unsaved goes back before the editor moves on.
         self.save();
         self.target = Some(next);
-        self.view = None;
+        // The take on screen stays up until the next one lands, and is
+        // swapped for it in one frame: dropping it here painted the box
+        // empty for the frames the read took — a black flash on every
+        // click. Until then it is a picture: it takes no input and does
+        // not follow the transport ([`Self::stale`]).
+        self.stale = self.view.is_some();
         self.loading = None;
         self.tried = false;
         true
@@ -837,7 +856,8 @@ impl EditorView {
         self.landed(size);
         self.aligned();
         // The transport's playhead, and the page following it.
-        if let (Some(view), Some(t), Some(transport)) = (
+        if let (false, Some(view), Some(t), Some(transport)) = (
+            self.stale,
             self.view.as_mut(),
             self.target.as_ref(),
             crate::engine::Transport::shared(),

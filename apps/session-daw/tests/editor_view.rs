@@ -228,9 +228,12 @@ fn the_editor_opens_on_a_midi_item_and_reads_its_notes() {
         .guid
         .clone();
     session_daw::editor_view::picked(&arp);
+    // No frame between the two takes is empty: the stack stays up until
+    // the Arp lands, then the Arp replaces it (no black flash).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
         let _ = widget.frame(1200, 700, 1.0);
+        assert!(widget.editor().is_some(), "a frame with no take on screen");
         if widget
             .editor()
             .is_some_and(|e| e.item() == Some(arp.as_str()))
