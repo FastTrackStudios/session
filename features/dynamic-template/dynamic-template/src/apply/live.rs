@@ -259,6 +259,26 @@ impl<D: Tracks + Routing> TemplateTarget for DawTarget<D> {
 
 use daw::service::Items;
 
+/// The kept block (see `DawTarget::kept_folders`) whose folder is named
+/// `name`, taken out of `units` and left open — its last track no longer
+/// closing its folder — so the group's other tracks can follow inside it.
+fn open_kept(
+    units: &mut Vec<Vec<(String, i32)>>,
+    all: &[daw::service::Track],
+    name: &str,
+) -> Option<Vec<(String, i32)>> {
+    let at = units.iter().position(|unit| {
+        unit.first()
+            .and_then(|(g, _)| all.iter().find(|t| &t.guid == g))
+            .is_some_and(|t| t.name.trim().eq_ignore_ascii_case(name.trim()))
+    })?;
+    let mut unit = units.remove(at);
+    if let Some(last) = unit.last_mut() {
+        last.1 = last.1.saturating_add(1);
+    }
+    Some(unit)
+}
+
 /// What [`DawTarget::arrange_into_groups`] did.
 #[derive(Debug, Default)]
 pub struct Arranged {
@@ -266,6 +286,8 @@ pub struct Arranged {
     pub unwrapped: Vec<String>,
     /// Group folders created.
     pub created: Vec<String>,
+    /// Tracks renamed for where they were placed: `(was, now)`.
+    pub renamed: Vec<(String, String)>,
     /// Tracks placed inside a group.
     pub placed: usize,
 }
@@ -305,7 +327,17 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         let mut rehearsal: Vec<String> = Vec::new();
         let mut bounces: Vec<String> = Vec::new();
         let mut classified: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut group_of: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for entry in super::classified_paths(self) {
+            // A bus is a bus: its name ("MIX BUS") classifies as what it
+            // carries — the mix, a reference — which it is not.
+            if crate::buses::is_bus_name(&entry.name) {
+                continue;
+            }
+            if let Some(group) = entry.path.first() {
+                group_of.insert(entry.track.clone(), group.clone());
+            }
             let reference = entry.path.first().is_some_and(|g| g == "Reference");
             if entry
                 .path
@@ -327,7 +359,7 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         // block, never taken apart for its tracks to be sorted by their
         // names alone, which reads `Main` and `DI` as nothing. Each is its
         // tracks, `(guid, depth change)`, in order.
-        let units = self.kept_folders(&all, &classified, &rehearsal, &bounces);
+        let mut units = self.kept_folders(&all, &classified, &rehearsal, &bounces);
         let in_unit: std::collections::HashSet<String> =
             units.iter().flatten().map(|(g, _)| g.clone()).collect();
 
@@ -417,27 +449,33 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         let mut layout: Vec<(String, i32)> = Vec::new();
         // A kept folder is not a group folder to reuse.
         let mut folders_in_use: std::collections::HashSet<String> = in_unit.clone();
+        // The folders open at this point of the layout, by name, and the
+        // top-level ones laid out so far.
+        let mut open: Vec<String> = Vec::new();
+        let mut top_folders: std::collections::HashSet<String> = std::collections::HashSet::new();
         for node in &hierarchy.tracks {
             let depth = node.folder_depth_change.to_raw_value();
             if node.is_folder || node.items.is_empty() {
-                // Reuse a folder of this name, or make one.
-                let existing = Tracks::all(&self.daw, project.clone())
-                    .into_iter()
-                    .find(|t| {
-                        t.name.trim().eq_ignore_ascii_case(node.name.trim())
-                            && !self.has_items(&t.guid)
-                            && !folders_in_use.contains(&t.guid)
-                    })
-                    .map(|t| t.guid);
-                let guid = match existing {
-                    Some(g) => g,
-                    None => {
-                        arranged.created.push(node.name.clone());
-                        Tracks::add(&self.daw, project.clone(), &node.name, None)?
-                    }
-                };
-                folders_in_use.insert(guid.clone());
+                // A group whose folder is already a kept block (the kit is
+                // `Drums`, and a stray tom goes in Drums): the block, left
+                // open, and the group's tracks after its own — one folder.
+                let kept = (open.is_empty() && depth > 0)
+                    .then(|| open_kept(&mut units, &all, &node.name))
+                    .flatten();
+                if let Some(unit) = kept {
+                    layout.extend(unit);
+                    top_folders.insert(node.name.to_lowercase());
+                    open.push(node.name.clone());
+                    continue;
+                }
+                let guid = self.group_folder(&node.name, &mut folders_in_use, &mut arranged)?;
                 layout.push((guid, depth));
+                if depth > 0 {
+                    if open.is_empty() {
+                        top_folders.insert(node.name.to_lowercase());
+                    }
+                    open.push(node.name.clone());
+                }
             } else {
                 // A leaf: the original track its item names. The engine
                 // may give a leaf more than one item; the first names it.
@@ -445,7 +483,50 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                     continue;
                 };
                 arranged.placed += 1;
+                let mut depth = depth;
+                let mut folders: Vec<&str> = open.iter().map(String::as_str).collect();
+                // Alone at the top, it still goes in its instrument's folder:
+                // a lone `Bass DI` is the Bass folder's, not a stray track.
+                // (Not when the group already has its folder here: the
+                // layout runs in order, and a second one is a duplicate.)
+                let group = group_of
+                    .get(&guid)
+                    .filter(|g| g.as_str() != "Reference")
+                    .filter(|g| !top_folders.contains(&g.to_lowercase()));
+                if let (true, Some(group)) = (open.is_empty(), group) {
+                    top_folders.insert(group.to_lowercase());
+                    // Into the kept block of that name, if there is one.
+                    if let Some(unit) = open_kept(&mut units, &all, group) {
+                        layout.extend(unit);
+                    } else {
+                        let folder =
+                            self.group_folder(group, &mut folders_in_use, &mut arranged)?;
+                        layout.push((folder, 1));
+                    }
+                    depth = depth.saturating_sub(1);
+                    folders.push(group.as_str());
+                }
+                // Named for where it is now.
+                let name = all.iter().find(|t| t.guid == guid).map(|t| t.name.clone());
+                if let Some(name) = name {
+                    let placed = super::placed_name(&name, &folders);
+                    if placed != name {
+                        Tracks::rename(
+                            &self.daw,
+                            project.clone(),
+                            TrackRef::Guid(guid.clone()),
+                            &placed,
+                        )?;
+                        arranged.renamed.push((name, placed));
+                    }
+                }
                 layout.push((guid, depth));
+            }
+            // Closes: the folders it ends.
+            if depth < 0 {
+                for _ in 0..depth.unsigned_abs() {
+                    open.pop();
+                }
             }
         }
 
@@ -469,6 +550,96 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
 
         self.apply_layout(&layout)?;
         Ok(arranged)
+    }
+
+    /// Hide the DI captures that sit beside the tracks meant to be used —
+    /// an amp, a mic — in the track panel and the mixer. A DI is kept to
+    /// reamp from, not to mix: `DI` and `DI Pedalboard` beside `Amp 1` and
+    /// `Amp 2` are two lanes of noise between the guitar you play back.
+    /// Only beside a sibling (same folder) that is not a capture and has
+    /// audio, or nested under such a track; a DI alone — a bass recorded
+    /// only DI — is the track, and stays. Returns the names hidden.
+    /// Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn hide_captures(&mut self) -> eyre::Result<Vec<String>> {
+        let project = self.project.clone();
+        let all = Tracks::all(&self.daw, project.clone());
+        // Each track's parent folder (by index), `None` at the top.
+        let mut parents: Vec<Option<usize>> = Vec::with_capacity(all.len());
+        let mut open: Vec<usize> = Vec::new();
+        for (i, track) in all.iter().enumerate() {
+            parents.push(open.last().copied());
+            if track.folder_depth > 0 {
+                open.push(i);
+            } else if track.folder_depth < 0 {
+                for _ in 0..track.folder_depth.unsigned_abs() {
+                    open.pop();
+                }
+            }
+        }
+        let mut hidden = Vec::new();
+        for (i, track) in all.iter().enumerate() {
+            let Some(parent) = parents.get(i).copied().flatten() else {
+                continue;
+            };
+            if track.folder_depth > 0 || !super::is_capture(&track.name) || !track.visible_in_tcp {
+                continue;
+            }
+            let real_beside = all.iter().enumerate().any(|(j, sibling)| {
+                j != i
+                    && parents.get(j).copied().flatten() == Some(parent)
+                    && sibling.folder_depth <= 0
+                    && !super::is_capture(&sibling.name)
+                    && self.has_items(&sibling.guid)
+            });
+            // Or nested under one: the bus pass nests a DI under its
+            // primary (`nest_secondary_mics`), which makes the track it
+            // stands beside its parent.
+            let real_above = all
+                .get(parent)
+                .is_some_and(|p| !super::is_capture(&p.name) && self.has_items(&p.guid));
+            if real_beside || real_above {
+                Tracks::set_visibility(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(track.guid.clone()),
+                    false,
+                    false,
+                )?;
+                hidden.push(track.name.clone());
+            }
+        }
+        Ok(hidden)
+    }
+
+    /// The folder `name` a group's tracks go in: one of the project's with
+    /// no media and not already in use, or a new one.
+    fn group_folder(
+        &self,
+        name: &str,
+        in_use: &mut std::collections::HashSet<String>,
+        arranged: &mut Arranged,
+    ) -> eyre::Result<String> {
+        let project = self.project.clone();
+        let existing = Tracks::all(&self.daw, project.clone())
+            .into_iter()
+            .find(|t| {
+                t.name.trim().eq_ignore_ascii_case(name.trim())
+                    && !self.has_items(&t.guid)
+                    && !in_use.contains(&t.guid)
+            })
+            .map(|t| t.guid);
+        let guid = if let Some(g) = existing {
+            g
+        } else {
+            arranged.created.push(name.to_string());
+            Tracks::add(&self.daw, project, name, None)?
+        };
+        in_use.insert(guid.clone());
+        Ok(guid)
     }
 
     /// The top-level folders kept whole by [`Self::arrange_into_groups`]:

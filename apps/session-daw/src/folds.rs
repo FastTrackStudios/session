@@ -115,9 +115,6 @@ pub fn set_tops(on: bool) {
 #[must_use]
 pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)> {
     let state = state();
-    if !state.tops && state.chosen.is_empty() {
-        return rows;
-    }
     let mut out = Vec::with_capacity(rows.len());
     // The depth of the shut folder whose contents are being skipped.
     let mut skipping: Option<u32> = None;
@@ -133,7 +130,7 @@ pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)>
                 .chosen
                 .get(&track.guid)
                 .copied()
-                .unwrap_or(!(state.tops && depth == 0));
+                .unwrap_or_else(|| !(shut_by_default(&track) || state.tops && depth == 0));
             if !open {
                 skipping = Some(depth);
             }
@@ -141,6 +138,20 @@ pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)>
         out.push((track, depth));
     }
     out
+}
+
+/// Whether a folder starts shut until it is opened: the bus tree, and the
+/// reference material. Buses are wiring and references are for listening
+/// against, not tracks you work on — opened, they were rows of nothing
+/// between the instruments.
+fn shut_by_default(track: &daw_proto::Track) -> bool {
+    let name = track.name.trim();
+    [
+        dynamic_template::buses::names::MIX,
+        dynamic_template::apply::REFERENCES_FOLDER,
+    ]
+    .iter()
+    .any(|shut| name.eq_ignore_ascii_case(shut))
 }
 
 #[cfg(test)]
@@ -225,6 +236,46 @@ mod tests {
             names(&apply(rows)).len(),
             7,
             "and back, every choice forgotten"
+        );
+    }
+}
+
+#[cfg(test)]
+mod default_tests {
+    /// The bus tree and the references start shut, every other folder
+    /// open; opened, one stays open.
+    #[test]
+    fn the_mix_bus_starts_shut_and_opens_when_asked() {
+        let row = |guid: &str, name: &str, folder: bool, depth: u32| {
+            (
+                daw_proto::Track {
+                    guid: guid.to_owned(),
+                    name: name.to_owned(),
+                    is_folder: folder,
+                    ..daw_proto::Track::default()
+                },
+                depth,
+            )
+        };
+        let rows = vec![
+            row("drums", "Drums", true, 0),
+            row("kick", "Kick", false, 1),
+            row("mix", "MIX BUS", true, 0),
+            row("vox", "VOX BUS", false, 1),
+            row("refs", "REFERENCES", true, 0),
+            row("mixdown", "Mixdown", false, 1),
+        ];
+        let names = |rows: Vec<(daw_proto::Track, u32)>| -> Vec<String> {
+            rows.into_iter().map(|(t, _)| t.guid).collect()
+        };
+        assert_eq!(
+            names(super::apply(rows.clone())),
+            ["drums", "kick", "mix", "refs"]
+        );
+        super::toggle("mix", false);
+        assert_eq!(
+            names(super::apply(rows)),
+            ["drums", "kick", "mix", "vox", "refs"]
         );
     }
 }

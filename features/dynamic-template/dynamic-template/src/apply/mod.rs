@@ -897,6 +897,46 @@ pub const UNSORTED_FOLDER: &str = "UNSORTED";
 /// [`REHEARSAL_FOLDER`] inside it.
 pub const REFERENCES_FOLDER: &str = "REFERENCES";
 
+/// Whether a track is a DI capture — a `DI` token in its name (`DI`,
+/// `DI Pedalboard`, `Bass DI`), the clean signal kept to reamp from.
+#[must_use]
+pub fn is_capture(name: &str) -> bool {
+    name.split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+        .any(|w| w.eq_ignore_ascii_case("di") || w.eq_ignore_ascii_case("d.i."))
+}
+
+/// What a track placed under `folders` (outermost first) is called there.
+///
+/// Its name without the words its folders already say — the hierarchy
+/// adds the context, the name does not repeat it (`NAMING_GUIDELINES.md`,
+/// rule 5) — so `Bass Synth` under `Bass` is `Synth`.
+///
+/// A bass that says no kind is a bass guitar: `Bass DI` under `Bass` is
+/// `Guitar DI`, read through its folder as Bass Guitar DI, beside a
+/// `Synth`. A name its folders say all of is its kind, or kept.
+#[must_use]
+pub fn placed_name(original: &str, folders: &[&str]) -> String {
+    let said: std::collections::HashSet<String> = folders
+        .iter()
+        .flat_map(|f| f.split_whitespace())
+        .map(str::to_lowercase)
+        .collect();
+    let mut kept: Vec<&str> = original
+        .split_whitespace()
+        .filter(|w| !said.contains(&w.to_lowercase()))
+        .collect();
+    let in_bass = said.contains("bass");
+    let kinds = ["guitar", "synth", "sub", "upright", "moog", "808", "keys"];
+    let kinded = |w: &str| kinds.contains(&w.to_lowercase().as_str());
+    if in_bass && !said.iter().any(|w| kinded(w)) && !kept.iter().any(|w| kinded(w)) {
+        kept.insert(0, "Guitar");
+    }
+    if kept.is_empty() {
+        return original.to_string();
+    }
+    kept.join(" ")
+}
+
 /// The folder a rehearsal recording is laid out in, inside
 /// [`REFERENCES_FOLDER`].
 pub const REHEARSAL_FOLDER: &str = "REHEARSAL";
@@ -1258,6 +1298,23 @@ mod rehearsal_tests {
             path_of(&out, "").is_empty(),
             "no set, so a nameless track is not one"
         );
+    }
+
+    /// A placed track drops what its folders say, and a bass that says no
+    /// kind is a bass guitar.
+    #[test]
+    fn a_placed_track_is_named_for_where_it_is() {
+        use super::placed_name;
+        assert_eq!(placed_name("Bass DI", &["Bass"]), "Guitar DI");
+        assert_eq!(placed_name("Bass", &["Bass"]), "Guitar");
+        assert_eq!(placed_name("Bass Synth", &["Bass"]), "Synth");
+        assert_eq!(placed_name("Bass Guitar DI", &["Bass", "Guitar"]), "DI");
+        assert_eq!(
+            placed_name("Kick In", &["Drums"]),
+            "Kick In",
+            "Drums says nothing of it"
+        );
+        assert_eq!(placed_name("Lead Vocal", &[]), "Lead Vocal");
     }
 
     /// `The ballad`: a nameless folder of acoustics is the acoustics'.

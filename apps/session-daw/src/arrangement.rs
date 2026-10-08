@@ -1971,10 +1971,20 @@ fn folded_contents(
 ) -> Option<Held> {
     let (folder, index) = daw_ui::studio::folded::parse_guid(guid)?;
     let span = project.folds.get(folder)?.spans.get(index)?;
+    // A track hidden from the panel (a DI kept to reamp from) is left out
+    // of the picture; its items still go with an edit to the span.
+    let shown = |item: &&&daw_proto::Item| {
+        project
+            .tracks
+            .iter()
+            .find(|t| t.guid == item.track_guid)
+            .is_none_or(|t| t.visible_in_tcp)
+    };
     let held: Vec<_> = span
         .from
         .iter()
         .filter_map(|child| by_guid.get(child.as_str()))
+        .filter(shown)
         .map(|item| (item, previews.wave(&item.guid), previews.get(&item.guid)))
         .collect();
     let children: Vec<crate::midi::Child<'_>> = held

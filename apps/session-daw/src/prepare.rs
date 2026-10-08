@@ -284,11 +284,14 @@ pub fn steps(
         tracing::info!(
             unwrapped = ?arranged.unwrapped,
             folders = ?arranged.created,
+            renamed = ?arranged.renamed,
             placed = arranged.placed,
             "prepare: arranged into groups"
         );
         let organized = dynamic_template::apply::organize(&mut target)
             .map_err(|e| eyre::eyre!("organize: {e}"))?;
+        let hidden = target.hide_captures()?;
+        tracing::info!(hidden = ?hidden, "prepare: captures hidden");
         tracing::info!(
             tracks = organized.existing,
             buses = organized.buses.len(),
