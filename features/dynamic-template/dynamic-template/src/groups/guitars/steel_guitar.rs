@@ -17,6 +17,8 @@ impl From<SteelGuitar> for Group<ItemMetadata> {
                 "pedal_steel",
                 "lap_steel",
             ])
+            // A steel-string guitar is an acoustic, not a steel.
+            .exclude(vec!["steel string", "steel-string", "steelstring"])
             .build()
     }
 }

@@ -620,6 +620,212 @@ pub fn reclassify_stem_splits<Id>(entries: Vec<TrackContext<Id>>) -> Vec<TrackCo
         .collect()
 }
 
+/// Every track's group path, the way the organizer files it.
+///
+/// Classified against its folders ([`contextual_paths`]), then the sets
+/// only a set gives away — a stem split ([`reclassify_stem_splits`]), a
+/// rehearsal and the song's own bounces ([`reclassify_rehearsal`]) — and
+/// last the folders their names say nothing about ([`folders_by_contents`]).
+pub fn classified_paths<T: TemplateTarget>(target: &T) -> Vec<TrackContext<T::TrackId>> {
+    folders_by_contents(reclassify_rehearsal(reclassify_stem_splits(
+        contextual_paths(target),
+    )))
+}
+
+/// A folder its name says nothing about, filed by what it holds.
+///
+/// Unnamed, or named nothing the groups know: it takes the group path every
+/// classified track inside it shares, if they share one. A nameless folder
+/// of acoustic guitars is the acoustics' folder, and routes as they do.
+#[must_use]
+pub fn folders_by_contents<Id>(mut entries: Vec<TrackContext<Id>>) -> Vec<TrackContext<Id>> {
+    let count = entries.len();
+    // Innermost first, so a folder of such folders follows.
+    for i in (0..count).rev() {
+        let Some(depth) = entries.get(i).map(|e| e.context.len()) else {
+            continue;
+        };
+        let after = i.saturating_add(1);
+        let end = (after..count)
+            .find(|j| entries.get(*j).is_some_and(|e| e.context.len() <= depth))
+            .unwrap_or(count);
+        if after >= end || entries.get(i).is_some_and(|e| !e.path.is_empty()) {
+            continue;
+        }
+        let mut shared: Option<Vec<String>> = None;
+        for inner in entries.get(after..end).unwrap_or_default() {
+            if inner.path.is_empty() {
+                continue;
+            }
+            shared = Some(shared.map_or_else(
+                || inner.path.clone(),
+                |so_far| {
+                    so_far
+                        .iter()
+                        .zip(&inner.path)
+                        .take_while(|(a, b)| a == b)
+                        .map(|(a, _)| a.clone())
+                        .collect()
+                },
+            ));
+        }
+        if let (Some(path), Some(entry)) = (shared.filter(|p| !p.is_empty()), entries.get_mut(i)) {
+            entry.path = path;
+        }
+    }
+    entries
+}
+
+/// Where a rehearsal's tracks are filed: reference material, kept out of
+/// the mix, together.
+pub const REHEARSAL_PATH: [&str; 2] = ["Reference", "Rehearsal"];
+
+/// Reclassify a rehearsal recording, and the song's own bounces, as
+/// reference material.
+///
+/// A band's rehearsal arrives as a stem set named for the song — `Bass -
+/// Unbreakable`, `Lead - Unbreakable`, a `Drums` folder of `Kick -
+/// Unbreakable`… — usually under a generic container (`Tracks`, `Track`, or
+/// the song's own name). Named that way they classify as the parts they
+/// are, or as nothing, and sum into the mix beside the tracks actually being
+/// produced. They are references to the arrangement, not parts of it: they go
+/// to [`REHEARSAL_PATH`]. So does a container's whole contents (the click
+/// excepted — it is the session's click), and a folder holding nothing else.
+///
+/// The song is the suffix the set shares: `Part - Song` on at least two
+/// tracks with different parts. A track named the song itself, or the
+/// song's stems (`<song>_stems`, `… - stem`), is a bounce of it: `Reference`.
+#[must_use]
+pub fn reclassify_rehearsal<Id>(mut entries: Vec<TrackContext<Id>>) -> Vec<TrackContext<Id>> {
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    let song = rehearsal_song(&names);
+    let is_song = |name: &str| song.as_deref().is_some_and(|s| loose(name) == s);
+    let of_song = |name: &str| {
+        song.as_deref()
+            .is_some_and(|s| part_and_song(name).is_some_and(|(_, of)| of == s))
+    };
+    let count = entries.len();
+    let depth = |i: usize| entries.get(i).map_or(0, |e| e.context.len());
+    // A folder: the next track sits deeper. Its contents: everything after
+    // it that does.
+    let is_folder = |i: usize| {
+        i.checked_add(1)
+            .is_some_and(|next| next < count && depth(next) > depth(i))
+    };
+    let inside = |i: usize| {
+        let d = depth(i);
+        let after = i.saturating_add(1);
+        after..(after..count).find(|j| depth(*j) <= d).unwrap_or(count)
+    };
+    let guide = |e: &TrackContext<Id>| {
+        e.path
+            .first()
+            .is_some_and(|g| g.eq_ignore_ascii_case("Guide"))
+    };
+
+    let mut rehearsal = vec![false; count];
+    // The containers, and all they hold.
+    for i in 0..count {
+        let Some(entry) = entries.get(i) else {
+            continue;
+        };
+        let generic = matches!(loose(&entry.name).as_str(), "tracks" | "track");
+        if is_folder(i) && entry.context.is_empty() && (generic || is_song(&entry.name)) {
+            for j in std::iter::once(i).chain(inside(i)) {
+                if let Some(flag) = rehearsal.get_mut(j) {
+                    *flag = true;
+                }
+            }
+        }
+    }
+    // The set's tracks wherever they are — and, beside a set, a track with
+    // no name at all, which is how a rehearsal's room recording arrives.
+    for (i, (entry, flag)) in entries.iter().zip(rehearsal.iter_mut()).enumerate() {
+        let nameless = song.is_some() && loose(&entry.name).is_empty() && !is_folder(i);
+        if of_song(&entry.name) || nameless {
+            *flag = true;
+        }
+    }
+    // A folder of nothing but the set (innermost first, so a folder of
+    // such folders follows).
+    for i in (0..count).rev() {
+        let range = inside(i);
+        if is_folder(i)
+            && !range.is_empty()
+            && range.clone().all(|j| rehearsal.get(j) == Some(&true))
+        {
+            if let Some(flag) = rehearsal.get_mut(i) {
+                *flag = true;
+            }
+        }
+    }
+
+    for (entry, rehearsed) in entries.iter_mut().zip(rehearsal) {
+        let bounce =
+            is_song(&entry.name) || stems_of(&entry.name, song.as_deref()) || dated(&entry.name);
+        if rehearsed && !guide(entry) {
+            entry.path = REHEARSAL_PATH.iter().map(|s| (*s).to_string()).collect();
+        } else if bounce {
+            entry.path = vec!["Reference".to_string()];
+        }
+    }
+    entries
+}
+
+/// Whether `name` is a render named the way REAPER names one by default:
+/// `Song - <date and time>` (`Intro - 6_16_26, 9.28 PM`).
+fn dated(name: &str) -> bool {
+    name.rsplit_once(" - ").is_some_and(|(song, when)| {
+        let when = when.trim().to_lowercase();
+        let when = when.trim_end_matches("am").trim_end_matches("pm");
+        !song.trim().is_empty()
+            && when.chars().any(|c| c.is_ascii_digit())
+            && when
+                .chars()
+                .all(|c| c.is_ascii_digit() || " _.:,/-".contains(c))
+    })
+}
+
+/// A name with case, edge spaces and punctuation at its ends ignored.
+fn loose(name: &str) -> String {
+    name.trim()
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+}
+
+/// `Part - Song` split at its last ` - `, both sides [`loose`]; `None`
+/// without one or with either side empty.
+fn part_and_song(name: &str) -> Option<(String, String)> {
+    let (part, song) = name.rsplit_once(" - ")?;
+    let (part, song) = (loose(part), loose(song));
+    (!part.is_empty() && !song.is_empty()).then_some((part, song))
+}
+
+/// The song a rehearsal set is named for: the `Part - Song` suffix shared by
+/// two or more tracks with different parts — the most such, if several.
+fn rehearsal_song(names: &[&str]) -> Option<String> {
+    let mut parts: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for (part, song) in names.iter().filter_map(|n| part_and_song(n)) {
+        parts.entry(song).or_default().insert(part);
+    }
+    parts
+        .into_iter()
+        .filter(|(_, parts)| parts.len() >= 2)
+        .max_by_key(|(_, parts)| parts.len())
+        .map(|(song, _)| song)
+}
+
+/// Whether `name` is a bounce's stems: `… - stem`, a bare `stem(s)`, or the
+/// song's own name with `stems` after it (`empty focus_stems`).
+fn stems_of(name: &str, song: Option<&str>) -> bool {
+    let lower = name.trim().to_lowercase();
+    let stemmed = |s: &str| s.ends_with("stem") || s.ends_with("stems");
+    lower.ends_with("- stem")
+        || matches!(loose(&lower).as_str(), "stem" | "stems")
+        || song.is_some_and(|song| lower.starts_with(song) && stemmed(&lower))
+}
+
 /// One track, its ancestor folders, and what it classifies into.
 #[derive(Debug, Clone)]
 pub struct TrackContext<Id> {
@@ -661,7 +867,7 @@ pub struct TrackContext<Id> {
 /// Returns [`T::Error`] if any backend operation fails.
 pub fn apply_colors<T: TemplateTarget>(target: &mut T) -> Result<usize, T::Error> {
     let mut painted: usize = 0;
-    for entry in reclassify_stem_splits(contextual_paths(target)) {
+    for entry in classified_paths(target) {
         if crate::buses::is_bus_name(&entry.name) {
             continue;
         }
@@ -761,7 +967,7 @@ pub fn apply_routing<T: TemplateTarget>(
         .into_iter()
         .map(|(_, _, d)| d)
         .collect();
-    let entries = reclassify_stem_splits(contextual_paths(target));
+    let entries = classified_paths(target);
 
     let bus_ids: Vec<T::TrackId> = buses.by_name.values().cloned().collect();
     let mut report = RoutingReport::default();
@@ -895,5 +1101,146 @@ mod tests {
             drum.color_hex.is_some(),
             "DRUM BUS should take the drums color"
         );
+    }
+}
+
+#[cfg(test)]
+mod rehearsal_tests {
+    use super::{folders_by_contents, reclassify_rehearsal, TrackContext, REHEARSAL_PATH};
+
+    /// `(depth, name, path)` rows as the classifier leaves them: each track
+    /// with its ancestor folders, as `contextual_paths` builds them.
+    fn entries(rows: &[(usize, &str, &[&str])]) -> Vec<TrackContext<usize>> {
+        let mut ancestors: Vec<String> = Vec::new();
+        rows.iter()
+            .enumerate()
+            .map(|(i, (depth, name, path))| {
+                ancestors.truncate(*depth);
+                let entry = TrackContext {
+                    track: i,
+                    name: (*name).to_string(),
+                    context: ancestors.clone(),
+                    path: path.iter().map(|s| (*s).to_string()).collect(),
+                };
+                ancestors.push((*name).to_string());
+                entry
+            })
+            .collect()
+    }
+
+    fn path_of<'a>(entries: &'a [TrackContext<usize>], name: &str) -> Vec<&'a str> {
+        entries
+            .iter()
+            .find(|e| e.name == name)
+            .map(|e| e.path.iter().map(String::as_str).collect())
+            .unwrap_or_default()
+    }
+
+    /// Crescendum's `unbreakable`: a `Tracks` container holding the band's
+    /// rehearsal stems, the click among them, beside the real recording.
+    #[test]
+    fn a_rehearsal_container_is_reference_material_but_its_click_is_not() {
+        let out = reclassify_rehearsal(entries(&[
+            (0, "Tracks", &["Tracks"]),
+            (1, "Click", &["Guide", "Click"]),
+            (1, " - stem", &[]),
+            (1, "", &[]),
+            (1, "Bass - Unbreakable", &["Bass"]),
+            (1, "Drums", &["Drums"]),
+            (2, "Kick - Unbreakable", &["Drums", "Kick"]),
+            (2, "Snare - Unbreakable", &["Drums", "Snare"]),
+            (1, "Lead - Unbreakable", &[]),
+            (0, "Electric GTR", &["Guitars", "Electric"]),
+            (1, "Main", &["Guitars", "Electric"]),
+        ]));
+        for name in [
+            "Tracks",
+            " - stem",
+            "",
+            "Bass - Unbreakable",
+            "Drums",
+            "Kick - Unbreakable",
+            "Lead - Unbreakable",
+        ] {
+            assert_eq!(path_of(&out, name), REHEARSAL_PATH, "{name:?}");
+        }
+        assert_eq!(
+            path_of(&out, "Click"),
+            ["Guide", "Click"],
+            "the session's click stays"
+        );
+        assert_eq!(
+            path_of(&out, "Main"),
+            ["Guitars", "Electric"],
+            "the recording is untouched"
+        );
+    }
+
+    /// `empty focus`: no container — the set loose at the top, a folder of
+    /// nothing but the set, a nameless room track, and the song's stems.
+    #[test]
+    fn a_loose_rehearsal_and_the_songs_bounces_are_found_by_the_song() {
+        let out = reclassify_rehearsal(entries(&[
+            (0, "Vocals - Empty Focus", &["Vocals"]),
+            (0, "Drums", &["Drums"]),
+            (1, "Snare - Empty Focus", &["Drums", "Snare"]),
+            (1, "Kick - Empty Focus", &["Drums", "Kick"]),
+            (0, "Electric GTR", &["Guitars", "Electric"]),
+            (1, "Main", &["Guitars", "Electric"]),
+            (0, "", &[]),
+            (0, "empty focus_stems", &[]),
+            (0, "Intro - 6_16_26, 9.28 PM", &[]),
+        ]));
+        for name in ["Vocals - Empty Focus", "Drums", "Kick - Empty Focus", ""] {
+            assert_eq!(path_of(&out, name), REHEARSAL_PATH, "{name:?}");
+        }
+        assert_eq!(path_of(&out, "empty focus_stems"), ["Reference"]);
+        assert_eq!(
+            path_of(&out, "Intro - 6_16_26, 9.28 PM"),
+            ["Reference"],
+            "a dated render"
+        );
+        assert_eq!(path_of(&out, "Electric GTR"), ["Guitars", "Electric"]);
+    }
+
+    /// One `Part - Song` is not a set: a track named `Vocals - Lead` in a
+    /// session with no rehearsal is a vocal, and an unnamed track is left
+    /// alone.
+    #[test]
+    fn without_a_set_nothing_is_rehearsal() {
+        let out = reclassify_rehearsal(entries(&[
+            (0, "Vocals - Lead", &["Vocals", "Lead"]),
+            (0, "", &[]),
+            (0, "Tracks2", &[]),
+        ]));
+        assert_eq!(path_of(&out, "Vocals - Lead"), ["Vocals", "Lead"]);
+        assert!(path_of(&out, "").is_empty());
+    }
+
+    /// `The ballad`: a nameless folder of acoustics is the acoustics'.
+    #[test]
+    fn a_nameless_folder_takes_what_its_contents_share() {
+        let out = folders_by_contents(entries(&[
+            (0, "", &[]),
+            (1, "AG GTR", &["Guitars", "Acoustic"]),
+            (2, "L", &["Guitars", "Acoustic"]),
+            (1, "AG GTR", &["Guitars", "Acoustic"]),
+            (0, "Mixed", &[]),
+            (1, "Kick", &["Drums", "Kick"]),
+            (1, "Bass", &["Bass"]),
+        ]));
+        assert_eq!(path_of(&out, ""), ["Guitars", "Acoustic"]);
+        assert!(
+            path_of(&out, "Mixed").is_empty(),
+            "contents that disagree say nothing"
+        );
+    }
+
+    #[test]
+    fn a_steel_string_is_an_acoustic() {
+        let path = crate::track_schema::classify_track("Steel String").matched_groups;
+        assert!(path.iter().any(|g| g == "Acoustic"), "{path:?}");
+        let pedal = crate::track_schema::classify_track("Pedal Steel").matched_groups;
+        assert!(pedal.iter().any(|g| g == "Steel"), "{pedal:?}");
     }
 }

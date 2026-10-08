@@ -13,9 +13,8 @@ use std::collections::BTreeMap;
 use dynamic_template_proto::TemplateBus;
 
 use super::{
-    apply_buses, apply_colors, apply_routing, contextual_paths, gather_unsorted,
-    normalize_folder_depths, reclassify_stem_splits, AppliedBuses, FolderFix, Gathered,
-    RoutingReport, TemplateTarget,
+    apply_buses, apply_colors, apply_routing, classified_paths, gather_unsorted,
+    normalize_folder_depths, AppliedBuses, FolderFix, Gathered, RoutingReport, TemplateTarget,
 };
 use crate::buses::{bus_for_path, buses_for_paths, is_bus_name};
 
@@ -68,7 +67,7 @@ pub fn organize<T: TemplateTarget>(target: &mut T) -> Result<Organized<T::TrackI
     let mut justified: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
     let mut group_paths: Vec<Vec<String>> = Vec::new();
     let mut unclassified: Vec<String> = Vec::new();
-    for entry in reclassify_stem_splits(contextual_paths(target)) {
+    for entry in classified_paths(target) {
         // Never let a bus track justify a bus: their names classify as the
         // content they carry ("VOX BUS" reads as a vocal).
         if is_bus_name(&entry.name) {

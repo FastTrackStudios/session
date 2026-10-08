@@ -43,6 +43,10 @@ impl From<AcousticGuitar> for Group<ItemMetadata> {
                 "aco", // Another common abbreviation
                 "acc",
                 "nylon",
+                // A steel-string acoustic (the pedal steel excludes these).
+                "steel string",
+                "steel-string",
+                "steelstring",
                 "classical",
                 "fingerpick",
                 // Gibson acoustic models
