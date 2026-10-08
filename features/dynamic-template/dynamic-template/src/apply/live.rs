@@ -286,8 +286,6 @@ pub struct Arranged {
     pub unwrapped: Vec<String>,
     /// Group folders created.
     pub created: Vec<String>,
-    /// Tracks renamed for where they were placed: `(was, now)`.
-    pub renamed: Vec<(String, String)>,
     /// Tracks placed inside a group.
     pub placed: usize,
 }
@@ -484,7 +482,6 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 };
                 arranged.placed += 1;
                 let mut depth = depth;
-                let mut folders: Vec<&str> = open.iter().map(String::as_str).collect();
                 // Alone at the top, it still goes in its instrument's folder:
                 // a lone `Bass DI` is the Bass folder's, not a stray track.
                 // (Not when the group already has its folder here: the
@@ -504,21 +501,6 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                         layout.push((folder, 1));
                     }
                     depth = depth.saturating_sub(1);
-                    folders.push(group.as_str());
-                }
-                // Named for where it is now.
-                let name = all.iter().find(|t| t.guid == guid).map(|t| t.name.clone());
-                if let Some(name) = name {
-                    let placed = super::placed_name(&name, &folders);
-                    if placed != name {
-                        Tracks::rename(
-                            &self.daw,
-                            project.clone(),
-                            TrackRef::Guid(guid.clone()),
-                            &placed,
-                        )?;
-                        arranged.renamed.push((name, placed));
-                    }
                 }
                 layout.push((guid, depth));
             }
@@ -610,6 +592,33 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                     false,
                 )?;
                 hidden.push(track.name.clone());
+            }
+        }
+        Ok(hidden)
+    }
+
+    /// Hide the buses from the track panel — the template's (`MIX BUS`
+    /// and its tree), a session's own (`Guitar A BUS`), and a headphone
+    /// mix. They are wiring: summed in the mixer, where they stay, and
+    /// rows of nothing in an arrangement. Returns the names hidden.
+    /// Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn hide_buses(&mut self) -> eyre::Result<Vec<String>> {
+        let project = self.project.clone();
+        let mut hidden = Vec::new();
+        for track in Tracks::all(&self.daw, project.clone()) {
+            if track.visible_in_tcp && super::is_bus_track(&track.name) {
+                Tracks::set_visibility(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(track.guid.clone()),
+                    false,
+                    track.visible_in_mixer,
+                )?;
+                hidden.push(track.name);
             }
         }
         Ok(hidden)

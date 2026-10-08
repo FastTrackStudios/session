@@ -899,8 +899,9 @@ mod tests {
         assert_ne!(kick, bass, "different groups get different colours");
         assert!(project.tracks[3].peak_color.is_none(), "Mystery untouched");
 
-        // The colour is the one the taxonomy assigns, not an arbitrary pick.
-        let expected = crate::colors::color_for_path(&["Drums", "Kick"])
+        // The colour is the one the taxonomy assigns, not an arbitrary pick:
+        // a drum's is its shade of the drums' red (`drum_color`).
+        let expected = super::super::drum_color(&["Drums", "Drum Kit", "Kick"])
             .unwrap()
             .to_reaper_native();
         assert_eq!(kick, expected);

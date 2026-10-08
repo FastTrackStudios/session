@@ -584,6 +584,15 @@ pub fn reclassify_stem_splits<Id>(entries: Vec<TrackContext<Id>>) -> Vec<TrackCo
     // project in with them.
     let mut sets: HashMap<(Vec<String>, String), Vec<usize>> = HashMap::new();
     for (i, entry) in entries.iter().enumerate() {
+        // A stem is a track of audio, never a folder: a session's own
+        // `Drums`, `Bass` and `Vocals` folders side by side are its groups,
+        // not a separation of the record.
+        let folder = entries
+            .get(i.saturating_add(1))
+            .is_some_and(|next| next.context.len() > entry.context.len());
+        if folder {
+            continue;
+        }
         let Some(source) = crate::stem_source(&entry.name) else {
             continue;
         };
@@ -881,13 +890,46 @@ pub fn apply_colors<T: TemplateTarget>(target: &mut T) -> Result<usize, T::Error
             continue;
         }
         let refs: Vec<&str> = entry.path.iter().map(String::as_str).collect();
-        let Some(color) = crate::colors::color_for_path(&refs) else {
+        let Some(color) = drum_color(&refs).or_else(|| crate::colors::color_for_path(&refs)) else {
             continue;
         };
         target.set_color(&entry.track, &color.to_hex_string())?;
         painted = painted.saturating_add(1);
     }
     Ok(painted)
+}
+
+/// A drum's colour: a shade of the drums' red by which part it is.
+///
+/// Kick, toms, snare, cymbals, rooms each a step lighter or darker, so a
+/// kit reads as one family down the panel, not as a red kick, a yellow hat
+/// and a blue snare. `None` for anything not under `Drums`.
+#[must_use]
+pub fn drum_color(path: &[&str]) -> Option<crate::colors::Color> {
+    if path
+        .first()
+        .is_none_or(|g| !g.eq_ignore_ascii_case("Drums"))
+    {
+        return None;
+    }
+    let part = |name: &str| path.iter().any(|p| p.eq_ignore_ascii_case(name));
+    let lighter = if part("Kick") {
+        -0.04
+    } else if part("Toms") {
+        0.04
+    } else if part("Snare") {
+        0.08
+    } else if part("Cymbals") {
+        0.14
+    } else if part("Rooms") {
+        0.2
+    } else {
+        0.0
+    };
+    Some(crate::colors::adjust_lightness(
+        crate::colors::groups::DRUMS,
+        lighter,
+    ))
 }
 
 /// The name of the holding folder for tracks that classify to nothing.
@@ -897,44 +939,23 @@ pub const UNSORTED_FOLDER: &str = "UNSORTED";
 /// [`REHEARSAL_FOLDER`] inside it.
 pub const REFERENCES_FOLDER: &str = "REFERENCES";
 
+/// Whether a track is a bus: one of the template's, a session's own named
+/// `… Bus`, or a headphone mix.
+#[must_use]
+pub fn is_bus_track(name: &str) -> bool {
+    let lower = name.trim().to_lowercase();
+    crate::buses::is_bus_name(name)
+        || lower.ends_with(" bus")
+        || lower == "bus"
+        || lower.contains("headphone")
+}
+
 /// Whether a track is a DI capture — a `DI` token in its name (`DI`,
 /// `DI Pedalboard`, `Bass DI`), the clean signal kept to reamp from.
 #[must_use]
 pub fn is_capture(name: &str) -> bool {
     name.split(|c: char| c.is_whitespace() || c == '-' || c == '_')
         .any(|w| w.eq_ignore_ascii_case("di") || w.eq_ignore_ascii_case("d.i."))
-}
-
-/// What a track placed under `folders` (outermost first) is called there.
-///
-/// Its name without the words its folders already say — the hierarchy
-/// adds the context, the name does not repeat it (`NAMING_GUIDELINES.md`,
-/// rule 5) — so `Bass Synth` under `Bass` is `Synth`.
-///
-/// A bass that says no kind is a bass guitar: `Bass DI` under `Bass` is
-/// `Guitar DI`, read through its folder as Bass Guitar DI, beside a
-/// `Synth`. A name its folders say all of is its kind, or kept.
-#[must_use]
-pub fn placed_name(original: &str, folders: &[&str]) -> String {
-    let said: std::collections::HashSet<String> = folders
-        .iter()
-        .flat_map(|f| f.split_whitespace())
-        .map(str::to_lowercase)
-        .collect();
-    let mut kept: Vec<&str> = original
-        .split_whitespace()
-        .filter(|w| !said.contains(&w.to_lowercase()))
-        .collect();
-    let in_bass = said.contains("bass");
-    let kinds = ["guitar", "synth", "sub", "upright", "moog", "808", "keys"];
-    let kinded = |w: &str| kinds.contains(&w.to_lowercase().as_str());
-    if in_bass && !said.iter().any(|w| kinded(w)) && !kept.iter().any(|w| kinded(w)) {
-        kept.insert(0, "Guitar");
-    }
-    if kept.is_empty() {
-        return original.to_string();
-    }
-    kept.join(" ")
 }
 
 /// The folder a rehearsal recording is laid out in, inside
@@ -1300,21 +1321,40 @@ mod rehearsal_tests {
         );
     }
 
-    /// A placed track drops what its folders say, and a bass that says no
-    /// kind is a bass guitar.
+    /// A session's own group folders side by side are not a stem split.
     #[test]
-    fn a_placed_track_is_named_for_where_it_is() {
-        use super::placed_name;
-        assert_eq!(placed_name("Bass DI", &["Bass"]), "Guitar DI");
-        assert_eq!(placed_name("Bass", &["Bass"]), "Guitar");
-        assert_eq!(placed_name("Bass Synth", &["Bass"]), "Synth");
-        assert_eq!(placed_name("Bass Guitar DI", &["Bass", "Guitar"]), "DI");
-        assert_eq!(
-            placed_name("Kick In", &["Drums"]),
-            "Kick In",
-            "Drums says nothing of it"
-        );
-        assert_eq!(placed_name("Lead Vocal", &[]), "Lead Vocal");
+    fn group_folders_are_not_a_stem_split() {
+        let out = super::reclassify_stem_splits(entries(&[
+            (0, "Drums", &["Drums"]),
+            (1, "Kick", &["Drums", "Kick"]),
+            (0, "Bass", &["Bass"]),
+            (1, "Bass DI", &["Bass"]),
+            (0, "Vocals", &["Vocals"]),
+            (1, "Lead", &["Vocals", "Lead"]),
+        ]));
+        assert_eq!(path_of(&out, "Bass"), ["Bass"]);
+        assert_eq!(path_of(&out, "Drums"), ["Drums"]);
+        assert_eq!(path_of(&out, "Vocals"), ["Vocals"]);
+    }
+
+    /// A kit is one family of reds; nothing else is touched.
+    #[test]
+    fn every_drum_is_a_shade_of_the_drums_red() {
+        let hue = |c: crate::colors::Color| c.to_hsl().0;
+        let base = hue(crate::colors::groups::DRUMS);
+        for path in [
+            &["Drums", "Drum Kit", "Kick"][..],
+            &["Drums", "Drum Kit", "Snare"],
+            &["Drums", "Drum Kit", "Cymbals", "OH"],
+            &["Drums", "Drum Kit", "Rooms"],
+            &["Drums"],
+        ] {
+            let color = super::drum_color(path).expect("a drum");
+            // Around the circle: red sits where 360° meets 0°.
+            let apart = (hue(color) - base).abs();
+            assert!(apart.min(360.0 - apart) < 1.0, "{path:?} is the drums' hue");
+        }
+        assert!(super::drum_color(&["Bass"]).is_none());
     }
 
     /// `The ballad`: a nameless folder of acoustics is the acoustics'.
