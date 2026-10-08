@@ -298,7 +298,38 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
 
         let mut arranged = Arranged::default();
         let project = self.project.clone();
+        // Reference material, read with each track's folders around it —
+        // a rehearsal is recognised by its set and its container, which a
+        // name alone does not show (`reclassify_rehearsal`). It is laid out
+        // apart, below, not grouped by what its tracks are called.
+        let mut rehearsal: Vec<String> = Vec::new();
+        let mut bounces: Vec<String> = Vec::new();
+        let mut classified: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for entry in super::classified_paths(self) {
+            let reference = entry.path.first().is_some_and(|g| g == "Reference");
+            if entry
+                .path
+                .iter()
+                .map(String::as_str)
+                .eq(super::REHEARSAL_PATH)
+            {
+                rehearsal.push(entry.track);
+            } else if reference {
+                bounces.push(entry.track);
+            } else if !entry.path.is_empty() {
+                classified.insert(entry.track);
+            }
+        }
         let all = Tracks::all(&self.daw, project.clone());
+        // A session already built: a top-level folder whose tracks are what
+        // its name and theirs say (an `Electric GTR` of amps, sides and
+        // mics) is the engineer's structure, kept whole — moved as one
+        // block, never taken apart for its tracks to be sorted by their
+        // names alone, which reads `Main` and `DI` as nothing. Each is its
+        // tracks, `(guid, depth change)`, in order.
+        let units = self.kept_folders(&all, &classified, &rehearsal, &bounces);
+        let in_unit: std::collections::HashSet<String> =
+            units.iter().flatten().map(|(g, _)| g.clone()).collect();
 
         // Groups the template knows, so a folder named for one is kept.
         let config = crate::default_config();
@@ -311,12 +342,19 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         };
 
         // 1. Unwrap: a folder with no media that is not a bus or a group
-        //    only held a multitrack together. Its children stay.
+        //    only held a multitrack together — nor does a rehearsal's
+        //    container, whatever it is called. Its children stay.
         for track in &all {
+            let container = rehearsal.contains(&track.guid) || bounces.contains(&track.guid);
+            if in_unit.contains(&track.guid) {
+                continue;
+            }
             if track.folder_depth > 0
-                && !is_known_folder(&track.name)
+                && (container || !is_known_folder(&track.name))
                 && !self.has_items(&track.guid)
             {
+                rehearsal.retain(|g| g != &track.guid);
+                bounces.retain(|g| g != &track.guid);
                 Tracks::remove(
                     &self.daw,
                     project.clone(),
@@ -352,17 +390,20 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             .filter(|t| {
                 !crate::buses::is_bus_name(&t.name)
                     && !keyflow_children.contains(&t.guid)
+                    && !rehearsal.contains(&t.guid)
+                    && !bounces.contains(&t.guid)
+                    && !in_unit.contains(&t.guid)
                     && self.has_items(&t.guid)
             })
             .collect();
-        if content.is_empty() {
-            return Ok(arranged);
-        }
         let names: Vec<String> = content.iter().map(|t| t.name.clone()).collect();
-        let hierarchy = names
-            .clone()
-            .organize_into_tracks(&config, None)
-            .map_err(|e| eyre::eyre!("grouping: {e}"))?;
+        let hierarchy = if names.is_empty() {
+            crate::TrackHierarchy::default()
+        } else {
+            names
+                .organize_into_tracks(&config, None)
+                .map_err(|e| eyre::eyre!("grouping: {e}"))?
+        };
 
         // 3. The desired layout: (guid, depth change) in order.
         let mut unused: Vec<(String, String)> = content
@@ -374,8 +415,8 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             Some(unused.remove(at).1)
         };
         let mut layout: Vec<(String, i32)> = Vec::new();
-        let mut folders_in_use: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        // A kept folder is not a group folder to reuse.
+        let mut folders_in_use: std::collections::HashSet<String> = in_unit.clone();
         for node in &hierarchy.tracks {
             let depth = node.folder_depth_change.to_raw_value();
             if node.is_folder || node.items.is_empty() {
@@ -408,7 +449,15 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             }
         }
 
-        // 4. Everything else keeps its order and depth, after the groups.
+        // The kept folders, whole, beside the groups.
+        layout.extend(units.into_iter().flatten());
+
+        // 4. The reference material, after the groups: REFERENCES, the
+        //    rehearsal in REHEARSAL inside it, then the song's bounces.
+        let references = self.references_layout(&rehearsal, &bounces, &mut arranged)?;
+        layout.extend(references);
+
+        // 5. Everything else keeps its order and depth, after them.
         let placed: std::collections::HashSet<&str> =
             layout.iter().map(|(g, _)| g.as_str()).collect();
         let rest: Vec<(String, i32)> = Tracks::all(&self.daw, project.clone())
@@ -420,6 +469,107 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
 
         self.apply_layout(&layout)?;
         Ok(arranged)
+    }
+
+    /// The top-level folders kept whole by [`Self::arrange_into_groups`]:
+    /// each a folder with no media of its own that classified (with its
+    /// folders as context) and is not a bus, Keyflow, UNSORTED or reference
+    /// material — with everything inside it, as `(guid, depth change)`.
+    fn kept_folders(
+        &self,
+        all: &[daw::service::Track],
+        classified: &std::collections::HashSet<String>,
+        rehearsal: &[String],
+        bounces: &[String],
+    ) -> Vec<Vec<(String, i32)>> {
+        let mut units = Vec::new();
+        let mut running = 0i32;
+        let mut i = 0;
+        while let Some(track) = all.get(i) {
+            let opens = running == 0 && track.folder_depth > 0;
+            let name = track.name.trim();
+            let keep = opens
+                && classified.contains(&track.guid)
+                && !rehearsal.contains(&track.guid)
+                && !bounces.contains(&track.guid)
+                && !crate::buses::is_bus_name(name)
+                && !name.eq_ignore_ascii_case("Keyflow")
+                && !name.eq_ignore_ascii_case(super::UNSORTED_FOLDER)
+                && !name.eq_ignore_ascii_case(super::REFERENCES_FOLDER)
+                && !self.has_items(&track.guid);
+            if !keep {
+                running = running.saturating_add(track.folder_depth);
+                i = i.saturating_add(1);
+                continue;
+            }
+            // The folder and everything until the depth comes back to the top.
+            let mut unit = Vec::new();
+            let mut depth = 0i32;
+            while let Some(t) = all.get(i) {
+                unit.push((t.guid.clone(), t.folder_depth));
+                depth = depth.saturating_add(t.folder_depth);
+                i = i.saturating_add(1);
+                if depth <= 0 {
+                    break;
+                }
+            }
+            // One holding reference material is not kept: those tracks are
+            // laid out in REFERENCES, and a track cannot be in two places.
+            let mixed = unit
+                .iter()
+                .any(|(g, _)| rehearsal.contains(g) || bounces.contains(g));
+            if !mixed {
+                units.push(unit);
+            }
+        }
+        units
+    }
+
+    /// The REFERENCES folder's part of a layout: the folder (reused if the
+    /// project has one), REHEARSAL inside it holding `rehearsal`, then
+    /// `bounces` — each a `(guid, depth change)`. Empty when both are.
+    fn references_layout(
+        &self,
+        rehearsal: &[String],
+        bounces: &[String],
+        arranged: &mut Arranged,
+    ) -> eyre::Result<Vec<(String, i32)>> {
+        if rehearsal.is_empty() && bounces.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut layout = vec![(self.folder_named(super::REFERENCES_FOLDER, arranged)?, 1)];
+        if !rehearsal.is_empty() {
+            layout.push((self.folder_named(super::REHEARSAL_FOLDER, arranged)?, 1));
+            layout.extend(rehearsal.iter().map(|g| (g.clone(), 0)));
+            // The last of the rehearsal closes REHEARSAL — and REFERENCES
+            // too, when there are no bounces after it.
+            let closes = if bounces.is_empty() { -2 } else { -1 };
+            if let Some(last) = layout.last_mut() {
+                last.1 = closes;
+            }
+        }
+        if !bounces.is_empty() {
+            layout.extend(bounces.iter().map(|g| (g.clone(), 0)));
+            if let Some(last) = layout.last_mut() {
+                last.1 = -1;
+            }
+        }
+        Ok(layout)
+    }
+
+    /// A folder track named `name` with no media of its own — the
+    /// project's, or a new one.
+    fn folder_named(&self, name: &str, arranged: &mut Arranged) -> eyre::Result<String> {
+        let project = self.project.clone();
+        let existing = Tracks::all(&self.daw, project.clone())
+            .into_iter()
+            .find(|t| t.name.trim().eq_ignore_ascii_case(name) && !self.has_items(&t.guid))
+            .map(|t| t.guid);
+        if let Some(guid) = existing {
+            return Ok(guid);
+        }
+        arranged.created.push(name.to_string());
+        Ok(Tracks::add(&self.daw, project, name, None)?)
     }
 
     /// Reorder the whole project to `layout` and set every depth from it.

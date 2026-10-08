@@ -761,6 +761,10 @@ pub fn reclassify_rehearsal<Id>(mut entries: Vec<TrackContext<Id>>) -> Vec<Track
     }
 
     for (entry, rehearsed) in entries.iter_mut().zip(rehearsal) {
+        // Reference material already (a stem split) keeps what it is.
+        if entry.path.first().is_some_and(|g| g == "Reference") {
+            continue;
+        }
         let bounce =
             is_song(&entry.name) || stems_of(&entry.name, song.as_deref()) || dated(&entry.name);
         if rehearsed && !guide(entry) {
@@ -806,7 +810,12 @@ fn part_and_song(name: &str) -> Option<(String, String)> {
 fn rehearsal_song(names: &[&str]) -> Option<String> {
     let mut parts: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         std::collections::BTreeMap::new();
-    for (part, song) in names.iter().filter_map(|n| part_and_song(n)) {
+    // A date is when a render was made, not what it is a render of.
+    for (part, song) in names
+        .iter()
+        .filter(|n| !dated(n))
+        .filter_map(|n| part_and_song(n))
+    {
         parts.entry(song).or_default().insert(part);
     }
     parts
@@ -883,6 +892,14 @@ pub fn apply_colors<T: TemplateTarget>(target: &mut T) -> Result<usize, T::Error
 
 /// The name of the holding folder for tracks that classify to nothing.
 pub const UNSORTED_FOLDER: &str = "UNSORTED";
+
+/// The folder reference material is laid out in: the song's bounces, and
+/// [`REHEARSAL_FOLDER`] inside it.
+pub const REFERENCES_FOLDER: &str = "REFERENCES";
+
+/// The folder a rehearsal recording is laid out in, inside
+/// [`REFERENCES_FOLDER`].
+pub const REHEARSAL_FOLDER: &str = "REHEARSAL";
 
 /// Gather `tracks` into an [`UNSORTED_FOLDER`] at the end of the project.
 ///
@@ -1215,6 +1232,32 @@ mod rehearsal_tests {
         ]));
         assert_eq!(path_of(&out, "Vocals - Lead"), ["Vocals", "Lead"]);
         assert!(path_of(&out, "").is_empty());
+    }
+
+    /// `Intro`: a stem split of a dated render (`…, Intro - 6_16_26`) is
+    /// not a rehearsal set — the date is not a song — and keeps its path.
+    #[test]
+    fn a_dated_stem_split_is_not_a_rehearsal() {
+        let out = reclassify_rehearsal(entries(&[
+            (0, "Intro Strems", &["Reference", "Stem Split"]),
+            (
+                1,
+                "(Example: Intro - 6_16_26, (Bass)_1_0001),Intro - 6_16_26",
+                &["Reference", "Stem Split"],
+            ),
+            (
+                1,
+                "(Example: Intro - 6_16_26, (Drums)_1_0002),Intro - 6_16_26",
+                &["Reference", "Stem Split"],
+            ),
+            (0, "Steel String", &["Guitars", "Acoustic"]),
+            (0, "", &[]),
+        ]));
+        assert_eq!(path_of(&out, "Intro Strems"), ["Reference", "Stem Split"]);
+        assert!(
+            path_of(&out, "").is_empty(),
+            "no set, so a nameless track is not one"
+        );
     }
 
     /// `The ballad`: a nameless folder of acoustics is the acoustics'.

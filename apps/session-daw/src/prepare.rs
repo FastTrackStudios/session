@@ -293,6 +293,7 @@ pub fn steps(
             tracks = organized.existing,
             buses = organized.buses.len(),
             unsorted = organized.unsorted.len(),
+            unrouted = ?organized.routing.unrouted,
             "prepare: organized"
         );
     }

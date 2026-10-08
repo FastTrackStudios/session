@@ -32,6 +32,8 @@ impl From<Reference> for Group<ItemMetadata> {
                 "rough mix",
                 // Reference patterns
                 "reference",
+                // The folder the organizer lays reference material out in.
+                "references",
                 "ref",
                 "ref mix",
                 "reference mix",
