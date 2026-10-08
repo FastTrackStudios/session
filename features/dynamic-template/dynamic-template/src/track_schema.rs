@@ -280,8 +280,9 @@ pub fn dimension_value(
     // every track — two full parses each, ~0.3 ms, every time a view is
     // planned. Asked again, it is a lookup.
     type Key = (String, Vec<String>, TrackDimension);
-    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Key, Option<String>>>> =
-        std::sync::OnceLock::new();
+    static SEEN: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<Key, Option<String>>>,
+    > = std::sync::OnceLock::new();
     let seen = SEEN.get_or_init(Default::default);
     let key = (name.to_owned(), context.to_vec(), dimension);
     if let Some(known) = seen
