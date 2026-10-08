@@ -160,6 +160,18 @@ impl Project {
         self.items.get(track_guid).map_or(&[], Vec::as_slice)
     }
 
+    /// `track_guid`'s items on a lane that plays — the row as it sounds.
+    /// A track with REAPER 7 fixed lanes keeps its other takes on lanes
+    /// that do not ([`on_playing_lane`]); drawn at the row's height they
+    /// were six takes piled on one another.
+    #[must_use]
+    pub fn sounding(&self, track: &daw_proto::Track) -> Vec<&Item> {
+        self.lane(&track.guid)
+            .iter()
+            .filter(|item| on_playing_lane(track, item))
+            .collect()
+    }
+
     /// Where an edit aimed at `guid` should actually land.
     ///
     /// `destructive` is whether it changes the items rather than merely
@@ -360,4 +372,51 @@ pub async fn fetch_when_ready() -> Arc<Project> {
 /// band falls back to the accent.
 fn css_color(c: u32) -> String {
     format!("#{:06x}", c & 0x00ff_ffff)
+}
+
+/// Whether `item` sits on a lane of `track` that plays: always, without
+/// fixed lanes; with them, when its lane's bit is in the play mask — the
+/// rule the renderer plays by.
+#[must_use]
+pub fn on_playing_lane(track: &daw_proto::Track, item: &Item) -> bool {
+    track.lane_count == 0
+        || item
+            .fixed_lane
+            .is_none_or(|lane| lane < 64 && track.lane_play_mask & (1_u64 << lane) != 0)
+}
+
+#[cfg(test)]
+mod playing_lane_tests {
+    use super::on_playing_lane;
+    use daw_proto::{Item, Track};
+
+    /// The renderer's rule: no lanes, everything; with lanes, the lanes in
+    /// the play mask — a comp lane playing hides the takes under it.
+    #[test]
+    fn only_a_playing_lane_sounds() {
+        let on = |lane: Option<u32>| Item {
+            fixed_lane: lane,
+            ..Item::default()
+        };
+        let plain = Track::default();
+        assert!(on_playing_lane(&plain, &on(None)));
+        let comped = Track {
+            lane_count: 6,
+            lane_play_mask: 0b1,
+            ..Track::default()
+        };
+        assert!(
+            on_playing_lane(&comped, &on(Some(0))),
+            "the comp lane plays"
+        );
+        assert!(
+            !on_playing_lane(&comped, &on(Some(3))),
+            "a take under it does not"
+        );
+        let take_four = Track {
+            lane_play_mask: 0b1_0000,
+            ..comped
+        };
+        assert!(on_playing_lane(&take_four, &on(Some(4))));
+    }
 }

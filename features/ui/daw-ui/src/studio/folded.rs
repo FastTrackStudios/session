@@ -240,10 +240,20 @@ pub fn refold(project: &mut super::project::Project, shown: &[daw_proto::Track],
     }
     let tracks = std::mem::take(&mut project.tracks);
     for folder in shut(&tracks, shown) {
-        let lanes: Vec<&[Item]> = under(&tracks, &folder.guid)
+        // What each child plays: a take on a lane that does not play is
+        // an alternative, not part of the folder's sound.
+        let playing: Vec<Vec<Item>> = under(&tracks, &folder.guid)
             .iter()
-            .map(|child| project.lane(&child.guid))
+            .map(|child| {
+                project
+                    .lane(&child.guid)
+                    .iter()
+                    .filter(|item| super::project::on_playing_lane(child, item))
+                    .cloned()
+                    .collect()
+            })
             .collect();
+        let lanes: Vec<&[Item]> = playing.iter().map(Vec::as_slice).collect();
         let spans = spans(&lanes);
         if spans.is_empty() {
             continue;

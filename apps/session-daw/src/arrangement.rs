@@ -270,7 +270,7 @@ pub struct Index {
     /// every envelope's every point was a path element at the lanes' one
     /// pixel a second — tens of megabytes a song, most of a browser
     /// page — for a picture that at any zoom shows a point a pixel.
-    waves: std::collections::HashMap<u32, LaneWave>,
+    waves: std::collections::HashMap<u32, Vec<LaneWave>>,
 }
 
 /// An item's waveform, to draw over its body at replay.
@@ -818,6 +818,7 @@ impl Arrangement {
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         let mut y = 0.0_f64;
         let keys = keys_of(project);
+        let roles = kit_roles(project);
         // Every item by guid, for the shut folders' rows to find what is
         // under them — built only when some folder is shut.
         let by_guid: std::collections::HashMap<&str, &daw_proto::Item> = if project.folds.is_empty()
@@ -885,7 +886,7 @@ impl Arrangement {
             // row shrinks, so a collapsed session still shows its items
             // as bands rather than as empty lanes.
             let inset = (body * 0.05).clamp(0.0, 2.0);
-            for item in project.lane(&track.guid) {
+            for item in project.sounding(track) {
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
                 // How far into the source this item starts. Zero for
@@ -921,29 +922,44 @@ impl Arrangement {
                 //
                 // A shut folder's item holds what is under it: the
                 // children's audio as one envelope, their notes over it.
-                let (notes, wave) = folded_contents(project, &by_guid, previews, &item.guid)
-                    .unwrap_or_else(|| (previews.get(&item.guid), previews.wave(&item.guid)));
+                let held = folded_contents(project, &by_guid, &roles, previews, &item.guid)
+                    .unwrap_or_else(|| Held {
+                        notes: previews.get(&item.guid),
+                        wave: previews.wave(&item.guid),
+                        layers: Vec::new(),
+                    });
+                let (notes, wave) = (held.notes, held.wave);
                 // Audio: the take's own peaks, once they have been read —
                 // plain until then, for the same reason.
-                if let Some(wave) = wave
+                if let Some(whole) = wave
                     .clone()
                     .filter(|w| w.step > 0.0 && !w.points.is_empty())
                 {
+                    // One gain for every layer: the loudest anywhere reaches
+                    // the edge, and the layers keep their loudness to each
+                    // other.
+                    let gain = wave_gain(&whole);
+                    let lane = |wave, color| LaneWave {
+                        runs: std::cell::RefCell::default(),
+                        gain,
+                        wave,
+                        x0,
+                        x1,
+                        top,
+                        bottom,
+                        color,
+                    };
+                    let drawn: Vec<LaneWave> = if held.layers.is_empty() {
+                        vec![lane(whole, color)]
+                    } else {
+                        held.layers
+                            .into_iter()
+                            .map(|(role, wave)| lane(wave, kit_color(role).unwrap_or(color)))
+                            .collect()
+                    };
                     // Over the body just recorded, drawn at replay.
                     let body = command_index(&lanes).saturating_sub(1);
-                    index.waves.insert(
-                        body,
-                        LaneWave {
-                            runs: std::cell::RefCell::default(),
-                            gain: wave_gain(&wave),
-                            wave,
-                            x0,
-                            x1,
-                            top,
-                            bottom,
-                            color,
-                        },
-                    );
+                    index.waves.insert(body, drawn);
                 }
                 if let Some(roll) = notes
                     .as_deref()
@@ -1886,17 +1902,70 @@ const MIN_NOTE_SECS: f64 = 0.02;
 /// One path for every note, because a lane of a hundred notes is a
 /// hundred fills otherwise, and the index has to carry an extent per
 /// command.
-/// A shut folder's item's contents: its children's notes and envelope.
-type Held = (
-    Option<Vec<crate::midi::Note>>,
-    Option<std::sync::Arc<crate::midi::Wave>>,
-);
+/// What an item holds to draw: its notes, its envelope, and — a shut
+/// kit's — that envelope by drum, in the order they are drawn.
+struct Held {
+    notes: Option<Vec<crate::midi::Note>>,
+    wave: Option<std::sync::Arc<crate::midi::Wave>>,
+    layers: Vec<(LaneRole, std::sync::Arc<crate::midi::Wave>)>,
+}
+
+use expression_editor_core::kit::LaneRole;
+
+/// The drums a shut kit's item is layered by, under to over: the kit's
+/// own colour for the rest (cymbals, rooms) at the bottom, then toms,
+/// snare, and the kick on top — the parts you read a groove by drawn
+/// over the wash, each in its own colour, so the pattern still shows.
+const KIT_LAYERS: [LaneRole; 4] = [
+    LaneRole::Other,
+    LaneRole::Toms,
+    LaneRole::Snare,
+    LaneRole::Kick,
+];
+
+/// A drum's waveform colour on a shut kit; `None` for the rest, which
+/// takes the kit's own.
+const fn kit_color(role: LaneRole) -> Option<Color> {
+    match role {
+        LaneRole::Kick => Some(Color::from_rgba8(0xe5, 0x48, 0x4d, 0xff)),
+        LaneRole::Snare => Some(Color::from_rgba8(0x3e, 0x8e, 0xf7, 0xff)),
+        LaneRole::Toms => Some(Color::from_rgba8(0x9b, 0x6b, 0xe0, 0xff)),
+        LaneRole::Other => None,
+    }
+}
+
+/// Every track's drum role, by guid: from its name and the folders it
+/// sits in (`kit_role`) — a mic called `In` inside `Kick` is the kick.
+fn kit_roles(project: &ProjectRef) -> std::collections::HashMap<&str, LaneRole> {
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> = project
+        .tracks
+        .iter()
+        .map(|t| (t.guid.as_str(), t))
+        .collect();
+    project
+        .tracks
+        .iter()
+        .map(|track| {
+            let mut folders: Vec<&str> = Vec::new();
+            let mut at = track.parent_guid.as_deref();
+            while let Some(parent) = at.and_then(|g| by_guid.get(g)) {
+                folders.push(parent.name.as_str());
+                at = parent.parent_guid.as_deref();
+            }
+            (
+                track.guid.as_str(),
+                expression_editor_core::kit::kit_role(&track.name, &folders),
+            )
+        })
+        .collect()
+}
 
 /// What a shut folder's item `guid` holds — the notes and the envelope of
 /// the children under its span — or `None` when `guid` is not one.
 fn folded_contents(
     project: &ProjectRef,
     by_guid: &std::collections::HashMap<&str, &daw_proto::Item>,
+    roles: &std::collections::HashMap<&str, LaneRole>,
     previews: &crate::midi::Previews,
     guid: &str,
 ) -> Option<Held> {
@@ -1917,10 +1986,38 @@ fn folded_contents(
             notes: notes.as_deref(),
         })
         .collect();
-    Some((
-        crate::midi::fold_notes(span.start, span.end, &children),
-        crate::midi::fold_waves(span.start, span.end, &children).map(std::sync::Arc::new),
-    ))
+    let role_of = |item: &daw_proto::Item| {
+        roles
+            .get(item.track_guid.as_str())
+            .copied()
+            .unwrap_or(LaneRole::Other)
+    };
+    // A kit — anything under it a drum — is layered by drum.
+    let kit = held
+        .iter()
+        .any(|(item, ..)| role_of(item) != LaneRole::Other);
+    let layers = if kit {
+        KIT_LAYERS
+            .iter()
+            .filter_map(|role| {
+                let these: Vec<crate::midi::Child<'_>> = held
+                    .iter()
+                    .zip(&children)
+                    .filter(|((item, ..), _)| role_of(item) == *role)
+                    .map(|(_, child)| crate::midi::Child { ..*child })
+                    .collect();
+                crate::midi::fold_waves(span.start, span.end, &these)
+                    .map(|wave| (*role, std::sync::Arc::new(wave)))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Some(Held {
+        notes: crate::midi::fold_notes(span.start, span.end, &children),
+        wave: crate::midi::fold_waves(span.start, span.end, &children).map(std::sync::Arc::new),
+        layers,
+    })
 }
 
 fn midi_preview(
@@ -2196,7 +2293,13 @@ impl Arrangement {
                 }
                 // An item body with a waveform over it: the part on
                 // screen, a point a pixel.
-                if let Some(lane) = u32::try_from(i).ok().and_then(|i| self.index.waves.get(&i)) {
+                // Layers in order: a shut kit's are drawn under to over.
+                for lane in u32::try_from(i)
+                    .ok()
+                    .and_then(|i| self.index.waves.get(&i))
+                    .into_iter()
+                    .flatten()
+                {
                     for path in lane_wave_paths(lane, left, right, view.pps) {
                         painter.fill(Fill::NonZero, transform, lane.color, None, &*path);
                         counts.submitted = counts.submitted.saturating_add(1);
@@ -2702,5 +2805,113 @@ mod lane_wave_tests {
             .map(|p| p.y)
             .fold(f64::MAX, f64::min);
         assert!(top < 5.0, "the spike survives the fold: top at {top}");
+    }
+}
+
+#[cfg(test)]
+mod kit_layer_tests {
+    use super::{LaneRole, folded_contents, kit_roles};
+    use daw_proto::{Duration, Item, PositionInSeconds, Track};
+    use daw_ui::studio::{ProjectRef, folded, project::Project};
+
+    fn track(guid: &str, name: &str, parent: Option<&str>) -> Track {
+        Track {
+            guid: guid.into(),
+            name: name.into(),
+            parent_guid: parent.map(Into::into),
+            is_folder: parent.is_none() || name == "Kick",
+            ..Track::default()
+        }
+    }
+
+    fn item(guid: &str, track: &str) -> Item {
+        Item {
+            guid: guid.into(),
+            track_guid: track.into(),
+            position: PositionInSeconds::from_seconds(0.0),
+            length: Duration::from_seconds(1.0),
+            ..Item::default()
+        }
+    }
+
+    /// A shut kit's item is its drums layered under to over — the rest,
+    /// then toms, snare, kick — each its own envelope; a mic is a kick by
+    /// the folder it sits in. A folder of no drums is one envelope.
+    #[test]
+    fn a_shut_kit_is_layered_by_drum_and_a_shut_folder_of_no_drums_is_not() {
+        let tracks = vec![
+            track("drums", "Drums", None),
+            track("kick", "Kick", Some("drums")),
+            track("in", "In", Some("kick")),
+            track("snare", "Snare Top", Some("drums")),
+            track("oh", "Overheads", Some("drums")),
+            track("gtrs", "Guitars", None),
+            track("amp", "Amp 1", Some("gtrs")),
+        ];
+        let mut project = Project {
+            tracks,
+            ..Project::default()
+        };
+        for (guid, on) in [
+            ("i-in", "in"),
+            ("i-snare", "snare"),
+            ("i-oh", "oh"),
+            ("i-amp", "amp"),
+        ] {
+            project
+                .items
+                .entry(on.to_string())
+                .or_default()
+                .push(item(guid, on));
+        }
+        let shown = vec![project.tracks[0].clone(), project.tracks[5].clone()];
+        folded::refold(&mut project, &shown, true);
+        let project = ProjectRef(std::sync::Arc::new(project));
+        let previews = crate::midi::Previews::default();
+        for guid in ["i-in", "i-snare", "i-oh", "i-amp"] {
+            previews.insert_wave(
+                guid,
+                crate::midi::Wave {
+                    step: 0.1,
+                    points: vec![(0.5, -0.5); 10],
+                },
+            );
+        }
+        let by_guid = project
+            .items
+            .values()
+            .flatten()
+            .map(|i| (i.guid.as_str(), i))
+            .collect();
+        let roles = kit_roles(&project);
+        assert_eq!(
+            roles.get("in"),
+            Some(&LaneRole::Kick),
+            "a mic in the kick folder"
+        );
+
+        let kit = folded_contents(
+            &project,
+            &by_guid,
+            &roles,
+            &previews,
+            &folded::guid_of("drums", 0),
+        )
+        .expect("the kit's item");
+        let order: Vec<LaneRole> = kit.layers.iter().map(|(role, _)| *role).collect();
+        assert_eq!(order, [LaneRole::Other, LaneRole::Snare, LaneRole::Kick]);
+
+        let guitars = folded_contents(
+            &project,
+            &by_guid,
+            &roles,
+            &previews,
+            &folded::guid_of("gtrs", 0),
+        )
+        .expect("the guitars' item");
+        assert!(
+            guitars.layers.is_empty() && guitars.wave.is_some(),
+            "one envelope"
+        );
     }
 }

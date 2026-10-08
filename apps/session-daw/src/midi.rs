@@ -227,6 +227,14 @@ impl Previews {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
 
+    /// Put `wave` in as `guid`'s, as a read would.
+    #[cfg(test)]
+    pub fn insert_wave(&self, guid: &str, wave: Wave) {
+        if let Ok(mut waves) = self.waves.lock() {
+            waves.insert(guid.to_owned(), Arc::new(wave));
+        }
+    }
+
     /// The waveform for an audio item, if its peaks have been read.
     #[must_use]
     pub fn wave(&self, guid: &str) -> Option<Arc<Wave>> {
