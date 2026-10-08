@@ -24,6 +24,10 @@ impl From<Guide> for Group<ItemMetadata> {
                 "count",
                 "guide",
                 "cue",
+                // A printed shaker keeps time the way a click does.
+                "shakeprint",
+                "shake print",
+                "shaker print",
             ])
             // A cue *bus* is a per-player monitor mix, not a guide track. The
             // exclusion has to sit on the container as well as on Cues: the
@@ -48,6 +52,14 @@ impl From<Click> for Group<ItemMetadata> {
             .patterns(vec![
                 "click",
                 "click track",
+                // A shaker guide is a click you can groove to: `ShakePrint`,
+                // `Shaker Guide` — the guide's, not the percussion's.
+                "shakeprint",
+                "shake print",
+                "shaker print",
+                "shaker guide",
+                "guide shaker",
+                "shaker click",
                 "metronome",
                 "met",
                 "tempo",

@@ -66,6 +66,15 @@ impl From<Reference> for Group<ItemMetadata> {
                 "render",
                 "rendered",
             ])
+            // A printed click or shaker is the guide's (`ClickPrint`,
+            // `ShakePrint`), not a print of the mix.
+            .exclude(vec![
+                "clickprint",
+                "click print",
+                "shakeprint",
+                "shake print",
+                "shaker print",
+            ])
             // Stem splits are reference material — a separation of the finished
             // record, not parts anyone played. Nesting them here means the path
             // is ["Reference", "Stem Split"], which routes to the same

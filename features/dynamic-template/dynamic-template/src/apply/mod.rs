@@ -1376,6 +1376,26 @@ mod rehearsal_tests {
         );
     }
 
+    /// A shaker is percussion; a shaker guide or a printed shaker is the
+    /// guide's; a print of the mix is still a reference.
+    #[test]
+    fn a_shaker_guide_is_the_guides_and_a_shaker_is_percussion() {
+        let top = |name: &str| {
+            crate::track_schema::classify_track(name)
+                .matched_groups
+                .first()
+                .cloned()
+                .unwrap_or_default()
+        };
+        for name in ["ShakePrint", "Shake Print", "Shaker Guide", "ClickPrint"] {
+            assert_eq!(top(name), "Guide", "{name}");
+        }
+        for name in ["Shaker", "130-Shaker"] {
+            assert_eq!(top(name), "Percussion", "{name}");
+        }
+        assert_eq!(top("Mix Print"), "Reference");
+    }
+
     #[test]
     fn a_steel_string_is_an_acoustic() {
         let path = crate::track_schema::classify_track("Steel String").matched_groups;
