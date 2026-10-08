@@ -140,8 +140,8 @@ pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)>
     out
 }
 
-/// Whether a folder starts shut until it is opened: the bus tree, and the
-/// reference material. Buses are wiring and references are for listening
+/// Whether a folder starts shut until it is opened: the bus tree, the
+/// reference material, and the guide's rendered prints. Buses are wiring and references are for listening
 /// against, not tracks you work on — opened, they were rows of nothing
 /// between the instruments.
 fn shut_by_default(track: &daw_proto::Track) -> bool {
@@ -149,6 +149,7 @@ fn shut_by_default(track: &daw_proto::Track) -> bool {
     [
         dynamic_template::buses::names::MIX,
         dynamic_template::apply::REFERENCES_FOLDER,
+        dynamic_template::apply::PRINTS_FOLDER,
     ]
     .iter()
     .any(|shut| name.eq_ignore_ascii_case(shut))
@@ -242,8 +243,8 @@ mod tests {
 
 #[cfg(test)]
 mod default_tests {
-    /// The bus tree and the references start shut, every other folder
-    /// open; opened, one stays open.
+    /// The bus tree, the references and the guide's prints start shut,
+    /// every other folder open; opened, one stays open.
     #[test]
     fn the_mix_bus_starts_shut_and_opens_when_asked() {
         let row = |guid: &str, name: &str, folder: bool, depth: u32| {
@@ -264,18 +265,21 @@ mod default_tests {
             row("vox", "VOX BUS", false, 1),
             row("refs", "REFERENCES", true, 0),
             row("mixdown", "Mixdown", false, 1),
+            row("guide", "Guide", true, 0),
+            row("prints", "PRINTS", true, 1),
+            row("clickprint", "ClickPrint", false, 2),
         ];
         let names = |rows: Vec<(daw_proto::Track, u32)>| -> Vec<String> {
             rows.into_iter().map(|(t, _)| t.guid).collect()
         };
         assert_eq!(
             names(super::apply(rows.clone())),
-            ["drums", "kick", "mix", "refs"]
+            ["drums", "kick", "mix", "refs", "guide", "prints"]
         );
         super::toggle("mix", false);
         assert_eq!(
             names(super::apply(rows)),
-            ["drums", "kick", "mix", "vox", "refs"]
+            ["drums", "kick", "mix", "vox", "refs", "guide", "prints"]
         );
     }
 }

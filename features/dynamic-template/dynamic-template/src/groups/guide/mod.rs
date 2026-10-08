@@ -28,17 +28,41 @@ impl From<Guide> for Group<ItemMetadata> {
                 "shakeprint",
                 "shake print",
                 "shaker print",
+                "clickprint",
+                "click print",
             ])
             // A cue *bus* is a per-player monitor mix, not a guide track. The
             // exclusion has to sit on the container as well as on Cues: the
             // parser matches each group on its own patterns, so blocking only
             // the child leaves the parent claiming "Cue Buss 1".
             .exclude(["buss", "bus", "headphone", "headphones"])
+            .group(Prints)
             .group(Click)
             .group(Count)
             .group(Cues)
             .group(Sections)
             .group(DynamicCues)
+            .build()
+    }
+}
+
+/// Rendered prints of the guide — `ClickPrint`, `ShakePrint`: the click
+/// and the shaker bounced to audio, kept under the guide in their own
+/// folder (shut until opened) rather than beside the live click.
+pub struct Prints;
+
+impl From<Prints> for Group<ItemMetadata> {
+    fn from(_val: Prints) -> Self {
+        Self::builder(crate::apply::PRINTS_FOLDER)
+            .patterns(vec![
+                "clickprint",
+                "click print",
+                "shakeprint",
+                "shake print",
+                "shaker print",
+                // Not a bare "print": groups match on their own patterns,
+                // and "Mix Print" is a reference, not the guide's.
+            ])
             .build()
     }
 }
@@ -52,11 +76,9 @@ impl From<Click> for Group<ItemMetadata> {
             .patterns(vec![
                 "click",
                 "click track",
-                // A shaker guide is a click you can groove to: `ShakePrint`,
-                // `Shaker Guide` — the guide's, not the percussion's.
-                "shakeprint",
-                "shake print",
-                "shaker print",
+                // A shaker guide is a click you can groove to: `Shaker
+                // Guide` — the guide's, not the percussion's. (A printed one
+                // is a print: `Prints`.)
                 "shaker guide",
                 "guide shaker",
                 "shaker click",
@@ -64,6 +86,15 @@ impl From<Click> for Group<ItemMetadata> {
                 "met",
                 "tempo",
                 "tempo track",
+            ])
+            // A print of the click is a print (`Prints`).
+            .exclude(vec![
+                "print",
+                "clickprint",
+                "click print",
+                "shakeprint",
+                "shake print",
+                "shaker print",
             ])
             .build()
     }
@@ -123,7 +154,19 @@ impl From<Cues> for Group<ItemMetadata> {
             // A cue *bus* is a per-player monitor mix, not a spoken callout —
             // "Cue Buss 1" belongs to Headphones. Guide is registered first, so
             // without this it takes every cue name in the project.
-            .exclude(["buss", "bus", "headphone", "headphones"])
+            // A print is a print, whatever folder it sits in: "Guide
+            // ClickPrint" is not a cue.
+            .exclude([
+                "buss",
+                "bus",
+                "headphone",
+                "headphones",
+                "clickprint",
+                "click print",
+                "shakeprint",
+                "shake print",
+                "shaker print",
+            ])
             .build()
     }
 }

@@ -958,6 +958,10 @@ pub fn is_capture(name: &str) -> bool {
         .any(|w| w.eq_ignore_ascii_case("di") || w.eq_ignore_ascii_case("d.i."))
 }
 
+/// The folder the guide's rendered prints (`ClickPrint`, `ShakePrint`)
+/// go in, inside the Guide — the `Prints` group's name.
+pub const PRINTS_FOLDER: &str = "PRINTS";
+
 /// The folder a rehearsal recording is laid out in, inside
 /// [`REFERENCES_FOLDER`].
 pub const REHEARSAL_FOLDER: &str = "REHEARSAL";
@@ -1394,6 +1398,19 @@ mod rehearsal_tests {
             assert_eq!(top(name), "Percussion", "{name}");
         }
         assert_eq!(top("Mix Print"), "Reference");
+        let path = crate::track_schema::classify_track("ClickPrint").matched_groups;
+        assert_eq!(
+            path,
+            ["Guide", super::PRINTS_FOLDER],
+            "a print is in PRINTS"
+        );
+        // Whatever folder it sits in.
+        let inside = crate::track_schema::classify_track("CLICK + GUIDE ShakePrint").matched_groups;
+        assert_eq!(
+            inside,
+            ["Guide", super::PRINTS_FOLDER],
+            "inside a guide folder too"
+        );
     }
 
     #[test]

@@ -327,6 +327,8 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         let mut classified: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut group_of: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
+        // The guide's rendered prints, by name: kept in their own folder.
+        let mut prints: std::collections::HashSet<String> = std::collections::HashSet::new();
         for entry in super::classified_paths(self) {
             // A bus is a bus: its name ("MIX BUS") classifies as what it
             // carries — the mix, a reference — which it is not.
@@ -335,6 +337,9 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             }
             if let Some(group) = entry.path.first() {
                 group_of.insert(entry.track.clone(), group.clone());
+            }
+            if entry.path.iter().any(|g| g == super::PRINTS_FOLDER) {
+                prints.insert(entry.name.clone());
             }
             let reference = entry.path.first().is_some_and(|g| g == "Reference");
             if entry
@@ -451,7 +456,11 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         // top-level ones laid out so far.
         let mut open: Vec<String> = Vec::new();
         let mut top_folders: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for node in &hierarchy.tracks {
+        let mut prints_open = false;
+        let is_print = |node: &daw_proto::TrackNode| {
+            !node.is_folder && node.items.first().is_some_and(|n| prints.contains(n))
+        };
+        for (at, node) in hierarchy.tracks.iter().enumerate() {
             let depth = node.folder_depth_change.to_raw_value();
             if node.is_folder || node.items.is_empty() {
                 // A group whose folder is already a kept block (the kit is
@@ -501,6 +510,26 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                         layout.push((folder, 1));
                     }
                     depth = depth.saturating_sub(1);
+                }
+                // A print goes in PRINTS — even the only kind of guide track
+                // there is, which the engine would leave bare in the Guide.
+                if is_print(node) {
+                    if !prints_open {
+                        let folder = self.group_folder(
+                            super::PRINTS_FOLDER,
+                            &mut folders_in_use,
+                            &mut arranged,
+                        )?;
+                        layout.push((folder, 1));
+                        open.push(super::PRINTS_FOLDER.to_string());
+                        prints_open = true;
+                    }
+                    // The last of a run closes it too.
+                    let next = hierarchy.tracks.get(at.saturating_add(1));
+                    if !next.is_some_and(&is_print) {
+                        depth = depth.saturating_sub(1);
+                        prints_open = false;
+                    }
                 }
                 layout.push((guid, depth));
             }
