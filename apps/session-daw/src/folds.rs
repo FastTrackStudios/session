@@ -26,13 +26,14 @@ struct State {
 }
 
 impl Default for State {
-    /// Every folder open: a session opens as every track it has — the
-    /// whole kit, every guitar — and the Folder switch folds them into
-    /// their families, one row and one strip each.
+    /// Every top-level folder shut: a session opens as its families —
+    /// Guide, Drums, Bass, Guitars, Vocals — one row and one strip each,
+    /// each folder item showing what is in it. A folder opened is opened
+    /// on its own; the Folder switch opens them all.
     fn default() -> Self {
         Self {
             chosen: HashMap::new(),
-            tops: false,
+            tops: true,
         }
     }
 }
@@ -264,8 +265,27 @@ mod tests {
         rows.iter().map(|(t, _)| t.name.as_str()).collect()
     }
 
+    /// A session opens as its families: every top-level folder shut, its
+    /// row kept, a loose top-level track shown.
+    #[test]
+    fn a_session_opens_with_its_top_level_folders_shut() {
+        let rows = vec![
+            row("Guide", true, 0),
+            row("Click", false, 1),
+            row("Drums", true, 0),
+            row("Kick", false, 1),
+            row("Bass", true, 0),
+            row("DI", false, 1),
+            row("Loose", false, 0),
+        ];
+        assert!(tops(), "the switch starts on");
+        assert_eq!(names(&apply(rows)), ["Guide", "Drums", "Bass", "Loose"]);
+    }
+
     #[test]
     fn folders_fold_by_choice_and_all_at_once() {
+        // With the top-level folders open: what is under test is beneath them.
+        crate::folds::set_tops(false);
         let rows = vec![
             row("Click", false, 0),
             row("Drums", true, 0),
@@ -297,7 +317,7 @@ mod tests {
             "one folder opened out of the folded whole"
         );
 
-        set_tops(false);
+        crate::folds::set_tops(false);
         assert_eq!(
             names(&apply(rows)).len(),
             7,
@@ -312,6 +332,8 @@ mod default_tests {
     /// every other folder open; opened, one stays open.
     #[test]
     fn the_mix_bus_starts_shut_and_opens_when_asked() {
+        // With the top-level folders open: what is under test is beneath them.
+        crate::folds::set_tops(false);
         let row = |guid: &str, name: &str, folder: bool, depth: u32| {
             (
                 daw_proto::Track {
@@ -355,6 +377,8 @@ mod part_tests {
     /// (a kick's mics) does not.
     #[test]
     fn a_part_and_its_sides_start_shut() {
+        // With the top-level folders open: what is under test is beneath them.
+        crate::folds::set_tops(false);
         let row = |guid: &str, folder: bool, depth: u32| {
             (
                 daw_proto::Track {

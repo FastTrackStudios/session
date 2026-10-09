@@ -42,6 +42,8 @@ fn family(rows: &Rows, from: &str) -> Vec<String> {
 
 #[test]
 fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
+    // With the top-level folders open: what is under test is beneath them.
+    session_daw::folds::set_tops(false);
     let path = template();
     session_daw::open::open_silent(&path).expect("the golden session opens");
     let session = StudioSession::read_current(Some(&path), None).expect("and reads back");

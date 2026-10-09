@@ -3351,6 +3351,8 @@ mod tests {
     /// the mutes made in it. The first one opens as the song did.
     #[test]
     fn a_rebuilt_arrangement_keeps_the_folds_and_mutes() {
+        // With the top-level folders open: what is under test is beneath them.
+        crate::folds::set_tops(false);
         let track = |i: u32, name: &str, depth: i32| daw_proto::Track {
             guid: format!("g{i}"),
             name: name.to_owned(),
