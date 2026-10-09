@@ -277,6 +277,34 @@ fn title_case(text: &str) -> String {
 #[cfg(test)]
 mod song_name_tests {
     #[test]
+    fn the_end_is_before_the_first_silence() {
+        let at = |s: u64, peak: f32| (s * 10, peak);
+        // Heard to 3, quiet 4–8 (a gap of 5 >= 4), heard again at 9.
+        let chunks = [
+            at(0, 1.0),
+            at(1, 1.0),
+            at(2, 0.5),
+            at(3, 0.2),
+            at(4, 0.0),
+            at(5, 0.0),
+            at(6, 0.0),
+            at(7, 0.0),
+            at(8, 0.0),
+            at(9, 0.9),
+        ];
+        assert_eq!(
+            super::last_heard(&chunks, 0.1, 10, 40).map(|c| c.0),
+            Some(30)
+        );
+        // A short pause does not end it.
+        let paused = [at(0, 1.0), at(1, 0.0), at(2, 0.0), at(3, 0.8)];
+        assert_eq!(
+            super::last_heard(&paused, 0.1, 10, 40).map(|c| c.0),
+            Some(30)
+        );
+    }
+
+    #[test]
     fn a_song_is_named_title_dash_artist() {
         assert_eq!(
             super::strip_working_suffix("unbreakable.current"),
@@ -400,6 +428,28 @@ fn song_end(
     daw.musical_to_time(project.clone(), measure.saturating_add(1), 1, 0.0)
 }
 
+/// How long a silence past the last marker ends the song: what plays
+/// after one is not the song's — a take recorded after it (the ballad's
+/// acoustic runs on four seconds past the drums' last ring, to 493 s).
+const SILENCE_SECONDS: u64 = 3;
+
+/// The last chunk heard (`peak >= floor`) before the first silence of
+/// `gap` frames that follows something heard: `chunks` are `(frame,
+/// peak)`, `chunk` frames each.
+fn last_heard(chunks: &[(u64, f32)], floor: f32, chunk: u64, gap: u64) -> Option<&(u64, f32)> {
+    let mut heard: Option<&(u64, f32)> = None;
+    for each in chunks {
+        if each.1 >= floor {
+            heard = Some(each);
+        } else if let Some(last) = heard
+            && each.0.saturating_sub(last.0.saturating_add(chunk)) >= gap
+        {
+            break;
+        }
+    }
+    heard
+}
+
 /// How far under the song's loudest its end still counts as heard: the
 /// last hit's ring at -48 dB is the song's, the room's hiss under it not.
 const HEARD_DB: f32 = 48.0;
@@ -447,20 +497,22 @@ fn heard_end(
         return None;
     }
     let floor = loudest * 10.0_f32.powf(-HEARD_DB / 20.0);
-    peaks
-        .iter()
-        .rev()
-        .find(|(_, peak)| *peak >= floor)
-        .map(|(at, _)| {
-            let frames = at.saturating_add(CHUNK_FRAMES);
-            Duration::from_nanos(
-                frames
-                    .saturating_mul(1_000_000_000)
-                    .checked_div(u64::from(RATE))
-                    .unwrap_or(0),
-            )
-            .as_secs_f64()
-        })
+    last_heard(
+        &peaks,
+        floor,
+        CHUNK_FRAMES,
+        u64::from(RATE).saturating_mul(SILENCE_SECONDS),
+    )
+    .map(|(at, _)| {
+        let frames = at.saturating_add(CHUNK_FRAMES);
+        Duration::from_nanos(
+            frames
+                .saturating_mul(1_000_000_000)
+                .checked_div(u64::from(RATE))
+                .unwrap_or(0),
+        )
+        .as_secs_f64()
+    })
 }
 
 /// The one `.kf` chart in the project's folder, if there is exactly one.
