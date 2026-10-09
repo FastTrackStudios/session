@@ -196,7 +196,7 @@ fn side(name: &str) -> Option<f64> {
 }
 
 /// A track's folders from the top, then its name.
-fn path_of<'a>(
+pub(crate) fn path_of<'a>(
     track: &'a daw_proto::Track,
     by_guid: &std::collections::HashMap<&str, &'a daw_proto::Track>,
 ) -> Vec<&'a str> {

@@ -623,6 +623,20 @@ pub fn steps(
         // compressors and rooms, sent from the kit, to DRUM BUS.
         let process = target.add_drum_process()?;
         tracing::info!(process = process.len(), "prepare: drum process");
+        // The mix's processing: the FTS processors built in (Tone on every
+        // recorded track and EQ/Comp on the buses, bypassed; the Process
+        // chains set).
+        #[cfg(feature = "native")]
+        {
+            let chains = crate::mix_chains::add(daw, &project)?;
+            tracing::info!(
+                tone = chains.tone,
+                buses = chains.buses,
+                process = chains.process,
+                unknown = ?chains.unknown,
+                "prepare: mix chains"
+            );
+        }
         // The recorded tracks at the reference kit's levels, as item
         // volume: nothing rendered, the audio as it was recorded.
         let staged = crate::gain_stage::stage(daw, &project)?;

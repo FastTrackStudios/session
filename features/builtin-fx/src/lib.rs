@@ -511,6 +511,36 @@ fn entry(name: &str) -> Option<&'static Entry> {
     ENTRIES.iter().find(|e| e.name.to_lowercase() == bare)
 }
 
+/// A parameter's index and engine value for a setting in words.
+///
+/// The value (normalized, 0..1) for `fx`'s parameter `param` at `text`,
+/// written as the plugin writes it (`-25.0 dB`, `4.0:1`, `10 ms`, or a
+/// choice's name: `FET`, `Arena`). What a preset is built from without
+/// knowing any plugin's ranges. `None` for an FX, a parameter or a value
+/// the plugin does not know.
+#[must_use]
+pub fn setting(fx: &str, param: &str, text: &str) -> Option<(u32, f64)> {
+    let mut plugin = (entry(fx)?.make)();
+    let id = plugin
+        .params()
+        .into_iter()
+        .find(|p| p.name.eq_ignore_ascii_case(param))?
+        .id;
+    if let Some(value) = plugin.text_to_value(id, text) {
+        return Some((id, value));
+    }
+    // A choice the plugin writes but does not read back: found by name
+    // along its range.
+    (0_u16..=1_000)
+        .map(|step| f64::from(step) / 1_000.0)
+        .find(|value| {
+            plugin
+                .value_to_text(id, *value)
+                .is_some_and(|t| t.eq_ignore_ascii_case(text))
+        })
+        .map(|value| (id, value))
+}
+
 /// The FTS processors, offered to the engine by name ([`FxFactory`]). An
 /// FX named for one — `FTS Comp`, or a project's `CLAP: FTS Comp
 /// (FastTrackStudios)` — is the built-in, run in-process.
@@ -627,6 +657,19 @@ mod tests {
                 entry.name
             );
         }
+    }
+
+    /// A setting is found by the plugin's own words: a number it reads,
+    /// a choice it only writes.
+    #[test]
+    fn a_setting_is_written_as_the_plugin_writes_it() {
+        let (ratio, value) = setting("FTS Comp", "Ratio", "4.0:1").expect("a ratio");
+        let mut comp = BuiltinFx.create("FTS Comp", 48_000.0).expect("comp");
+        assert_eq!(comp.value_to_text(ratio, value).as_deref(), Some("4.0:1"));
+        let (style, fet) = setting("FTS Comp", "Style", "FET").expect("a style");
+        assert_eq!(comp.value_to_text(style, fet).as_deref(), Some("FET"));
+        assert!(setting("FTS Comp", "Style", "Valve").is_none());
+        assert!(setting("FTS Comp", "Nothing", "1").is_none());
     }
 
     /// A parameter moves the sound: FTS Saturate's output turned up makes
