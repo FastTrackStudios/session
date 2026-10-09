@@ -119,7 +119,11 @@ pub fn set_tops(on: bool) {
 pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)> {
     // Worked out before the lock: a scan of every row, no state in it.
     let parts = parts_and_sides(&rows);
-    let state = state();
+    // The choices copied out, the lock let go before the walk.
+    let (chosen, tops) = {
+        let state = state();
+        (state.chosen.clone(), state.tops)
+    };
     let mut out = Vec::with_capacity(rows.len());
     // The depth of the shut folder whose contents are being skipped.
     let mut skipping: Option<u32> = None;
@@ -131,10 +135,10 @@ pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)>
             skipping = None;
         }
         if track.is_folder {
-            let open = state.chosen.get(&track.guid).copied().unwrap_or_else(|| {
+            let open = chosen.get(&track.guid).copied().unwrap_or_else(|| {
                 !(shut_by_default(&track)
                     || parts.contains(track.guid.as_str())
-                    || state.tops && depth == 0)
+                    || tops && depth == 0)
             });
             if !open {
                 skipping = Some(depth);
