@@ -811,11 +811,11 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         Ok(made)
     }
 
-    /// Each drum piece's gate keyed from its trigger, as the golden mix
-    /// wires it: a piece (`Kick`, `Snare`, `Toms` — a folder in the
-    /// Drums folder) with a trigger among its children (`Trig`, or a
-    /// `Trig` folder of `T1 Trig` …) gets a pre-FX send from it onto the
-    /// piece's channels 3/4, which keys the gate on the piece
+    /// Each drum piece's gate keyed from its trigger: a piece (`Kick`,
+    /// `Snare`, `Tom 1` — a folder in the Drums folder) with a trigger in
+    /// it or in its `Sum` (`Trig`, `T1 Trig`, or a `Trig` folder of them
+    /// on a kit the toms could not be split on) gets a pre-FX send from it
+    /// onto the piece's channels 3/4, which keys the gate on the piece
     /// (`session_daw::mix_chains`).
     ///
     /// The trigger is then unmuted — a muted track's sends are muted, in
@@ -827,7 +827,7 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
     ///
     /// A backend call failed.
     pub fn key_drum_gates(&mut self) -> eyre::Result<Vec<String>> {
-        use daw_proto::{RouteLocation, RouteRef, RouteType, routing::SendMode};
+        use daw_proto::{routing::SendMode, RouteLocation, RouteRef, RouteType};
         let project = self.project.clone();
         let tracks = Tracks::all(&self.daw, project.clone());
         let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
@@ -847,8 +847,8 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             false
         };
         let mut keyed = Vec::new();
-        // A piece, not the SUM of one's mics (`add_piece_verbs`), where its
-        // trigger goes after it is keyed.
+        // A piece, not the Sum of one's mics (`apply_golden_kit`), where
+        // its trigger goes.
         let piece_like = |t: &&daw_proto::Track| {
             t.is_folder
                 && !super::is_trigger(&t.name)
@@ -856,8 +856,20 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 && in_drums(t)
         };
         for piece in tracks.iter().filter(piece_like) {
+            // Its triggers: in it, or in its Sum (`apply_golden_kit`).
+            let sums: Vec<&str> = tracks
+                .iter()
+                .filter(|t| {
+                    t.parent_guid.as_deref() == Some(piece.guid.as_str())
+                        && t.name.trim().eq_ignore_ascii_case("sum")
+                })
+                .map(|t| t.guid.as_str())
+                .collect();
             let triggers = tracks.iter().filter(|t| {
-                t.parent_guid.as_deref() == Some(piece.guid.as_str()) && super::is_trigger(&t.name)
+                t.parent_guid
+                    .as_deref()
+                    .is_some_and(|p| p == piece.guid || sums.contains(&p))
+                    && super::is_trigger(&t.name)
             });
             for trigger in triggers {
                 let source = TrackRef::Guid(trigger.guid.clone());
@@ -914,203 +926,319 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         Ok(keyed)
     }
 
-    /// A reverb return inside the pieces the golden mix gives one
-    /// ([`super::PIECE_VERBS`]: Kick's room, Snare's non-linear), with
-    /// the piece's own tracks put in a `SUM` folder that feeds it:
+    /// The golden template's kit, made of the session's: each piece the
+    /// template gives a `Sum` (`golden_session::shape::drum_kit` — Kick,
+    /// Snare) gets one around its tracks, with what the template puts in
+    /// it and beside it that the recording cannot have — a `Fund`, the
+    /// kick's `Sub`, the piece's `Verb` bank. Toms become the template's
+    /// `Tom N` pieces, each its mic, its trigger and a `Fund`, beside the
+    /// toms' shared `Verb` bank.
     ///
-    /// ```text
-    /// Kick                  gate, EQ, comp, saturation
-    ///   Verb                <- SUM
-    ///   SUM
-    ///     In, Out, Trig
-    /// ```
-    ///
-    /// The return sits inside the piece, so its gate shapes the tail too.
-    /// Starts at the golden mix's level. Returns the returns made; a piece
-    /// that already has a `SUM` is left alone.
+    /// A bank's returns are fed by its piece — the `Sum`, or each tom —
+    /// post-fader, and are muted but for the first: the one the song
+    /// wants is a mute away. A mic the recording has no track for is not
+    /// made: a template's `Out` with no kick-out mic would be a lane of
+    /// nothing. Returns the tracks made. Idempotent: a piece that has its
+    /// `Sum`, a tom already a `Tom N`, a bank already there is left.
     ///
     /// # Errors
     ///
     /// A backend call failed.
-    pub fn add_piece_verbs(&mut self) -> eyre::Result<Vec<String>> {
-        use super::TemplateTarget as _;
+    pub fn apply_golden_kit(&mut self) -> eyre::Result<Vec<String>> {
+        let golden = crate::golden_session::shape::drum_kit();
+        let tracks = Tracks::all(&self.daw, self.project.clone());
+        let Some(drums) = tracks.iter().find(|t| {
+            t.parent_guid.is_none()
+                && t.is_folder
+                && (t.name.trim().eq_ignore_ascii_case("drums")
+                    || t.name.trim().eq_ignore_ascii_case("drum kit"))
+        }) else {
+            return Ok(Vec::new());
+        };
+        let drums = drums.guid.clone();
+        let mut forest = Branch::forest(&tracks);
         let mut made = Vec::new();
-        for (piece_name, verb_name, level_db) in super::PIECE_VERBS {
-            let project = self.project.clone();
-            let tracks = Tracks::all(&self.daw, project.clone());
-            let Some(at) = tracks.iter().position(|t| {
-                t.is_folder
-                    && t.name.trim().eq_ignore_ascii_case(piece_name)
-                    && t.parent_guid.as_deref().is_some_and(|p| {
-                        tracks.iter().any(|d| {
-                            d.guid == p
-                                && (d.name.trim().eq_ignore_ascii_case("drum kit")
-                                    || d.name.trim().eq_ignore_ascii_case("drums"))
-                        })
-                    })
-            }) else {
+        let mut feeds: Vec<(String, String)> = Vec::new();
+        let mut quiet: Vec<String> = Vec::new();
+        let mut gone: Vec<String> = Vec::new();
+        for piece in &golden.children {
+            let Some(at) = Branch::find_mut(
+                &mut forest,
+                &|b| b.is_folder() && b.name.trim().eq_ignore_ascii_case(&piece.name),
+                &drums,
+            ) else {
                 continue;
             };
-            let Some(piece) = tracks.get(at) else {
-                continue;
-            };
-            if tracks.iter().any(|t| {
-                t.parent_guid.as_deref() == Some(piece.guid.as_str())
-                    && t.name.trim().eq_ignore_ascii_case("sum")
-            }) {
-                continue;
+            if let Some(sum) = piece
+                .children
+                .iter()
+                .find(|n| n.kind == crate::golden_session::Kind::Sum)
+            {
+                self.golden_piece(at, piece, sum, &mut made, &mut feeds, &mut quiet)?;
+            } else if piece
+                .children
+                .iter()
+                .any(|n| n.kind == crate::golden_session::Kind::Piece)
+            {
+                self.golden_toms(at, piece, &mut made, &mut feeds, &mut quiet, &mut gone)?;
             }
-            // The piece's block: it and everything to the track closing it.
-            let end = block_end(&tracks, at);
-            if end == at {
-                continue;
-            }
-            let verb = self.append_track(verb_name)?;
-            let sum = self.append_track("SUM")?;
-            self.add_send(&sum, &verb)?;
-            Tracks::set_volume(
+        }
+        if made.is_empty() {
+            return Ok(made);
+        }
+        let project = self.project.clone();
+        for guid in &gone {
+            Branch::remove(&mut forest, guid);
+            Tracks::remove(&self.daw, project.clone(), TrackRef::Guid(guid.clone()))?;
+        }
+        self.apply_layout(&Branch::flatten(&forest))?;
+        for (from, to) in &feeds {
+            self.add_send(from, to)?;
+        }
+        for guid in &quiet {
+            Tracks::set_muted(
                 &self.daw,
                 project.clone(),
-                TrackRef::Guid(verb.clone()),
-                10_f64.powf(level_db / 20.0),
+                TrackRef::Guid(guid.clone()),
+                true,
             )?;
-            // Verb and SUM go first in the piece; the track that closed the
-            // piece now closes SUM as well.
-            let mut layout: Vec<(String, i32)> = Vec::new();
-            for (i, t) in tracks.iter().enumerate() {
-                let depth = if i == end {
-                    t.folder_depth.saturating_sub(1)
-                } else {
-                    t.folder_depth
-                };
-                layout.push((t.guid.clone(), depth));
-                if i == at {
-                    layout.push((verb.clone(), 0));
-                    layout.push((sum.clone(), 1));
-                }
-            }
-            self.apply_layout(&layout)?;
-            made.push(format!("{piece_name} {verb_name}"));
         }
         Ok(made)
     }
 
-    /// The golden mix's vocal effects, at the end of the top-level Vocals
-    /// folder, for a session with one and no `FX` in it yet:
+    /// One summed piece ([`Self::apply_golden_kit`]): its tracks under a
+    /// `Sum`, the template's `Fund` in it, the tracks beside it made.
+    fn golden_piece(
+        &mut self,
+        at: &mut Branch,
+        piece: &crate::golden_session::shape::Node,
+        sum: &crate::golden_session::shape::Node,
+        made: &mut Vec<String>,
+        feeds: &mut Vec<(String, String)>,
+        quiet: &mut Vec<String>,
+    ) -> eyre::Result<()> {
+        use super::TemplateTarget as _;
+        if at
+            .children
+            .iter()
+            .any(|c| c.name.trim().eq_ignore_ascii_case(&sum.name))
+        {
+            return Ok(());
+        }
+        let guid = self.append_track(&sum.name)?;
+        made.push(format!("{}/{}", at.name, sum.name));
+        let mut summed = Branch::new(guid, &sum.name);
+        summed.children = std::mem::take(&mut at.children);
+        for one in sum
+            .children
+            .iter()
+            .filter(|n| n.kind == crate::golden_session::Kind::Fundamental)
+        {
+            summed
+                .children
+                .push(self.make(one, &format!("{}/{}", at.name, sum.name), made)?);
+        }
+        let from = summed.guid.clone();
+        at.children.push(summed);
+        for beside in piece
+            .children
+            .iter()
+            .filter(|n| n.kind != crate::golden_session::Kind::Sum)
+        {
+            let branch = self.make(beside, &at.name, made)?;
+            branch.wire_bank(std::slice::from_ref(&from), feeds, quiet);
+            at.children.push(branch);
+        }
+        Ok(())
+    }
+
+    /// The toms ([`Self::apply_golden_kit`]): each `TN` with its `TN Trig`
+    /// made the template's `Tom N` with a `Fund`, the triggers' emptied
+    /// folder gone, the shared `Verb` bank beside them, fed by every tom.
+    fn golden_toms(
+        &mut self,
+        at: &mut Branch,
+        toms: &crate::golden_session::shape::Node,
+        made: &mut Vec<String>,
+        feeds: &mut Vec<(String, String)>,
+        quiet: &mut Vec<String>,
+        gone: &mut Vec<String>,
+    ) -> eyre::Result<()> {
+        use super::TemplateTarget as _;
+        let mut pieces: Vec<String> = Vec::new();
+        let mut built: Vec<Branch> = Vec::new();
+        for tom in toms
+            .children
+            .iter()
+            .filter(|n| n.kind == crate::golden_session::Kind::Piece)
+        {
+            if at
+                .children
+                .iter()
+                .any(|c| c.name.trim().eq_ignore_ascii_case(&tom.name))
+            {
+                continue;
+            }
+            // The template's mic and trigger names for this tom, `T1` and
+            // `T1 Trig`: what the session's are found by.
+            let names: Vec<(&str, crate::golden_session::Kind)> = tom
+                .children
+                .iter()
+                .map(|n| (n.name.as_str(), n.kind))
+                .collect();
+            let Some((mic, _)) = names
+                .iter()
+                .find(|(_, k)| *k == crate::golden_session::Kind::Source)
+            else {
+                continue;
+            };
+            let Some(mic) = Branch::take(&mut at.children, mic) else {
+                continue;
+            };
+            let guid = self.append_track(&tom.name)?;
+            made.push(format!("{}/{}", at.name, tom.name));
+            let mut piece = Branch::new(guid, &tom.name);
+            piece.children.push(mic);
+            let trig = names
+                .iter()
+                .find(|(_, k)| *k == crate::golden_session::Kind::Trigger)
+                .and_then(|(trig, _)| Branch::take(&mut at.children, trig));
+            piece.children.extend(trig);
+            for one in tom
+                .children
+                .iter()
+                .filter(|n| n.kind == crate::golden_session::Kind::Fundamental)
+            {
+                piece
+                    .children
+                    .push(self.make(one, &format!("{}/{}", at.name, tom.name), made)?);
+            }
+            pieces.push(piece.guid.clone());
+            built.push(piece);
+        }
+        if built.is_empty() {
+            return Ok(());
+        }
+        // The folders the triggers came out of, now empty.
+        at.children.retain(|c| {
+            let empty = c.was_folder && c.children.is_empty();
+            if empty {
+                gone.push(c.guid.clone());
+            }
+            !empty
+        });
+        let rest = std::mem::take(&mut at.children);
+        at.children = built;
+        at.children.extend(rest);
+        for beside in toms
+            .children
+            .iter()
+            .filter(|n| n.kind != crate::golden_session::Kind::Piece)
+        {
+            if at
+                .children
+                .iter()
+                .any(|c| c.name.trim().eq_ignore_ascii_case(&beside.name))
+            {
+                continue;
+            }
+            let branch = self.make(beside, &at.name, made)?;
+            branch.wire_bank(&pieces, feeds, quiet);
+            at.children.push(branch);
+        }
+        Ok(())
+    }
+
+    /// The template's vocal returns (`golden_session::shape::vox_fx` —
+    /// Delay: Slap, Short, Long, Throw; Verb: Room, Short, Long, Moment,
+    /// Throw; Wide; Pitch: Oct+, Oct-) at the end of the top-level Vocals
+    /// folder, every lead in it — each track or folder directly in
+    /// Vocals — sending to every return, post-fader: whichever lead is
+    /// up goes into the same delays and verbs.
     ///
-    /// ```text
-    /// Vocals
-    ///   …
-    ///   FX
-    ///     Input             <- the lead vocals; fader down, not heard
-    ///     Long Verb, Short Verb, Slap, Oct Down   <- Input, pre-FX
-    /// ```
-    ///
-    /// One `Input` gathers the leads so every return hears the same thing
-    /// and a lead added later is one send, not four. The leads are the
-    /// `Main` folder when there is one, else the tracks named lead. Each
-    /// return starts at the golden mix's level ([`super::VOCAL_FX`]).
-    /// Returns the tracks made.
+    /// The returns in [`super::VOX_FX_START`] start on at their level;
+    /// the rest start muted at [`super::VOX_FX_QUIET_DB`] — a mute away,
+    /// and not a full-scale wet return when one is unmuted. Returns the
+    /// tracks made; none when Vocals has its `Vox FX` already.
     ///
     /// # Errors
     ///
     /// A backend call failed.
-    pub fn add_vocal_fx(&mut self) -> eyre::Result<Vec<String>> {
+    pub fn apply_vox_fx(&mut self) -> eyre::Result<Vec<String>> {
         use super::TemplateTarget as _;
-        use daw_proto::{RouteRef, routing::SendMode};
-        let project = self.project.clone();
-        let tracks = Tracks::all(&self.daw, project.clone());
-        let Some(at) = tracks.iter().position(|t| {
-            t.parent_guid.is_none() && t.is_folder && t.name.trim().eq_ignore_ascii_case("vocals")
-        }) else {
+        let golden = crate::golden_session::shape::vox_fx();
+        let tracks = Tracks::all(&self.daw, self.project.clone());
+        let mut forest = Branch::forest(&tracks);
+        let Some(vocals) = forest
+            .iter_mut()
+            .find(|b| b.is_folder() && b.name.trim().eq_ignore_ascii_case("vocals"))
+        else {
             return Ok(Vec::new());
         };
-        let Some(vocals) = tracks.get(at).map(|t| t.guid.clone()) else {
-            return Ok(Vec::new());
-        };
-        let inside = |t: &daw_proto::Track| t.parent_guid.as_deref() == Some(vocals.as_str());
-        if tracks
+        if vocals
+            .children
             .iter()
-            .any(|t| inside(t) && t.name.trim().eq_ignore_ascii_case("fx"))
+            .any(|c| c.name.trim().eq_ignore_ascii_case(&golden.name))
         {
             return Ok(Vec::new());
         }
-        let leads: Vec<String> = tracks
+        let leads: Vec<String> = vocals
+            .children
             .iter()
-            .find(|t| inside(t) && t.is_folder && t.name.trim().eq_ignore_ascii_case("main"))
-            .map_or_else(
-                || {
-                    tracks
-                        .iter()
-                        .filter(|t| {
-                            !t.is_folder
-                                && t.name.to_ascii_lowercase().contains("lead")
-                                && self.has_items(&t.guid)
-                        })
-                        .map(|t| t.guid.clone())
-                        .collect()
-                },
-                |main| vec![main.guid.clone()],
-            );
-        let end = block_end(&tracks, at);
-        if end == at {
-            return Ok(Vec::new());
-        }
-        let fx = self.append_track("FX")?;
-        let input = self.append_track("Input")?;
-        Tracks::set_volume(
-            &self.daw,
-            project.clone(),
-            TrackRef::Guid(input.clone()),
-            0.0,
-        )?;
-        for lead in &leads {
-            self.add_send(lead, &input)?;
-        }
-        let mut made = vec!["FX".to_string(), "Input".to_string()];
-        let mut block = vec![(fx, 1), (input.clone(), 0)];
-        for (name, level_db) in super::VOCAL_FX {
-            let ret = self.append_track(name)?;
-            if let Some(index) = Routing::add_send(
-                &self.daw,
-                project.clone(),
-                TrackRef::Guid(input.clone()),
-                TrackRef::Guid(ret.clone()),
-            ) {
-                Routing::set_send_mode(
-                    &self.daw,
-                    project.clone(),
-                    TrackRef::Guid(input.clone()),
-                    RouteRef::Index(index),
-                    SendMode::PreFx,
-                )?;
+            .filter(|c| !c.name.trim().to_ascii_uppercase().starts_with("VOX "))
+            .map(|c| c.guid.clone())
+            .collect();
+        let mut made = Vec::new();
+        let vocals_name = vocals.name.clone();
+        let branch = self.make(&golden, &vocals_name, &mut made)?;
+        let mut returns: Vec<(String, String, String)> = Vec::new();
+        branch.leaves_with_parent(&mut returns);
+        vocals.children.push(branch);
+        self.apply_layout(&Branch::flatten(&forest))?;
+        let project = self.project.clone();
+        for (guid, parent, name) in &returns {
+            for lead in &leads {
+                self.add_send(lead, guid)?;
             }
+            let start = super::VOX_FX_START
+                .iter()
+                .find(|(p, n, _)| p.eq_ignore_ascii_case(parent) && n.eq_ignore_ascii_case(name));
+            let level = start.map_or(super::VOX_FX_QUIET_DB, |(_, _, db)| *db);
             Tracks::set_volume(
                 &self.daw,
                 project.clone(),
-                TrackRef::Guid(ret.clone()),
-                10_f64.powf(level_db / 20.0),
+                TrackRef::Guid(guid.clone()),
+                10_f64.powf(level / 20.0),
             )?;
-            block.push((ret, 0));
-            made.push((*name).to_string());
-        }
-        // The last return closes FX and Vocals; the track that closed
-        // Vocals stays inside it.
-        let closed = tracks.get(end).map_or(0, |t| t.folder_depth);
-        if let Some(last) = block.last_mut() {
-            last.1 = -2;
-        }
-        let mut layout: Vec<(String, i32)> = Vec::new();
-        for (i, t) in tracks.iter().enumerate() {
-            if i == end {
-                layout.push((t.guid.clone(), closed.saturating_add(1)));
-                layout.extend(block.iter().cloned());
-            } else {
-                layout.push((t.guid.clone(), t.folder_depth));
+            if start.is_none() {
+                Tracks::set_muted(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(guid.clone()),
+                    true,
+                )?;
             }
         }
-        self.apply_layout(&layout)?;
         Ok(made)
+    }
+
+    /// `node` and everything in it made as tracks, under `at` (a path,
+    /// for what is returned in `made`).
+    fn make(
+        &mut self,
+        node: &crate::golden_session::shape::Node,
+        at: &str,
+        made: &mut Vec<String>,
+    ) -> eyre::Result<Branch> {
+        use super::TemplateTarget as _;
+        let guid = self.append_track(&node.name)?;
+        let path = format!("{at}/{}", node.name);
+        made.push(path.clone());
+        let mut branch = Branch::new(guid, &node.name);
+        for child in &node.children {
+            branch.children.push(self.make(child, &path, made)?);
+        }
+        Ok(branch)
     }
 
     /// Mute every track whose name `matches` and is not muted yet.
@@ -1496,4 +1624,157 @@ fn block_end(tracks: &[daw_proto::Track], at: usize) -> usize {
         }
     }
     tracks.len().saturating_sub(1).max(at)
+}
+
+/// A track and the tracks in it: the project as a folder tree, for a
+/// restructure built on the tree and written back as one layout
+/// ([`Branch::flatten`]).
+#[derive(Clone, Debug)]
+struct Branch {
+    guid: String,
+    name: String,
+    /// Whether it was a folder before it was changed: a folder emptied
+    /// by a restructure is gone, an empty track is a track.
+    was_folder: bool,
+    children: Vec<Self>,
+}
+
+impl Branch {
+    fn new(guid: String, name: &str) -> Self {
+        Self {
+            guid,
+            name: name.to_owned(),
+            was_folder: false,
+            children: Vec::new(),
+        }
+    }
+
+    const fn is_folder(&self) -> bool {
+        !self.children.is_empty()
+    }
+
+    /// The project's tracks as a tree, in order.
+    fn forest(tracks: &[daw_proto::Track]) -> Vec<Self> {
+        fn grow(parent: Option<&str>, tracks: &[daw_proto::Track]) -> Vec<Branch> {
+            tracks
+                .iter()
+                .filter(|t| t.parent_guid.as_deref() == parent)
+                .map(|t| Branch {
+                    guid: t.guid.clone(),
+                    name: t.name.clone(),
+                    was_folder: t.is_folder,
+                    children: grow(Some(t.guid.as_str()), tracks),
+                })
+                .collect()
+        }
+        grow(None, tracks)
+    }
+
+    /// The first branch under the one with guid `within` that `matches`.
+    fn find_mut<'a>(
+        forest: &'a mut [Self],
+        matches: &dyn Fn(&Self) -> bool,
+        within: &str,
+    ) -> Option<&'a mut Self> {
+        fn inside<'a>(
+            branches: &'a mut [Branch],
+            matches: &dyn Fn(&Branch) -> bool,
+        ) -> Option<&'a mut Branch> {
+            for branch in branches {
+                if matches(branch) {
+                    return Some(branch);
+                }
+                if let Some(found) = inside(&mut branch.children, matches) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        fn root<'a>(branches: &'a mut [Branch], guid: &str) -> Option<&'a mut Branch> {
+            for branch in branches {
+                if branch.guid == guid {
+                    return Some(branch);
+                }
+                if let Some(found) = root(&mut branch.children, guid) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        inside(&mut root(forest, within)?.children, matches)
+    }
+
+    /// Take the branch named `name` out of `branches`, wherever in them.
+    fn take(branches: &mut Vec<Self>, name: &str) -> Option<Self> {
+        if let Some(at) = branches
+            .iter()
+            .position(|b| b.name.trim().eq_ignore_ascii_case(name))
+        {
+            return Some(branches.remove(at));
+        }
+        branches
+            .iter_mut()
+            .find_map(|b| Self::take(&mut b.children, name))
+    }
+
+    /// Drop the branch `guid` from the tree.
+    fn remove(forest: &mut Vec<Self>, guid: &str) {
+        forest.retain(|b| b.guid != guid);
+        for branch in forest {
+            Self::remove(&mut branch.children, guid);
+        }
+    }
+
+    /// The tree as the project's order: each track and its folder depth
+    /// change.
+    fn flatten(forest: &[Self]) -> Vec<(String, i32)> {
+        fn walk(branches: &[Branch], level: i32, out: &mut Vec<(String, i32)>) {
+            for branch in branches {
+                out.push((branch.guid.clone(), level));
+                walk(&branch.children, level.saturating_add(1), out);
+            }
+        }
+        let mut levels = Vec::new();
+        walk(forest, 0, &mut levels);
+        let next: Vec<i32> = levels.iter().skip(1).map(|(_, l)| *l).chain([0]).collect();
+        levels
+            .iter()
+            .zip(next)
+            .map(|((guid, level), next)| (guid.clone(), next.saturating_sub(*level)))
+            .collect()
+    }
+
+    /// Feed this bank's returns from `from`, post-fader, all but the
+    /// first muted; a branch that is no bank (the kick's `Sub`) is fed
+    /// nothing.
+    fn wire_bank(
+        &self,
+        from: &[String],
+        feeds: &mut Vec<(String, String)>,
+        quiet: &mut Vec<String>,
+    ) {
+        if !self.is_folder() {
+            return;
+        }
+        for (i, ret) in self.children.iter().enumerate() {
+            for source in from {
+                feeds.push((source.clone(), ret.guid.clone()));
+            }
+            if i > 0 {
+                quiet.push(ret.guid.clone());
+            }
+        }
+    }
+
+    /// Every track with nothing in it, below this one: its guid, its
+    /// folder's name and its own.
+    fn leaves_with_parent(&self, out: &mut Vec<(String, String, String)>) {
+        for child in &self.children {
+            if child.is_folder() {
+                child.leaves_with_parent(out);
+            } else {
+                out.push((child.guid.clone(), self.name.clone(), child.name.clone()));
+            }
+        }
+    }
 }

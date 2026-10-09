@@ -13,9 +13,10 @@
 //!   its channels 3/4) gets FTS Gate, on and keyed from that sidechain,
 //!   ahead of its Tone chain: the threshold read off the trigger's own
 //!   hits ([`gate_threshold`]).
-//! - The golden mix's returns — Kick's room, Snare's non-linear, the
-//!   vocals' long and short verbs, slap and octave down — their FX set,
-//!   on ([`RETURNS`]).
+//! - The golden template's returns — the kit's Verb banks, the vocals'
+//!   Vox FX delays, verbs, widener and octaves — their FX set, on
+//!   ([`return_fx`]); its one-note `Fund` and `Sub` tracks a gate, a
+//!   band-pass and saturation, bypassed.
 //! - The instrument folders and the folders directly in them get the
 //!   bus chain, bypassed, as the golden mix's do.
 //!
@@ -34,61 +35,104 @@ const TONE: &[&str] = &["FTS EQ", "FTS Comp", "FTS Saturate"];
 /// A bus's chain.
 const BUS: &[&str] = &["FTS EQ", "FTS Comp"];
 
-/// The returns the golden mix has, by the folder they sit in and their
-/// name: the FX and its settings, all wet — they are fed by sends.
-const RETURNS: &[(&str, &str, &str, &[(&str, &str)])] = &[
-    (
-        "kick",
-        "verb",
-        "FTS Reverb",
-        &[
-            ("Space", "Room"),
-            ("Size", "25%"),
-            ("Decay", "25%"),
-            ("Mix", "100%"),
-        ],
-    ),
-    (
-        "snare",
-        "nonlin",
-        "FTS Reverb",
-        &[("Space", "Non-Linear"), ("Decay", "40%"), ("Mix", "100%")],
-    ),
-    (
-        "fx",
-        "long verb",
-        "FTS Reverb",
-        &[
-            ("Space", "Concert Hall"),
-            ("Decay", "70%"),
-            ("Pre-Delay", "40.0 ms"),
-            ("Mix", "100%"),
-        ],
-    ),
-    (
-        "fx",
-        "short verb",
-        "FTS Reverb",
-        &[("Space", "Plate"), ("Decay", "30%"), ("Mix", "100%")],
-    ),
-    (
-        "fx",
-        "slap",
-        "FTS Delay",
-        &[
-            ("Time L", "110.0 ms"),
-            ("Link", "On"),
-            ("Feedback", "10%"),
-            ("Mix", "100%"),
-        ],
-    ),
-    (
-        "fx",
-        "oct down",
-        "FTS Pitch",
-        &[("Semitones", "-12"), ("Mix", "100%")],
-    ),
-];
+/// The FX and settings for one of the golden template's returns, by
+/// the folder it sits in and its name: the kit's Verb banks (`Room`,
+/// `Plate`, `Hall`, `Nonlin`) and the vocals' `Vox FX`. All wet — they
+/// are fed by sends. The vocal delays are in time with the song: `beat`
+/// is a quarter note, in milliseconds.
+fn return_fx(
+    parent: &str,
+    name: &str,
+    beat: f64,
+) -> Option<(&'static str, Vec<(&'static str, String)>)> {
+    let set = |pairs: &[(&'static str, &str)]| {
+        pairs
+            .iter()
+            .map(|(p, v)| (*p, (*v).to_owned()))
+            .collect::<Vec<_>>()
+    };
+    let delay = |beats: f64, feedback: &str| {
+        vec![
+            ("Time L", format!("{:.1} ms", beat * beats)),
+            ("Link", "On".to_owned()),
+            ("Feedback", feedback.to_owned()),
+            ("Mix", "100%".to_owned()),
+        ]
+    };
+    Some(match (parent, name) {
+        ("verb", "room") => (
+            "FTS Reverb",
+            set(&[
+                ("Space", "Room"),
+                ("Size", "25%"),
+                ("Decay", "25%"),
+                ("Mix", "100%"),
+            ]),
+        ),
+        ("verb", "plate") => (
+            "FTS Reverb",
+            set(&[("Space", "Plate"), ("Decay", "35%"), ("Mix", "100%")]),
+        ),
+        ("verb", "hall") => (
+            "FTS Reverb",
+            set(&[("Space", "Concert Hall"), ("Decay", "50%"), ("Mix", "100%")]),
+        ),
+        ("verb", "nonlin") => (
+            "FTS Reverb",
+            set(&[("Space", "Non-Linear"), ("Decay", "40%"), ("Mix", "100%")]),
+        ),
+        ("verb", "short") => (
+            "FTS Reverb",
+            set(&[("Space", "Plate"), ("Decay", "30%"), ("Mix", "100%")]),
+        ),
+        ("verb", "long") => (
+            "FTS Reverb",
+            set(&[
+                ("Space", "Concert Hall"),
+                ("Decay", "70%"),
+                ("Pre-Delay", "40.0 ms"),
+                ("Mix", "100%"),
+            ]),
+        ),
+        ("verb", "moment") => (
+            "FTS Reverb",
+            set(&[("Space", "Bloom"), ("Decay", "60%"), ("Mix", "100%")]),
+        ),
+        ("verb", "throw") => (
+            "FTS Reverb",
+            set(&[("Space", "Cathedral"), ("Decay", "90%"), ("Mix", "100%")]),
+        ),
+        // A slap is a room's first reflection, not a note value.
+        ("delay", "slap") => (
+            "FTS Delay",
+            set(&[
+                ("Time L", "110.0 ms"),
+                ("Link", "On"),
+                ("Feedback", "10%"),
+                ("Mix", "100%"),
+            ]),
+        ),
+        ("delay", "short") => ("FTS Delay", delay(0.5, "20%")),
+        ("delay", "long") => ("FTS Delay", delay(1.5, "35%")),
+        ("delay", "throw") => ("FTS Delay", delay(2.0, "50%")),
+        ("vox fx", "wide") => (
+            "FTS Unison",
+            set(&[
+                ("Voices", "2"),
+                ("Spread", "100%"),
+                ("Dry", "0%"),
+                ("Voices Mix", "100%"),
+            ]),
+        ),
+        ("pitch", "oct+") => ("FTS Pitch", set(&[("Semitones", "12"), ("Mix", "100%")])),
+        ("pitch", "oct-") => ("FTS Pitch", set(&[("Semitones", "-12"), ("Mix", "100%")])),
+        _ => return None,
+    })
+}
+
+/// A one-note track's chain (the template's `Fund` and `Sub`): a gate,
+/// a band-pass at the note, saturation — bypassed until it has a note.
+const ONE_NOTE: &[&str] = &["FTS Gate", "FTS EQ", "FTS Saturate"];
 
 /// The gate on a keyed drum piece, before its threshold: Kick and Toms
 /// shut all the way, Snare to 20 dB under — its room stays in the
@@ -236,8 +280,10 @@ pub struct Chains {
     pub tone: usize,
     pub buses: usize,
     pub process: usize,
-    /// Drum pieces gated from their trigger: name and threshold, dBFS.
-    pub gates: Vec<(String, f64)>,
+    /// Drum pieces gated from their trigger: name and threshold, dBFS —
+    /// `None` for a trigger with nothing on it to key from, whose gate is
+    /// left bypassed.
+    pub gates: Vec<(String, Option<f64>)>,
     /// Returns given their FX.
     pub returns: usize,
     /// Settings a plugin did not know (`fx param=text`), said, not fatal.
@@ -257,6 +303,10 @@ pub fn add(
     let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
         tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
     let mut done = Chains::default();
+    // A quarter note at the song's tempo, ms: what the vocal delays are
+    // timed in.
+    let bpm = daw_proto::TempoMap::get_tempo_at(daw, project.clone(), 0.0);
+    let beat = if bpm > 0.0 { 60_000.0 / bpm } else { 500.0 };
     for track in &tracks {
         let chain = FxChainContext::Track(track.guid.clone());
         if Effects::count(daw, project.clone(), chain.clone()) > 0 {
@@ -291,18 +341,38 @@ pub fn add(
                 &settings,
                 &mut done.unknown,
             )?;
+            if threshold.is_none() {
+                // A dead trigger opens the gate on its own noise, or never.
+                Effects::set_enabled(
+                    daw,
+                    project.clone(),
+                    FxTarget {
+                        context: chain.clone(),
+                        fx: FxRef::Index(0),
+                    },
+                    false,
+                )?;
+            }
             bypassed(daw, project, &chain, TONE)?;
-            done.gates
-                .push((name.to_owned(), threshold.unwrap_or(-40.0)));
+            done.gates.push((name.to_owned(), threshold));
             continue;
         }
         let parent = lower.iter().rev().nth(1).map_or("", String::as_str);
-        if let Some((_, _, fx, settings)) = RETURNS
-            .iter()
-            .find(|(p, n, _, _)| *p == parent && name.eq_ignore_ascii_case(n))
+        let in_process = under(&dynamic_template::apply::PROCESS_FOLDER.to_lowercase());
+        if !in_process
+            && !track.is_folder
+            && let Some((fx, settings)) = return_fx(parent, &name.to_lowercase(), beat)
         {
-            set_up(daw, project, &chain, fx, settings, &mut done.unknown)?;
+            let settings: Vec<(&str, &str)> =
+                settings.iter().map(|(p, v)| (*p, v.as_str())).collect();
+            set_up(daw, project, &chain, fx, &settings, &mut done.unknown)?;
             done.returns += 1;
+            continue;
+        }
+        if !track.is_folder
+            && (name.eq_ignore_ascii_case("fund") || name.eq_ignore_ascii_case("sub"))
+        {
+            bypassed(daw, project, &chain, ONE_NOTE)?;
             continue;
         }
         if under(&dynamic_template::apply::PROCESS_FOLDER.to_lowercase()) {
@@ -355,9 +425,19 @@ pub fn add(
             && !referenced
             && path.len() <= 2
             && !dynamic_template::apply::is_trigger(name)
-            && !["drum kit", "process", "fx", "sum", "rehearsal"]
-                .iter()
-                .any(|w| name.eq_ignore_ascii_case(w));
+            && ![
+                "drum kit",
+                "process",
+                "fx",
+                "sum",
+                "rehearsal",
+                "vox fx",
+                "delay",
+                "verb",
+                "pitch",
+            ]
+            .iter()
+            .any(|w| name.eq_ignore_ascii_case(w));
         let names = if bus || group {
             BUS
         } else if recorded && !referenced && !dynamic_template::apply::is_trigger(name) {
@@ -441,13 +521,18 @@ const GATE_UNDER_HITS_DB: f64 = 24.0;
 /// How far over the trigger's floor the gate stays shut.
 const GATE_OVER_FLOOR_DB: f64 = 6.0;
 
+/// A trigger whose strong hits are under this, dBFS, is no trigger: a
+/// struck piezo is hot, and this is crosstalk on a dead one or a drum
+/// never hit (unbreakable's T4, at -61).
+const DEAD_TRIGGER_DB: f64 = -45.0;
+
 /// The threshold for a gate keyed from `keys` (trigger tracks, or a
 /// folder of them), read off the trigger's own recording — offline, the
 /// whole song at once: [`GATE_UNDER_HITS_DB`] under the strong hits of
 /// the quietest trigger played (a folder of tom triggers opens for every
 /// tom; one that far under the loudest is a tom not played), and at
 /// least [`GATE_OVER_FLOOR_DB`] over the noise between them.
-/// `None` when no trigger has audio.
+/// `None` when no trigger has audio, or only under [`DEAD_TRIGGER_DB`].
 fn gate_threshold(
     daw: &daw_standalone::sync::Standalone,
     project: &ProjectContext,
@@ -493,11 +578,14 @@ fn gate_threshold(
     // A trigger far under the loudest of its set is a drum not played —
     // or a dead trigger — reading crosstalk: it would open the gate on
     // everything else's.
-    let loudest = levels.iter().map(|(h, _)| *h).fold(f64::NEG_INFINITY, f64::max);
+    let loudest = levels
+        .iter()
+        .map(|(h, _)| *h)
+        .fold(f64::NEG_INFINITY, f64::max);
     let (hits, floor) = levels
         .iter()
         .copied()
-        .filter(|(h, _)| *h >= loudest - GATE_UNDER_HITS_DB)
+        .filter(|(h, _)| *h >= loudest - GATE_UNDER_HITS_DB && *h >= DEAD_TRIGGER_DB)
         .reduce(|(h, f), (h2, f2)| (h.min(h2), f.max(f2)))?;
     Some(
         (hits - GATE_UNDER_HITS_DB)

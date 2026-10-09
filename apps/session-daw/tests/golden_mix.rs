@@ -1,7 +1,7 @@
-//! The golden mix's shape, built at prepare: each drum piece's gate keyed
-//! from its trigger, Kick's and Snare's returns beside a SUM of their
-//! mics, the vocal effects fed from one Input — and the FTS processors
-//! on them (`mix_chains`).
+//! The golden template, built at prepare from a session's own tracks:
+//! the kit's pieces with their Sum, Fund, Sub and Verb banks, the toms as
+//! pieces, each piece's gate keyed from its trigger, the vocals' Vox FX
+//! fed by every lead — and the FTS processors on them (`mix_chains`).
 
 #![cfg(feature = "native")]
 
@@ -48,6 +48,9 @@ const SONG: &str = r#"<REAPER_PROJECT 0.1 "7.75/linux-x86_64" 1790015830 0
   <TRACK {A0000000-0000-0000-0000-000000000009}
     NAME T1
   >
+  <TRACK {A0000000-0000-0000-0000-000000000011}
+    NAME T2
+  >
   <TRACK {A0000000-0000-0000-0000-00000000000A}
     NAME Trig
     MUTESOLO 1 0 0
@@ -55,6 +58,10 @@ const SONG: &str = r#"<REAPER_PROJECT 0.1 "7.75/linux-x86_64" 1790015830 0
   >
   <TRACK {A0000000-0000-0000-0000-00000000000B}
     NAME "T1 Trig"
+    MUTESOLO 1 0 0
+  >
+  <TRACK {A0000000-0000-0000-0000-000000000012}
+    NAME "T2 Trig"
     MUTESOLO 1 0 0
     ISBUS 2 -2
   >
@@ -76,7 +83,11 @@ const SONG: &str = r#"<REAPER_PROJECT 0.1 "7.75/linux-x86_64" 1790015830 0
   >
   <TRACK {A0000000-0000-0000-0000-000000000010}
     NAME "Lead Vocal"
-    ISBUS 2 -2
+    ISBUS 2 -1
+  >
+  <TRACK {A0000000-0000-0000-0000-000000000013}
+    NAME Scream
+    ISBUS 2 -1
   >
 >
 "#;
@@ -104,8 +115,20 @@ fn find<'a>(tracks: &'a [daw_proto::Track], parent: &str, name: &str) -> &'a daw
         .unwrap_or_else(|| panic!("{parent}/{name}"))
 }
 
+/// Whether the track `guid` is fed by a send from `from`.
+fn fed_by(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    guid: &str,
+    from: &str,
+) -> bool {
+    Routing::receives(daw, project.clone(), TrackRef::Guid(guid.to_owned()))
+        .iter()
+        .any(|r| r.dest_track_guid.as_deref() == Some(from))
+}
+
 #[test]
-fn prepare_builds_the_golden_mix() {
+fn prepare_builds_the_golden_template() {
     let daw = daw::standalone::Standalone::new();
     daw.set_fx_factory(Arc::new(builtin_fx::BuiltinFx));
     let loaded =
@@ -114,61 +137,116 @@ fn prepare_builds_the_golden_mix() {
     let project = ProjectContext::Project(loaded.project_guid);
     let mut target = dynamic_template::apply::DawTarget::on(daw.clone(), project.clone());
 
+    assert!(!target.apply_golden_kit().expect("kit").is_empty());
+    assert!(!target.apply_vox_fx().expect("vox fx").is_empty());
     assert_eq!(
         target.key_drum_gates().expect("keyed"),
-        ["Kick", "Snare", "Toms"]
+        ["Kick", "Snare", "Tom 1", "Tom 2"]
     );
-    assert_eq!(
-        target.add_piece_verbs().expect("verbs"),
-        ["Kick Verb", "Snare NonLin"]
-    );
-    assert_eq!(target.add_vocal_fx().expect("vocals").len(), 6);
     let chains = session_daw::mix_chains::add(&daw, &project).expect("chains");
-
     let tracks = Tracks::all(&daw, project.clone());
-    let kick = find(&tracks, "Drums", "Kick");
-    assert_eq!(children(&tracks, kick), ["Verb", "SUM"]);
-    let sum = find(&tracks, "Kick", "SUM");
-    assert_eq!(children(&tracks, sum), ["In", "Trig"]);
 
-    // The trigger keys the piece: pre-FX onto 3/4, unheard but alive.
-    let trig = find(&tracks, "SUM", "Trig");
-    let sends = Routing::sends(&daw, project.clone(), TrackRef::Guid(trig.guid.clone()));
-    let key = sends.first().expect("the key send");
-    assert_eq!(key.dest_track_guid.as_deref(), Some(kick.guid.as_str()));
+    // The kick: its tracks under a Sum, the template's Sub and Verb bank
+    // beside it, the bank fed by the Sum.
+    let kick = find(&tracks, "Drums", "Kick");
+    assert_eq!(children(&tracks, kick), ["Sum", "Sub", "Verb"]);
+    let kick_sum = find(&tracks, "Kick", "Sum");
+    assert_eq!(children(&tracks, kick_sum), ["In", "Trig"]);
+    let kick_room = find(&tracks, "Verb", "Room");
+    assert!(fed_by(&daw, &project, &kick_room.guid, &kick_sum.guid));
+    // The snare: a Fund in its Sum, three rooms with the first on.
+    let snare_sum = find(&tracks, "Snare", "Sum");
+    assert_eq!(children(&tracks, snare_sum), ["Top", "Trig", "Fund"]);
+    let snare_verb = tracks
+        .iter()
+        .find(|t| {
+            t.name == "Verb"
+                && t.parent_guid.as_deref() == Some(find(&tracks, "Drums", "Snare").guid.as_str())
+        })
+        .expect("the snare's bank");
+    assert_eq!(children(&tracks, snare_verb), ["Plate", "Hall", "Nonlin"]);
+    let in_bank = |name: &str| {
+        tracks
+            .iter()
+            .find(|t| t.name == name && t.parent_guid.as_deref() == Some(snare_verb.guid.as_str()))
+            .expect(name)
+    };
+    assert!(!in_bank("Plate").muted && in_bank("Hall").muted && in_bank("Nonlin").muted);
+    assert!(fed_by(
+        &daw,
+        &project,
+        &in_bank("Hall").guid,
+        &snare_sum.guid
+    ));
+    // The toms: each a piece of its mic, its trigger and a Fund; the
+    // triggers' folder gone; the shared bank fed by every tom.
+    let toms = find(&tracks, "Drums", "Toms");
+    assert_eq!(children(&tracks, toms), ["Tom 1", "Tom 2", "Verb"]);
+    let tom_1 = find(&tracks, "Toms", "Tom 1");
+    assert_eq!(children(&tracks, tom_1), ["T1", "T1 Trig", "Fund"]);
+    assert!(
+        !tracks.iter().any(|t| t.name == "Trig" && t.is_folder),
+        "the emptied trigger folder"
+    );
+    let toms_verb = tracks
+        .iter()
+        .find(|t| t.name == "Verb" && t.parent_guid.as_deref() == Some(toms.guid.as_str()))
+        .expect("the toms' bank");
+    let toms_room = tracks
+        .iter()
+        .find(|t| t.name == "Room" && t.parent_guid.as_deref() == Some(toms_verb.guid.as_str()))
+        .expect("Room");
+    assert!(fed_by(&daw, &project, &toms_room.guid, &tom_1.guid));
+    assert!(fed_by(
+        &daw,
+        &project,
+        &toms_room.guid,
+        &find(&tracks, "Toms", "Tom 2").guid
+    ));
+
+    // Each tom keyed from its own trigger, pre-FX onto 3/4.
+    let t1_trig = find(&tracks, "Tom 1", "T1 Trig");
+    let key = Routing::sends(&daw, project.clone(), TrackRef::Guid(t1_trig.guid.clone()));
+    let key = key.first().expect("the key send");
+    assert_eq!(key.dest_track_guid.as_deref(), Some(tom_1.guid.as_str()));
     assert_eq!(
         (key.send_mode, key.dest_channels.start_channel),
         (SendMode::PreFx, 2)
     );
-    assert!(!trig.muted, "a muted track's sends are muted");
-    assert!(!Routing::parent_send_enabled(
-        &daw,
-        project.clone(),
-        TrackRef::Guid(trig.guid.clone())
-    ));
-    // A folder of tom triggers keys Toms, every trigger in it unmuted.
-    assert!(!find(&tracks, "Trig", "T1 Trig").muted);
-    // No trigger, no key.
+    assert!(!t1_trig.muted, "a muted track's sends are muted");
     let cymbals = find(&tracks, "Drums", "Cymbals");
     assert!(
         Routing::receives(&daw, project.clone(), TrackRef::Guid(cymbals.guid.clone())).is_empty()
     );
 
-    let vocal_fx = find(&tracks, "Vocals", "FX");
+    // The vocals: the template's Vox FX, every lead into every return.
+    let vox_fx = find(&tracks, "Vocals", "Vox FX");
     assert_eq!(
-        children(&tracks, vocal_fx),
-        ["Input", "Long Verb", "Short Verb", "Slap", "Oct Down"]
+        children(&tracks, vox_fx),
+        ["Delay", "Verb", "Wide", "Pitch"]
     );
-    let input = find(&tracks, "FX", "Input");
-    let main = find(&tracks, "Vocals", "Main");
-    let fed = Routing::receives(&daw, project.clone(), TrackRef::Guid(input.guid.clone()));
     assert_eq!(
-        fed.first().and_then(|r| r.dest_track_guid.as_deref()),
-        Some(main.guid.as_str())
+        children(&tracks, find(&tracks, "Vox FX", "Delay")),
+        ["Slap", "Short", "Long", "Throw"]
+    );
+    let slap = find(&tracks, "Delay", "Slap");
+    for lead in ["Main", "Scream"] {
+        assert!(
+            fed_by(
+                &daw,
+                &project,
+                &slap.guid,
+                &find(&tracks, "Vocals", lead).guid
+            ),
+            "{lead} into Slap"
+        );
+    }
+    assert!(
+        !slap.muted && find(&tracks, "Delay", "Throw").muted,
+        "a start, the rest a mute away"
     );
 
-    // The processors: the gate first and on, the returns set, no tone on
-    // a trigger.
+    // The processors.
     let fx = |track: &daw_proto::Track| {
         Effects::list(
             &daw,
@@ -176,43 +254,53 @@ fn prepare_builds_the_golden_mix() {
             FxChainContext::Track(track.guid.clone()),
         )
     };
-    let on_kick = fx(kick);
-    assert_eq!(
-        on_kick.first().map(|f| (f.plugin_name.as_str(), f.enabled)),
-        Some(("FTS Gate", true))
+    let first = |track: &daw_proto::Track| {
+        fx(track)
+            .first()
+            .map(|f| (f.plugin_name.clone(), f.enabled))
+    };
+    // A gate first; bypassed, since this fixture's triggers have no audio
+    // to read a threshold off (a dead trigger would open it on noise).
+    assert_eq!(first(tom_1), Some(("FTS Gate".to_owned(), false)));
+    assert!(
+        chains
+            .gates
+            .iter()
+            .all(|(_, threshold)| threshold.is_none())
     );
     assert_eq!(
-        fx(find(&tracks, "Kick", "Verb"))
-            .first()
-            .map(|f| f.plugin_name.clone())
-            .as_deref(),
+        first(in_bank("Hall")).map(|f| f.0).as_deref(),
         Some("FTS Reverb")
     );
     assert_eq!(
-        fx(find(&tracks, "FX", "Slap"))
-            .first()
-            .map(|f| f.plugin_name.clone())
+        first(find(&tracks, "Vox FX", "Wide"))
+            .map(|f| f.0)
+            .as_deref(),
+        Some("FTS Unison")
+    );
+    assert_eq!(
+        first(find(&tracks, "Pitch", "Oct-"))
+            .map(|f| f.0)
+            .as_deref(),
+        Some("FTS Pitch")
+    );
+    assert_eq!(
+        first(find(&tracks, "Delay", "Long"))
+            .map(|f| f.0)
             .as_deref(),
         Some("FTS Delay")
     );
     assert_eq!(
-        fx(find(&tracks, "FX", "Oct Down"))
-            .first()
-            .map(|f| f.plugin_name.clone())
-            .as_deref(),
-        Some("FTS Pitch")
+        first(find(&tracks, "Tom 1", "Fund")),
+        Some(("FTS Gate".to_owned(), false))
     );
-    assert!(fx(trig).is_empty(), "a trigger is a key, not a channel");
-    assert!(
-        fx(cymbals).iter().all(|f| f.plugin_name != "FTS Gate"),
-        "Cymbals: no key, no gate"
-    );
-    assert_eq!(chains.gates.len(), 3);
+    assert!(fx(t1_trig).is_empty(), "a trigger is a key, not a channel");
+    assert!(fx(vox_fx).is_empty(), "a returns folder is no bus");
     assert!(chains.unknown.is_empty(), "{:?}", chains.unknown);
 
     // Again: nothing more.
+    assert!(target.apply_golden_kit().expect("kit").is_empty());
+    assert!(target.apply_vox_fx().expect("vox fx").is_empty());
     assert!(target.key_drum_gates().expect("keyed").is_empty());
-    assert!(target.add_piece_verbs().expect("verbs").is_empty());
-    assert!(target.add_vocal_fx().expect("vocals").is_empty());
     assert_eq!(Tracks::all(&daw, project).len(), tracks.len());
 }

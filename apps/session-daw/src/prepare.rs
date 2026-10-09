@@ -728,18 +728,18 @@ pub fn steps(
         // below would make cost a minute. The gates change the kit's
         // loudest moment little.
         //
-        // The golden mix's shape inside the kit and the vocals: each
-        // piece's gate keyed from its trigger, Kick's and Snare's reverb
-        // returns beside a SUM of their mics, the vocal effects fed from
-        // one Input.
+        // The golden template's kit and vocal returns, made of the
+        // session's tracks: each piece's Sum and what the template puts
+        // beside it, the toms as pieces, the Vox FX the leads feed — then
+        // each piece's gate keyed from its trigger where it now sits.
+        let kit = target.apply_golden_kit()?;
+        let vox_fx = target.apply_vox_fx()?;
         let keyed = target.key_drum_gates()?;
-        let piece_verbs = target.add_piece_verbs()?;
-        let vocal_fx = target.add_vocal_fx()?;
         tracing::info!(
+            kit = ?kit,
+            vox_fx = vox_fx.len(),
             keyed = ?keyed,
-            piece_verbs = ?piece_verbs,
-            vocal_fx = vocal_fx.len(),
-            "prepare: golden mix structure"
+            "prepare: golden template"
         );
         // The mix's processing: the FTS processors built in (Tone on every
         // recorded track and EQ/Comp on the buses, bypassed; the Process

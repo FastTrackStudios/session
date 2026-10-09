@@ -483,7 +483,8 @@ fn bus(name: &str, colour: u32) -> Node {
 /// The bus tree — the dynamic template's canonical one without GUITAR
 /// BUS, with the three electric buses under ELECTRIC BUS, in the bus
 /// list rather than in the folder.
-fn drum_kit() -> Node {
+#[must_use]
+pub fn drum_kit() -> Node {
     Node::new("Drum Kit", DRUMS, Kind::Group)
         .template(&["Drums", "Drum Kit"])
         .send("DRUM BUS")
@@ -902,7 +903,8 @@ fn lead(name: &str, languages: &[&str], returns: &[String]) -> Node {
 /// The vocal returns: delays slap to throw, verbs room to throw, a
 /// widener and the octaves — the vocal template's `Vox FX`, one
 /// definition for both fixtures.
-fn vox_fx() -> Node {
+#[must_use]
+pub fn vox_fx() -> Node {
     Node::new("Vox FX", VOX_FX, Kind::Fx).children(vec![
         returns(
             "Delay",
