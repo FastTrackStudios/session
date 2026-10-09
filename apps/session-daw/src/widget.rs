@@ -307,7 +307,7 @@ pub struct ArrangementWidget {
     /// (with the visibility this window has changed since): what a track
     /// shown or hidden re-plans from. `None` in a widget built without
     /// one, which then cannot show or hide anything.
-    replan: Option<(crate::studio::Planner, daw_ui::studio::project::Project)>,
+    replan: Option<(crate::studio::Planner, Left)>,
     /// A page's session read back from the engine, waiting to be drawn
     /// ([`Self::resync`]).
     #[cfg(not(feature = "native"))]
@@ -741,7 +741,7 @@ impl ArrangementWidget {
         planner: crate::studio::Planner,
         content_h: Rc<std::cell::Cell<f64>>,
     ) -> Self {
-        let raw = (*planner.raw).clone();
+        let raw = song_as_left(&planner);
         self.replan = Some((planner, raw));
         content_h.set(self.content_h.get());
         self.content_h = content_h;
@@ -848,7 +848,7 @@ impl ArrangementWidget {
         let name: &'static str = now
             .and_then(dynamic_template::scenes::scene)
             .map_or("Default view", |s| s.name.as_str());
-        let (project, rows) = planner.plan(raw);
+        let (project, rows) = planner.plan(&raw.borrow());
         self.notice = Some(crate::notice::Notice::new(name, None));
         self.restructure((*project.0).clone(), rows.as_slice().to_vec());
         true
@@ -859,9 +859,12 @@ impl ArrangementWidget {
     /// (no planner, or a group no track is in).
     fn visibility(&mut self, change: &crate::keys::Visibility) -> bool {
         use crate::keys::Visibility;
-        let Some((planner, raw)) = self.replan.as_mut() else {
+        let Some((planner, shared)) = self.replan.as_ref() else {
             return false;
         };
+        let (planner, shared) = (planner.clone(), Rc::clone(shared));
+        let mut guard = shared.borrow_mut();
+        let raw = &mut *guard;
         let names: Vec<String> = raw.tracks.iter().map(|t| t.name.clone()).collect();
         let groups = match dynamic_template::visibility::groups(names) {
             Ok(groups) => groups,
@@ -906,6 +909,8 @@ impl ArrangementWidget {
             return false;
         }
         let (project, rows) = planner.plan(raw);
+        // Let go before the rows are taken: publishing them reads it.
+        drop(guard);
         for guid in changed {
             self.edits
                 .borrow_mut()
@@ -959,8 +964,8 @@ impl ArrangementWidget {
         let Some((planner, raw)) = self.replan.as_mut() else {
             return;
         };
-        *raw = fresh;
-        let (project, rows) = planner.plan(raw);
+        *raw.borrow_mut() = fresh;
+        let (project, rows) = planner.plan(&raw.borrow());
         self.restructure((*project.0).clone(), rows.as_slice().to_vec());
     }
 
@@ -968,7 +973,7 @@ impl ArrangementWidget {
     /// folder opened or shut.
     fn replan_rows(&mut self) {
         if let Some((planner, raw)) = self.replan.as_ref() {
-            let (project, rows) = planner.plan(raw);
+            let (project, rows) = planner.plan(&raw.borrow());
             self.restructure((*project.0).clone(), rows.as_slice().to_vec());
         }
     }
@@ -1022,7 +1027,7 @@ impl ArrangementWidget {
                     .map(|(track, _)| (track.guid.as_str(), track))
                     .collect();
                 planner
-                    .plan_strips(raw)
+                    .plan_strips(&raw.borrow())
                     .as_slice()
                     .iter()
                     .map(|(track, depth)| {
@@ -1624,17 +1629,17 @@ impl ArrangementWidget {
         // a change to the one named. Handled before the rest.
         if let Edit::Select(guid) | Edit::AddToSelection(guid) = edit {
             let only = matches!(edit, Edit::Select(_));
-            for track in self
-                .tracks
-                .iter_mut()
-                .chain(self.rows.iter_mut().map(|(track, _)| track))
-                .chain(planned_from(&mut self.replan))
-            {
+            let pick = |track: &mut daw_proto::Track| {
                 if track.guid == *guid {
                     track.selected = true;
                 } else if only {
                     track.selected = false;
                 }
+            };
+            self.tracks.iter_mut().for_each(pick);
+            self.rows.iter_mut().for_each(|(track, _)| pick(track));
+            if let Some((_, raw)) = &self.replan {
+                raw.borrow_mut().tracks.iter_mut().for_each(pick);
             }
             // A row's tint carries its selection, and a tint is
             // recorded — the same reason a rename has to forget the
@@ -1659,22 +1664,73 @@ impl ArrangementWidget {
             .tracks
             .iter_mut()
             .chain(self.rows.iter_mut().map(|(track, _)| track))
-            .chain(planned_from(&mut self.replan))
             .filter(|track| track.guid == guid)
         {
             change(track);
+        }
+        // And the tracks the rows are planned from: a fold or a scene
+        // plans the rows again from them, and an edit only in the rows it
+        // replaced — a mute, a rename — was undone by it.
+        if let Some((_, raw)) = &self.replan {
+            raw.borrow_mut()
+                .tracks
+                .iter_mut()
+                .filter(|track| track.guid == guid)
+                .for_each(change);
         }
         self.values_changed();
     }
 }
 
-/// The tracks the rows are planned from, for an edit to land in too: a
-/// fold or a scene plans the rows again from them, and an edit only in
-/// the rows it replaced — a mute, a rename — was undone by it.
-fn planned_from(
-    replan: &mut Option<(crate::studio::Planner, daw_ui::studio::project::Project)>,
-) -> impl Iterator<Item = &mut daw_proto::Track> {
-    replan.iter_mut().flat_map(|(_, raw)| raw.tracks.iter_mut())
+thread_local! {
+    /// Each open song as its arrangement last had it — the tracks with the
+    /// mutes, renames and visibility changed in it — by the song (held
+    /// weakly: a song closed is forgotten). A panel rebuilt on the way
+    /// back from another view starts from this, not from the song as it
+    /// opened.
+    static LEFT: RefCell<Vec<(std::sync::Weak<daw_ui::studio::project::Project>, Left)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// A song as its arrangement has it, shared by every arrangement built for
+/// it ([`song_as_left`]).
+type Left = Rc<RefCell<daw_ui::studio::project::Project>>;
+
+/// `planner`'s song as its arrangement left it, kept from now on.
+fn song_as_left(planner: &crate::studio::Planner) -> Left {
+    LEFT.with(|all| {
+        let mut all = all.borrow_mut();
+        all.retain(|(song, _)| song.strong_count() > 0);
+        if let Some((_, raw)) = all
+            .iter()
+            .find(|(song, _)| std::ptr::eq(song.as_ptr(), std::sync::Arc::as_ptr(&planner.raw)))
+        {
+            return Rc::clone(raw);
+        }
+        let raw = Rc::new(RefCell::new((*planner.raw).clone()));
+        all.push((std::sync::Arc::downgrade(&planner.raw), Rc::clone(&raw)));
+        raw
+    })
+}
+
+/// The rows to open `planner`'s arrangement with, when it has been shown
+/// before.
+///
+/// Planned again from the song as it was left, with the window's folds as
+/// they are now. `None` the first time — the rows the song opened with
+/// are those.
+#[must_use]
+pub fn rows_as_left(
+    planner: &crate::studio::Planner,
+) -> Option<(daw_ui::studio::ProjectRef, daw_ui::studio::RowsRef)> {
+    let raw = LEFT.with(|all| {
+        all.borrow()
+            .iter()
+            .find(|(song, _)| std::ptr::eq(song.as_ptr(), std::sync::Arc::as_ptr(&planner.raw)))
+            .map(|(_, raw)| Rc::clone(raw))
+    })?;
+    let as_left = planner.plan(&raw.borrow());
+    Some(as_left)
 }
 
 /// The MIDI items of `fresh` whose notes `previews` has not read.
@@ -3259,6 +3315,61 @@ mod tests {
         assert!(row("g0").muted, "the mute is still lit");
         assert!(row("g1").soloed && row("g1").name == "Bass DI");
         assert!(widget.tracks.iter().any(|t| t.guid == "g0" && t.muted));
+    }
+
+    /// An arrangement built again for the same song (back from the
+    /// mixer) opens as the last one left it: the folders shut since, and
+    /// the mutes made in it. The first one opens as the song did.
+    #[test]
+    fn a_rebuilt_arrangement_keeps_the_folds_and_mutes() {
+        let track = |i: u32, name: &str, depth: i32| daw_proto::Track {
+            guid: format!("g{i}"),
+            name: name.to_owned(),
+            index: i,
+            is_folder: depth > 0,
+            folder_depth: depth,
+            visible_in_tcp: true,
+            parent_guid: (i == 1).then(|| "g0".to_owned()),
+            ..daw_proto::Track::default()
+        };
+        let raw = daw_ui::studio::project::Project {
+            tracks: vec![
+                track(0, "Drums", 1),
+                track(1, "Kick", -1),
+                track(2, "Bass", 0),
+            ],
+            ..daw_ui::studio::project::Project::default()
+        };
+        let planner = crate::studio::Planner {
+            raw: std::sync::Arc::new(raw),
+            scene: None,
+            kinds: std::sync::Arc::new(crate::plan::Kinds::default()),
+        };
+        assert!(
+            super::rows_as_left(&planner).is_none(),
+            "never shown: as it opened"
+        );
+        let content_h = std::rc::Rc::new(std::cell::Cell::new(0.0));
+        let mut first = widget().with_planner(planner.clone(), content_h);
+        first.replan_rows();
+        assert_eq!(first.rows.len(), 3);
+        first.assume(&Edit::ToggleMute("g2".into()));
+        crate::folds::toggle("g0", true);
+        drop(first);
+
+        let (_, rows) = super::rows_as_left(&planner).expect("shown before");
+        let names: Vec<&str> = rows
+            .as_slice()
+            .iter()
+            .map(|(t, _)| t.name.as_str())
+            .collect();
+        assert_eq!(names, ["Drums", "Bass"], "the drums still shut");
+        let bass = rows
+            .as_slice()
+            .iter()
+            .find(|(t, _)| t.guid == "g2")
+            .expect("bass");
+        assert!(bass.0.muted, "the bass still muted");
     }
 
     #[test]

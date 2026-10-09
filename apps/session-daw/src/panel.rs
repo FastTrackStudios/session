@@ -342,9 +342,16 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
             play_at: 0.0,
         });
         let view: crate::widget::Shared = Rc::new(RefCell::new(opening));
+        // Shown before (back from the mixer, say): the song as it was left
+        // and the folders as the window has them now, not the rows the
+        // song opened with.
+        let left = crate::widget::rows_as_left(&session.planner);
+        let (project, rows) = left
+            .as_ref()
+            .map_or((&session.project, &session.rows), |(p, r)| (p, r));
         let built = crate::widget::ArrangementWidget::for_session(
-            &session.project,
-            &session.rows,
+            project,
+            rows,
             &session.previews,
             compact.get(),
             Rc::clone(&view),
