@@ -163,15 +163,19 @@ fn sums_beside_sends(g: &Golden) -> bool {
 }
 
 fn kick(g: &Golden) -> bool {
-    summed(g, "Drum Kit/Kick", &["In", "Out", "Trig"], &["Sub", "Verb"])
-        && names_eq(g, "Drum Kit/Kick/Verb", &["Room"])
+    summed(
+        g,
+        "Drum Kit/Kick",
+        &["In", "Out", "Trig", "Sample"],
+        &["Sub", "Verb"],
+    ) && names_eq(g, "Drum Kit/Kick/Verb", &["Room"])
 }
 
 fn snare(g: &Golden) -> bool {
     summed(
         g,
         "Drum Kit/Snare",
-        &["Top", "Bottom", "Trig", "Fund"],
+        &["Top", "Bottom", "Trig", "Sample", "Fund"],
         &["Verb"],
     ) && names_eq(g, "Drum Kit/Snare/Verb", &["Plate", "Hall", "Nonlin"])
 }
@@ -185,7 +189,12 @@ fn toms(g: &Golden) -> bool {
         names_eq(
             g,
             &format!("Drum Kit/Toms/Tom {n}"),
-            &[&format!("T{n}"), &format!("T{n} Trig"), "Fund"],
+            &[
+                &format!("T{n}"),
+                &format!("T{n} Trig"),
+                &format!("T{n} Sample"),
+                "Fund",
+            ],
         )
     }) && names_eq(g, "Drum Kit/Toms/Verb", &["Room", "Nonlin"])
 }
@@ -590,17 +599,17 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: DRUMS,
-        text: "**Kick**: In, Out, Trig; Sub; **Verb/** Room.",
+        text: "**Kick**: In, Out, Trig, Sample; Sub; **Verb/** Room.",
         check: Some(kick),
     },
     Item {
         section: DRUMS,
-        text: "**Snare**: Top, Bottom, Trig, Fund; **Verb/** Plate, Hall, Nonlin.",
+        text: "**Snare**: Top, Bottom, Trig, Sample, Fund; **Verb/** Plate, Hall, Nonlin.",
         check: Some(snare),
     },
     Item {
         section: DRUMS,
-        text: "**Toms**: per tom T*n*, Trig, Fund; one shared **Verb/** Room, Nonlin.",
+        text: "**Toms**: per tom T*n*, Trig, Sample, Fund; one shared **Verb/** Room, Nonlin.",
         check: Some(toms),
     },
     Item {
@@ -917,8 +926,8 @@ mod tests {
         // the render says so, while the snare's tick is unaffected.
         g.built.tracks.retain(|t| t.path != "Drum Kit/Kick/Sub");
         let text = render(&g);
-        assert!(text.contains("- [ ] **Kick**: In, Out, Trig; Sub; **Verb/** Room."));
-        assert!(text.contains("- [x] **Snare**: Top, Bottom, Trig, Fund;"));
+        assert!(text.contains("- [ ] **Kick**: In, Out, Trig, Sample; Sub; **Verb/** Room."));
+        assert!(text.contains("- [x] **Snare**: Top, Bottom, Trig, Sample, Fund;"));
     }
 
     #[test]

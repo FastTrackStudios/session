@@ -92,11 +92,12 @@ impl Flat {
         !self.is_folder && !self.is_bus() && !self.no_items
     }
 
-    /// Whether the track's items are MIDI — the triggers, which are
-    /// spikes for a sampler rather than recorded audio.
+    /// Whether the track's items are MIDI — a trigger (here the kit's
+    /// notes; a session's may as well be a recorded piezo) and the samples
+    /// it drives, a sampler's notes.
     #[must_use]
     pub fn is_midi(&self) -> bool {
-        self.has_items() && (self.kind == Kind::Trigger || self.midi)
+        self.has_items() && (matches!(self.kind, Kind::Trigger | Kind::Sample) || self.midi)
     }
 
     /// The media file this track's items play, relative to the project.
@@ -141,7 +142,8 @@ pub fn slug(path: &str) -> String {
 
 /// Is this a track you look at, or one you only need present?
 ///
-/// A trigger, a sub, a fundamental and a reverb return are all things
+/// A trigger and its samples, a sub, a fundamental and a reverb return
+/// are all things
 /// you want IN the session and almost never want to READ. Collapsed to
 /// the minimum they stay reachable and stop spending the space the mics
 /// and the sums actually need. By name rather than by kind because this
@@ -149,7 +151,7 @@ pub fn slug(path: &str) -> String {
 /// named `Short Room` is a reverb by kind but opens as a piece.
 #[must_use]
 pub fn is_auxiliary(name: &str) -> bool {
-    matches!(name, "Sub" | "Verb" | "Fund") || name.ends_with("Trig")
+    matches!(name, "Sub" | "Verb" | "Fund") || name.ends_with("Trig") || name.ends_with("Sample")
 }
 
 /// Is this the track the KIT PIECE is mixed on?
@@ -682,7 +684,7 @@ impl MidiPattern {
             "Guide" => Self::Cue,
             "KEY" => Self::Key,
             "CHORD" => Self::Chord,
-            _ if kind == Kind::Trigger => Self::Trigger,
+            _ if matches!(kind, Kind::Trigger | Kind::Sample) => Self::Trigger,
             _ => Self::Trigger,
         }
     }
@@ -990,7 +992,10 @@ mod tests {
         // and the bass guitar's Sum gone (−1).
         // 272 with the Inst FX folder gone — the folder, its six banks
         // and their seventeen returns (−24).
-        assert_eq!(tracks.len(), 272);
+        // 278 with a Sample beside each drum's Trig — the kick's, the
+        // snare's and the four toms' (+6): Trig is what says the drum was
+        // hit, Sample what plays from it.
+        assert_eq!(tracks.len(), 278);
     }
 
     fn clear_aux(nodes: &mut [Node]) {

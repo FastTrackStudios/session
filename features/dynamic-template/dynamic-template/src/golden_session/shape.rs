@@ -429,6 +429,11 @@ fn trig(name: &str, colour: u32) -> Node {
     Node::new(name, colour, Kind::Trigger)
 }
 
+/// The drum's samples, beside its `Trig`: the notes a sampler plays.
+fn sample(name: &str, colour: u32) -> Node {
+    Node::new(name, colour, Kind::Sample)
+}
+
 fn fund(colour: u32) -> Node {
     Node::new("Fund", colour, Kind::Fundamental).fx(ONE_NOTE_CHAIN)
 }
@@ -457,13 +462,15 @@ fn summed(name: &str, colour: u32, sum: Vec<Node>, beside: Vec<Node>) -> Node {
     Node::new(name, colour, Kind::Piece).children(children)
 }
 
-/// A tom: its mic, its trigger and its fundamental, and nothing else. No
+/// A tom: its mic, its trigger, its samples and its fundamental, and
+/// nothing else. No
 /// Sum and no Verb of its own — the piece IS the pair, and the toms
 /// share one Verb bank beside them at the Toms level.
 fn tom(number: u32) -> Node {
     Node::new(format!("Tom {number}"), TOMS, Kind::Piece).children(vec![
         mic(&format!("T{number}"), TOMS),
         trig(&format!("T{number} Trig"), TOMS),
+        sample(&format!("T{number} Sample"), TOMS),
         fund(TOMS),
     ])
 }
@@ -492,7 +499,12 @@ pub fn drum_kit() -> Node {
             summed(
                 "Kick",
                 KICK,
-                vec![mic("In", KICK), mic("Out", KICK), trig("Trig", KICK)],
+                vec![
+                    mic("In", KICK),
+                    mic("Out", KICK),
+                    trig("Trig", KICK),
+                    sample("Sample", KICK),
+                ],
                 vec![
                     Node::new("Sub", KICK, Kind::Sub).fx(ONE_NOTE_CHAIN),
                     // A folder of one, like the snare's and the toms':
@@ -514,6 +526,7 @@ pub fn drum_kit() -> Node {
                     mic("Top", SNARE),
                     mic("Bottom", SNARE),
                     trig("Trig", SNARE),
+                    sample("Sample", SNARE),
                     fund(SNARE),
                 ],
                 vec![verb("Verb", SNARE).children(vec![

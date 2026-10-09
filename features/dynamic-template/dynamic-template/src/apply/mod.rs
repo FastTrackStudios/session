@@ -988,6 +988,15 @@ pub const VOX_FX_START: &[(&str, &str, f64)] = &[
 /// Where the vocal returns that start muted sit.
 pub const VOX_FX_QUIET_DB: f64 = -20.0;
 
+/// Whether a track is a drum's samples — `Sample`, `T1 Sample`, a
+/// `Sample` folder of layers: what plays from its `Trig`, which is what
+/// says the drum was hit. Not a mic: no Fund is fed by it.
+#[must_use]
+pub fn is_sample(name: &str) -> bool {
+    name.split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+        .any(|w| w.eq_ignore_ascii_case("sample") || w.eq_ignore_ascii_case("samples"))
+}
+
 /// Whether a track is one of the golden template's one-note tracks:
 /// a piece's `Fund`, the kick's `Sub` — a band-pass at the drum's
 /// fundamental, fed by its mics, gated by its hits.

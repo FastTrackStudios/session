@@ -7,6 +7,7 @@
 4	In	133
 4	Out	133
 4	Trig	30
+4	Sample	30
 3	Sub	30
 3	Verb	86
 4	Room	30
@@ -15,6 +16,7 @@
 4	Top	133
 4	Bottom	133
 4	Trig	30
+4	Sample	30
 4	Fund	30
 3	Verb	86
 4	Plate	30
@@ -24,18 +26,22 @@
 3	Tom 1	86
 4	T1	30
 4	T1 Trig	30
+4	T1 Sample	30
 4	Fund	30
 3	Tom 2	86
 4	T2	30
 4	T2 Trig	30
+4	T2 Sample	30
 4	Fund	30
 3	Tom 3	86
 4	T3	30
 4	T3 Trig	30
+4	T3 Sample	30
 4	Fund	30
 3	Tom 4	86
 4	T4	30
 4	T4 Trig	30
+4	T4 Sample	30
 4	Fund	30
 3	Verb	86
 4	Room	30

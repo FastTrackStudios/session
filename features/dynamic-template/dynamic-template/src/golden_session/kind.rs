@@ -30,8 +30,14 @@ pub enum Kind {
     /// A close mic or a direct source under a piece: `In`, `Out`, `Top`,
     /// `T1`, `DI`, `Amp`, `Close`.
     Source,
-    /// A trigger track — a spike for a sampler, blended on the piece.
+    /// The drum's trigger: what says when it was hit — a recorded piezo
+    /// (audio) or the kit's own notes (MIDI). It keys the drum's gates and
+    /// drives its samples; it is never heard.
     Trigger,
+    /// The drum's samples: notes from its trigger's hits, played by a
+    /// sampler and blended on the piece — beside the `Trig` that drives
+    /// it. A track, or a folder when there is more than one sample.
+    Sample,
     /// A one-note fundamental blended under the mics.
     Fundamental,
     /// The kick's sub, a one-note track beside its Sum.
@@ -75,12 +81,13 @@ pub enum Kind {
 
 impl Kind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Group,
         Self::Piece,
         Self::Sum,
         Self::Source,
         Self::Trigger,
+        Self::Sample,
         Self::Fundamental,
         Self::Sub,
         Self::Verb,
@@ -106,6 +113,7 @@ impl Kind {
             Self::Sum => "sum",
             Self::Source => "source",
             Self::Trigger => "trigger",
+            Self::Sample => "sample",
             Self::Fundamental => "fundamental",
             Self::Sub => "sub",
             Self::Verb => "verb",

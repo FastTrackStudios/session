@@ -151,12 +151,15 @@ fn prepare_builds_the_golden_template() {
     let kick = find(&tracks, "Drums", "Kick");
     assert_eq!(children(&tracks, kick), ["Sum", "Sub", "Verb"]);
     let kick_sum = find(&tracks, "Kick", "Sum");
-    assert_eq!(children(&tracks, kick_sum), ["In", "Trig"]);
+    assert_eq!(children(&tracks, kick_sum), ["In", "Trig", "Sample"]);
     let kick_room = find(&tracks, "Verb", "Room");
     assert!(fed_by(&daw, &project, &kick_room.guid, &kick_sum.guid));
     // The snare: a Fund in its Sum, three rooms with the first on.
     let snare_sum = find(&tracks, "Snare", "Sum");
-    assert_eq!(children(&tracks, snare_sum), ["Top", "Trig", "Fund"]);
+    assert_eq!(
+        children(&tracks, snare_sum),
+        ["Top", "Trig", "Sample", "Fund"]
+    );
     let snare_verb = tracks
         .iter()
         .find(|t| {
@@ -183,7 +186,10 @@ fn prepare_builds_the_golden_template() {
     let toms = find(&tracks, "Drums", "Toms");
     assert_eq!(children(&tracks, toms), ["Tom 1", "Tom 2", "Verb"]);
     let tom_1 = find(&tracks, "Toms", "Tom 1");
-    assert_eq!(children(&tracks, tom_1), ["T1", "T1 Trig", "Fund"]);
+    assert_eq!(
+        children(&tracks, tom_1),
+        ["T1", "T1 Trig", "T1 Sample", "Fund"]
+    );
     assert!(
         !tracks.iter().any(|t| t.name == "Trig" && t.is_folder),
         "the emptied trigger folder"

@@ -6,6 +6,7 @@
 3	In	86
 3	Out	86
 3	Trig	86
+3	Sample	86
 2	Sub	86
 2	Verb	86
 3	Room	86
@@ -14,6 +15,7 @@
 3	Top	86
 3	Bottom	86
 3	Trig	86
+3	Sample	86
 3	Fund	86
 2	Verb	86
 3	Plate	86
@@ -23,18 +25,22 @@
 2	Tom 1	86
 3	T1	86
 3	T1 Trig	86
+3	T1 Sample	86
 3	Fund	86
 2	Tom 2	86
 3	T2	86
 3	T2 Trig	86
+3	T2 Sample	86
 3	Fund	86
 2	Tom 3	86
 3	T3	86
 3	T3 Trig	86
+3	T3 Sample	86
 3	Fund	86
 2	Tom 4	86
 3	T4	86
 3	T4 Trig	86
+3	T4 Sample	86
 3	Fund	86
 2	Verb	86
 3	Room	86

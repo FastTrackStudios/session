@@ -2,33 +2,39 @@ window 0.000000 16.000000
 take 0
 
 folder Drum Kit
-children 31
+children 37
 takes 1
-revision 82ba1f989ae7251f
+revision f41317553e7fdc12
 mute-mask 0000000000000000
   child In role Kick side None muted false hidden false takes 1
   child Out role Kick side None muted false hidden false takes 1
   child Trig role Kick side None muted false hidden false takes 1
+  child Sample role Kick side None muted false hidden false takes 1
   child Sub role Kick side None muted false hidden false takes 1
   child Room role Other side None muted false hidden false takes 1
   child Top role Snare side None muted false hidden false takes 1
   child Bottom role Snare side None muted false hidden false takes 1
   child Trig role Snare side None muted false hidden false takes 1
+  child Sample role Snare side None muted false hidden false takes 1
   child Fund role Snare side None muted false hidden false takes 1
   child Plate role Other side None muted false hidden false takes 1
   child Hall role Other side None muted false hidden false takes 1
   child Nonlin role Other side None muted false hidden false takes 1
   child T1 role Toms side None muted false hidden false takes 1
   child T1 Trig role Toms side None muted false hidden false takes 1
+  child T1 Sample role Toms side None muted false hidden false takes 1
   child Fund role Toms side None muted false hidden false takes 1
   child T2 role Toms side None muted false hidden false takes 1
   child T2 Trig role Toms side None muted false hidden false takes 1
+  child T2 Sample role Toms side None muted false hidden false takes 1
   child Fund role Toms side None muted false hidden false takes 1
   child T3 role Toms side None muted false hidden false takes 1
   child T3 Trig role Toms side None muted false hidden false takes 1
+  child T3 Sample role Toms side None muted false hidden false takes 1
   child Fund role Toms side None muted false hidden false takes 1
   child T4 role Toms side None muted false hidden false takes 1
   child T4 Trig role Toms side None muted false hidden false takes 1
+  child T4 Sample role Toms side None muted false hidden false takes 1
   child Fund role Toms side None muted false hidden false takes 1
   child Room role Other side None muted false hidden false takes 1
   child Nonlin role Other side None muted false hidden false takes 1
@@ -297,13 +303,14 @@ columns 256
    255   -0.511917   0.584552   -0.022767   0.057070   -0.091372   0.161107   -0.177740   0.696921
 
 folder Snare
-children 7
+children 8
 takes 1
-revision 3dfe2e52c9cde17a
+revision cce7069b10bd16a8
 mute-mask 0000000000000000
   child Top role Snare side None muted false hidden false takes 1
   child Bottom role Snare side None muted false hidden false takes 1
   child Trig role Snare side None muted false hidden false takes 1
+  child Sample role Snare side None muted false hidden false takes 1
   child Fund role Snare side None muted false hidden false takes 1
   child Plate role Other side None muted false hidden false takes 1
   child Hall role Other side None muted false hidden false takes 1

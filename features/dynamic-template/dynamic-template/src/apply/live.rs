@@ -1019,18 +1019,14 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         made.push(format!("{}/{}", at.name, sum.name));
         let mut summed = Branch::new(guid, &sum.name);
         summed.children = std::mem::take(&mut at.children);
-        for one in sum
-            .children
-            .iter()
-            .filter(|n| n.kind == crate::golden_session::Kind::Fundamental)
-        {
-            // Fed by the piece's mics — not the Sum it sits in, whose
-            // sum would come round through it.
-            let fund = self.make(one, &format!("{}/{}", at.name, sum.name), made)?;
-            for mic in summed.children.iter().filter(|c| c.is_source()) {
-                feeds.push((mic.guid.clone(), fund.guid.clone()));
-            }
-            summed.children.push(fund);
+        for one in &sum.children {
+            self.add_made(
+                one,
+                &mut summed,
+                &format!("{}/{}", at.name, sum.name),
+                made,
+                feeds,
+            )?;
         }
         let from = summed.guid.clone();
         at.children.push(summed);
@@ -1102,16 +1098,14 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 .find(|(_, k)| *k == crate::golden_session::Kind::Trigger)
                 .and_then(|(trig, _)| Branch::take(&mut at.children, trig));
             piece.children.extend(trig);
-            for one in tom
-                .children
-                .iter()
-                .filter(|n| n.kind == crate::golden_session::Kind::Fundamental)
-            {
-                let fund = self.make(one, &format!("{}/{}", at.name, tom.name), made)?;
-                for mic in piece.children.iter().filter(|c| c.is_source()) {
-                    feeds.push((mic.guid.clone(), fund.guid.clone()));
-                }
-                piece.children.push(fund);
+            for one in &tom.children {
+                self.add_made(
+                    one,
+                    &mut piece,
+                    &format!("{}/{}", at.name, tom.name),
+                    made,
+                    feeds,
+                )?;
             }
             pieces.push(piece.guid.clone());
             built.push(piece);
@@ -1220,6 +1214,46 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             }
         }
         Ok(made)
+    }
+
+    /// What a piece has that a recording cannot, made into `into` (a
+    /// Sum, a tom): its `Sample` beside its `Trig` — unless it has one —
+    /// and its `Fund`, fed by the piece's mics, not the Sum it sits in,
+    /// whose sum would come round through it. A mic or trigger the
+    /// template names is the recording's, and is not made.
+    fn add_made(
+        &mut self,
+        one: &crate::golden_session::shape::Node,
+        into: &mut Branch,
+        at: &str,
+        made: &mut Vec<String>,
+        feeds: &mut Vec<(String, String)>,
+    ) -> eyre::Result<()> {
+        use crate::golden_session::Kind;
+        match one.kind {
+            Kind::Sample => {
+                if into.children.iter().any(|c| super::is_sample(&c.name)) {
+                    return Ok(());
+                }
+                let sample = self.make(one, at, made)?;
+                // Beside the trigger it plays from.
+                let after = into
+                    .children
+                    .iter()
+                    .rposition(|c| super::is_trigger(&c.name))
+                    .map_or(into.children.len(), |i| i.saturating_add(1));
+                into.children.insert(after, sample);
+            }
+            Kind::Fundamental => {
+                let fund = self.make(one, at, made)?;
+                for mic in into.children.iter().filter(|c| c.is_source()) {
+                    feeds.push((mic.guid.clone(), fund.guid.clone()));
+                }
+                into.children.push(fund);
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// `node` and everything in it made as tracks, under `at` (a path,
@@ -1671,7 +1705,10 @@ impl Branch {
 
     /// A mic or a direct source: a track, not a trigger, not one-note.
     fn is_source(&self) -> bool {
-        !self.is_folder() && !super::is_trigger(&self.name) && !super::is_one_note(&self.name)
+        !self.is_folder()
+            && !super::is_trigger(&self.name)
+            && !super::is_sample(&self.name)
+            && !super::is_one_note(&self.name)
     }
 
     /// The project's tracks as a tree, in order.

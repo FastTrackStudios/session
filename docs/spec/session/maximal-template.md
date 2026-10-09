@@ -28,9 +28,9 @@ fixed tree.
       rose → wine).
 - [x] Each piece's close mics under a **Sum**; the piece's sends beside
       the Sum, not inside it.
-- [x] **Kick**: In, Out, Trig; Sub; **Verb/** Room.
-- [x] **Snare**: Top, Bottom, Trig, Fund; **Verb/** Plate, Hall, Nonlin.
-- [x] **Toms**: per tom T*n*, Trig, Fund; one shared **Verb/** Room, Nonlin.
+- [x] **Kick**: In, Out, Trig, Sample; Sub; **Verb/** Room.
+- [x] **Snare**: Top, Bottom, Trig, Sample, Fund; **Verb/** Plate, Hall, Nonlin.
+- [x] **Toms**: per tom T*n*, Trig, Sample, Fund; one shared **Verb/** Room, Nonlin.
 - [x] **Cymbals**: OH, Hi-Hat, Ride. **Rooms**: two stereo pairs, Rooms
       and Rooms Far.
 - [x] One-note tracks (Fund, Sub) get Gate → band-pass at the fundamental
