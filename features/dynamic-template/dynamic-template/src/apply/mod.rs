@@ -774,8 +774,10 @@ pub fn reclassify_rehearsal<Id>(mut entries: Vec<TrackContext<Id>>) -> Vec<Track
         if entry.path.first().is_some_and(|g| g == "Reference") {
             continue;
         }
-        let bounce =
-            is_song(&entry.name) || stems_of(&entry.name, song.as_deref()) || dated(&entry.name);
+        let bounce = is_song(&entry.name)
+            || stems_of(&entry.name, song.as_deref())
+            || dated(&entry.name)
+            || says_reference(&entry.name);
         if rehearsed && !guide(entry) {
             entry.path = REHEARSAL_PATH.iter().map(|s| (*s).to_string()).collect();
         } else if bounce {
@@ -797,6 +799,13 @@ fn dated(name: &str) -> bool {
                 .chars()
                 .all(|c| c.is_ascii_digit() || " _.:,/-".contains(c))
     })
+}
+
+/// Whether a name says it is a reference: a `REF` / `Reference` word
+/// (`DRUM REF`, `Vocal Reference`), whatever instrument it also names.
+fn says_reference(name: &str) -> bool {
+    name.split(|c: char| !c.is_alphanumeric())
+        .any(|w| w.eq_ignore_ascii_case("ref") || w.eq_ignore_ascii_case("reference"))
 }
 
 /// A name with case, edge spaces and punctuation at its ends ignored.
@@ -1411,6 +1420,23 @@ mod rehearsal_tests {
             ["Guide", super::PRINTS_FOLDER],
             "inside a guide folder too"
         );
+    }
+
+    /// A track that says REF is a reference, whatever it also names; a
+    /// screamed part is a vocal.
+    #[test]
+    fn a_ref_is_a_reference_and_a_scream_is_a_vocal() {
+        let out = reclassify_rehearsal(entries(&[
+            (0, "Drums", &["Drums"]),
+            (1, "Kick", &["Drums", "Kick"]),
+            (1, "DRUM REF", &["Drums"]),
+            (0, "Referee", &[]),
+        ]));
+        assert_eq!(path_of(&out, "DRUM REF"), ["Reference"]);
+        assert_eq!(path_of(&out, "Kick"), ["Drums", "Kick"]);
+        assert!(path_of(&out, "Referee").is_empty(), "a word, not a prefix");
+        let scream = crate::track_schema::classify_track("Scream 2").matched_groups;
+        assert_eq!(scream.first().map(String::as_str), Some("Vocals"));
     }
 
     #[test]

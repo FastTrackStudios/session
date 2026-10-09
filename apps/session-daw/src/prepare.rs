@@ -339,7 +339,12 @@ pub fn steps(
         // routing out of the track panel.
         target.order_top_level(
             &["Guide", "Keyflow"],
-            &["CLICK + GUIDE BUS", "MIX BUS", "UNSORTED"],
+            &[
+                dynamic_template::apply::REFERENCES_FOLDER,
+                "CLICK + GUIDE BUS",
+                "MIX BUS",
+                "UNSORTED",
+            ],
         )?;
         target.hide_in_tcp("CLICK + GUIDE BUS")?;
         target.hide_in_tcp("MIX BUS")?;

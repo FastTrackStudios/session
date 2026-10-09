@@ -21,6 +21,8 @@ impl From<Vocals> for ItemMetadataGroup {
             .patterns([
                 "vocal", "vocals", "vox", "voc", "voca", "voice", "lv", "bv", "bg", "bgv", "bgvs",
                 "bvs", // background-vocal abbreviations enter the Vocals bus
+                // A screamed part is a vocal (a metal band's "Scream").
+                "scream", "screams", "screamer",
             ])
             // Exclude non-vocal voice effects (these should go to SFX)
             // Also exclude "cowbell" to prevent compound names like "CowbellGangVox" from matching

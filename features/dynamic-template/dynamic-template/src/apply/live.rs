@@ -279,6 +279,24 @@ fn open_kept(
     Some(unit)
 }
 
+/// The instrument groups in the order a session lays them out: the rhythm
+/// section, then the harmony, then the voices.
+const INSTRUMENT_ORDER: &[&str] = &[
+    "Drums",
+    "Percussion",
+    "Bass",
+    "Guitars",
+    "Keys",
+    "Synths",
+    "Strings",
+    "Orchestra",
+    "Horns",
+    "Harmonica",
+    "Vocals",
+    "Choir",
+    "SFX",
+];
+
 /// What [`DawTarget::arrange_into_groups`] did.
 #[derive(Debug, Default)]
 pub struct Arranged {
@@ -722,14 +740,25 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                     break;
                 }
             }
-            // One holding reference material is not kept: those tracks are
-            // laid out in REFERENCES, and a track cannot be in two places.
-            let mixed = unit
-                .iter()
-                .any(|(g, _)| rehearsal.contains(g) || bounces.contains(g));
-            if !mixed {
-                units.push(unit);
+            // Reference material inside it (a `DRUM REF` in the kit) is laid
+            // out in REFERENCES, so it comes out — the track before it
+            // taking over the folders it closed. A reference that is itself
+            // a folder takes too much with it: the block is not kept.
+            let reference = |g: &String| rehearsal.contains(g) || bounces.contains(g);
+            if unit.iter().any(|(g, depth)| reference(g) && *depth > 0) {
+                continue;
             }
+            let mut kept: Vec<(String, i32)> = Vec::with_capacity(unit.len());
+            for (guid, depth) in unit {
+                if reference(&guid) {
+                    if let Some(last) = kept.last_mut() {
+                        last.1 = last.1.saturating_add(depth);
+                    }
+                } else {
+                    kept.push((guid, depth));
+                }
+            }
+            units.push(kept);
         }
         units
     }
@@ -847,6 +876,12 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 .map(|t| t.name.trim().to_owned())
                 .unwrap_or_default()
         };
+        // The instruments between, by group in the template's order — an
+        // `Electric GTR` and a `GTR E` are both the guitars'.
+        let group_of: std::collections::HashMap<String, String> = super::classified_paths(self)
+            .into_iter()
+            .filter_map(|e| Some((e.track, e.path.first()?.clone())))
+            .collect();
         let rank = |block: &Vec<(String, i32)>| {
             let name = name_of(block);
             if let Some(i) = first.iter().position(|n| n.eq_ignore_ascii_case(&name)) {
@@ -854,7 +889,15 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             } else if let Some(i) = last.iter().position(|n| n.eq_ignore_ascii_case(&name)) {
                 (2, i)
             } else {
-                (1, 0)
+                let group = block.first().and_then(|(g, _)| group_of.get(g));
+                let at = group
+                    .and_then(|g| {
+                        INSTRUMENT_ORDER
+                            .iter()
+                            .position(|o| o.eq_ignore_ascii_case(g))
+                    })
+                    .unwrap_or(INSTRUMENT_ORDER.len());
+                (1, at)
             }
         };
         let mut ordered = blocks.clone();

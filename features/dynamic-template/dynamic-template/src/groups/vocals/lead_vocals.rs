@@ -21,7 +21,8 @@ impl From<LeadVocals> for ItemMetadataGroup {
             // vocal context (could be guitar lead/solo). Use requires_parent_match() to ensure
             // parent Vocals group matches first, providing the vocal context.
             .patterns([
-                "main", "ld", "ldv", "lv", "vld", "voc", "vox", "vocal", "voca", "voice",
+                "main", "ld", "ldv", "lv", "vld", "voc", "vox", "vocal", "voca", "voice", "scream",
+                "screams", "screamer",
             ])
             // Only match if parent (Vocals) also matches - prevents "JohnyLead" from matching
             // just because it contains "Lead" without any vocal-related patterns

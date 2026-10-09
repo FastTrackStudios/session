@@ -398,7 +398,11 @@ pub fn shut<'a>(
         .filter_map(|track| tracks.iter().find(|t| t.guid == track.guid))
         .filter(|folder| {
             let inside = under(tracks, &folder.guid);
-            !inside.is_empty() && !inside.iter().any(|t| on_screen.contains(t.guid.as_str()))
+            // A folder whose every child is hidden (a guitar's `Main` with
+            // its DI nested under it and hidden) is not shut: it is a track,
+            // its own items drawn, not a fold of what nobody is shown.
+            inside.iter().any(|t| t.visible_in_tcp)
+                && !inside.iter().any(|t| on_screen.contains(t.guid.as_str()))
         })
         .collect()
 }
@@ -452,6 +456,33 @@ mod tests {
             length: Duration::from_seconds(len),
             ..Item::default()
         }
+    }
+
+    /// A guitar's `Main` with its DI nested under it and hidden is a track,
+    /// not a shut folder; a folder with a child that could show is shut
+    /// when the child is off screen.
+    #[test]
+    fn a_folder_of_only_hidden_tracks_is_not_shut() {
+        let track =
+            |guid: &str, parent: Option<&str>, folder: bool, visible: bool| daw_proto::Track {
+                guid: guid.to_owned(),
+                parent_guid: parent.map(str::to_owned),
+                is_folder: folder,
+                visible_in_tcp: visible,
+                ..daw_proto::Track::default()
+            };
+        let tracks = vec![
+            track("main", None, true, true),
+            track("di", Some("main"), false, false),
+            track("kick", None, true, true),
+            track("in", Some("kick"), false, true),
+        ];
+        let shown = vec![tracks[0].clone(), tracks[2].clone()];
+        let shut: Vec<&str> = super::shut(&tracks, &shown)
+            .iter()
+            .map(|t| t.guid.as_str())
+            .collect();
+        assert_eq!(shut, ["kick"]);
     }
 
     /// The case the feature exists for: three mics of one drum, recorded
