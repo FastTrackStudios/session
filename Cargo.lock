@@ -3503,6 +3503,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "facet",
+ "libc",
  "libspa",
  "pipewire",
  "rtrb",
@@ -14298,6 +14299,7 @@ dependencies = [
  "anyrender_vello_cpu",
  "anyrender_vello_hybrid",
  "architect",
+ "audiocore-dsp",
  "auth-client",
  "blitz-dom",
  "blitz-paint",

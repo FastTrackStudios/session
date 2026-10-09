@@ -229,6 +229,27 @@ fn open(path: &std::path::Path, audio: bool) -> StudioSession {
     {
         tracing::error!(error = %e, "preparing the session failed; opening it as it was");
     }
+    // `FTS_BLITZ_LEVELS=from:to`: the staged tracks as heard — each
+    // rendered alone over that span — against their targets, then the
+    // drum folder's peak and the mix's.
+    if let Some((from, to)) = std::env::var("FTS_BLITZ_LEVELS").ok().and_then(|span| {
+        span.split_once(':')
+            .and_then(|(a, b)| Some((a.parse::<f64>().ok()?, b.parse::<f64>().ok()?)))
+    }) {
+        let (heard, kit, mix) =
+            session_daw::gain_stage::heard_levels(&opened.daw, &opened.project_guid, from, to);
+        for each in &heard {
+            tracing::info!(
+                track = %each.name,
+                role = ?each.role,
+                target = each.target,
+                heard = (each.level * 10.0).round() / 10.0,
+                off = ((each.level - each.target) * 10.0).round() / 10.0,
+                "blitz: level"
+            );
+        }
+        tracing::info!(?kit, ?mix, "blitz: peaks");
+    }
     let scene: &'static str = match std::env::var("FTS_BLITZ_SCENE") {
         Ok(slug) => dynamic_template::scenes::scene(&slug).map_or_else(
             || {

@@ -622,6 +622,18 @@ pub fn steps(
         // The recorded tracks at the reference kit's levels, as item
         // volume: nothing rendered, the audio as it was recorded.
         let staged = crate::gain_stage::stage(daw, &project)?;
+        // And the kit at the session's reference, −23 LUFS short-term at
+        // its loudest: its folder's fader.
+        #[cfg(feature = "native")]
+        if let Some((loudest, fader)) =
+            crate::gain_stage::kit_headroom(daw, project_guid, 0.0, media_end(daw, &project).latest)
+        {
+            tracing::info!(
+                kit.short_term_lufs = loudest,
+                kit.fader_db = fader,
+                "prepare: kit level"
+            );
+        }
         tracing::info!(
             staged = staged.staged.len(),
             silent = ?staged.silent,

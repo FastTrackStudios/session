@@ -138,7 +138,7 @@ pub fn role(path: &[&str]) -> Option<Role> {
 /// level is the 90th percentile of its 100 ms windows' peaks within
 /// [`HIT_RANGE_DB`] of the loudest. `None` for silence.
 #[must_use]
-pub fn level(points: &[f32], step: f64) -> Option<f64> {
+pub fn level(points: &[f64], step: f64) -> Option<f64> {
     if step <= 0.0 {
         return None;
     }
@@ -148,20 +148,16 @@ pub fn level(points: &[f32], step: f64) -> Option<f64> {
         .and_then(|(window, point)| window.checked_div(point))
         .unwrap_or(1)
         .max(1);
-    let windows: Vec<f32> = points
+    let windows: Vec<f64> = points
         .chunks(per)
-        .map(|w| w.iter().fold(0.0_f32, |p, x| p.max(x.abs())))
+        .map(|w| w.iter().fold(0.0_f64, |p, x| p.max(x.abs())))
         .collect();
-    let loudest = windows.iter().copied().fold(0.0_f32, f32::max);
+    let loudest = windows.iter().copied().fold(0.0_f64, f64::max);
     if loudest <= 0.0 {
         return None;
     }
-    let floor = f64::from(loudest) * 10.0_f64.powf(-HIT_RANGE_DB / 20.0);
-    let mut hits: Vec<f64> = windows
-        .into_iter()
-        .map(f64::from)
-        .filter(|w| *w >= floor)
-        .collect();
+    let floor = loudest * 10.0_f64.powf(-HIT_RANGE_DB / 20.0);
+    let mut hits: Vec<f64> = windows.into_iter().filter(|w| *w >= floor).collect();
     hits.sort_by(f64::total_cmp);
     // Nearest rank, over the gaps between hits: ten hits read the ninth,
     // not the one loudest.
@@ -282,7 +278,7 @@ pub fn plan(
         // other takes (unbreakable's, another song's), at their own
         // levels. The gain goes on every item, so a lane switched to is
         // staged alike.
-        let mut points: Vec<f32> = Vec::new();
+        let mut points: Vec<f64> = Vec::new();
         let mut step = 0.0;
         for item in own
             .iter()
@@ -293,7 +289,7 @@ pub fn plan(
                 points.extend(
                     read.points
                         .iter()
-                        .map(|(max, min)| max.abs().max(min.abs())),
+                        .map(|(max, min)| f64::from(max.abs().max(min.abs()))),
                 );
             }
         }
@@ -450,8 +446,278 @@ pub async fn clear_live(project: &daw_control::Project) -> eyre::Result<Vec<Stri
     Ok(cleared)
 }
 
+/// One staged track as it is heard: rendered alone through the engine,
+/// item volume and all, its strong hits read as staging reads them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Heard {
+    pub name: String,
+    pub role: Role,
+    pub target: f64,
+    /// Its strong-hit level as rendered, dBFS.
+    pub level: f64,
+}
+
+/// Render `project_guid` from `from` to `to` seconds with only `solo`
+/// soloed (none: the whole mix), handing each 50 ms block's interleaved
+/// stereo samples to `each`. The folders above what is soloed are
+/// unmuted for it — a muted folder silences what is in it, soloed or not
+/// (unbreakable's Drums is muted in its RPP) — and muted again after.
+#[cfg(feature = "native")]
+fn render_blocks(
+    daw: &daw_standalone::sync::Standalone,
+    project_guid: &str,
+    solo: &[String],
+    from: f64,
+    to: f64,
+    mut each: impl FnMut(&[f32], f64),
+) {
+    const CHUNK: usize = 2_400;
+    const CHUNK_FRAMES: u64 = 2_400;
+    let project = ProjectContext::Project(project_guid.to_owned());
+    let tracks = Tracks::all(daw, project.clone());
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let mut unmuted: Vec<String> = Vec::new();
+    for guid in solo {
+        let mut at = by_guid.get(guid.as_str()).copied();
+        while let Some(track) = at {
+            if track.muted && !unmuted.contains(&track.guid) {
+                unmuted.push(track.guid.clone());
+            }
+            at = track
+                .parent_guid
+                .as_deref()
+                .and_then(|p| by_guid.get(p).copied());
+        }
+    }
+    for guid in &unmuted {
+        let _ = Tracks::set_muted(daw, project.clone(), TrackRef::Guid(guid.clone()), false);
+    }
+    for guid in solo {
+        let _ = Tracks::set_soloed(daw, project.clone(), TrackRef::Guid(guid.clone()), true);
+    }
+    let renderer =
+        daw::standalone::audio_engine::render::ProjectRenderer::new(daw, project_guid, RENDER_RATE);
+    let frame = |seconds: f64| {
+        let nanos =
+            std::time::Duration::try_from_secs_f64(seconds.max(0.0)).map_or(0, |d| d.as_nanos());
+        u64::try_from(nanos.saturating_mul(u128::from(RENDER_RATE)) / 1_000_000_000).unwrap_or(0)
+    };
+    // What the bus itself puts out: the master fader taken back off (it
+    // is unbreakable's −2.4 dB, and the kit is set before it).
+    // `each` is handed the gain that undoes it.
+    let unmaster = Tracks::master(daw, project.clone())
+        .map(|m| m.volume)
+        .filter(|v| *v > 1e-6)
+        .map_or(1.0, |v| 1.0 / v);
+    let (mut at, end) = (frame(from), frame(to));
+    while at < end {
+        each(&renderer.render_block(at, CHUNK).samples, unmaster);
+        at = at.saturating_add(CHUNK_FRAMES);
+    }
+    for guid in solo {
+        let _ = Tracks::set_soloed(daw, project.clone(), TrackRef::Guid(guid.clone()), false);
+    }
+    for guid in &unmuted {
+        let _ = Tracks::set_muted(daw, project.clone(), TrackRef::Guid(guid.clone()), true);
+    }
+}
+
+/// The rate staging renders at.
+#[cfg(feature = "native")]
+const RENDER_RATE: u32 = 48_000;
+
+/// [`render_blocks`]' peaks, one per 50 ms block.
+#[cfg(feature = "native")]
+fn render_peaks(
+    daw: &daw_standalone::sync::Standalone,
+    project_guid: &str,
+    solo: &[String],
+    from: f64,
+    to: f64,
+) -> Vec<f64> {
+    let mut peaks = Vec::new();
+    render_blocks(daw, project_guid, solo, from, to, |block, gain| {
+        let peak = block.iter().fold(0.0_f32, |p, s| p.max(s.abs()));
+        peaks.push(f64::from(peak) * gain);
+    });
+    peaks
+}
+
+/// The loudest short-term loudness, LUFS.
+///
+/// BS.1770: K-weighted, 3 s windows, a new one every 100 ms. `sums` are
+/// 50 ms blocks: each block's K-weighted sum of squares over both
+/// channels, and its frame count.
+#[must_use]
+pub fn short_term_max(sums: &[(f64, usize)]) -> Option<f64> {
+    // 100 ms steps of two 50 ms blocks; 3 s is 30 steps.
+    const PER_STEP: usize = 2;
+    const WINDOW: usize = 30;
+    let steps: Vec<(f64, usize)> = sums
+        .chunks(PER_STEP)
+        .map(|c| {
+            c.iter().fold((0.0, 0_usize), |(s, n), (a, b)| {
+                (s + a, n.saturating_add(*b))
+            })
+        })
+        .collect();
+    steps
+        .windows(WINDOW.min(steps.len()).max(1))
+        .filter_map(|w| {
+            let (energy, frames) = w.iter().fold((0.0, 0_usize), |(s, n), (a, b)| {
+                (s + a, n.saturating_add(*b))
+            });
+            let frames = f64::from(u32::try_from(frames).ok()?);
+            (energy > 0.0 && frames > 0.0)
+                .then(|| 10.0_f64.mul_add((energy / frames).log10(), -0.691))
+        })
+        .reduce(f64::max)
+}
+
+/// The loudest short-term loudness of `solo` rendered over `from..to`,
+/// LUFS ([`short_term_max`]).
+#[cfg(feature = "native")]
+fn loudest_short_term(
+    daw: &daw_standalone::sync::Standalone,
+    project_guid: &str,
+    solo: &[String],
+    from: f64,
+    to: f64,
+) -> Option<f64> {
+    let mut filters = [
+        audiocore_dsp::loudness::KWeightingFilter::new(),
+        audiocore_dsp::loudness::KWeightingFilter::new(),
+    ];
+    for filter in &mut filters {
+        filter.update(f64::from(RENDER_RATE));
+    }
+    let mut sums: Vec<(f64, usize)> = Vec::new();
+    render_blocks(daw, project_guid, solo, from, to, |block, gain| {
+        let mut energy = 0.0;
+        for frame in block.chunks_exact(2) {
+            for (filter, sample) in filters.iter_mut().zip(frame) {
+                let weighted = filter.tick(f64::from(*sample) * gain);
+                energy += weighted * weighted;
+            }
+        }
+        sums.push((energy, block.len() / 2));
+    });
+    short_term_max(&sums)
+}
+
+/// Where the drum kit is put by its folder's fader, LUFS.
+///
+/// Its loudest moment at −23 LUFS short-term. The kit is the session's
+/// reference: everything
+/// else is set in relation to it. Every mic stays at its staged level, so
+/// each one's own processing still sees the reference kit's levels.
+pub const KIT_LUFS: f64 = -23.0;
+
+/// The kit's level, by its folder's fader.
+///
+/// Render the top-level `Drums` folder alone over `from..to` and set its
+/// fader so its loudest short-term loudness is
+/// [`KIT_LUFS`]. Returns that loudness at a unity fader, LUFS, and the
+/// fader set, dB. `None` with no Drums folder or nothing heard in it.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn kit_headroom(
+    daw: &daw_standalone::sync::Standalone,
+    project_guid: &str,
+    from: f64,
+    to: f64,
+) -> Option<(f64, f64)> {
+    let project = ProjectContext::Project(project_guid.to_owned());
+    let drums = Tracks::all(daw, project.clone()).into_iter().find(|t| {
+        t.parent_guid.is_none() && t.is_folder && t.name.trim().eq_ignore_ascii_case("drums")
+    })?;
+    let at = TrackRef::Guid(drums.guid.clone());
+    Tracks::set_volume(daw, project.clone(), at.clone(), 1.0).ok()?;
+    let loudest = loudest_short_term(
+        daw,
+        project_guid,
+        std::slice::from_ref(&drums.guid),
+        from,
+        to,
+    )?;
+    let fader = (KIT_LUFS - loudest).clamp(-MOST_DB, MOST_DB);
+    Tracks::set_volume(daw, project, at, 10.0_f64.powf(fader / 20.0)).ok()?;
+    Some((loudest, fader))
+}
+
+/// The check that staging landed where it meant to.
+///
+/// The staged tracks as heard over `from..to` seconds (see [`Heard`]),
+/// then the drum folder's loudest short-term loudness, LUFS, and the
+/// whole mix's peak, dBFS.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn heard_levels(
+    daw: &daw_standalone::sync::Standalone,
+    project_guid: &str,
+    from: f64,
+    to: f64,
+) -> (Vec<Heard>, Option<f64>, Option<f64>) {
+    let project = ProjectContext::Project(project_guid.to_owned());
+    let tracks = Tracks::all(daw, project);
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let peak_db = |peaks: &[f64]| {
+        let loudest = peaks.iter().copied().fold(0.0_f64, f64::max);
+        (loudest > 0.0).then(|| 20.0 * loudest.log10())
+    };
+    let mut heard = Vec::new();
+    for track in tracks.iter().filter(|t| !t.is_folder) {
+        let Some(role) = role(&path_of(track, &by_guid)) else {
+            continue;
+        };
+        // Two 50 ms chunks make the 100 ms windows `level` reads.
+        let peaks = render_peaks(
+            daw,
+            project_guid,
+            std::slice::from_ref(&track.guid),
+            from,
+            to,
+        );
+        if let Some(level) = level(&peaks, 0.05) {
+            heard.push(Heard {
+                name: track.name.clone(),
+                role,
+                target: target(role),
+                level,
+            });
+        }
+    }
+    let drums: Vec<String> = tracks
+        .iter()
+        .filter(|t| {
+            t.parent_guid.is_none() && t.is_folder && t.name.trim().eq_ignore_ascii_case("drums")
+        })
+        .map(|t| t.guid.clone())
+        .collect();
+    let kit = (!drums.is_empty())
+        .then(|| loudest_short_term(daw, project_guid, &drums, from, to))
+        .flatten();
+    let mix = peak_db(&render_peaks(daw, project_guid, &[], from, to));
+    (heard, kit, mix)
+}
+
 #[cfg(test)]
 mod tests {
+    /// The loudest 3 s, not the average: a quiet minute then three loud
+    /// seconds reads the loud ones. A mean square of 0.01 summed over two
+    /// channels is −20.691 LUFS before K-weighting.
+    #[test]
+    fn short_term_is_the_loudest_three_seconds() {
+        let block = |ms: f64| (ms * 2_400.0, 2_400_usize);
+        let mut sums = vec![block(1e-6); 1_200];
+        sums.extend(vec![block(0.01); 60]);
+        let loudest = super::short_term_max(&sums).expect("a loudness");
+        assert!((loudest - -20.691).abs() < 0.01, "{loudest}");
+        assert_eq!(super::short_term_max(&[]), None);
+    }
+
     use super::{Role, level, role, tom_pans};
 
     /// A track's role is where it was filed: the kit by piece and mic, a
@@ -488,9 +754,9 @@ mod tests {
     #[test]
     fn the_level_is_the_strong_hits() {
         let step = 0.02;
-        let bleed = 10.0_f32.powi(-2);
+        let bleed = 10.0_f64.powi(-2);
         let mut points = vec![bleed; 500];
-        let hit = 10.0_f32.powf(-6.0 / 20.0);
+        let hit = 10.0_f64.powf(-6.0 / 20.0);
         for at in [50, 100, 150, 200, 250, 300, 350, 400, 450] {
             points[at] = hit;
         }
