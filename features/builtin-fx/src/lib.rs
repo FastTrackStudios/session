@@ -48,8 +48,14 @@ pub struct Embedded<P: Plugin> {
     config: Option<BufferConfig>,
     /// The main bus's channels, the plugin processes them in place.
     channels: Vec<Vec<f32>>,
-    /// Each sidechain input's channels, kept silent.
+    /// Each sidechain input's channels: the first port carries what the
+    /// engine handed over for this block ([`Self::key`]), the rest are
+    /// silent.
     sidechains: Vec<Vec<Vec<f32>>>,
+    /// The sidechain for the next block, left and right, and whether
+    /// there is one ([`PluginInstance::set_sidechain`]).
+    key: [Vec<f32>; 2],
+    keyed: bool,
     buffer: Buffer<'static>,
     sidechain_buffers: Vec<Buffer<'static>>,
     latency: AtomicU32,
@@ -89,6 +95,8 @@ impl<P: Plugin> Embedded<P> {
             config: None,
             channels: Vec::new(),
             sidechains: Vec::new(),
+            key: [Vec::new(), Vec::new()],
+            keyed: false,
             buffer: Buffer::default(),
             sidechain_buffers: Vec::new(),
             latency: AtomicU32::new(0),
@@ -325,6 +333,7 @@ impl<P: Plugin> PluginInstance for Embedded<P> {
             .map(|port| (0..port.get()).map(|_| vec![0.0; frames]).collect())
             .collect();
         self.sidechain_buffers = self.sidechains.iter().map(|_| Buffer::default()).collect();
+        self.key = [vec![0.0; frames], vec![0.0; frames]];
         for (_, ptr) in &self.params {
             // SAFETY: as in `params`.
             unsafe { ptr._internal_update_smoother(rate, true) };
@@ -369,8 +378,26 @@ impl<P: Plugin> PluginInstance for Embedded<P> {
         // pieces it was; an input shorter than the output is silence past
         // its end.
         let (mut lefts, mut rights) = (in_l.chunks(most), in_r.chunks(most));
-        for (out_l, out_r) in out_l.chunks_mut(most).zip(out_r.chunks_mut(most)) {
+        let keyed = std::mem::take(&mut self.keyed);
+        for (piece, (out_l, out_r)) in out_l
+            .chunks_mut(most)
+            .zip(out_r.chunks_mut(most))
+            .enumerate()
+        {
             let n = out_l.len().min(out_r.len());
+            // The sidechain, this piece of it — or silence, the block it
+            // was not handed one.
+            if let Some(port) = self.sidechains.first_mut() {
+                let at = piece.saturating_mul(most);
+                for (channel, key) in port.iter_mut().zip(&self.key) {
+                    let from = if keyed {
+                        key.get(at..).unwrap_or(&[])
+                    } else {
+                        &[]
+                    };
+                    fill(channel, from, n);
+                }
+            }
             let left = lefts.next().unwrap_or(&[]);
             let right = rights.next().filter(|r| !r.is_empty()).unwrap_or(left);
             let mut channels = self.channels.iter_mut();
@@ -390,6 +417,19 @@ impl<P: Plugin> PluginInstance for Embedded<P> {
             }
         }
         Ok(())
+    }
+
+    fn set_sidechain(&mut self, left: &[f32], right: &[f32]) {
+        for (key, from) in self.key.iter_mut().zip([left, right]) {
+            // Sized at `prepare` for the blocks it was told of; a longer
+            // one grows it once.
+            if key.len() < from.len() {
+                key.resize(from.len(), 0.0);
+            }
+            key.truncate(from.len());
+            key.copy_from_slice(from);
+        }
+        self.keyed = true;
     }
 
     fn load_state(&mut self, state: &[u8]) -> Result<(), PluginError> {

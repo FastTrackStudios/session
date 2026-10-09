@@ -29,4 +29,4 @@ saturate-plugin = { workspace = true }
 
 [dev-dependencies]
 # A song to put them in, as the app opens one.
-daw-standalone = { workspace = true, features = ["rpp-project"] }
+daw-standalone = { workspace = true, features = ["rpp-project", "decode"] }
