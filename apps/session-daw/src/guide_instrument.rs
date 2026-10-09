@@ -320,14 +320,24 @@ impl FxFactory for GuideFxFactory {
     }
 }
 
-/// Install the guide instrument's factory on `daw`, playing from `library`.
+/// Install the engine's FX factory on `daw`: the guide's instruments,
+/// playing from `library`, and (desktop) the FTS processors built in.
 /// Before the guide tracks are made: the factory prepares each instrument
 /// as its FX is added.
 pub fn install(daw: &daw_standalone::Standalone, library: Library) {
-    daw.set_fx_factory(Arc::new(GuideFxFactory {
+    let guide: Arc<dyn FxFactory> = Arc::new(GuideFxFactory {
         gate: Arc::default(),
         library,
-    }));
+    });
+    // The FTS processors run built in beside it (`builtin_fx`): an FX
+    // named `FTS Comp` — or a project's `CLAP: FTS Comp (FastTrackStudios)`
+    // — is the engine's own, no plugin file loaded.
+    #[cfg(feature = "native")]
+    let factory: Arc<dyn FxFactory> =
+        Arc::new(builtin_fx::Chain(vec![Arc::new(builtin_fx::BuiltinFx), guide]));
+    #[cfg(not(feature = "native"))]
+    let factory = guide;
+    daw.set_fx_factory(factory);
 }
 
 #[cfg(test)]

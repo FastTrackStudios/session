@@ -216,6 +216,8 @@ gloo-timers = { workspace = true, optional = true }
 # standalone features instead).
 daw-standalone = { workspace = true, features = ["bootstrap", "rpp-project-wasm"] }
 dawfile-reaper = { workspace = true, optional = true }
+# The FTS processors as built-in FX (desktop: they are nice-plug plugins).
+builtin-fx = { workspace = true, optional = true }
 # The web demo's stems: Ogg proxies decoded a window at a time (`web_audio`).
 fts-sample = { workspace = true, optional = true, features = ["engine-core"] }
 # Streaming a song in from the Task library (song_stream::TaskSource).
@@ -288,6 +290,7 @@ native = [
     "fts-sample/engine-native",
     "fts-sample/write",
     "dep:dawfile-reaper",
+    "dep:builtin-fx",
     "dawfile-reaper/peaks-wav",
     "dawfile-reaper/peaks-ogg",
     "dep:session-library",

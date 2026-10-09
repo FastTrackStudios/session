@@ -15,6 +15,7 @@ members = [
     "libs/vendor/anyrender_vello_hybrid",
     "libs/vendor/dioxus-native-dom",
     "libs/vendor/dioxus-native",
+    "features/builtin-fx",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
     "features/expression-editor/expression-editor-corpus",
@@ -306,6 +307,19 @@ saturate-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0
 # The saturator's five circuits and their profiles — what its selector
 # picks from, applied through the plugin's own `apply`.
 saturate-profiles = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+# The FTS plugins themselves, run in-process as the engine's built-in FX
+# (`builtin-fx`): their CLAP/VST3 exports off (`default-features`).
+comp-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+delay-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+eq-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+gate-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+level-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+limiter-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+meter-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+modulation-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+reverb-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+saturate-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+builtin-fx = { path = "features/builtin-fx" }
 
 expression-editor-audio = { path = "features/expression-editor/expression-editor-audio" }
 expression-editor-core = { path = "features/expression-editor/expression-editor-core" }
@@ -617,6 +631,7 @@ globset = "0.4"
 # ── Serialization ─────────────────────────────────────────────────────
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+num-traits = "0.2"
 thiserror = "2.0"
 anyhow = "1.0"
 
@@ -1317,6 +1332,16 @@ spectrum-analyzer = { path = "../processor/features/fx/eq/spectrum-analyzer/spec
 spectrum-analyzer-dsp = { path = "../processor/features/fx/eq/spectrum-analyzer/spectrum-analyzer-dsp" }
 fts-audio-ui = { path = "../processor/libs/ui/fts-audio-ui" }
 fts-plug-ui = { path = "../processor/libs/ui/fts-plug-ui" }
+comp-plugin = { path = "../processor/apps/plugins/comp" }
+delay-plugin = { path = "../processor/apps/plugins/delay" }
+eq-plugin = { path = "../processor/apps/plugins/eq" }
+gate-plugin = { path = "../processor/apps/plugins/gate" }
+level-plugin = { path = "../processor/apps/plugins/level" }
+limiter-plugin = { path = "../processor/apps/plugins/limiter" }
+meter-plugin = { path = "../processor/apps/plugins/meter" }
+modulation-plugin = { path = "../processor/apps/plugins/modulation" }
+reverb-plugin = { path = "../processor/apps/plugins/reverb" }
+saturate-plugin = { path = "../processor/apps/plugins/saturate" }
 
 
 
