@@ -1469,3 +1469,26 @@ mod trigger_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod player_dash_tests {
+    /// `<player> - <instrument>` is the instrument; `<part> - <song>` is
+    /// the part.
+    #[test]
+    fn a_dash_names_the_instrument_after_it_or_the_part_before() {
+        let first = |name: &str| {
+            crate::track_schema::classify_track(name)
+                .matched_groups
+                .first()
+                .cloned()
+        };
+        assert_eq!(first("Tom - Keys").as_deref(), Some("Keys"));
+        assert_eq!(first("Kick - Unbreakable").as_deref(), Some("Drums"));
+        assert_eq!(first("Bass - The Plague").as_deref(), Some("Bass"));
+        assert_eq!(
+            first("Toms").as_deref(),
+            Some("Drums"),
+            "a tom is still a drum"
+        );
+    }
+}

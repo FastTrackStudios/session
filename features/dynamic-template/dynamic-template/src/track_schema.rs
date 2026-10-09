@@ -50,6 +50,22 @@ pub fn classify_track_with_config(
     name: &str,
     config: &DynamicTemplateConfig,
 ) -> TrackClassification {
+    // `<player> - <instrument>` (`Tom - Keys`: Tom on keys) names the
+    // instrument after the dash, and it wins; `<part> - <song>` (`Kick -
+    // Unbreakable`, a rehearsal stem) names nothing there, and the part
+    // before decides as it always did.
+    if let Some((_, after)) = name
+        .rsplit_once(" - ")
+        .filter(|(_, after)| !after.trim().is_empty())
+    {
+        let instrument = classify_track_with_config(after.trim(), config);
+        if !instrument.matched_groups.is_empty() {
+            return TrackClassification {
+                name: name.to_string(),
+                ..instrument
+            };
+        }
+    }
     let matched_groups = Parser::new(config)
         .parse(name.to_string())
         .map(|item| {
