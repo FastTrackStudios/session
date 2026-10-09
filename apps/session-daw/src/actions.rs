@@ -662,6 +662,332 @@ fn register_data(list: &ActionList) {
     register_hits(list);
     register_fundamental(list);
     register_track_set(list);
+    register_reference(list);
+}
+
+static REFERENCE_MAP: ActionMeta = meta(
+    "DRUMS_REFERENCE_MAP",
+    "drum_reference_map",
+    "Drum MIDI map",
+    "The song's drum MIDI (the part as written) mapped to the kit: each note number, how many notes it has, and the piece whose trigger hits its notes land on — learned from the recording, since a drum library's map is its own. Unmapped: a cymbal, an articulation, a piece with no trigger.",
+    "Drums",
+    "",
+);
+static REFERENCE: ActionMeta = meta(
+    "DRUMS_REFERENCE",
+    "drum_reference",
+    "Drum MIDI notes",
+    "The drum part as written — the song's drum MIDI — for a piece (`Kick`, `Snare`, `Tom 1`, through the learned map) or a note number: each note's time, bar, beat and velocity. Paged; `from`/`to` (seconds) narrow it.",
+    "Drums",
+    "",
+);
+static COMPARE: ActionMeta = meta(
+    "DRUMS_COMPARE",
+    "drum_compare",
+    "Drums against the MIDI",
+    "A piece's recorded hits (its trigger) held up to its notes in the drum MIDI: how many were played, missing (written, not played) and extra (played, not written), the hits' offsets from their notes (ms, late positive: median, worst), then each note — worst first — with its bar and beat. Not every fill is as written: read missing and extra as where the take departs from the plan.",
+    "Drums",
+    "",
+);
+
+/// Which drum MIDI.
+#[derive(Facet)]
+struct MapArg {
+    /// The drum MIDI track; found by name (`DRUM MIDI`) when left out.
+    track: Option<String>,
+}
+
+/// One note number's place.
+#[derive(Facet)]
+struct MapRow {
+    pitch: u8,
+    notes: u32,
+    piece: Option<String>,
+    /// The share of its notes on that piece's hits (0..1).
+    agreement: f64,
+}
+
+/// Which written notes.
+#[derive(Facet)]
+struct ReferenceArg {
+    track: Option<String>,
+    /// A piece, through the learned map.
+    piece: Option<String>,
+    /// Or a note number.
+    pitch: Option<u8>,
+    from: Option<f64>,
+    to: Option<f64>,
+    offset: Option<u32>,
+    limit: Option<u32>,
+}
+
+/// One written note.
+#[derive(Facet)]
+struct NoteRow {
+    time: f64,
+    bar: i32,
+    beat: f64,
+    pitch: u8,
+    velocity: u8,
+}
+
+/// A page of written notes.
+#[derive(Facet)]
+struct NotesPage {
+    total: u32,
+    offset: u32,
+    notes: Vec<NoteRow>,
+}
+
+/// Which piece to compare.
+#[derive(Facet)]
+struct CompareArg {
+    /// The piece: `Kick`, `Snare`, `Tom 1`.
+    piece: String,
+    track: Option<String>,
+    /// How far a hit may be from its note and still be it (ms; 60).
+    window_ms: Option<f64>,
+    from: Option<f64>,
+    to: Option<f64>,
+    /// How many notes to detail (worst first; 50).
+    limit: Option<u32>,
+}
+
+/// A note held up to its hit.
+#[derive(Facet)]
+struct NoteVsHit {
+    time: f64,
+    bar: i32,
+    beat: f64,
+    /// The hit's offset from the note, ms (late positive); `None`: not
+    /// played.
+    offset_ms: Option<f64>,
+}
+
+/// A piece against its part.
+#[derive(Facet)]
+struct CompareResult {
+    piece: String,
+    pitches: Vec<u8>,
+    notes: u32,
+    hits: u32,
+    matched: u32,
+    missing: u32,
+    extra: u32,
+    median_offset_ms: Option<f64>,
+    worst_offset_ms: Option<f64>,
+    /// The worst-placed and the missing notes first.
+    detail: Vec<NoteVsHit>,
+    /// Hits with no note, their times.
+    extra_hits: Vec<f64>,
+}
+
+/// A trigger whose loudest hit is under this (dBFS) is dead.
+const DEAD_TRIGGER_DB: f64 = -45.0;
+
+/// How far a written note and its hit may be, unless asked (seconds).
+const NOTE_WINDOW: f64 = 0.06;
+
+/// The drum MIDI's notes, each live piece's name, trigger and hits, and
+/// the learned map.
+type Reference = (
+    Vec<crate::drum_reference::RefNote>,
+    Vec<(String, String, Vec<f64>)>,
+    Vec<crate::drum_reference::Mapped>,
+);
+
+/// The kit's pieces' hits and the learned map, for the drum MIDI `track`.
+fn reference(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: Option<&str>,
+) -> Result<Reference, String> {
+    let midi = match track {
+        Some(t) => resolve(daw, project, t)?,
+        None => crate::drum_reference::find_track(daw, project)
+            .ok_or("no drum MIDI track — name it with `track`")?,
+    };
+    let notes = crate::drum_reference::notes(daw, project, &midi);
+    // A trigger whose loudest is under the floor is dead — crosstalk on
+    // a piezo nobody hit — and has no hits to hold anything up to.
+    let pieces: Vec<(String, String, Vec<f64>)> = crate::drum_reference::pieces(daw, project)
+        .into_iter()
+        .filter_map(|(name, trigger)| {
+            let found = crate::fundamental::hits_of(daw, project, &trigger, 24.0);
+            let loudest = found
+                .iter()
+                .map(|h| h.level_db)
+                .fold(f64::NEG_INFINITY, f64::max);
+            (loudest >= DEAD_TRIGGER_DB)
+                .then(|| (name, trigger, found.into_iter().map(|h| h.time).collect()))
+        })
+        .collect();
+    let named: Vec<(String, Vec<f64>)> = pieces
+        .iter()
+        .map(|(n, _, h)| (n.clone(), h.clone()))
+        .collect();
+    let map = crate::drum_reference::learn_map(&notes, &named, NOTE_WINDOW);
+    Ok((notes, pieces, map))
+}
+
+fn register_reference(list: &ActionList) {
+    register_reference_map(list);
+    register_reference_notes(list);
+    register_compare(list);
+}
+
+fn register_reference_map(list: &ActionList) {
+    list.register(&REFERENCE_MAP, Effect::ReadOnly, |a: MapArg| {
+        let (daw, project) = song()?;
+        let (_, _, map) = reference(daw, &project, a.track.as_deref())?;
+        Ok(map
+            .into_iter()
+            .map(|m| MapRow {
+                pitch: m.pitch,
+                notes: u32::try_from(m.notes).unwrap_or(u32::MAX),
+                piece: m.piece,
+                agreement: m.agreement,
+            })
+            .collect::<Vec<_>>())
+    });
+}
+
+fn register_reference_notes(list: &ActionList) {
+    list.register(&REFERENCE, Effect::ReadOnly, |a: ReferenceArg| {
+        let (daw, project) = song()?;
+        let (notes, _, map) = reference(daw, &project, a.track.as_deref())?;
+        let pitches: Vec<u8> = match (&a.piece, a.pitch) {
+            (_, Some(p)) => vec![p],
+            (Some(piece), None) => map
+                .iter()
+                .filter(|m| {
+                    m.piece
+                        .as_deref()
+                        .is_some_and(|p| p.eq_ignore_ascii_case(piece))
+                })
+                .map(|m| m.pitch)
+                .collect(),
+            (None, None) => map.iter().map(|m| m.pitch).collect(),
+        };
+        let from = a.from.unwrap_or(f64::NEG_INFINITY);
+        let to = a.to.unwrap_or(f64::INFINITY);
+        let all: Vec<_> = notes
+            .into_iter()
+            .filter(|n| pitches.contains(&n.pitch) && n.time >= from && n.time <= to)
+            .collect();
+        let offset = a.offset.unwrap_or(0);
+        let page = all
+            .iter()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+            .take(usize::try_from(a.limit.unwrap_or(PAGE)).unwrap_or(usize::MAX))
+            .map(|n| {
+                let (bar, beat, frac) = daw.time_to_musical(project.clone(), n.time);
+                NoteRow {
+                    time: n.time,
+                    bar,
+                    beat: f64::from(beat) + frac,
+                    pitch: n.pitch,
+                    velocity: n.velocity,
+                }
+            })
+            .collect();
+        Ok(NotesPage {
+            total: u32::try_from(all.len()).unwrap_or(u32::MAX),
+            offset,
+            notes: page,
+        })
+    });
+}
+
+fn register_compare(list: &ActionList) {
+    list.register(&COMPARE, Effect::ReadOnly, |a: CompareArg| {
+        let (daw, project) = song()?;
+        let (notes, pieces, map) = reference(daw, &project, a.track.as_deref())?;
+        let (name, _, hits) = pieces
+            .iter()
+            .find(|(n, _, _)| n.eq_ignore_ascii_case(&a.piece))
+            .ok_or_else(|| {
+                format!(
+                    "no piece {} with a trigger: one of {:?}",
+                    a.piece,
+                    pieces
+                        .iter()
+                        .map(|(n, _, _)| n.as_str())
+                        .collect::<Vec<_>>()
+                )
+            })?;
+        let pitches: Vec<u8> = map
+            .iter()
+            .filter(|m| m.piece.as_deref() == Some(name.as_str()))
+            .map(|m| m.pitch)
+            .collect();
+        let from = a.from.unwrap_or(f64::NEG_INFINITY);
+        let to = a.to.unwrap_or(f64::INFINITY);
+        let written: Vec<f64> = notes
+            .iter()
+            .filter(|n| pitches.contains(&n.pitch) && n.time >= from && n.time <= to)
+            .map(|n| n.time)
+            .collect();
+        let played: Vec<f64> = hits
+            .iter()
+            .copied()
+            .filter(|t| *t >= from && *t <= to)
+            .collect();
+        let window = a.window_ms.map_or(NOTE_WINDOW, |ms| ms / 1_000.0);
+        let c = crate::drum_reference::compare(&written, &played, window);
+        let mut offsets: Vec<f64> = c.matched.iter().map(|m| m.2).collect();
+        offsets.sort_by(f64::total_cmp);
+        let median = offsets.get(offsets.len() / 2).copied();
+        let worst = offsets
+            .iter()
+            .copied()
+            .max_by(|x, y| x.abs().total_cmp(&y.abs()));
+        let at = |t: f64| {
+            let (bar, beat, frac) = daw.time_to_musical(project.clone(), t);
+            (bar, f64::from(beat) + frac)
+        };
+        let mut detail: Vec<NoteVsHit> = c
+            .missing
+            .iter()
+            .map(|t| {
+                let (bar, beat) = at(*t);
+                NoteVsHit {
+                    time: *t,
+                    bar,
+                    beat,
+                    offset_ms: None,
+                }
+            })
+            .chain(c.matched.iter().map(|(t, _, off)| {
+                let (bar, beat) = at(*t);
+                NoteVsHit {
+                    time: *t,
+                    bar,
+                    beat,
+                    offset_ms: Some(*off),
+                }
+            }))
+            .collect();
+        detail.sort_by(|x, y| {
+            let key = |n: &NoteVsHit| n.offset_ms.map_or(f64::INFINITY, f64::abs);
+            key(y).total_cmp(&key(x))
+        });
+        detail.truncate(usize::try_from(a.limit.unwrap_or(50)).unwrap_or(usize::MAX));
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        Ok(CompareResult {
+            piece: name.clone(),
+            pitches,
+            notes: count(written.len()),
+            hits: count(played.len()),
+            matched: count(c.matched.len()),
+            missing: count(c.missing.len()),
+            extra: count(c.extra.len()),
+            median_offset_ms: median,
+            worst_offset_ms: worst,
+            detail,
+            extra_hits: c.extra.into_iter().take(50).collect(),
+        })
+    });
 }
 
 fn register_tracks(list: &ActionList) {
