@@ -852,7 +852,18 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 None => loose.push(guid.clone()),
             }
         }
+        let made = arranged.created.len();
         let folder = self.folder_named(super::REHEARSAL_FOLDER, arranged)?;
+        // Made here, it starts muted: the rehearsal is something to listen
+        // back to on purpose, never under the song as it plays.
+        if arranged.created.len() > made {
+            let _ = Tracks::set_muted(
+                &self.daw,
+                self.project.clone(),
+                TrackRef::Guid(folder.clone()),
+                true,
+            );
+        }
         in_use.insert(folder.clone());
         let mut layout: Vec<(String, i32)> = vec![(folder, 1)];
         for (_, (group, tracks)) in by_group {
