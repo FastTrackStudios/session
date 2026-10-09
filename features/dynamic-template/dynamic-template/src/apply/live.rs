@@ -279,6 +279,31 @@ fn open_kept(
     Some(unit)
 }
 
+/// The instrument a rehearsal track (`Kick - Unbreakable`, `Lead -
+/// Unbreakable`) belongs to: its part — the name before ` - Song` —
+/// classified. A band's `Lead` and `Rhythm` are its guitars, which the
+/// name alone does not say.
+fn rehearsal_group(name: &str) -> Option<String> {
+    let part = name
+        .rsplit_once(" - ")
+        .map_or(name, |(part, _)| part)
+        .trim();
+    if part.is_empty() {
+        return None;
+    }
+    if let Some(group) = crate::track_schema::classify_track(part)
+        .matched_groups
+        .into_iter()
+        .next()
+    {
+        return Some(group);
+    }
+    let guitar = ["lead", "rhythm", "rhy", "solo"];
+    part.split_whitespace()
+        .any(|w| guitar.contains(&w.to_lowercase().as_str()))
+        .then(|| "Guitars".to_string())
+}
+
 /// The instrument groups in the order a session lays them out: the rhythm
 /// section, then the harmony, then the voices.
 const INSTRUMENT_ORDER: &[&str] = &[
@@ -564,7 +589,8 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
 
         // 4. The reference material, after the groups: REFERENCES, the
         //    rehearsal in REHEARSAL inside it, then the song's bounces.
-        let references = self.references_layout(&rehearsal, &bounces, &mut arranged)?;
+        let references =
+            self.references_layout(&rehearsal, &bounces, &mut folders_in_use, &mut arranged)?;
         layout.extend(references);
 
         // 5. Everything else keeps its order and depth, after them.
@@ -770,27 +796,76 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         &self,
         rehearsal: &[String],
         bounces: &[String],
+        in_use: &mut std::collections::HashSet<String>,
         arranged: &mut Arranged,
     ) -> eyre::Result<Vec<(String, i32)>> {
         if rehearsal.is_empty() && bounces.is_empty() {
             return Ok(Vec::new());
         }
-        let mut layout = vec![(self.folder_named(super::REFERENCES_FOLDER, arranged)?, 1)];
+        let references = self.folder_named(super::REFERENCES_FOLDER, arranged)?;
+        in_use.insert(references.clone());
+        let mut layout = vec![(references, 1)];
         if !rehearsal.is_empty() {
-            layout.push((self.folder_named(super::REHEARSAL_FOLDER, arranged)?, 1));
-            layout.extend(rehearsal.iter().map(|g| (g.clone(), 0)));
-            // The last of the rehearsal closes REHEARSAL — and REFERENCES
-            // too, when there are no bounces after it.
-            let closes = if bounces.is_empty() { -2 } else { -1 };
-            if let Some(last) = layout.last_mut() {
-                last.1 = closes;
+            layout.extend(self.rehearsal_layout(rehearsal, in_use, arranged)?);
+        }
+        layout.extend(bounces.iter().map(|g| (g.clone(), 0)));
+        // The last of it closes REFERENCES.
+        if let Some(last) = layout.last_mut() {
+            last.1 = last.1.saturating_sub(1);
+        }
+        Ok(layout)
+    }
+
+    /// The REHEARSAL folder's part of a layout, closed: the rehearsal filed
+    /// by instrument the way the session is — Drums (`Kick - Song`, `OH L -
+    /// Song`), Bass, Guitars (`Lead`, `Rhythm`), Vocals — in the template's
+    /// order, then what names no instrument (the room track, a stem).
+    fn rehearsal_layout(
+        &self,
+        rehearsal: &[String],
+        in_use: &mut std::collections::HashSet<String>,
+        arranged: &mut Arranged,
+    ) -> eyre::Result<Vec<(String, i32)>> {
+        let all = Tracks::all(&self.daw, self.project.clone());
+        let name_of = |guid: &str| {
+            all.iter()
+                .find(|t| t.guid == guid)
+                .map(|t| t.name.clone())
+                .unwrap_or_default()
+        };
+        let mut by_group: std::collections::BTreeMap<usize, (String, Vec<String>)> =
+            std::collections::BTreeMap::new();
+        let mut loose: Vec<String> = Vec::new();
+        for guid in rehearsal {
+            match rehearsal_group(&name_of(guid)) {
+                Some(group) => {
+                    let at = INSTRUMENT_ORDER
+                        .iter()
+                        .position(|o| o.eq_ignore_ascii_case(&group))
+                        .unwrap_or(INSTRUMENT_ORDER.len());
+                    by_group
+                        .entry(at)
+                        .or_insert_with(|| (group, Vec::new()))
+                        .1
+                        .push(guid.clone());
+                }
+                None => loose.push(guid.clone()),
             }
         }
-        if !bounces.is_empty() {
-            layout.extend(bounces.iter().map(|g| (g.clone(), 0)));
+        let folder = self.folder_named(super::REHEARSAL_FOLDER, arranged)?;
+        in_use.insert(folder.clone());
+        let mut layout: Vec<(String, i32)> = vec![(folder, 1)];
+        for (_, (group, tracks)) in by_group {
+            layout.push((self.group_folder(&group, in_use, arranged)?, 1));
+            layout.extend(tracks.into_iter().map(|g| (g, 0)));
             if let Some(last) = layout.last_mut() {
                 last.1 = -1;
             }
+        }
+        layout.extend(loose.into_iter().map(|g| (g, 0)));
+        // The last of it closes REHEARSAL.
+        if let Some(last) = layout.last_mut() {
+            last.1 = last.1.saturating_sub(1);
         }
         Ok(layout)
     }
@@ -926,5 +1001,26 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             Tracks::set_visibility(&self.daw, project, TrackRef::Guid(track.guid), false, true)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod rehearsal_group_tests {
+    use super::rehearsal_group;
+
+    /// A rehearsal track goes in its instrument's folder by its part — the
+    /// name before ` - Song`; a band's Lead and Rhythm are its guitars; a
+    /// nameless track or a bare stem names none.
+    #[test]
+    fn a_rehearsal_track_is_filed_by_its_part() {
+        let group = |name: &str| rehearsal_group(name);
+        assert_eq!(group("Kick - The Plague").as_deref(), Some("Drums"));
+        assert_eq!(group("OH L - The Plague").as_deref(), Some("Drums"));
+        assert_eq!(group("Bass - The Plague").as_deref(), Some("Bass"));
+        assert_eq!(group("Lead - The Plague").as_deref(), Some("Guitars"));
+        assert_eq!(group("Rhythm - The Plague").as_deref(), Some("Guitars"));
+        assert_eq!(group("Vocals - The Plague").as_deref(), Some("Vocals"));
+        assert_eq!(group(""), None);
+        assert_eq!(group(" - stem"), None);
     }
 }
