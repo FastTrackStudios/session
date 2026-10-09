@@ -44,16 +44,34 @@ pub fn list() -> &'static ActionList {
 
 /// The window's actions run since it last looked, in order.
 pub fn take_window() -> Vec<Action> {
-    WINDOW
+    let taken: Vec<Action> = WINDOW
         .lock()
         .map(|mut q| q.drain(..).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !taken.is_empty() {
+        FOLLOW_UP.store(true, std::sync::atomic::Ordering::Release);
+    }
+    taken
 }
 
 /// Whether any are waiting.
 pub fn window_pending() -> bool {
     WINDOW.lock().is_ok_and(|q| !q.is_empty())
 }
+
+/// Whether the window owes a frame for actions it just carried out —
+/// taken, so one frame is asked for each time. For the shell's frame
+/// loop alone.
+///
+/// The window sends its edits to the engine at the start of a frame and
+/// carries out these actions while painting one, so what they edited
+/// goes on the frame AFTER. No event is coming to ask for it.
+pub fn frame_owed() -> bool {
+    FOLLOW_UP.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
+/// A frame owed for actions just carried out.
+static FOLLOW_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn queue(action: Action) {
     if let Ok(mut q) = WINDOW.lock() {
@@ -146,7 +164,9 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
             };
             (ZOOM.id, format!(r#"{{"zoom":"{zoom}"}}"#))
         }
-        Action::Unbound(_) => return None,
+        // Already the list's own answer (`DRUMS_SLIP`), or a binding the
+        // window does not do: straight to the window.
+        Action::Unbound(_) | Action::SlipDrums { .. } => return None,
     })
 }
 
@@ -657,7 +677,95 @@ struct TrackSetArg {
 /// How many hits a page holds unless asked.
 const PAGE: u32 = 200;
 
+static MODE: ActionMeta = meta(
+    "SESSION_MODE",
+    "mode",
+    "Mode",
+    "Put the window in a mode: Organize, Write, Produce, Record, Edit, Mix, Master, Live, Video or Scoring — what the panels show and how (Edit shows every cut on a folder's row; Live and Mix a folder's row whole).",
+    "View",
+    "",
+);
+
+/// Which mode.
+#[derive(Facet)]
+struct ModeArg {
+    mode: String,
+}
+
+/// The mode a caller asked for, until the window takes it
+/// ([`take_mode_request`]).
+static MODE_REQUEST: Mutex<Option<session::modes::Mode>> = Mutex::new(None);
+
+/// The mode asked for since the window last looked, if any.
+pub fn take_mode_request() -> Option<session::modes::Mode> {
+    MODE_REQUEST.lock().ok()?.take()
+}
+
+static PHASE: ActionMeta = meta(
+    "SESSION_PHASE",
+    "phase",
+    "Phase",
+    "Put a mode in one of its phases — Edit: comp, edit; Mix: rescue, balance, tone, polish, relational, depth, creative, overview; Organize: import, tempo-map. `mode` defaults to Edit.",
+    "View",
+    "",
+);
+
+/// Which phase.
+#[derive(Facet)]
+struct PhaseArg {
+    phase: String,
+    mode: Option<String>,
+}
+
+fn register_phase(list: &ActionList) {
+    list.register(&PHASE, Effect::Mutating, |a: PhaseArg| {
+        let name = a.mode.as_deref().unwrap_or("Edit");
+        let mode = session::modes::Mode::ALL
+            .into_iter()
+            .find(|m| m.display_name().eq_ignore_ascii_case(name.trim()))
+            .ok_or_else(|| format!("no mode {name}"))?;
+        let phases = session::mode_phases::of(mode);
+        let phase = phases
+            .iter()
+            .find(|p| {
+                p.slug.eq_ignore_ascii_case(a.phase.trim())
+                    || p.name.eq_ignore_ascii_case(a.phase.trim())
+            })
+            .ok_or_else(|| {
+                format!(
+                    "{} has no phase {}: one of {:?}",
+                    mode.display_name(),
+                    a.phase,
+                    phases.iter().map(|p| p.slug).collect::<Vec<_>>()
+                )
+            })?;
+        session::mode_phases::choose(mode, phase.slug);
+        Ok(())
+    });
+}
+
+fn register_mode(list: &ActionList) {
+    list.register(&MODE, Effect::Mutating, |a: ModeArg| {
+        let mode = session::modes::Mode::ALL
+            .into_iter()
+            .find(|m| m.display_name().eq_ignore_ascii_case(a.mode.trim()))
+            .ok_or_else(|| {
+                let names: Vec<&str> = session::modes::Mode::ALL
+                    .iter()
+                    .map(|m| m.display_name())
+                    .collect();
+                format!("no mode {}: one of {names:?}", a.mode)
+            })?;
+        if let Ok(mut slot) = MODE_REQUEST.lock() {
+            *slot = Some(mode);
+        }
+        Ok(())
+    });
+}
+
 fn register_data(list: &ActionList) {
+    register_mode(list);
+    register_phase(list);
     register_tracks(list);
     register_hits(list);
     register_fundamental(list);
@@ -831,6 +939,8 @@ fn reference(
 }
 
 fn register_reference(list: &ActionList) {
+    register_slip(list);
+    register_peaks(list);
     register_reference_map(list);
     register_reference_notes(list);
     register_compare(list);
@@ -1223,4 +1333,762 @@ mod tests {
         let refused = list().run_json("SESSION_SCENE", br#"{"scene":"nope"}"#);
         assert!(refused.is_err_and(|e| e.to_string().contains("overview")));
     }
+}
+
+static SLIP: ActionMeta = meta(
+    "DRUMS_SLIP",
+    "drums_slip",
+    "Slip-edit the drums",
+    "Slip-edit the whole kit as one: every drum track cut `lead_ms` before each hit and the slices moved together, the seams crossfaded (`xfade_ms`), a gap filled from the slice's own source — no stretching. Runs on the drum-edit settings (DRUMS_EDIT_SETTINGS; tune them with DRUMS_EDIT_SET, watching DRUMS_DETECT), any of which a call may give for itself alone. The hits are the live triggers' (a flam across pieces one moment); each moves toward its target (Guided: the grid line its drum-MIDI note is written on, or the nearest when plainly near; else left and listed in `to_check`). Fills are left as played unless `fills` says otherwise — with `from`/`to` around one and `fills: Only`, a fill is edited with its own settings. Explicit `moves` (`[hit, to]`, seconds) skip detection. `dry_run` says what it would do and does nothing.",
+    "Drums",
+    "",
+);
+static FILLS: ActionMeta = meta(
+    "DRUMS_FILLS",
+    "drums_fills",
+    "Find the fills",
+    "Where the drummer leaves the groove: beats that, against the groove at that place in the bar in the eight bars before AND the eight after, add toms (`toms`), add three or more hits (`busier`), or play the hands another way where the groove is steady (`different`). Beats in a row are one fill. Fills are played against the grid on purpose, so DRUMS_SLIP leaves them alone unless asked. Uses the drum-edit settings' detector; `from`/`to` narrow it.",
+    "Drums",
+    "",
+);
+static EDIT_SETTINGS: ActionMeta = meta(
+    "DRUMS_EDIT_SETTINGS",
+    "drums_edit_settings",
+    "Drum edit settings",
+    "The drum-edit settings as they stand — sticky: what every detection, fill search and slip uses until changed, kept across restarts. detector (Level: within `under_db` of a trigger's loudest; Transient: Perfect Timing!'s — the attack outrunning the signal by `sensitivity_db` over `threshold_db`), `retrig_ms`, `offset_ms`, `grid` (a whole note's division), `grid_scan` (one hit per grid line, the loudest within `grid_tolerance_ms`), `target` (Guided, Reference, Grid), `window_ms`, `sure_ms`, `tolerance_ms`, `strength`, `lead_ms`, `xfade_ms`, `fills` (Skip, Include, Only).",
+    "Drums",
+    "",
+);
+static EDIT_SET: ActionMeta = meta(
+    "DRUMS_EDIT_SET",
+    "drums_edit_set",
+    "Set drum edit settings",
+    "Change any drum-edit settings (the ones given; `reset` first goes back to the defaults) — they stay changed — and get back at once what is detected with them (as DRUMS_DETECT, over `from`/`to`): tune, look, tune again. Giving `threshold_db` or `sensitivity_db` chooses the Transient detector.",
+    "Drums",
+    "",
+);
+static DETECT: ActionMeta = meta(
+    "DRUMS_DETECT",
+    "drums_detect",
+    "Detect the drum hits",
+    "What the drum-edit settings detect, from `from` to `to` (seconds): each piece's hit count, the kit's moments (a flam across pieces one; with `grid_scan`, one per grid line), the fills, and each moment — time, bar and beat, which pieces, how loud against its piece's loudest, its target and how far off, and what a slip would do with it (`move`, `stay`, `check`: no target near, `fill`: left in a fill). Paged by `offset`/`limit` (100, 300 at most). Settings given here are for this look alone. Fast after the first: the audio is read once and kept until its items change.",
+    "Drums",
+    "",
+);
+static PEAKS: ActionMeta = meta(
+    "AUDIO_PEAKS",
+    "audio_peaks",
+    "Audio peaks",
+    "A track's audio from `from` to `to` (seconds) as `points` peaks (each the loudest sample in its slice, linear 0..1, through the item volume; 400 unless asked, 4000 at most) — the waveform as numbers, to read a hit, a ring, a stray, a double. `db` gives them in dBFS.",
+    "Data",
+    "",
+);
+/// A slip edit.
+#[derive(Facet)]
+struct SlipArg {
+    /// Settings for this slip alone.
+    #[facet(flatten, default)]
+    with: crate::drum_settings::Patch,
+    /// Explicit moves, `[hit, to]` in seconds: no detection, no target.
+    moves: Option<Vec<Vec<f64>>>,
+    from: Option<f64>,
+    to: Option<f64>,
+    dry_run: Option<bool>,
+}
+
+/// One hit's move.
+#[derive(Facet)]
+struct SlipMove {
+    time: f64,
+    bar: i32,
+    beat: f64,
+    /// Where its target is, ms from it (late positive: the hit is late
+    /// when this is negative).
+    off_ms: f64,
+    /// How far it is moved, ms.
+    shift_ms: f64,
+}
+
+/// A fill, as a model reads it.
+#[derive(Facet)]
+struct FillOut {
+    from: f64,
+    to: f64,
+    bar: i32,
+    beat: f64,
+    beats: u32,
+    why: Vec<String>,
+}
+
+/// What a slip edit did, or would.
+#[derive(Facet)]
+struct SlipResult {
+    hits: u32,
+    moved: u32,
+    /// Within tolerance already.
+    in_place: u32,
+    /// No target near: left as played.
+    unmatched: u32,
+    /// In a fill, and left as played.
+    in_fills: u32,
+    /// How far the moved hits were, ms: median and worst.
+    median_off_ms: Option<f64>,
+    worst_off_ms: Option<f64>,
+    applied: bool,
+    /// The biggest moves, first.
+    biggest: Vec<SlipMove>,
+    /// Left as played, with no target near enough to be sure of: to be
+    /// listened to (the first 50).
+    to_check: Vec<SlipMove>,
+    /// The fills found in the span.
+    fills: Vec<FillOut>,
+}
+
+/// The kit's hits: every live trigger's, merged — hits within this of
+/// each other are one moment (a flam, a kick under a snare).
+const KIT_MERGE: f64 = 0.015;
+
+/// One live piece of the kit: its name, what it is, its hits.
+type KitPiece = (
+    String,
+    crate::drum_edit::Piece,
+    Vec<crate::drum_edit::KitHit>,
+);
+
+/// The kit's live pieces and their hits by the settings' detector, each
+/// hit's loudness against its piece's loudest. The audio is read once
+/// and kept, so this is quick the second time.
+fn kit(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    settings: &crate::drum_settings::Settings,
+) -> Vec<KitPiece> {
+    let rate = crate::fundamental::DETECT_RATE;
+    let offset = settings.offset_ms / 1_000.0;
+    crate::drum_reference::pieces(daw, project)
+        .into_iter()
+        .filter_map(|(name, trigger)| {
+            let audio = crate::fundamental::detect_audio(daw, project, &trigger);
+            let found: Vec<crate::drum_edit::Transient> = match settings.detector {
+                crate::drum_settings::Detector::Level => crate::drum_edit::levels(
+                    &audio,
+                    rate,
+                    settings.under_db,
+                    settings.retrig_ms / 1_000.0,
+                ),
+                crate::drum_settings::Detector::Transient => {
+                    let detect = settings.detect();
+                    audio
+                        .iter()
+                        .flat_map(|(start, samples)| {
+                            crate::drum_edit::transients(samples, rate, *start, &detect)
+                        })
+                        .collect()
+                }
+            };
+            let loudest = found
+                .iter()
+                .map(|h| h.peak_db)
+                .fold(f64::NEG_INFINITY, f64::max);
+            // A trigger whose loudest is under the floor is dead — crosstalk
+            // on a piezo nobody hit.
+            (loudest >= DEAD_TRIGGER_DB).then(|| {
+                let hits = found
+                    .into_iter()
+                    .map(|h| crate::drum_edit::KitHit {
+                        time: h.time + offset,
+                        relative_db: h.peak_db - loudest,
+                    })
+                    .collect();
+                (name.clone(), crate::drum_edit::Piece::of(&name), hits)
+            })
+        })
+        .collect()
+}
+
+/// Every beat from the bar holding `from` to the one holding `to`.
+fn beats(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    (from, to): (f64, f64),
+) -> Vec<crate::drum_edit::Beat> {
+    let (mut bar, _, _) = daw.time_to_musical(project.clone(), from.max(0.0));
+    let mut starts: Vec<(f64, u32)> = Vec::new();
+    loop {
+        let downbeat = daw.musical_to_time(project.clone(), bar, 1, 0.0);
+        let (per_bar, _) = daw.get_time_signature_at(project.clone(), downbeat);
+        for beat in 1..=per_bar.max(1) {
+            let at = daw.musical_to_time(project.clone(), bar, beat, 0.0);
+            starts.push((at, u32::try_from(beat.saturating_sub(1)).unwrap_or(0)));
+        }
+        bar = bar.saturating_add(1);
+        if downbeat > to || starts.len() > 100_000 {
+            break;
+        }
+    }
+    starts
+        .iter()
+        .zip(starts.iter().skip(1))
+        .map(|(&(start, in_bar), &(next, _))| crate::drum_edit::Beat {
+            start,
+            length: (next - start).max(1e-3),
+            in_bar,
+        })
+        .collect()
+}
+
+/// The fills among the kit's hits, from `from` to `to`.
+fn find_fills(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    kit: &[KitPiece],
+    (from, to): (f64, f64),
+) -> Vec<crate::drum_edit::Fill> {
+    let hits: Vec<(crate::drum_edit::Piece, f64)> = kit
+        .iter()
+        .flat_map(|(_, piece, hits)| hits.iter().map(|h| (*piece, h.time)))
+        .filter(|(_, t)| *t >= from && *t <= to)
+        .collect();
+    let Some(first) = hits.iter().map(|h| h.1).reduce(f64::min) else {
+        return Vec::new();
+    };
+    let last = hits.iter().map(|h| h.1).fold(first, f64::max);
+    crate::drum_edit::fills(&hits, &beats(daw, project, (first, last)))
+}
+
+/// A fill for a model: where, in bars and beats, and why.
+fn fill_out(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    fill: &crate::drum_edit::Fill,
+) -> FillOut {
+    let (bar, beat, frac) = daw.time_to_musical(project.clone(), fill.from + 1e-6);
+    FillOut {
+        from: fill.from,
+        to: fill.to,
+        bar,
+        beat: f64::from(beat) + frac,
+        beats: fill.beats,
+        why: fill.why.iter().map(|w| (*w).to_owned()).collect(),
+    }
+}
+
+/// One moment of the kit: when, which pieces, how loud the loudest of
+/// them against its own.
+#[derive(Clone, Debug)]
+struct Moment {
+    time: f64,
+    pieces: Vec<String>,
+    relative_db: f64,
+}
+
+/// The kit's moments: one hit per grid line (the loudest), or every hit
+/// with flams merged to their first.
+fn moments(kit: &[KitPiece], scan: Option<(&dyn Fn(f64) -> f64, f64)>) -> Vec<Moment> {
+    let mut hits: Vec<(&str, crate::drum_edit::KitHit)> = kit
+        .iter()
+        .flat_map(|(name, _, h)| h.iter().map(move |h| (name.as_str(), *h)))
+        .collect();
+    hits.sort_by(|a, b| a.1.time.total_cmp(&b.1.time));
+    let mut out: Vec<Moment> = Vec::new();
+    for (name, hit) in &hits {
+        match out.last_mut() {
+            Some(m) if hit.time - m.time <= KIT_MERGE => {
+                if !m.pieces.iter().any(|p| p == name) {
+                    m.pieces.push((*name).to_owned());
+                }
+                m.relative_db = m.relative_db.max(hit.relative_db);
+            }
+            _ => out.push(Moment {
+                time: hit.time,
+                pieces: vec![(*name).to_owned()],
+                relative_db: hit.relative_db,
+            }),
+        }
+    }
+    let Some((line_of, tolerance)) = scan else {
+        return out;
+    };
+    let as_hits: Vec<crate::drum_edit::KitHit> = out
+        .iter()
+        .map(|m| crate::drum_edit::KitHit {
+            time: m.time,
+            relative_db: m.relative_db,
+        })
+        .collect();
+    let kept = crate::drum_edit::grid_scan(&as_hits, line_of, tolerance);
+    out.retain(|m| kept.iter().any(|k| (k.time - m.time).abs() < 1e-9));
+    out
+}
+
+/// The nearest of `written` (sorted) within `window` of `h`.
+fn nearest(written: &[f64], h: f64, window: f64) -> Option<f64> {
+    let at = written.partition_point(|n| *n < h - window);
+    written
+        .iter()
+        .skip(at)
+        .take_while(|n| **n <= h + window)
+        .min_by(|x, y| (*x - h).abs().total_cmp(&(*y - h).abs()))
+        .copied()
+}
+
+/// The grid line nearest `h`, at `division` of a whole note.
+fn grid_line(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    h: f64,
+    division: u32,
+) -> f64 {
+    let step = 240.0 / daw.get_tempo_at(project.clone(), h).max(1.0) / f64::from(division.max(1));
+    (h / step).round() * step
+}
+
+/// Each moment's target, `None` when none is near enough to be sure of.
+fn targets(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    settings: &crate::drum_settings::Settings,
+    kit: &[KitPiece],
+    moments: &[f64],
+) -> Result<Vec<(f64, Option<f64>)>, String> {
+    use crate::drum_settings::Target;
+    if settings.target == Target::Grid {
+        return Ok(moments
+            .iter()
+            .map(|&h| (h, Some(grid_line(daw, project, h, settings.grid))))
+            .collect());
+    }
+    // The drum MIDI, and which of its notes are which piece — learned
+    // against these hits.
+    let midi = crate::drum_reference::find_track(daw, project)
+        .ok_or("no drum MIDI track to guide by — use `target: Grid`")?;
+    let notes = crate::drum_reference::notes(daw, project, &midi);
+    let named: Vec<(String, Vec<f64>)> = kit
+        .iter()
+        .map(|(n, _, h)| (n.clone(), h.iter().map(|h| h.time).collect()))
+        .collect();
+    let map = crate::drum_reference::learn_map(&notes, &named, NOTE_WINDOW);
+    let mapped: Vec<u8> = map
+        .iter()
+        .filter(|m| m.piece.is_some())
+        .map(|m| m.pitch)
+        .collect();
+    let mut written: Vec<f64> = notes
+        .iter()
+        .filter(|n| mapped.contains(&n.pitch))
+        .map(|n| n.time)
+        .collect();
+    written.sort_by(f64::total_cmp);
+    written.dedup_by(|x, y| (*x - *y).abs() < 0.002);
+    let window = settings.window_ms / 1_000.0;
+    let sure = settings.sure_ms / 1_000.0;
+    Ok(moments
+        .iter()
+        .map(|&h| {
+            let note = nearest(&written, h, window);
+            let to = match settings.target {
+                // The MIDI is quantized: its note IS the grid line it was
+                // written on — straight or a triplet — which is all it is
+                // asked here.
+                Target::Guided => note.or_else(|| {
+                    Some(grid_line(daw, project, h, settings.grid))
+                        .filter(|g| (g - h).abs() <= sure)
+                }),
+                _ => note,
+            };
+            (h, to)
+        })
+        .collect())
+}
+
+/// What the settings make of the kit: its pieces, its moments (with
+/// their targets), its fills.
+struct Detected {
+    kit: Vec<KitPiece>,
+    moments: Vec<Moment>,
+    targets: Vec<(f64, Option<f64>)>,
+    fills: Vec<crate::drum_edit::Fill>,
+}
+
+fn detect(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    settings: &crate::drum_settings::Settings,
+    span: (f64, f64),
+) -> Result<Detected, String> {
+    let kit = kit(daw, project, settings);
+    let line_of = |h: f64| grid_line(daw, project, h, settings.grid);
+    let by_line: &dyn Fn(f64) -> f64 = &line_of;
+    let tolerance = settings
+        .grid_tolerance_ms
+        .map_or(f64::INFINITY, |ms| ms / 1_000.0);
+    let moments = moments(&kit, settings.grid_scan.then_some((by_line, tolerance)));
+    let times: Vec<f64> = moments.iter().map(|m| m.time).collect();
+    let targets = targets(daw, project, settings, &kit, &times)?;
+    let fills = find_fills(daw, project, &kit, span);
+    Ok(Detected {
+        kit,
+        moments,
+        targets,
+        fills,
+    })
+}
+
+/// Whether the hit at `h` is in one of `fills`.
+fn in_a_fill(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    fills: &[crate::drum_edit::Fill],
+    h: f64,
+) -> bool {
+    let beat = 60.0 / daw.get_tempo_at(project.clone(), h).max(1.0);
+    fills.iter().any(|f| f.holds(h, beat))
+}
+
+fn register_slip(list: &ActionList) {
+    list.register(&SLIP, Effect::Mutating, |a: SlipArg| {
+        let (daw, project) = song()?;
+        let settings = crate::drum_settings::current().with(&a.with);
+        let span = (
+            a.from.unwrap_or(f64::NEG_INFINITY),
+            a.to.unwrap_or(f64::INFINITY),
+        );
+        let (pairs, fills) = if let Some(moves) = &a.moves {
+            let pairs = moves
+                .iter()
+                .filter_map(|m| Some((*m.first()?, Some(*m.get(1)?))))
+                .collect();
+            (pairs, Vec::new())
+        } else {
+            let found = detect(daw, &project, &settings, span)?;
+            (found.targets, found.fills)
+        };
+        let mut in_fills = 0_u32;
+        let pairs: Vec<(f64, Option<f64>)> = pairs
+            .into_iter()
+            .filter(|(h, _)| *h >= span.0 && *h <= span.1)
+            .filter(|(h, _)| {
+                let held = in_a_fill(daw, &project, &fills, *h);
+                let keep = match settings.fills {
+                    crate::drum_settings::Fills::Skip => !held,
+                    crate::drum_settings::Fills::Include => true,
+                    crate::drum_settings::Fills::Only => held,
+                };
+                if held && !keep {
+                    in_fills = in_fills.saturating_add(1);
+                }
+                keep
+            })
+            .collect();
+        let mut result = judge(daw, &project, &settings, &pairs, a.dry_run.unwrap_or(false));
+        result.in_fills = in_fills;
+        result.fills = fills.iter().map(|f| fill_out(daw, &project, f)).collect();
+        Ok(result)
+    });
+    list.register(&FILLS, Effect::ReadOnly, |a: SpanArg| {
+        let (daw, project) = song()?;
+        let settings = crate::drum_settings::current().with(&a.with);
+        let kit = kit(daw, &project, &settings);
+        Ok(find_fills(daw, &project, &kit, a.span())
+            .iter()
+            .map(|f| fill_out(daw, &project, f))
+            .collect::<Vec<FillOut>>())
+    });
+    list.register(&EDIT_SETTINGS, Effect::ReadOnly, |(): ()| {
+        Ok(crate::drum_settings::current())
+    });
+    list.register(&EDIT_SET, Effect::Mutating, |a: SetArg| {
+        if a.reset.unwrap_or(false) {
+            crate::drum_settings::reset();
+        }
+        let settings = crate::drum_settings::set(&a.with);
+        crate::actions::list().changed("drums.settings", "the drum edit settings changed");
+        let (daw, project) = song()?;
+        let detected = detected_out(daw, &project, &settings, &a.look)?;
+        Ok(SetResult { settings, detected })
+    });
+    list.register(&DETECT, Effect::ReadOnly, |a: DetectArg| {
+        let (daw, project) = song()?;
+        let settings = crate::drum_settings::current().with(&a.with);
+        detected_out(daw, &project, &settings, &a.look)
+    });
+}
+
+/// Where to look.
+#[derive(Facet, Default)]
+struct Look {
+    from: Option<f64>,
+    to: Option<f64>,
+    /// The first moment shown, and how many (100).
+    offset: Option<u32>,
+    limit: Option<u32>,
+}
+
+/// Where, with settings for this look alone.
+#[derive(Facet)]
+struct SpanArg {
+    #[facet(flatten, default)]
+    with: crate::drum_settings::Patch,
+    from: Option<f64>,
+    to: Option<f64>,
+}
+
+impl SpanArg {
+    fn span(&self) -> (f64, f64) {
+        (
+            self.from.unwrap_or(f64::NEG_INFINITY),
+            self.to.unwrap_or(f64::INFINITY),
+        )
+    }
+}
+
+/// A look at the detection, with settings for it alone.
+#[derive(Facet)]
+struct DetectArg {
+    #[facet(flatten, default)]
+    with: crate::drum_settings::Patch,
+    #[facet(flatten, default)]
+    look: Look,
+}
+
+/// Settings to keep, and where to look with them.
+#[derive(Facet)]
+struct SetArg {
+    #[facet(flatten, default)]
+    with: crate::drum_settings::Patch,
+    /// Back to the defaults first.
+    reset: Option<bool>,
+    #[facet(flatten, default)]
+    look: Look,
+}
+
+/// The settings now, and what they detect.
+#[derive(Facet)]
+struct SetResult {
+    settings: crate::drum_settings::Settings,
+    detected: DetectedOut,
+}
+
+/// One piece's count.
+#[derive(Facet)]
+struct PieceCount {
+    piece: String,
+    hits: u32,
+}
+
+/// One moment, as a slip would see it.
+#[derive(Facet)]
+struct MomentOut {
+    time: f64,
+    bar: i32,
+    beat: f64,
+    pieces: Vec<String>,
+    /// Against its piece's loudest, dB.
+    level_db: f64,
+    target: Option<f64>,
+    /// Its target, ms from it.
+    off_ms: Option<f64>,
+    /// `move`, `stay`, `check` or `fill`.
+    slip: String,
+}
+
+/// What the settings detect, in a span.
+#[derive(Facet)]
+struct DetectedOut {
+    pieces: Vec<PieceCount>,
+    moments: u32,
+    would_move: u32,
+    would_stay: u32,
+    to_check: u32,
+    in_fills: u32,
+    fills: Vec<FillOut>,
+    /// A page of them.
+    shown: Vec<MomentOut>,
+    /// How long it took, ms.
+    took_ms: u32,
+}
+
+fn detected_out(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    settings: &crate::drum_settings::Settings,
+    look: &Look,
+) -> Result<DetectedOut, String> {
+    let started = std::time::Instant::now();
+    let span = (
+        look.from.unwrap_or(f64::NEG_INFINITY),
+        look.to.unwrap_or(f64::INFINITY),
+    );
+    let found = detect(daw, project, settings, span)?;
+    let inside = |t: f64| t >= span.0 && t <= span.1;
+    let tolerance = settings.tolerance_ms / 1_000.0;
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let mut all: Vec<MomentOut> = Vec::new();
+    for (moment, (_, target)) in found.moments.iter().zip(&found.targets) {
+        if !inside(moment.time) {
+            continue;
+        }
+        let held = in_a_fill(daw, project, &found.fills, moment.time);
+        let slip = match (target, settings.fills) {
+            (_, crate::drum_settings::Fills::Skip) if held => "fill",
+            (_, crate::drum_settings::Fills::Only) if !held => "fill",
+            (None, _) => "check",
+            (Some(t), _) if (t - moment.time).abs() <= tolerance => "stay",
+            (Some(_), _) => "move",
+        };
+        let (bar, beat, frac) = daw.time_to_musical(project.clone(), moment.time);
+        all.push(MomentOut {
+            time: moment.time,
+            bar,
+            beat: f64::from(beat) + frac,
+            pieces: moment.pieces.clone(),
+            level_db: (moment.relative_db * 10.0).round() / 10.0,
+            target: *target,
+            off_ms: target.map(|t| ((t - moment.time) * 10_000.0).round() / 10.0),
+            slip: slip.to_owned(),
+        });
+    }
+    let tally = |what: &str| count(all.iter().filter(|m| m.slip == what).count());
+    let offset = usize::try_from(look.offset.unwrap_or(0)).unwrap_or(0);
+    // A page fits in one reply (the MCP's text cap): 300 at most.
+    let limit = usize::try_from(look.limit.unwrap_or(100).min(300)).unwrap_or(100);
+    Ok(DetectedOut {
+        pieces: found
+            .kit
+            .iter()
+            .map(|(name, _, hits)| PieceCount {
+                piece: name.clone(),
+                hits: count(hits.iter().filter(|h| inside(h.time)).count()),
+            })
+            .collect(),
+        moments: count(all.len()),
+        would_move: tally("move"),
+        would_stay: tally("stay"),
+        to_check: tally("check"),
+        in_fills: tally("fill"),
+        fills: found
+            .fills
+            .iter()
+            .map(|f| fill_out(daw, project, f))
+            .collect(),
+        shown: all.into_iter().skip(offset).take(limit).collect(),
+        took_ms: u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX),
+    })
+}
+
+/// The moves `pairs` (hit, target) make, and — unless a dry run — the
+/// slip queued for the window.
+fn judge(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    settings: &crate::drum_settings::Settings,
+    pairs: &[(f64, Option<f64>)],
+    dry: bool,
+) -> SlipResult {
+    let tolerance = settings.tolerance_ms / 1_000.0;
+    let strength = settings.strength;
+    let at = |hit: f64, off: f64, shift: f64| {
+        let (bar, beat, frac) = daw.time_to_musical(project.clone(), hit);
+        SlipMove {
+            time: hit,
+            bar,
+            beat: f64::from(beat) + frac,
+            off_ms: off * 1_000.0,
+            shift_ms: shift * 1_000.0,
+        }
+    };
+    let to_check: Vec<SlipMove> = pairs
+        .iter()
+        .filter(|(_, t)| t.is_none())
+        .take(50)
+        .map(|(h, _)| at(*h, 0.0, 0.0))
+        .collect();
+    let mut moves: Vec<(f64, f64, f64)> = Vec::new();
+    let (mut in_place, mut unmatched) = (0_u32, 0_u32);
+    for (hit, target) in pairs {
+        match target {
+            None => unmatched = unmatched.saturating_add(1),
+            Some(t) if (t - hit).abs() <= tolerance => in_place = in_place.saturating_add(1),
+            Some(t) => moves.push((*hit, t - hit, (t - hit) * strength)),
+        }
+    }
+    let mut offs: Vec<f64> = moves.iter().map(|m| m.1 * 1_000.0).collect();
+    offs.sort_by(|x, y| x.abs().total_cmp(&y.abs()));
+    let mut biggest: Vec<&(f64, f64, f64)> = moves.iter().collect();
+    biggest.sort_by(|x, y| y.1.abs().total_cmp(&x.1.abs()));
+    if !dry && !moves.is_empty() {
+        let us = |s: f64| num_traits::ToPrimitive::to_i64(&(s * 1_000_000.0).round()).unwrap_or(0);
+        queue(Action::SlipDrums {
+            moves: moves
+                .iter()
+                .map(|(h, _, shift)| (us(*h), us(*shift)))
+                .collect(),
+            pre_roll_us: us(settings.lead_ms / 1_000.0),
+            crossfade_us: us(settings.xfade_ms / 1_000.0),
+        });
+    }
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    SlipResult {
+        hits: count(pairs.len()),
+        moved: count(moves.len()),
+        in_place,
+        unmatched,
+        in_fills: 0,
+        median_off_ms: offs.get(offs.len() / 2).copied(),
+        worst_off_ms: offs.last().copied(),
+        applied: !dry && !moves.is_empty(),
+        biggest: biggest
+            .into_iter()
+            .take(30)
+            .map(|(hit, off, shift)| at(*hit, *off, *shift))
+            .collect(),
+        to_check,
+        fills: Vec::new(),
+    }
+}
+
+/// Which audio.
+#[derive(Facet)]
+struct PeaksArg {
+    track: String,
+    from: f64,
+    to: f64,
+    points: Option<u32>,
+    db: Option<bool>,
+}
+
+/// A track's audio as peaks.
+#[derive(Facet)]
+struct PeaksResult {
+    from: f64,
+    /// Seconds a point stands for.
+    step: f64,
+    peaks: Vec<f64>,
+}
+
+fn register_peaks(list: &ActionList) {
+    list.register(&PEAKS, Effect::ReadOnly, |a: PeaksArg| {
+        let (daw, project) = song()?;
+        let guid = resolve(daw, &project, &a.track)?;
+        if a.to <= a.from {
+            return Err("`to` must be after `from`".to_owned());
+        }
+        let points = a.points.unwrap_or(400).clamp(1, 4_000);
+        let n = usize::try_from(points).unwrap_or(400);
+        let mut peaks = crate::fundamental::envelope(daw, &project, &guid, (a.from, a.to), n);
+        if a.db.unwrap_or(false) {
+            for p in &mut peaks {
+                *p = (20.0 * p.max(1e-6).log10() * 10.0).round() / 10.0;
+            }
+        } else {
+            for p in &mut peaks {
+                *p = (*p * 10_000.0).round() / 10_000.0;
+            }
+        }
+        Ok(PeaksResult {
+            from: a.from,
+            step: (a.to - a.from) / f64::from(points),
+            peaks,
+        })
+    });
 }

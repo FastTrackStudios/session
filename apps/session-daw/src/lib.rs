@@ -143,7 +143,9 @@ pub mod open {
 #[cfg(feature = "native")]
 pub mod actions;
 pub mod device_audio;
+pub mod drum_edit;
 pub mod drum_reference;
+pub mod drum_settings;
 pub mod fundamental;
 pub mod gain_stage;
 #[cfg(test)]

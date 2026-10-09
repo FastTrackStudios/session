@@ -41,6 +41,16 @@ pub enum Action {
     /// Quantize the kit under the selected folded rows: cut every mic
     /// before each hit and move the slices onto the grid together.
     QuantizeDrums,
+    /// Slip-edit the whole kit — every folded row of the drums folder —
+    /// by these moves: `(hit, shift)`, microseconds (whole numbers, so
+    /// an action compares). What `DRUMS_SLIP` on the Action List works
+    /// out and hands the window, which carries it out where it is seen.
+    SlipDrums {
+        moves: Vec<(i64, i64)>,
+        /// The cut before each hit and the seams' crossfade, µs.
+        pre_roll_us: i64,
+        crossfade_us: i64,
+    },
     /// Gain stage the session (Shift+G), or with `clear` (Alt+G) put every
     /// staged item back at an item volume of 1 (`crate::gain_stage`).
     GainStage {

@@ -844,6 +844,83 @@ impl ArrangementWidget {
         true
     }
 
+    /// Slip-edit the kit by `moves` (`(hit, shift)`, microseconds): the
+    /// drums folder's folded rows, each with the moves inside its span —
+    /// the whole kit cut and moved as one ([`crate::arrange_edit::Editor::slip`]).
+    /// False when the drums are not folded to a row here.
+    fn slip_drums(&mut self, moves: &[(i64, i64)], cut: crate::arrange_edit::SlipCut) -> bool {
+        // Every audio track under the drums folder — the kit, whatever is
+        // folded or open here, never its Process — and every take on it
+        // that plays: one unit, cut and moved together.
+        let Some(drums) = self
+            .project
+            .tracks
+            .iter()
+            .find(|t| {
+                t.parent_guid.is_none()
+                    && t.is_folder
+                    && t.name.trim().eq_ignore_ascii_case("drums")
+            })
+            .map(|t| t.guid.clone())
+        else {
+            return false;
+        };
+        let mut inside: std::collections::HashSet<String> =
+            std::collections::HashSet::from([drums]);
+        let mut kit: Vec<&daw_proto::Track> = Vec::new();
+        for track in &self.project.tracks {
+            let Some(parent) = track.parent_guid.as_deref() else {
+                continue;
+            };
+            if !inside.contains(parent) || track.name.trim().eq_ignore_ascii_case("process") {
+                continue;
+            }
+            inside.insert(track.guid.clone());
+            if !track.is_folder {
+                kit.push(track);
+            }
+        }
+        let items: Vec<String> = kit
+            .iter()
+            .flat_map(|track| {
+                self.project
+                    .items
+                    .get(&track.guid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| daw_ui::studio::project::on_playing_lane(track, item))
+                    .map(|item| item.guid.clone())
+            })
+            .collect();
+        if items.is_empty() {
+            return false;
+        }
+        let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1_000_000.0;
+        let moves: Vec<(f64, f64)> = moves
+            .iter()
+            .map(|&(hit, shift)| (seconds(hit), seconds(shift)))
+            .collect();
+        let started = std::time::Instant::now();
+        let mut effects = Vec::new();
+        crate::arrange_edit::Editor::slip_items(
+            &mut self.project,
+            &items,
+            &moves,
+            ("Slip edit drums", cut),
+            &mut effects,
+        );
+        tracing::info!(
+            slip.takes = items.len(),
+            slip.moves = moves.len(),
+            slip.edits = effects.len(),
+            slip.ms = started.elapsed().as_millis(),
+            "drums slip-edited"
+        );
+        self.settle(effects);
+        self.dirty.set(true);
+        true
+    }
+
     /// A quantize whose hits have arrived, carried out: every mic cut
     /// before each hit and the slices moved onto the sixteenths.
     fn settle_quantize(&mut self) {
@@ -1540,6 +1617,20 @@ impl ArrangementWidget {
             }
             if action == crate::keys::Action::QuantizeDrums {
                 handled |= self.quantize_drums();
+                continue;
+            }
+            if let crate::keys::Action::SlipDrums {
+                moves,
+                pre_roll_us,
+                crossfade_us,
+            } = &action
+            {
+                let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1e6;
+                let cut = crate::arrange_edit::SlipCut {
+                    pre_roll: seconds(*pre_roll_us),
+                    crossfade: seconds(*crossfade_us),
+                };
+                handled |= self.slip_drums(moves, cut);
                 continue;
             }
             if let crate::keys::Action::GainStage { clear } = action {

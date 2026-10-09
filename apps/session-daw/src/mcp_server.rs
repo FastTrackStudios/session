@@ -27,8 +27,12 @@ Tom 1…) has its close mics, its `Trig` (what says the drum was hit — a recor
 kit's notes; it keys the piece's gate and is never heard) and its `Sample` (what plays from the \
 trigger), with a `Fund` (or the kick's `Sub`) band-pass beside them. DRUMS_HITS lists a drum's \
 hits — run it on the piece's Trig — with times, bars and beats and levels, paged. SESSION_* \
-actions are the window's own: what its keys do. TRACK_SET changes a track's fader, pan, mute or \
-solo.";
+actions are the window's own: what its keys do (SESSION_MODE Edit and SESSION_PHASE edit put the \
+window where every cut shows). TRACK_SET changes a track's fader, pan, mute or solo. Drum editing: \
+the settings are sticky (DRUMS_EDIT_SETTINGS); tune them with DRUMS_EDIT_SET, which answers at once \
+with what they detect, look closer with DRUMS_DETECT over a span, find the fills with DRUMS_FILLS \
+(left as played by a slip unless asked), then DRUMS_SLIP — a dry run first. The drum MIDI is a guide, \
+not the truth: a live drummer plays other fills.";
 
 /// Where it is being served, and the token to reach it, if it wants one.
 #[derive(Clone, Debug)]
@@ -59,7 +63,9 @@ pub fn start() -> Option<Serving> {
         return None;
     }
     // Optional: a token only when one is asked for.
-    let token = std::env::var("FTS_MCP_TOKEN").ok().filter(|t| !t.is_empty());
+    let token = std::env::var("FTS_MCP_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
     let url = format!("http://127.0.0.1:{port}/mcp");
     let server = architect_mcp::Server::new(
         "FastTrackStudio Session",

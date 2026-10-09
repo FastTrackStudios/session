@@ -42,8 +42,8 @@ const ONSET_RATE: f64 = 4_000.0;
 const HIT_UNDER_DB: f64 = 12.0;
 
 /// The least time between two hits, seconds: a spike's own wobble is
-/// not a second hit.
-const REFRACTORY: f64 = 0.06;
+/// not a second hit, and a 16th-note triplet at 160 (62 ms) is.
+const REFRACTORY: f64 = 0.04;
 
 /// After the hit, the spectrum starts here, seconds: past the stick's
 /// click, into the drum's ring.
@@ -114,6 +114,126 @@ pub fn hits_of(
 ) -> Vec<Hit> {
     let mut reader = Reader::new(daw, project);
     let out = detect(&mut reader, track, under_db);
+    reader.close();
+    out
+}
+
+/// The rate a track is read at for drum editing's detectors: the
+/// transient detector's fast envelope attacks in a millisecond, eight
+/// samples of it.
+pub const DETECT_RATE: f64 = 8_000.0;
+
+/// A track's audio for the detectors: each playing item's start and its
+/// samples at [`DETECT_RATE`], through its volume.
+pub type DetectAudio = std::sync::Arc<Vec<(f64, Vec<f32>)>>;
+
+/// What a track's audio was read from: each playing item's place and
+/// gain. The same, and the audio read last is still the audio.
+type Fingerprint = Vec<(String, u64, u64, u64, u64)>;
+
+/// The audio last read for each track, by what it was read from.
+fn audio_cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, (Fingerprint, DetectAudio)>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, (Fingerprint, DetectAudio)>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// `track`'s audio for the detectors — read once, then kept until its
+/// items change, so detecting again with other settings is arithmetic
+/// on what is already here: what makes tweaking them live.
+#[must_use]
+pub fn detect_audio(
+    daw: &daw_standalone::sync::Standalone,
+    project: &ProjectContext,
+    track: &str,
+) -> DetectAudio {
+    let mut reader = Reader::new(daw, project);
+    let items = reader.playing(track);
+    let print: Fingerprint = items
+        .iter()
+        .map(|i| {
+            (
+                i.guid.clone(),
+                i.position.as_seconds().to_bits(),
+                i.length.as_seconds().to_bits(),
+                i.start_offset.as_seconds().to_bits(),
+                i.volume.to_bits(),
+            )
+        })
+        .collect();
+    if let Ok(cache) = audio_cache().lock()
+        && let Some((was, audio)) = cache.get(track)
+        && *was == print
+    {
+        reader.close();
+        return std::sync::Arc::clone(audio);
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for item in &items {
+        let frames = (item.length.as_seconds() * DETECT_RATE).ceil();
+        let Some(frames) = num_traits::ToPrimitive::to_u32(&frames) else {
+            continue;
+        };
+        let samples: Vec<f32> = reader
+            .read(item, 0.0, frames, DETECT_RATE)
+            .iter()
+            .map(|s| num_traits::ToPrimitive::to_f32(&(s * item.volume)).unwrap_or(0.0))
+            .collect();
+        out.push((item.position.as_seconds(), samples));
+    }
+    reader.close();
+    let audio: DetectAudio = std::sync::Arc::new(out);
+    if let Ok(mut cache) = audio_cache().lock() {
+        cache.insert(track.to_owned(), (print, std::sync::Arc::clone(&audio)));
+    }
+    audio
+}
+
+/// `track`'s audio from `from` to `to` (project seconds) as `points`
+/// peaks, from the items the song plays.
+///
+/// Each is the loudest sample in its slice, through the item's volume:
+/// what a waveform shows, as numbers — for reading a hit, a ring, a
+/// stray by eye.
+#[must_use]
+pub fn envelope(
+    daw: &daw_standalone::sync::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    (from, to): (f64, f64),
+    points: usize,
+) -> Vec<f64> {
+    let mut reader = Reader::new(daw, project);
+    let points = points.max(1);
+    let span = (to - from).max(1e-6);
+    let step = span / f64::from(u32::try_from(points).unwrap_or(u32::MAX));
+    // Read finely enough to catch a hit's peak: 8 samples a point, at
+    // least 4 kHz.
+    let rate = (8.0 / step).max(ONSET_RATE);
+    let mut out = vec![0.0_f64; points];
+    for item in reader.playing(track) {
+        let start = item.position.as_seconds();
+        let end = start + item.length.as_seconds();
+        let (a, b) = (from.max(start), to.min(end));
+        if b <= a {
+            continue;
+        }
+        let frames = ((b - a) * rate).ceil();
+        let Some(frames) = num_traits::ToPrimitive::to_u32(&frames) else {
+            continue;
+        };
+        let samples = reader.read(&item, a - start, frames, rate);
+        for (k, v) in samples.iter().enumerate() {
+            let time = a + f64::from(u32::try_from(k).unwrap_or(u32::MAX)) / rate;
+            let at = ((time - from) / step).floor();
+            if let Some(slot) = num_traits::ToPrimitive::to_usize(&at).and_then(|i| out.get_mut(i))
+            {
+                *slot = slot.max((v * item.volume).abs());
+            }
+        }
+    }
     reader.close();
     out
 }

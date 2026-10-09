@@ -923,7 +923,12 @@ impl Arrangement {
             }
             for item in row_items {
                 let band = if lanes_shown {
-                    lane_band(item.fixed_lane.unwrap_or(0).min(lane_count.saturating_sub(1)), lane_count)
+                    lane_band(
+                        item.fixed_lane
+                            .unwrap_or(0)
+                            .min(lane_count.saturating_sub(1)),
+                        lane_count,
+                    )
                 } else {
                     (0.0, 1.0)
                 };

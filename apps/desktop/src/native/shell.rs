@@ -67,6 +67,17 @@ pub fn Shell() -> Element {
     // The mode, for the panels that change with it (the mixer's strips
     // are live-mode strips in Live).
     use_context_provider(|| mode);
+    // A mode asked for on the Action List (`SESSION_MODE`, a model over
+    // MCP): taken up within a tenth of a second.
+    let mut asked = mode;
+    use_future(move || async move {
+        loop {
+            if let Some(next) = session_daw::actions::take_mode_request() {
+                asked.set(next);
+            }
+            architect::platform::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
     // The chart's text editor, beside the chart in the Overview: open in
     // Organize, closed in the other modes, and the button on the chart's
     // corner opens or closes it in any of them. Out here, not per song, so
@@ -118,7 +129,14 @@ pub fn Shell() -> Element {
             async move {
                 loop {
                     let moving = session_daw::engine::moving();
-                    if moving {
+                    // Or an action run on the Action List for the window
+                    // (a model's, over MCP): no event of the window's own
+                    // will come to carry it out, nor to send what it
+                    // edited on to the engine, so frames are asked for.
+                    if moving
+                        || session_daw::actions::window_pending()
+                        || session_daw::actions::frame_owed()
+                    {
                         window.request_redraw();
                     }
                     let wait = if moving { 33 } else { 100 };

@@ -1450,6 +1450,7 @@ impl Editor {
             | Action::Visibility(_)
             | Action::ToggleScene(_)
             | Action::QuantizeDrums
+            | Action::SlipDrums { .. }
             | Action::GainStage { .. }
             | Action::ToggleMixer
             | Action::ToggleEditor
@@ -1671,75 +1672,172 @@ impl Editor {
         if step <= 0.0 {
             return;
         }
+        let moves: Vec<(String, Vec<(f64, f64)>)> = rows
+            .iter()
+            .map(|(row, hits)| {
+                let moves = hits
+                    .iter()
+                    .map(|&hit| {
+                        let to = (hit / step).round() * step;
+                        (hit, (to - hit) * strength.clamp(0.0, 1.0))
+                    })
+                    .collect();
+                (row.clone(), moves)
+            })
+            .collect();
+        Self::slip(project, &moves, "Quantize drums", effects);
+    }
+
+    /// Slip-edit the kit under each of `rows` (a folded row and its
+    /// moves, `(hit, shift)` in seconds): every mic cut a moment before
+    /// each hit, then each slice moved by its hit's shift — on every mic
+    /// at once, so the kit stays in phase with itself; the seams closed
+    /// with short crossfades, a gap filled from the slice's own source
+    /// (`close_seams`). No audio is stretched. One undo step, `label`.
+    pub fn slip(
+        project: &mut Project,
+        rows: &[(String, Vec<(f64, f64)>)],
+        label: &str,
+        effects: &mut Vec<Effect>,
+    ) {
         let from = effects.len();
-        for (row, hits) in rows {
+        for (row, moves) in rows {
             let Some(mics) = targets(project, row, true, effects) else {
                 continue;
             };
-            let spans: Vec<(f64, f64)> = project
-                .items
-                .values()
-                .flatten()
-                .filter(|i| mics.contains(&i.guid))
-                .map(|i| {
-                    let start = i.position.as_seconds();
-                    (start, start + i.length.as_seconds())
-                })
-                .collect();
-            let Some(start) = spans.iter().map(|s| s.0).reduce(f64::min) else {
-                continue;
-            };
-            let end = spans.iter().map(|s| s.1).fold(start, f64::max);
-            // Each mic's slices, by where they start: the mic's own guid
-            // and every piece a cut has made of it.
-            let of_mics = |guid: &str| mics.iter().any(|m| piece_of(guid, m));
-            // Every cut first, in the take's own time, then every move.
-            // Cut and move hit by hit and each move shifts the audio the
-            // next cut is placed on: the error runs down the take.
-            let cuts: Vec<(f64, f64)> = hits
-                .iter()
-                .map(|&hit| {
-                    let to = (hit / step).round() * step;
-                    (
-                        hit - QUANTIZE_PRE_ROLL,
-                        (to - hit) * strength.clamp(0.0, 1.0),
-                    )
-                })
-                .filter(|(at, _)| *at > start + QUANTIZE_PRE_ROLL && *at < end - QUANTIZE_PRE_ROLL)
-                .collect();
-            for &(at, _) in &cuts {
-                let mine: HashSet<String> = project
-                    .items
-                    .values()
-                    .flatten()
-                    .filter(|i| of_mics(&i.guid))
-                    .map(|i| i.guid.clone())
-                    .collect();
-                effects.extend(cut(project, at, &mine).into_iter().map(Effect::Send));
-            }
-            for &(at, shift) in &cuts {
-                if shift.abs() < 1e-4 {
-                    continue;
-                }
-                for item in project.items.values_mut().flatten() {
-                    let pos = item.position.as_seconds();
-                    if of_mics(&item.guid) && (pos - at).abs() < 1e-6 {
-                        let moved = at + shift;
-                        item.position =
-                            daw_proto::primitives::PositionInSeconds::from_seconds(moved);
-                        effects.push(Effect::Send(Edit::MoveItem(item.guid.clone(), moved)));
-                    }
-                }
-            }
-            for mic in &mics {
-                close_seams(project, mic, (start, end), effects);
-            }
+            slip_takes(project, &mics, moves, SlipCut::default(), effects);
         }
         if effects.len() > from {
             project.item_count = project.items.values().map(Vec::len).sum();
-            as_one_step("Quantize drums", from, effects);
+            as_one_step(label, from, effects);
             effects.push(Effect::ReRecord);
         }
+    }
+
+    /// [`Self::slip`] on these items — every take of a kit, however it is
+    /// shown — as one: one undo step, `label`.
+    pub fn slip_items(
+        project: &mut Project,
+        items: &[String],
+        moves: &[(f64, f64)],
+        (label, cut): (&str, SlipCut),
+        effects: &mut Vec<Effect>,
+    ) {
+        let from = effects.len();
+        slip_takes(project, items, moves, cut, effects);
+        if effects.len() > from {
+            project.item_count = project.items.values().map(Vec::len).sum();
+            as_one_step(label, from, effects);
+            effects.push(Effect::ReRecord);
+        }
+    }
+}
+
+/// The slip itself, on `mics` (item guids — a kit's takes) by `moves`:
+/// every take cut a moment before each hit, each slice moved by its
+/// hit's shift, the seams closed.
+///
+/// One pass, whatever the size: the cuts sorted once, each take cut at
+/// every cut inside it left to right, each lane sorted once after. A
+/// piece is named after the take it is cut from and where
+/// (`{take}-split@{t}`), never after the piece before — names that grew
+/// with every cut were what made a whole song's slip take a minute.
+fn slip_takes(
+    project: &mut Project,
+    mics: &[String],
+    moves: &[(f64, f64)],
+    cut: SlipCut,
+    effects: &mut Vec<Effect>,
+) {
+    use daw_proto::primitives::{Duration, PositionInSeconds};
+    let mic_set: HashSet<&str> = mics.iter().map(String::as_str).collect();
+    let (mut start, mut end) = (f64::INFINITY, f64::NEG_INFINITY);
+    for item in project.items.values().flatten() {
+        if mic_set.contains(item.guid.as_str()) {
+            let at = item.position.as_seconds();
+            start = start.min(at);
+            end = end.max(at + item.length.as_seconds());
+        }
+    }
+    if !start.is_finite() {
+        return;
+    }
+    // Every cut first, in the take's own time, then every move. Cut and
+    // move hit by hit and each move shifts the audio the next cut is
+    // placed on: the error runs down the take.
+    let mut cuts: Vec<(f64, f64)> = moves
+        .iter()
+        .map(|&(hit, shift)| (hit - cut.pre_roll, shift))
+        .filter(|(at, _)| *at > start + cut.pre_roll && *at < end - cut.pre_roll)
+        .collect();
+    cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for lane in project.items.values_mut() {
+        if !lane.iter().any(|i| mic_set.contains(i.guid.as_str())) {
+            continue;
+        }
+        let mut added: Vec<daw_proto::Item> = Vec::new();
+        for item in lane
+            .iter_mut()
+            .filter(|i| mic_set.contains(i.guid.as_str()))
+        {
+            let take = item.guid.clone();
+            let take_start = item.position.as_seconds();
+            let take_end = take_start + item.length.as_seconds();
+            let from = cuts.partition_point(|c| c.0 <= take_start + 1e-3);
+            let mut pieces: Vec<daw_proto::Item> = Vec::new();
+            let mut last = item.clone();
+            for &(at, _) in cuts.iter().skip(from).take_while(|c| c.0 < take_end - 1e-3) {
+                let left_start = last.position.as_seconds();
+                let mut right = last.clone();
+                right.guid = format!("{take}-split@{at:.3}");
+                right.position = PositionInSeconds::from_seconds(at);
+                right.length = Duration::from_seconds(take_end - at);
+                right.fade_in_length = Duration::from_seconds(0.0);
+                // As far into the source as the cut is into the piece: the
+                // right half plays on from where the left stopped.
+                right.start_offset =
+                    Duration::from_seconds(last.start_offset.as_seconds() + (at - left_start));
+                last.length = Duration::from_seconds(at - left_start);
+                last.fade_out_length = Duration::from_seconds(0.0);
+                effects.push(Effect::Send(Edit::SplitItem(
+                    last.guid.clone(),
+                    at,
+                    right.guid.clone(),
+                )));
+                pieces.push(std::mem::replace(&mut last, right));
+            }
+            pieces.push(last);
+            let mut pieces = pieces.into_iter();
+            if let Some(first) = pieces.next() {
+                *item = first;
+            }
+            added.extend(pieces);
+        }
+        lane.extend(added);
+        lane.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
+    }
+    project.item_count = project.items.values().map(Vec::len).sum();
+    // Each piece that starts at a cut, moved by its hit's shift.
+    let shift_at = |pos: f64| {
+        let at = cuts.partition_point(|c| c.0 < pos - 1e-6);
+        cuts.get(at)
+            .filter(|c| (c.0 - pos).abs() < 1e-6)
+            .map(|c| c.1)
+    };
+    let of_mics = |guid: &str| mics.iter().any(|m| piece_of(guid, m));
+    for item in project.items.values_mut().flatten() {
+        let pos = item.position.as_seconds();
+        if let Some(shift) = shift_at(pos)
+            && shift.abs() >= 1e-4
+            && of_mics(&item.guid)
+        {
+            let landing = pos + shift;
+            item.position = PositionInSeconds::from_seconds(landing);
+            effects.push(Effect::Send(Edit::MoveItem(item.guid.clone(), landing)));
+        }
+    }
+    for mic in mics {
+        close_seams(project, mic, (start, end), cut.crossfade, effects);
     }
 }
 
@@ -1954,11 +2052,12 @@ fn close_seams(
     project: &mut Project,
     mic: &str,
     (from, to): (f64, f64),
+    crossfade: f64,
     effects: &mut Vec<Effect>,
 ) {
     use daw_proto::primitives::{Duration, PositionInSeconds};
     let fade = if crate::options::AUTO_CROSSFADE.get() {
-        QUANTIZE_CROSSFADE
+        crossfade
     } else {
         0.0
     };
@@ -2035,6 +2134,26 @@ fn close_seams(
 
 /// The crossfade across a quantize's seams, with auto-crossfade on.
 pub const QUANTIZE_CROSSFADE: f64 = 0.005;
+
+/// Where a slip cuts and how its seams are joined — Perfect Timing!'s
+/// Lead and Xfade, in seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlipCut {
+    /// How far before a hit the cut is ([`QUANTIZE_PRE_ROLL`]).
+    pub pre_roll: f64,
+    /// The crossfade across each seam, with auto-crossfade on
+    /// ([`QUANTIZE_CROSSFADE`]).
+    pub crossfade: f64,
+}
+
+impl Default for SlipCut {
+    fn default() -> Self {
+        Self {
+            pre_roll: QUANTIZE_PRE_ROLL,
+            crossfade: QUANTIZE_CROSSFADE,
+        }
+    }
+}
 
 /// How far before a hit a quantize cuts: the stick's attack is in the
 /// slice it moves, not left behind in the one before.
@@ -3439,10 +3558,12 @@ mod tests {
         assert_eq!(
             moved,
             vec![
+                // Each piece named after its take and where it was cut,
+                // never after the piece before it.
                 ("in1-split@3.015".to_owned(), 2.995),
-                ("in1-split@3.015-split@4.485".to_owned(), 4.495),
+                ("in1-split@4.485".to_owned(), 4.495),
                 ("out1-split@3.015".to_owned(), 2.995),
-                ("out1-split@3.015-split@4.485".to_owned(), 4.495),
+                ("out1-split@4.485".to_owned(), 4.495),
             ]
         );
         // The slice plays on from where the one before it was cut.
@@ -3466,12 +3587,12 @@ mod tests {
         // meet it; the slice moved later reaches back over its gap.
         assert!(trims.contains(&("in1".to_owned(), 1.0)), "{trims:?}");
         assert!(
-            trims.contains(&("in1-split@3.015-split@4.485".to_owned(), 1.55)),
+            trims.contains(&("in1-split@4.485".to_owned(), 1.55)),
             "{trims:?}"
         );
         assert!(
             sent.iter().any(|e| matches!(e, Edit::SlipItem(g, off)
-                if g == "in1-split@3.015-split@4.485" && (off - 2.45).abs() < 1e-9)),
+                if g == "in1-split@4.485" && (off - 2.45).abs() < 1e-9)),
             "and plays from as far back in its source"
         );
         let fades_in = sent
