@@ -144,7 +144,9 @@ pub fn arrangement(
     if let Some((index, zone)) = scene.item_at(view, row, x - rail_x - panel_w, content_y) {
         use crate::arrangement::ItemZone as Z;
         let context = match zone {
-            Z::Body => Context::MediaItemBottomHalf,
+            // The dial is the widget's to turn; to the mouse map it is
+            // the body it sits on.
+            Z::Body | Z::Volume => Context::MediaItemBottomHalf,
             Z::LeftEdge => Context::MediaItemLeftEdge,
             Z::RightEdge => Context::MediaItemRightEdge,
             Z::FadeIn | Z::FadeOut => Context::MediaItemFade,

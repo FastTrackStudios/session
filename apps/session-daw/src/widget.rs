@@ -242,6 +242,22 @@ pub(crate) fn mods(from: Modifiers) -> crate::mousemap::Mods {
 }
 
 /// A knob under the pointer, mid-turn.
+struct ItemTurn {
+    index: usize,
+    from: f64,
+    was: f64,
+    now: f64,
+}
+
+impl ItemTurn {
+    /// Quieter or louder for every pixel the pointer has gone down or up
+    /// since the press: a quarter dB a pixel, a twentieth with Ctrl.
+    fn turn(&mut self, y: f64, fine: bool) {
+        let per_px = if fine { 0.05 } else { 0.25 };
+        self.now = (self.from - y).mul_add(per_px, self.was).clamp(-60.0, 24.0);
+    }
+}
+
 struct Turn {
     spot: crate::pointer::RowSpot,
     /// Where the press landed, in the widget's own coordinates.
@@ -467,6 +483,9 @@ pub struct ArrangementWidget {
     /// the deltas, so a slow drag and a fast one over the same distance
     /// would land somewhere different.
     turning: Option<Turn>,
+    /// An item's volume dial being turned: which item, the pointer's
+    /// height at the press, the dB it was at and is at now.
+    item_turn: Option<ItemTurn>,
     /// What the widget wants done to the session, for the window to
     /// pick up and hand to the engine.
     ///
@@ -605,6 +624,7 @@ impl ArrangementWidget {
             scene_before: None,
             last_name: None,
             turning: None,
+            item_turn: None,
             edits: Rc::new(RefCell::new(Vec::new())),
             controls: None,
             was: at_rest,
@@ -1718,6 +1738,25 @@ impl ArrangementWidget {
         self.edits.borrow_mut().push(edit);
     }
 
+    /// An item's volume set from its dial, `db`: in the widget's own
+    /// project, sent to the engine, and the picture cut again (the
+    /// waveform is drawn through it).
+    fn set_item_volume(&mut self, index: usize, db: f64) {
+        let Some(guid) = self.scene.item(index).map(|i| i.guid.clone()) else {
+            return;
+        };
+        let volume = 10.0_f64.powf(db / 20.0);
+        for item in self.project.items.values_mut().flatten() {
+            if item.guid == guid {
+                item.volume = volume;
+            }
+        }
+        self.edits
+            .borrow_mut()
+            .push(crate::engine::Edit::SetItemVolume(guid, volume));
+        self.recut();
+    }
+
     /// Apply an edit to the widget's own copy of the tracks.
     ///
     /// Only the ones a control can make, and only the fields a control
@@ -2091,7 +2130,7 @@ impl ArrangementWidget {
         match zone {
             ItemZone::FadeIn => Edge::FadeIn,
             ItemZone::FadeOut => Edge::FadeOut,
-            ItemZone::Body => Edge::Plain,
+            ItemZone::Body | ItemZone::Volume => Edge::Plain,
             ItemZone::LeftEdge | ItemZone::RightEdge => {
                 let Some(item) = self.scene.item(index) else {
                     return Edge::Plain;
@@ -2461,6 +2500,11 @@ impl ArrangementWidget {
                         .editor
                         .moved(Some(seconds), view.pps, bpm, mods(e.mods));
                 }
+                if let Some(turn) = self.item_turn.as_mut() {
+                    turn.turn(y, e.mods.contains(Modifiers::CONTROL));
+                    self.dirty.set(true);
+                    return true;
+                }
                 // A knob mid-turn keeps the pointer: the hand can leave
                 // the control and the drag goes on, which is what makes
                 // a fine adjustment possible at all.
@@ -2483,6 +2527,23 @@ impl ArrangementWidget {
                 // are the editor's.
                 if spot.is_none() {
                     let hit = self.hit(x, y);
+                    // An item's volume dial: turned here, not by the editor.
+                    if let Some(crate::hit::Target::Item {
+                        index,
+                        zone: crate::arrangement::ItemZone::Volume,
+                        ..
+                    }) = hit.map(|h| h.target)
+                        && let Some(volume) = self.scene.item(index).and_then(|i| i.volume)
+                    {
+                        let db = 20.0 * volume.max(1e-9).log10();
+                        self.item_turn = Some(ItemTurn {
+                            index,
+                            from: y,
+                            was: db,
+                            now: db,
+                        });
+                        return true;
+                    }
                     let mut effects = Vec::new();
                     let took = self
                         .editor
@@ -2526,6 +2587,10 @@ impl ArrangementWidget {
                 // every move of it, so there is nothing to do on
                 // release but stop — and NOT to treat it as a click,
                 // which would re-fire the control it was turning.
+                if let Some(turn) = self.item_turn.take() {
+                    self.set_item_volume(turn.index, turn.now);
+                    return true;
+                }
                 if self.turning.take().is_some() {
                     self.pointer.release();
                     self.pointer.hover(self.spot_at(x, y));
@@ -2702,6 +2767,15 @@ impl ArrangementWidget {
             lanes_at,
             self.hovered_item,
             self.editor.fade_in_flight(),
+        );
+        crate::arrangement::volume_overlay(
+            &mut out,
+            &self.palette,
+            &self.scene,
+            view,
+            lanes_at,
+            self.hovered_item,
+            self.item_turn.as_ref().map(|t| (t.index, t.now)),
         );
         crate::arrangement::selection_overlay(
             &mut out,
@@ -3402,6 +3476,58 @@ mod tests {
         assert!(widget.visibility(&Visibility::HideAll));
         assert!(widget.visibility(&Visibility::ShowAll));
         assert_eq!(names_shown(&widget), names);
+    }
+
+    /// An item's volume dial: found where the hit test says it is, turned
+    /// up by a drag (a quarter dB a pixel), and on the release the item's
+    /// volume is set — in the widget's project and sent to the engine.
+    #[test]
+    fn an_items_dial_turns_its_volume() {
+        let mut widget = widget();
+        let mut project = daw_ui::studio::project::Project::default();
+        project.items.insert(
+            "t0".into(),
+            vec![daw_proto::Item {
+                guid: "i0".into(),
+                track_guid: "t0".into(),
+                position: daw_proto::primitives::PositionInSeconds::from_seconds(0.0),
+                length: daw_proto::primitives::Duration::from_seconds(4.0),
+                volume: 10.0_f64.powf(6.0 / 20.0),
+                ..daw_proto::Item::default()
+            }],
+        );
+        let rows = widget.rows.clone();
+        widget.restructure(project, rows);
+        let dial = (0..1600)
+            .step_by(2)
+            .flat_map(|x| {
+                (0..300)
+                    .step_by(2)
+                    .map(move |y| (f64::from(x), f64::from(y)))
+            })
+            .find(|&(x, y)| {
+                matches!(
+                    widget.hit(x, y).map(|h| h.target),
+                    Some(crate::hit::Target::Item {
+                        zone: crate::arrangement::ItemZone::Volume,
+                        ..
+                    })
+                )
+            })
+            .expect("the item's dial");
+        let (x, y) = dial;
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        widget.handle_event(&UiEvent::PointerMove(pointer(x, y - 40.0)));
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y - 40.0)));
+        let sent = widget.edits.borrow().clone();
+        let Some(Edit::SetItemVolume(guid, volume)) = sent.last() else {
+            panic!("{sent:?}");
+        };
+        assert_eq!(guid, "i0");
+        let db = 20.0 * volume.log10();
+        assert!((db - 16.0).abs() < 0.01, "{db} dB");
+        let item = widget.project.items["t0"][0].volume;
+        assert!((item - volume).abs() < 1e-9, "the widget's own copy too");
     }
 
     /// A mute, solo or rename made in the arrangement outlives the rows

@@ -238,6 +238,8 @@ pub enum Edit {
     /// Put an item on a fixed lane (REAPER 7's comping lanes): a comp's
     /// piece onto the comp lane.
     SetItemLane(String, u32),
+    /// An item's volume (linear): its dial, or gain staging.
+    SetItemVolume(String, f64),
     DeleteItem(String),
 }
 
@@ -294,6 +296,7 @@ impl Edit {
             | Self::SplitItem(g, ..)
             | Self::CopyItem(g, ..)
             | Self::SetItemLane(g, _)
+            | Self::SetItemVolume(g, _)
             | Self::SlipItem(g, _)
             | Self::DeleteItem(g) => g,
         }
@@ -333,6 +336,7 @@ impl Edit {
                 | Self::SplitItem(..)
                 | Self::CopyItem(..)
                 | Self::SetItemLane(..)
+                | Self::SetItemVolume(..)
                 | Self::SlipItem(..)
                 | Self::DeleteItem(_)
         )
@@ -1211,6 +1215,7 @@ async fn apply(edit: &Edit) {
                 Err(error) => Err(error),
             },
             Edit::SetItemLane(_, lane) => item.set_fixed_lane(*lane).await,
+            Edit::SetItemVolume(_, volume) => item.set_volume(*volume).await,
             Edit::DeleteItem(_) => item.delete().await,
             _ => Ok(()),
         };
@@ -1334,6 +1339,7 @@ async fn apply(edit: &Edit) {
         | Edit::SplitItem(..)
         | Edit::CopyItem(..)
         | Edit::SetItemLane(..)
+        | Edit::SetItemVolume(..)
         | Edit::SlipItem(..)
         | Edit::DeleteItem(_)
         // Already handled above, where they did not need a track.

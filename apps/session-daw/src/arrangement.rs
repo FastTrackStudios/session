@@ -922,12 +922,11 @@ impl Arrangement {
                 // children's audio as one envelope, their notes over it.
                 let folded = folded_contents(project, &by_guid, &roles, previews, &item.guid);
                 let is_folder = folded.is_some();
-                let held = folded
-                    .unwrap_or_else(|| Held {
-                        notes: previews.get(&item.guid),
-                        wave: previews.wave(&item.guid),
-                        layers: Vec::new(),
-                    });
+                let held = folded.unwrap_or_else(|| Held {
+                    notes: previews.get(&item.guid),
+                    wave: previews.wave(&item.guid),
+                    layers: Vec::new(),
+                });
                 let (notes, wave) = (held.notes, held.wave);
                 // Audio: the take's own peaks, once they have been read —
                 // plain until then, for the same reason.
@@ -995,6 +994,9 @@ impl Arrangement {
                     x0,
                     x1,
                     fades,
+                    // A shut folder's row stands for many items: no one
+                    // item volume to show or turn.
+                    volume: (!is_folder).then_some(item.volume),
                 });
                 if let Some(name) = project.title(item) {
                     titles.push(Title {
@@ -1073,6 +1075,21 @@ impl Arrangement {
             let x0 = item.x0.mul_add(scale, -view.scroll_x);
             let x1 = item.x1.mul_add(scale, -view.scroll_x);
             if x < x0 - GRAB || x > x1 + GRAB {
+                continue;
+            }
+            // The dial first: it sits in the corner the fade-out handle
+            // shares, and is the smaller target.
+            // At the right edge of what is on screen of it: a take that
+            // runs the song has its corner far off to the right.
+            if item.volume.is_some()
+                && let Some((cx, cy, r)) = item_dial(
+                    x0,
+                    x1.min(view.width - view.panel_w - DIAL_EDGE),
+                    height * view.zoom_y,
+                )
+                && (x - cx).hypot((content_y - top).mul_add(view.zoom_y, -cy)) <= r + 2.0
+            {
+                found = Some((index, ItemZone::Volume));
                 continue;
             }
             let in_handle_band = content_y - top <= HANDLE_BAND * view.zoom_y.max(0.1) + 2.0;
@@ -1267,6 +1284,8 @@ pub enum ItemZone {
     FadeIn,
     /// The fade-out's handle: the top corner where the fade starts.
     FadeOut,
+    /// The item volume dial in the top right corner ([`item_dial`]).
+    Volume,
 }
 
 /// An item as the hit test and the handles see it.
@@ -1288,6 +1307,9 @@ pub struct ItemBox {
     pub x0: f64,
     pub x1: f64,
     pub fades: Fades,
+    /// Its item volume (linear), shown and turned on its dial
+    /// ([`item_dial`]). `None` for a shut folder's row.
+    pub volume: Option<f64>,
 }
 
 /// An item's two fades: how long, and what shape.
@@ -1437,6 +1459,126 @@ pub fn fade_overlay(
     ] {
         let r = Rect::new(x - 3.0, top, x + 3.0, top + 6.0);
         painter.fill(Fill::NonZero, Affine::IDENTITY, palette.text, None, &r);
+    }
+}
+
+/// How far in from the lanes' right edge a dial on an item that runs off
+/// it is kept: clear of the scrollbar.
+const DIAL_EDGE: f64 = 10.0;
+
+/// Where an item's volume dial sits, in pixels: REAPER's corner knob.
+///
+/// Its centre and radius, from the item's left and right edges and its
+/// lane's height, the centre measured from the lane's top. `None` for an
+/// item too small to hold one.
+#[must_use]
+pub fn item_dial(x0: f64, x1: f64, lane_h: f64) -> Option<(f64, f64, f64)> {
+    const R: f64 = 6.0;
+    const MARGIN: f64 = 3.0;
+    // Room for four radii across and a dial with its margins down.
+    const WIDE: f64 = 30.0;
+    const TALL: f64 = 18.0;
+    let fits = x1 - x0 >= WIDE && lane_h >= TALL;
+    fits.then_some((x1 - MARGIN - R, MARGIN + R, R))
+}
+
+/// The angle a dial points at for `db`: 0 dB straight up, ±24 dB at
+/// ±135°, quieter than −24 at the stop. Radians, clockwise from up.
+#[must_use]
+pub fn dial_angle(db: f64) -> f64 {
+    const SWEEP: f64 = 135.0;
+    (db / 24.0).clamp(-1.0, 1.0) * SWEEP.to_radians()
+}
+
+/// The item volume dials, in pixel space over the lanes.
+///
+/// On every item whose volume is not 0 dB — a gain-staged kit shows its
+/// gains — and on the one under the pointer; the one being turned at its
+/// new value. Only what is on screen.
+pub fn volume_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    hovered: Option<usize>,
+    turning: Option<(usize, f64)>,
+) {
+    use vello::kurbo::{Arc, Circle, Line, Point, Stroke};
+    let (ox, oy) = origin;
+    let x_of = |t: f64| t.mul_add(view.pps, ox);
+    for (index, item) in scene.items.iter().enumerate() {
+        let Some(volume) = item.volume else { continue };
+        let db = turning
+            .filter(|(at, _)| *at == index)
+            .map_or_else(|| 20.0 * volume.max(1e-9).log10(), |(_, db)| db);
+        let shown =
+            db.abs() > 0.05 || hovered == Some(index) || turning.is_some_and(|(at, _)| at == index);
+        if !shown {
+            continue;
+        }
+        let (x0, x1) = (x_of(item.x0), x_of(item.x1));
+        if x1 < 0.0 || x0 > view.width {
+            continue;
+        }
+        let Some((top, height)) = scene.row_box(item.row) else {
+            continue;
+        };
+        let top = top.mul_add(view.zoom_y, oy);
+        if top > view.height || height.mul_add(view.zoom_y, top) < 0.0 {
+            continue;
+        }
+        let Some((cx, cy, r)) = item_dial(
+            x0.max(0.0),
+            x1.min(view.width - DIAL_EDGE),
+            height * view.zoom_y,
+        ) else {
+            continue;
+        };
+        let centre = Point::new(cx, top + cy);
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            palette.surface.multiply_alpha(0.85),
+            None,
+            &Circle::new(centre, r),
+        );
+        let track = Arc::new(
+            centre,
+            (r - 1.5, r - 1.5),
+            (-225.0_f64).to_radians(),
+            270.0_f64.to_radians(),
+            0.0,
+        );
+        painter.stroke(
+            &Stroke::new(1.0),
+            Affine::IDENTITY,
+            palette.text_faint,
+            None,
+            &track,
+        );
+        // From 0 dB (up) to the value: the gain at a glance.
+        let up = -std::f64::consts::FRAC_PI_2;
+        let angle = dial_angle(db);
+        let value = Arc::new(centre, (r - 1.5, r - 1.5), up, angle, 0.0);
+        painter.stroke(
+            &Stroke::new(1.8),
+            Affine::IDENTITY,
+            palette.text,
+            None,
+            &value,
+        );
+        let tip = Point::new(
+            (r - 2.0).mul_add((up + angle).cos(), cx),
+            (r - 2.0).mul_add((up + angle).sin(), top + cy),
+        );
+        painter.stroke(
+            &Stroke::new(1.2),
+            Affine::IDENTITY,
+            palette.text,
+            None,
+            &Line::new(centre, tip),
+        );
     }
 }
 
@@ -2966,5 +3108,28 @@ mod item_color_tests {
         );
         let plain = daw_proto::Item::default();
         assert_eq!(super::item_color(&plain, track, false), track);
+    }
+}
+
+#[cfg(test)]
+mod dial_tests {
+    use super::{dial_angle, item_dial};
+
+    #[test]
+    fn a_dial_fits_in_the_top_right_corner_of_an_item_that_holds_one() {
+        let (cx, cy, r) = item_dial(100.0, 300.0, 40.0).expect("room for one");
+        assert!(cx + r < 300.0 && cx - r > 100.0 && cy - r > 0.0);
+        assert!(item_dial(100.0, 110.0, 40.0).is_none(), "too narrow");
+        assert!(item_dial(100.0, 300.0, 8.0).is_none(), "too short");
+    }
+
+    #[test]
+    fn zero_db_points_up_and_the_ends_stop() {
+        assert!(dial_angle(0.0).abs() < 1e-12);
+        assert!((dial_angle(24.0) - 135_f64.to_radians()).abs() < 1e-12);
+        assert!(
+            (dial_angle(-96.0) + 135_f64.to_radians()).abs() < 1e-12,
+            "the stop"
+        );
     }
 }
