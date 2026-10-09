@@ -1034,7 +1034,7 @@ impl Applier {
                     next
                 };
                 let Some(edit) = next else { break };
-                apply(&edit).await;
+                apply_reported(&edit).await;
             }
         });
     }
@@ -1059,7 +1059,7 @@ impl Applier {
                         queue.push(more);
                     }
                     while let Some(edit) = queue.pop() {
-                        runtime.block_on(apply(&edit));
+                        runtime.block_on(apply_reported(&edit));
                     }
                 }
             })
@@ -1134,9 +1134,27 @@ async fn split(item: &daw::rpc::ItemHandle, split_at: f64, new_guid: &str) -> da
 #[must_use]
 pub fn apply_now(edit: &Edit) -> bool {
     crate::open::runtime().is_some_and(|runtime| {
-        runtime.block_on(apply(edit));
+        runtime.block_on(apply_reported(edit));
         true
     })
+}
+
+/// One edit, against the engine — then said to the Action List, so
+/// whoever watches the app (a model, through `architect-mcp`'s `watch`)
+/// hears the session change as it changes.
+async fn apply_reported(edit: &Edit) {
+    apply(edit).await;
+    #[cfg(feature = "native")]
+    if !matches!(edit, Edit::BeginUndo(_) | Edit::EndUndo(_)) {
+        let topic = if edit.is_ruler() {
+            "markers"
+        } else if edit.is_item() {
+            "items"
+        } else {
+            "tracks"
+        };
+        crate::actions::list().changed(topic, edit.guid());
+    }
 }
 
 /// One edit, against the engine.

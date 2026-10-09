@@ -140,11 +140,15 @@ pub mod open {
         None
     }
 }
+#[cfg(feature = "native")]
+pub mod actions;
 pub mod device_audio;
 pub mod fundamental;
 pub mod gain_stage;
 #[cfg(test)]
 mod hook_rules;
+#[cfg(feature = "native")]
+pub mod mcp_server;
 pub mod mix_chains;
 pub mod mix_export;
 pub mod overlay;

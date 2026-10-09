@@ -1506,6 +1506,18 @@ impl ArrangementWidget {
             // changed, and the key must not also do anything else.
             return self.keys.is_pending();
         }
+        // A key is one more caller of the Action List: what it asks for
+        // runs there, and comes back here to be done — the path a model's
+        // action takes too.
+        #[cfg(feature = "native")]
+        let actions = crate::actions::through_list(actions);
+        self.apply_actions(actions)
+    }
+
+    /// The window's actions carried out: what a key asked for, or what
+    /// was run on the Action List (`crate::actions`). Whether any did
+    /// anything.
+    fn apply_actions(&mut self, actions: Vec<crate::keys::Action>) -> bool {
         let mut effects = Vec::new();
         let mut handled = false;
         let mut tracks = self.tracks.clone();
@@ -1909,6 +1921,18 @@ fn unread_midi(
         .collect()
 }
 
+/// Whether the window has actions waiting from the Action List.
+#[cfg(feature = "native")]
+fn window_queued() -> bool {
+    crate::actions::window_pending()
+}
+
+/// No Action List without the engine: nothing ever waits.
+#[cfg(not(feature = "native"))]
+const fn window_queued() -> bool {
+    false
+}
+
 impl Widget for ArrangementWidget {
     /// Whether the last event changed the picture.
     ///
@@ -1920,6 +1944,7 @@ impl Widget for ArrangementWidget {
         // `dirty` — nothing is going to set it. Nor can a read-back the
         // engine asked for.
         self.dirty.get()
+            || window_queued()
             || self.quantize_ready()
             || self.stage_ready()
             || crate::studio::resync_pending()
@@ -2017,6 +2042,12 @@ impl ArrangementWidget {
     /// The picture at `width` x `height`: what Blitz's `Widget::paint`
     /// returns, and what the web host draws into its canvas.
     pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
+        // What was run on the Action List for the window, from elsewhere
+        // than a key (a model, a menu): done before the picture is.
+        #[cfg(feature = "native")]
+        if crate::actions::window_pending() {
+            let _ = self.apply_actions(crate::actions::take_window());
+        }
         self.settle_quantize();
         self.settle_stage();
         self.dirty.set(false);

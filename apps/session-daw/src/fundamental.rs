@@ -94,12 +94,45 @@ pub fn find(
     peak(&spectrum?, range)
 }
 
+/// One hit: when, and how hard.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hit {
+    /// Project seconds.
+    pub time: f64,
+    /// Its peak, dBFS.
+    pub level_db: f64,
+}
+
+/// Every hit on `track` — a drum's trigger, ideally: one spike a hit —
+/// down to `under_db` under the loudest, in project time.
+#[must_use]
+pub fn hits_of(
+    daw: &daw_standalone::sync::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    under_db: f64,
+) -> Vec<Hit> {
+    let mut reader = Reader::new(daw, project);
+    let out = detect(&mut reader, track, under_db);
+    reader.close();
+    out
+}
+
 /// The trigger's strong hits, project seconds.
 fn hits(reader: &mut Reader<'_>, trigger: &str) -> Vec<f64> {
+    detect(reader, trigger, HIT_UNDER_DB)
+        .iter()
+        .map(|h| h.time)
+        .collect()
+}
+
+/// The hits on `track` down to `under_db` under its loudest: a spike over
+/// the threshold [`REFRACTORY`] after the last, at its peak within that.
+fn detect(reader: &mut Reader<'_>, track: &str, under_db: f64) -> Vec<Hit> {
     // Each item's envelope, at the onset rate, then one threshold over
     // the lot: a hit is a hit wherever in the song it is.
     let mut items: Vec<(f64, Vec<f64>)> = Vec::new();
-    for item in reader.playing(trigger) {
+    for item in reader.playing(track) {
         let frames = (item.length.as_seconds() * ONSET_RATE).ceil();
         let Some(frames) = num_traits::ToPrimitive::to_u32(&frames) else {
             continue;
@@ -107,7 +140,7 @@ fn hits(reader: &mut Reader<'_>, trigger: &str) -> Vec<f64> {
         let samples = reader.read(&item, 0.0, frames, ONSET_RATE);
         items.push((
             item.position.as_seconds(),
-            samples.iter().map(|s| s.abs()).collect(),
+            samples.iter().map(|s| (s * item.volume).abs()).collect(),
         ));
     }
     let loudest = items
@@ -117,18 +150,36 @@ fn hits(reader: &mut Reader<'_>, trigger: &str) -> Vec<f64> {
     if loudest <= 0.0 {
         return Vec::new();
     }
-    let threshold = loudest * 10_f64.powf(-HIT_UNDER_DB / 20.0);
-    let mut out = Vec::new();
+    let threshold = loudest * 10_f64.powf(-under_db / 20.0);
+    let mut out: Vec<Hit> = Vec::new();
     for (start, envelope) in items {
         let mut last = f64::NEG_INFINITY;
+        // The hit still taking its peak, by its place in `out`.
+        let mut open: Option<usize> = None;
+        let mut peak = 0.0_f64;
         let mut at = 0.0;
         for value in envelope {
             let time = start + at;
             at += 1.0 / ONSET_RATE;
-            if value >= threshold && time - last >= REFRACTORY {
-                out.push(time);
-                last = time;
+            if time - last < REFRACTORY {
+                peak = peak.max(value);
+                continue;
             }
+            if let Some(hit) = open.take().and_then(|i| out.get_mut(i)) {
+                hit.level_db = 20.0 * peak.max(1e-12).log10();
+            }
+            if value >= threshold {
+                open = Some(out.len());
+                out.push(Hit {
+                    time,
+                    level_db: 0.0,
+                });
+                last = time;
+                peak = value;
+            }
+        }
+        if let Some(hit) = open.and_then(|i| out.get_mut(i)) {
+            hit.level_db = 20.0 * peak.max(1e-12).log10();
         }
     }
     out

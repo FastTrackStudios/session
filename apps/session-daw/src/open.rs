@@ -67,7 +67,9 @@ static RUNTIME: OnceLock<&'static tokio::runtime::Runtime> = OnceLock::new();
 /// Parse the project, stand up its backend, install the facade, and
 /// start audio. Returns once the panels have something to read.
 pub fn open_and_serve(path: &Path) -> eyre::Result<Opened> {
-    open_with_audio(path, true, Media::All)
+    let opened = open_with_audio(path, true, Media::All)?;
+    serve_actions();
+    Ok(opened)
 }
 
 /// [`open_and_serve`] (with `audio`) or [`open_silent`], choosing when the
@@ -78,7 +80,24 @@ pub fn open_and_serve(path: &Path) -> eyre::Result<Opened> {
 ///
 /// As [`open_and_serve`].
 pub fn open_first_with(path: &Path, audio: bool, media: Media) -> eyre::Result<Opened> {
-    open_with_audio(path, audio, media)
+    let opened = open_with_audio(path, audio, media)?;
+    if audio {
+        serve_actions();
+    }
+    Ok(opened)
+}
+
+/// The window's Action List served to a model (`crate::mcp_server`), once
+/// a song is open in a window that plays — not for a renderer or a test,
+/// which open silent.
+fn serve_actions() {
+    #[cfg(feature = "native")]
+    {
+        static STARTED: OnceLock<()> = OnceLock::new();
+        STARTED.get_or_init(|| {
+            let _ = crate::mcp_server::start();
+        });
+    }
 }
 
 /// The same, without opening an audio device.
