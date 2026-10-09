@@ -30,6 +30,8 @@
 //!   the mixer docked and the panel compact. `FTS_BLITZ_FPS=1` puts the
 //!   widget's frame-time graph over it.
 //!
+//! `FTS_BLITZ_OPEN=Drums,Kick` (or `*`) opens those folders first.
+//!
 //! The session is laid out by `FTS_BLITZ_SCENE` (`drum-mixing` by
 //! default, the app's), and prepared first if `FTS_BLITZ_ORGANIZE`,
 //! `FTS_BLITZ_CHART` or `FTS_BLITZ_GUIDE` ask — see
@@ -238,6 +240,21 @@ fn open(path: &std::path::Path, audio: bool) -> StudioSession {
         Err(_) => SCENE,
     };
     let raw = session_daw::studio::fetch().expect("read the project back");
+    // `FTS_BLITZ_OPEN=Drums,Kick` (or `*`): those folders opened, as a
+    // click on each would — the shot of what is under a folder that
+    // starts shut.
+    if let Ok(names) = std::env::var("FTS_BLITZ_OPEN") {
+        let names: Vec<&str> = names.split(',').map(str::trim).collect();
+        for track in raw.tracks.iter().filter(|t| t.is_folder) {
+            if names.contains(&"*")
+                || names
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case(track.name.trim()))
+            {
+                session_daw::folds::toggle(&track.guid, false);
+            }
+        }
+    }
     let planner = session_daw::studio::Planner {
         raw: Arc::new(raw),
         scene: Some(scene),

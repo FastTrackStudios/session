@@ -567,6 +567,24 @@ pub fn steps(
         let hidden = target.hide_captures()?;
         let buses = target.hide_buses()?;
         let triggers = target.mute_triggers()?;
+        // The recorded tracks at the reference kit's levels, as item
+        // volume: nothing rendered, the audio as it was recorded.
+        let staged = crate::gain_stage::stage(daw, &project)?;
+        tracing::info!(
+            staged = staged.staged.len(),
+            silent = ?staged.silent,
+            toms = ?staged.toms,
+            "prepare: gain staged"
+        );
+        for each in &staged.staged {
+            tracing::debug!(
+                track = %each.name,
+                role = ?each.role,
+                level_db = each.level,
+                gain_db = each.gain_db,
+                "prepare: staged"
+            );
+        }
         tracing::info!(
             hidden = ?hidden,
             buses = ?buses,

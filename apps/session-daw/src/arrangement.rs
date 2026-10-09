@@ -920,7 +920,9 @@ impl Arrangement {
                 //
                 // A shut folder's item holds what is under it: the
                 // children's audio as one envelope, their notes over it.
-                let held = folded_contents(project, &by_guid, &roles, previews, &item.guid)
+                let folded = folded_contents(project, &by_guid, &roles, previews, &item.guid);
+                let is_folder = folded.is_some();
+                let held = folded
                     .unwrap_or_else(|| Held {
                         notes: previews.get(&item.guid),
                         wave: previews.wave(&item.guid),
@@ -936,7 +938,16 @@ impl Arrangement {
                     // One gain for every layer: the loudest anywhere reaches
                     // the edge, and the layers keep their loudness to each
                     // other.
-                    let gain = wave_gain(&whole);
+                    // An item at its true level through its item gain, as
+                    // REAPER draws it — so gain staging shows: a staged
+                    // kick's hits near the edge, the hats under them, a
+                    // track recorded low small until it is staged. A shut
+                    // folder's row is a summary, as loud as the lane allows.
+                    let gain = if held.layers.is_empty() && !is_folder {
+                        item.volume.max(0.0)
+                    } else {
+                        wave_gain(&whole)
+                    };
                     let lane = |wave, color| LaneWave {
                         runs: std::cell::RefCell::default(),
                         gain,

@@ -149,6 +149,7 @@ pub mod panel;
 pub mod patch_list;
 pub mod plan;
 pub mod pointer;
+pub mod gain_stage;
 pub mod prepare;
 pub mod profile;
 pub mod progress;
