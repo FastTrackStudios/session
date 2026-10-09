@@ -188,6 +188,72 @@ pub fn stamp_lyrics(
     session::lyrics::stamp_lines(daw, project, &lyrics).map_err(|e| eyre::eyre!("lyrics: {e}"))
 }
 
+/// The song's name: the project's, less a working copy's suffix
+/// (`unbreakable.current` is "unbreakable").
+fn song_name(daw: &daw_standalone::sync::Standalone, project: &ProjectContext) -> Option<String> {
+    use daw::service::Projects as _;
+    let name = daw.info(project.clone()).ok()?.name;
+    let name = [".current", ".organized", ".raw"]
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+        .unwrap_or(&name)
+        .trim()
+        .to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Where the song ends: where most of what is still playing at its last
+/// marker stops — the median of those tracks' last item ends. Not the
+/// latest end: a guitar take left running, a click rendered long, a
+/// rehearsal in the references runs on for minutes past the song. The
+/// references and the guide are not counted; with nothing else, all of it.
+fn media_end(daw: &daw_standalone::sync::Standalone, project: &ProjectContext) -> f64 {
+    use daw::service::{Items as _, Markers, Tracks};
+    let tracks = Tracks::all(daw, project.clone());
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    // Under REFERENCES or the Guide, however deep.
+    let referenced = |guid: &str| {
+        let mut at = by_guid.get(guid).copied();
+        while let Some(track) = at {
+            let name = track.name.trim();
+            if name.eq_ignore_ascii_case(dynamic_template::apply::REFERENCES_FOLDER)
+                || (track.parent_guid.is_none() && name.eq_ignore_ascii_case("Guide"))
+            {
+                return true;
+            }
+            at = track
+                .parent_guid
+                .as_deref()
+                .and_then(|p| by_guid.get(p).copied());
+        }
+        false
+    };
+    let last_marker = Markers::all(daw, project.clone())
+        .iter()
+        .filter_map(|m| m.position.seconds())
+        .fold(0.0, f64::max);
+    let items = daw.get_all_items(project.clone());
+    let ends = |song_only: bool| {
+        let mut by_track: std::collections::HashMap<&str, f64> = std::collections::HashMap::new();
+        for item in items
+            .iter()
+            .filter(|item| !song_only || !referenced(&item.track_guid))
+        {
+            let end = item.position.as_seconds() + item.length.as_seconds();
+            let slot = by_track.entry(item.track_guid.as_str()).or_insert(0.0);
+            *slot = slot.max(end);
+        }
+        let mut ends: Vec<f64> = by_track
+            .into_values()
+            .filter(|end| *end > last_marker)
+            .collect();
+        ends.sort_by(f64::total_cmp);
+        ends.get(ends.len() / 2).copied()
+    };
+    ends(true).or_else(|| ends(false)).unwrap_or(last_marker)
+}
+
 /// The one `.kf` chart in the project's folder, if there is exactly one.
 /// Two would be a guess, and a wrong chart is worse than none.
 #[cfg(not(target_arch = "wasm32"))]
@@ -304,6 +370,25 @@ pub fn steps(
             unsorted = organized.unsorted.len(),
             unrouted = ?organized.routing.unrouted,
             "prepare: organized"
+        );
+    }
+    if chart.is_none() {
+        // No chart to lay the song out: its structure is the multitrack's
+        // own markers — the sections made regions, the song's region and
+        // bounds placed, the notes left marks — before the guide, whose
+        // cues follow the sections.
+        let converted = session::keyflow::actions::convert_markers_in(
+            daw,
+            &project,
+            song_name(daw, &project).as_deref(),
+            Some(media_end(daw, &project)),
+        )
+        .map_err(|e| eyre::eyre!("markers: {e}"))?;
+        tracing::info!(
+            sections = ?converted.sections,
+            marks = ?converted.marks,
+            song = ?converted.song,
+            "prepare: markers made the song's sections"
         );
     }
     if let Some(text) = chart {

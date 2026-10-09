@@ -555,6 +555,89 @@ mod tests {
     use super::*;
     use dawfile_reaper::types::RppSerialize;
 
+    /// A multitrack's markers made the session's: sections regions running
+    /// section to section — never to the note between them — the last to
+    /// the media's end; the song's region and SONGSTART/SONGEND; the note
+    /// and the count-in left markers, the note on the MARKS lane.
+    #[test]
+    fn section_markers_become_regions_and_the_rest_stay_marks() {
+        let daw = OfflineDaw::new(ReaperProject::default(), "unbreakable.current");
+        let at = ProjectContext::Current;
+        for (position, name) in [
+            (0.0, "COUNT"),
+            (2.0, "IN"),
+            (5.0, "Scream"),
+            (10.0, "VS 1"),
+            (20.0, "B - Pre Chorus"),
+            (25.0, "A"),
+            (30.0, "Last Hit"),
+        ] {
+            Markers::add(&daw, at.clone(), position, name).unwrap();
+        }
+        let done =
+            super::super::actions::convert_markers_in(&daw, &at, Some("Unbreakable"), Some(40.0))
+                .unwrap();
+        assert_eq!(
+            done.sections,
+            ["IN", "VS 1", "B - Pre Chorus", "A", "Last Hit"]
+        );
+        assert_eq!(done.song, Some((2.0, 40.0)));
+
+        let regions = Regions::all(&daw, at.clone());
+        let lane = |r: &Region| r.lane;
+        let span = |name: &str| {
+            regions
+                .iter()
+                .find(|r| r.name == name && lane(r) == Some(CoreLane::Sections.lane_index()))
+                .map(|r| (r.start_seconds(), r.end_seconds()))
+        };
+        assert_eq!(
+            span("IN"),
+            Some((2.0, 10.0)),
+            "to the next section, past the note"
+        );
+        assert_eq!(
+            span("Last Hit"),
+            Some((30.0, 40.0)),
+            "the last to the media's end"
+        );
+        let song: Vec<_> = regions
+            .iter()
+            .filter(|r| r.lane == Some(CoreLane::Song.lane_index()))
+            .map(|r| (r.name.clone(), r.start_seconds(), r.end_seconds()))
+            .collect();
+        assert_eq!(song, [("Unbreakable".to_string(), 2.0, 40.0)]);
+
+        let markers: Vec<(String, f64, Option<u32>)> = Markers::all(&daw, at)
+            .into_iter()
+            .map(|m| (m.name.clone(), m.position.seconds().unwrap_or(-1.0), m.lane))
+            .collect();
+        let named = |name: &str| markers.iter().find(|(n, ..)| n == name).cloned();
+        assert_eq!(named("SONGSTART").map(|m| m.1), Some(2.0));
+        assert_eq!(named("SONGEND").map(|m| m.1), Some(40.0));
+        assert_eq!(
+            named("Scream").and_then(|m| m.2),
+            Some(CoreLane::Marks.lane_index()),
+            "the note a mark"
+        );
+        assert!(named("COUNT").is_some(), "the count-in a marker still");
+        assert!(named("IN").is_none(), "a section is no longer a marker");
+    }
+
+    /// A project with section regions already keeps them: no marker is
+    /// made a second one.
+    #[test]
+    fn a_project_with_sections_is_left_its_regions() {
+        let daw = OfflineDaw::new(ReaperProject::default(), "song");
+        let at = ProjectContext::Current;
+        let id = Regions::add(&daw, at.clone(), 0.0, 8.0, "VS 1").unwrap();
+        Regions::set_lane(&daw, at.clone(), id, Some(CoreLane::Sections.lane_index())).unwrap();
+        Markers::add(&daw, at.clone(), 8.0, "CH 1").unwrap();
+        let done = super::super::actions::convert_markers_in(&daw, &at, None, Some(16.0)).unwrap();
+        assert!(done.sections.is_empty());
+        assert_eq!(Regions::all(&daw, at).len(), 1);
+    }
+
     /// A region added offline (empty guid, no `flags` bit set) used to
     /// degrade into two orphan point markers the moment it was serialized
     /// and re-parsed: `dawfile_reaper`'s tokenizer collapses an empty guid

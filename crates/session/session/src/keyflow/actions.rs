@@ -183,114 +183,185 @@ where
     }
 }
 
+/// Convert the current project's section markers to session format — see
+/// [`convert_markers_in`]. The action has no idea of the media's end, so a
+/// last section with no marker after it is left a marker.
 pub(crate) fn convert_markers_to_session_format<D>(daw: &D) -> eyre::Result<()>
 where
     D: Projects + Markers + Regions,
 {
-    let project = ProjectContext::Current;
+    convert_markers_in(daw, &ProjectContext::Current, None, None).map(|_| ())
+}
 
-    let project_name = daw
-        .info(project.clone())
-        .ok()
-        .map(|info| info.name)
-        .filter(|name| !name.is_empty() && name != "Untitled")
-        .unwrap_or_else(|| "Song".to_string());
+/// What [`convert_markers_in`] did.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MarkersConverted {
+    /// The section markers made regions, by name.
+    pub sections: Vec<String>,
+    /// The markers left as marks (notes: `Scream`, `Kick in`), by name.
+    pub marks: Vec<String>,
+    /// The song's span, when one was placed.
+    pub song: Option<(f64, f64)>,
+}
 
-    // Markers with no time component can't anchor a region — drop them
-    // up front so subsequent indexing maps 1:1 with `marker_positions`.
-    let mut all_markers: Vec<_> = Markers::all(daw, project.clone())
-        .into_iter()
-        .filter(|m| m.position.seconds().is_some())
-        .collect();
-    all_markers.sort_by(|a, b| match (a.position.seconds(), b.position.seconds()) {
-        (Some(a_sec), Some(b_sec)) => a_sec.total_cmp(&b_sec),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-
-    let marker_positions: Vec<f64> = all_markers
-        .iter()
-        .filter_map(|m| m.position.seconds())
-        .collect();
-
-    let songstart_pos = all_markers
-        .iter()
-        .find(|m| m.name.trim().eq_ignore_ascii_case("SONGSTART"))
-        .and_then(|m| m.position.seconds());
-    let songend_pos = all_markers
-        .iter()
-        .find(|m| m.name.trim().eq_ignore_ascii_case("SONGEND"))
-        .and_then(|m| m.position.seconds());
-
+/// A multitrack's song structure, kept as markers, made the session's:
+///
+/// - every **section** marker (`IN`, `VS 1`, `PRE-CH 1`, `CH 2B`, `BD`,
+///   `SOLO 2`, `OUT`, `A`, `B - Pre Chorus`) becomes a SECTIONS-lane region,
+///   named as the marker was and coloured by its kind, running to the next
+///   section — never to a note between them — and the last to `SONGEND`,
+///   `=END` or `end` (the media's end), whichever is first after it;
+/// - the **song**: a SONG-lane region over the sections, named `song` (else
+///   the project's name), with `SONGSTART` and `SONGEND` markers at its
+///   ends where the project has none;
+/// - every **other** marker (`Scream`, `DRUM HIT`… a note) stays, a mark,
+///   on the MARKS lane.
+///
+/// A project that already has section regions keeps them: only its
+/// markers' lanes are set. Count-in markers stay markers.
+///
+/// # Errors
+///
+/// A backend call failed.
+pub fn convert_markers_in<D>(
+    daw: &D,
+    project: &ProjectContext,
+    song: Option<&str>,
+    end: Option<f64>,
+) -> eyre::Result<MarkersConverted>
+where
+    D: Projects + Markers + Regions,
+{
     let section_lane = CoreLane::Sections.lane_index();
     let song_lane = CoreLane::Song.lane_index();
+    let mut done = MarkersConverted::default();
 
-    let mut converted_section_ends: Vec<f64> = Vec::new();
-    let mut converted_section_starts: Vec<f64> = Vec::new();
-
-    for (i, marker) in all_markers.iter().enumerate() {
-        let Some(id) = marker.id else { continue };
-        let Some(section_type) = parse_region_section_type(&marker.name) else {
-            continue;
-        };
-
-        let Some(start) = marker_positions.get(i).copied() else {
-            continue;
-        };
-        let end = marker_positions
+    let regions = Regions::all(daw, project.clone());
+    let has_sections = regions.iter().any(|r| {
+        r.lane == Some(section_lane)
+            || (r.lane != Some(song_lane) && parse_region_section_type(&r.name).is_some())
+    });
+    let mut markers: Vec<(f64, daw_proto::Marker)> = Markers::all(daw, project.clone())
+        .into_iter()
+        .filter_map(|m| Some((m.position.seconds()?, m)))
+        .collect();
+    markers.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let at = |name: &str| {
+        markers
             .iter()
-            .skip(i.saturating_add(1))
-            .find(|&&p| p > start + TOUCH_EPSILON_SECONDS)
-            .copied()
-            .or(songend_pos)
-            .unwrap_or(start);
+            .find(|(_, m)| m.name.trim().eq_ignore_ascii_case(name))
+            .map(|(t, _)| *t)
+    };
+    let (songstart, songend, abs_end) = (at("SONGSTART"), at("SONGEND"), at("=END"));
 
-        if end <= start {
-            warn!(
-                marker = %marker.name,
-                start,
-                "[session] Convert: skipping marker — no end position found",
-            );
-            continue;
-        }
-
-        let region_id = Regions::add(daw, project.clone(), start, end, &marker.name)?;
-        Regions::set_lane(daw, project.clone(), region_id, Some(section_lane))?;
-        Regions::set_color(
-            daw,
-            project.clone(),
-            region_id,
-            section_type_color(&section_type),
-        )?;
-        Markers::remove(daw, project.clone(), id)?;
-
-        converted_section_starts.push(start);
-        converted_section_ends.push(end);
-    }
-
-    let song_start =
-        songstart_pos.or_else(|| converted_section_starts.iter().copied().reduce(f64::min));
-    let song_end = songend_pos.or_else(|| converted_section_ends.iter().copied().reduce(f64::max));
-
-    if let (Some(start), Some(end)) = (song_start, song_end)
-        && end > start
-    {
-        let already_has_song_region = Regions::all(daw, project.clone())
+    if !has_sections {
+        let sections: Vec<(f64, &daw_proto::Marker, SectionType)> = markers
             .iter()
-            .any(|r| r.lane == Some(song_lane));
-        if !already_has_song_region {
-            let id = Regions::add(daw, project.clone(), start, end, &project_name)?;
-            Regions::set_lane(daw, project, id, Some(song_lane))?;
+            .filter_map(|(t, m)| Some((*t, m, marker_section_type(&m.name)?)))
+            .collect();
+        for (i, (start, marker, section_type)) in sections.iter().enumerate() {
+            let next = sections.get(i.saturating_add(1)).map(|(t, ..)| *t);
+            let last = [songend, abs_end, end]
+                .into_iter()
+                .flatten()
+                .filter(|t| *t > start + TOUCH_EPSILON_SECONDS)
+                .reduce(f64::min);
+            let Some(stop) = next.or(last).filter(|t| *t > start + TOUCH_EPSILON_SECONDS) else {
+                warn!(marker = %marker.name, start, "[session] Convert: no end for the last section");
+                continue;
+            };
+            let Some(id) = marker.id else { continue };
+            let region = Regions::add(daw, project.clone(), *start, stop, marker.name.trim())?;
+            Regions::set_lane(daw, project.clone(), region, Some(section_lane))?;
+            Regions::set_color(
+                daw,
+                project.clone(),
+                region,
+                section_type_color(section_type),
+            )?;
+            Markers::remove(daw, project.clone(), id)?;
+            done.sections.push(marker.name.trim().to_string());
+            let span = done
+                .song
+                .map_or((*start, stop), |(a, b)| (a.min(*start), b.max(stop)));
+            done.song = Some(span);
         }
     }
 
+    // The song: its region and its two markers, where it has none.
+    if let Some((first, last)) = done.song {
+        let (start, stop) = (songstart.unwrap_or(first), songend.unwrap_or(last));
+        let name = song
+            .map(str::to_string)
+            .or_else(|| daw.info(project.clone()).ok().map(|info| info.name))
+            .filter(|name| !name.trim().is_empty() && name != "Untitled")
+            .unwrap_or_else(|| "Song".to_string());
+        if !regions.iter().any(|r| r.lane == Some(song_lane)) && stop > start {
+            let id = Regions::add(daw, project.clone(), start, stop, &name)?;
+            Regions::set_lane(daw, project.clone(), id, Some(song_lane))?;
+        }
+        for (missing, kind, position) in [
+            (songstart.is_none(), MarkerKind::SongStart, start),
+            (songend.is_none(), MarkerKind::SongEnd, stop),
+        ] {
+            if missing {
+                Markers::add(daw, project.clone(), position, kind.name())?;
+            }
+        }
+        done.song = Some((start, stop));
+    }
+
+    // What is left is marks, on their lane.
+    normalize_marker_lanes_in(daw, project)?;
+    done.marks = Markers::all(daw, project.clone())
+        .into_iter()
+        .map(|m| m.name)
+        .filter(|name| !is_song_marker(name))
+        .collect();
     debug!(
-        sections_converted = converted_section_starts.len(),
-        project = %project_name,
+        sections = done.sections.len(),
+        marks = done.marks.len(),
         "[session] Convert markers to session format",
     );
-    Ok(())
+    Ok(done)
+}
+
+/// A marker that is a section's start: a section name ([`parse_region_section_type`]),
+/// or a lettered part (`A`, `B - Pre Chorus`) — by what follows the letter
+/// when anything does. A count-in is a marker, never a section.
+fn marker_section_type(name: &str) -> Option<SectionType> {
+    let name = name.trim();
+    if is_song_marker(name) {
+        return None;
+    }
+    let lettered = |part: &str| part.len() == 1 && part.chars().all(|c| c.is_ascii_uppercase());
+    let section = match name.split_once(" - ") {
+        Some((letter, rest)) if lettered(letter.trim()) => {
+            parse_region_section_type(rest).or_else(|| Some(SectionType::Custom(name.to_string())))
+        }
+        _ if lettered(name) => Some(SectionType::Custom(name.to_string())),
+        _ => parse_region_section_type(name),
+    };
+    section.filter(|t| !matches!(t, SectionType::CountIn))
+}
+
+/// The song's own markers: its bounds, the count-in, the render tail.
+fn is_song_marker(name: &str) -> bool {
+    let upper = name.trim().to_uppercase();
+    matches!(
+        upper.as_str(),
+        "SONGSTART"
+            | "SONGEND"
+            | "=START"
+            | "=END"
+            | "COUNT-IN"
+            | "COUNT IN"
+            | "COUNTIN"
+            | "PREROLL"
+            | "=PREROLL"
+            | "POSTROLL"
+            | "=POSTROLL"
+    )
 }
 
 fn insert_marker<D>(daw: &D, kind: MarkerKind) -> eyre::Result<()>
@@ -618,7 +689,15 @@ pub(crate) fn normalize_marker_lanes<D>(daw: &D) -> eyre::Result<()>
 where
     D: Markers,
 {
-    let project = ProjectContext::Current;
+    normalize_marker_lanes_in(daw, &ProjectContext::Current)
+}
+
+/// [`normalize_marker_lanes`], in `project`.
+fn normalize_marker_lanes_in<D>(daw: &D, project: &ProjectContext) -> eyre::Result<()>
+where
+    D: Markers,
+{
+    let project = project.clone();
     for marker in Markers::all(daw, project.clone()) {
         let Some(id) = marker.id else {
             continue;
