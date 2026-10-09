@@ -50,6 +50,8 @@ pub mod lyrics_panel;
 pub mod macros;
 pub mod mcp;
 pub mod midi;
+#[cfg(any(feature = "native", feature = "web"))]
+pub mod mix_guide;
 pub mod mixer_panel;
 pub mod mousemap;
 pub mod navigator;
@@ -63,8 +65,6 @@ pub mod options;
 pub mod organize;
 pub mod plugin_faces;
 pub mod rig;
-#[cfg(any(feature = "native", feature = "web"))]
-pub mod mix_guide;
 pub mod song_modes;
 pub mod song_stream;
 #[cfg(feature = "native")]
@@ -141,17 +141,17 @@ pub mod open {
     }
 }
 pub mod device_audio;
+pub mod gain_stage;
 #[cfg(test)]
 mod hook_rules;
+pub mod mix_chains;
+pub mod mix_export;
 pub mod overlay;
 pub mod panel;
 #[cfg(feature = "native")]
 pub mod patch_list;
 pub mod plan;
 pub mod pointer;
-pub mod gain_stage;
-pub mod mix_chains;
-pub mod mix_export;
 pub mod prepare;
 pub mod profile;
 pub mod progress;

@@ -333,8 +333,10 @@ pub fn install(daw: &daw_standalone::Standalone, library: Library) {
     // named `FTS Comp` — or a project's `CLAP: FTS Comp (FastTrackStudios)`
     // — is the engine's own, no plugin file loaded.
     #[cfg(feature = "native")]
-    let factory: Arc<dyn FxFactory> =
-        Arc::new(builtin_fx::Chain(vec![Arc::new(builtin_fx::BuiltinFx), guide]));
+    let factory: Arc<dyn FxFactory> = Arc::new(builtin_fx::Chain(vec![
+        Arc::new(builtin_fx::BuiltinFx),
+        guide,
+    ]));
     #[cfg(not(feature = "native"))]
     let factory = guide;
     daw.set_fx_factory(factory);

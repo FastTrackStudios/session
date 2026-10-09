@@ -402,9 +402,7 @@ where
 /// Run `future` to completion on the engine runtime from sync code — on a
 /// scoped thread of its own when the caller is already inside a runtime,
 /// where blocking on another would panic. `None` before there is one.
-pub fn block_on_engine<T: Send>(
-    future: impl std::future::Future<Output = T> + Send,
-) -> Option<T> {
+pub fn block_on_engine<T: Send>(future: impl std::future::Future<Output = T> + Send) -> Option<T> {
     let rt = runtime()?;
     if tokio::runtime::Handle::try_current().is_err() {
         return Some(rt.block_on(future));
