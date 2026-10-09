@@ -137,6 +137,7 @@ fn prepare_builds_the_golden_template() {
     let project = ProjectContext::Project(loaded.project_guid);
     let mut target = dynamic_template::apply::DawTarget::on(daw.clone(), project.clone());
 
+    assert!(!target.add_drum_process().expect("process").is_empty());
     assert!(!target.apply_golden_kit().expect("kit").is_empty());
     assert!(!target.apply_vox_fx().expect("vox fx").is_empty());
     assert_eq!(
@@ -321,7 +322,33 @@ fn prepare_builds_the_golden_template() {
     assert!(fx(vox_fx).is_empty(), "a returns folder is no bus");
     assert!(chains.unknown.is_empty(), "{:?}", chains.unknown);
 
+    // One kit is no folder of its own: the pieces are Drums', and Process
+    // is in Drums with them — in the mixer, out of the track panel — fed
+    // by every piece.
+    let drums = tracks.iter().find(|t| t.name == "Drums").expect("Drums");
+    assert!(!tracks.iter().any(|t| t.name == "Drum Kit"));
+    assert_eq!(
+        children(&tracks, drums),
+        ["Kick", "Snare", "Toms", "Cymbals", "Process"]
+    );
+    let process = find(&tracks, "Drums", "Process");
+    assert!(!process.visible_in_tcp && process.visible_in_mixer);
+    let dry = find(&tracks, "Compress", "Dry");
+    assert!(!dry.visible_in_tcp && dry.visible_in_mixer && dry.muted);
+    for piece in ["Kick", "Snare", "Toms", "Cymbals"] {
+        assert!(
+            fed_by(
+                &daw,
+                &project,
+                &dry.guid,
+                &find(&tracks, "Drums", piece).guid
+            ),
+            "{piece} into Dry"
+        );
+    }
+
     // Again: nothing more.
+    assert!(target.add_drum_process().expect("process").is_empty());
     assert!(target.apply_golden_kit().expect("kit").is_empty());
     assert!(target.apply_vox_fx().expect("vox fx").is_empty());
     assert!(target.key_drum_gates().expect("keyed").is_empty());

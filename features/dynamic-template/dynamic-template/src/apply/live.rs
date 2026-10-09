@@ -712,27 +712,25 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
     }
 
     /// The golden template's drum Process folder, inside the session's
-    /// top-level Drums folder, for a session with one and no Process yet.
-    ///
-    /// The kit is wrapped in a `Drum Kit` folder (the golden template's
-    /// name for it) and `Process` is put beside it, inside Drums:
+    /// top-level Drums folder, for a session with one and no Process yet:
     ///
     /// ```text
     /// Drums                 -> DRUM BUS, as organized
-    ///   Drum Kit            -> sends to every chain below
-    ///     Kick, Snare, Toms, Cymbals, Rooms …
-    ///   Process
+    ///   Kick, Snare, Toms, Cymbals, Rooms …   each sends to every chain
+    ///   Process             hidden in the track panel, in the mixer
     ///     Compress          Dry, Tight, Punch, Smash, Crunch
     ///     FX                Room Sim; Verb: Wood Room, Music Club,
     ///                       Stadium, RMX 16, Nonlin, Brick Wall
     /// ```
     ///
-    /// The kit, not Drums, feeds the chains: Drums sums Process, so a send
+    /// One kit is not a folder of its own: the pieces are Drums' (a
+    /// level is a folder only when it has more than one member). Each
+    /// piece feeds the chains — not Drums, which sums Process, so a send
     /// from it would come back round. Every chain starts muted: a palette
-    /// to pick from, not all of it under the kit at once. Their FX are
-    /// written with the project (`session_daw::mix_export`). Returns the
-    /// tracks made; none when there is no Drums folder or a Process
-    /// already.
+    /// to pick from, not all of it under the kit at once. Process is
+    /// mixing, not arranging: in the mixer, out of the track panel.
+    /// Returns the tracks made; none when there is no Drums folder or a
+    /// Process already.
     ///
     /// # Errors
     ///
@@ -752,6 +750,14 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         {
             return Ok(Vec::new());
         }
+        let Some(drums) = tracks.get(drums_at) else {
+            return Ok(Vec::new());
+        };
+        let pieces: Vec<String> = tracks
+            .iter()
+            .filter(|t| t.parent_guid.as_deref() == Some(drums.guid.as_str()))
+            .map(|t| t.guid.clone())
+            .collect();
         // The Drums block: the folder and everything to the track closing it.
         let mut running = 0_i32;
         let mut end = drums_at;
@@ -762,7 +768,7 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 break;
             }
         }
-        // (name, folder depth change, the kit sends to it)
+        // (name, folder depth change, the pieces send to it)
         let mut chains: Vec<(&str, i32, bool)> =
             vec![(super::PROCESS_FOLDER, 1, false), ("Compress", 1, false)];
         chains.extend(super::PROCESS_COMPRESS.iter().map(|n| (*n, 0, true)));
@@ -777,13 +783,14 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             // Closes Verb, FX, Process — and Drums.
             last.1 = -4;
         }
-        let kit = self.append_track("Drum Kit")?;
-        let mut made = vec!["Drum Kit".to_string()];
+        let mut made = Vec::new();
         let mut process: Vec<(String, i32)> = Vec::new();
         for (name, depth, fed) in chains {
             let track = self.append_track(name)?;
             if fed {
-                self.add_send(&kit, &track)?;
+                for piece in &pieces {
+                    self.add_send(piece, &track)?;
+                }
                 Tracks::set_muted(
                     &self.daw,
                     project.clone(),
@@ -791,20 +798,25 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                     true,
                 )?;
             }
+            Tracks::set_visibility(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(track.clone()),
+                false,
+                true,
+            )?;
             process.push((track, depth));
             made.push(name.to_string());
         }
-        // The whole project laid out again: the kit's pieces under Drum
-        // Kit — the piece closing Drums now closes Drum Kit instead, the
-        // same count — and Process after them, closing Drums.
+        // The whole project laid out again: Process after the last piece,
+        // which no longer closes Drums — Process does.
         let mut layout: Vec<(String, i32)> = Vec::new();
         for (i, t) in tracks.iter().enumerate() {
-            layout.push((t.guid.clone(), t.folder_depth));
-            if i == drums_at {
-                layout.push((kit.clone(), 1));
-            }
             if i == end {
+                layout.push((t.guid.clone(), t.folder_depth.saturating_add(1)));
                 layout.extend(process.iter().cloned());
+            } else {
+                layout.push((t.guid.clone(), t.folder_depth));
             }
         }
         self.apply_layout(&layout)?;
