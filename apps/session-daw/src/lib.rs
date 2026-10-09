@@ -179,6 +179,8 @@ pub mod take_window;
 pub mod tcp;
 pub mod text;
 pub mod tone;
+#[cfg(feature = "native")]
+pub mod tone_bind;
 pub mod tool;
 pub mod toolbar;
 pub mod touch;

@@ -520,25 +520,36 @@ fn entry(name: &str) -> Option<&'static Entry> {
 /// the plugin does not know.
 #[must_use]
 pub fn setting(fx: &str, param: &str, text: &str) -> Option<(u32, f64)> {
-    let mut plugin = (entry(fx)?.make)();
-    let id = plugin
-        .params()
-        .into_iter()
-        .find(|p| p.name.eq_ignore_ascii_case(param))?
-        .id;
-    if let Some(value) = plugin.text_to_value(id, text) {
-        return Some((id, value));
-    }
-    // A choice the plugin writes but does not read back: found by name
-    // along its range.
-    (0_u16..=1_000)
-        .map(|step| f64::from(step) / 1_000.0)
-        .find(|value| {
-            plugin
-                .value_to_text(id, *value)
-                .is_some_and(|t| t.eq_ignore_ascii_case(text))
-        })
-        .map(|value| (id, value))
+    let entry = entry(fx)?;
+    SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let plugin = scratch.entry(entry.name).or_insert_with(|| (entry.make)());
+        let id = plugin
+            .params()
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case(param))?
+            .id;
+        if let Some(value) = plugin.text_to_value(id, text) {
+            return Some((id, value));
+        }
+        // A choice the plugin writes but does not read back: found by
+        // name along its range.
+        (0_u16..=1_000)
+            .map(|step| f64::from(step) / 1_000.0)
+            .find(|value| {
+                plugin
+                    .value_to_text(id, *value)
+                    .is_some_and(|t| t.eq_ignore_ascii_case(text))
+            })
+            .map(|value| (id, value))
+    })
+}
+
+thread_local! {
+    /// One unprepared instance of each built-in, kept to read settings
+    /// with ([`setting`]): a strip turned is a lookup, not a plugin built.
+    static SCRATCH: std::cell::RefCell<std::collections::HashMap<&'static str, Box<dyn PluginInstance>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// The FTS processors, offered to the engine by name ([`FxFactory`]). An

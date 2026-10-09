@@ -9808,12 +9808,33 @@ pub const PRESETS_H: f64 = 18.0;
 pub struct Shared {
     pub store: std::cell::RefCell<Store>,
     generation: std::cell::Cell<u64>,
+    /// Where the racks' edits go: the track's FTS processors, in the
+    /// engine (`crate::tone_bind`). Started the first time there is one.
+    #[cfg(feature = "native")]
+    applier: std::cell::OnceCell<Option<crate::engine::Applier>>,
 }
 
 impl Shared {
-    /// Say the settings moved.
+    /// Say the settings moved — and send what moved to the processors
+    /// on the tracks ([`Store::flush`]). A store still held by its editor
+    /// keeps its changes for the next edit to send.
     pub fn edited(&self) {
         self.generation.set(self.generation.get().wrapping_add(1));
+        #[cfg(feature = "native")]
+        {
+            let edits = match self.store.try_borrow_mut() {
+                Ok(mut store) => store.flush(),
+                Err(_) => return,
+            };
+            if edits.is_empty() {
+                return;
+            }
+            if let Some(applier) = self.applier.get_or_init(crate::engine::Applier::start) {
+                for edit in edits {
+                    applier.send(edit);
+                }
+            }
+        }
     }
 
     /// Which edit the settings are at.
@@ -9822,6 +9843,10 @@ impl Shared {
         self.generation.get()
     }
 }
+
+/// One FX's wanted parameters (`crate::tone_bind`): its name, and
+/// `(index, normalized value)`.
+type Stage = (&'static str, Vec<(u32, f64)>);
 
 /// The Tone settings for every track the window has opened.
 ///
@@ -9837,6 +9862,15 @@ impl Shared {
 #[derive(Clone, Debug, Default)]
 pub struct Store {
     by_guid: std::collections::HashMap<String, Tone>,
+    /// What each track's chain was last given (`crate::tone_bind`), so a
+    /// flush sends what changed and only that.
+    sent: std::collections::HashMap<String, Vec<Stage>>,
+    /// The FX a flush has switched on, by track: a stage's first change
+    /// switches it on and sends all of it — the plugin's own defaults are
+    /// not the rack's.
+    on: std::collections::HashSet<(String, &'static str)>,
+    /// Tracks edited since the last flush.
+    dirty: std::collections::HashSet<String>,
 }
 
 impl Store {
@@ -9878,9 +9912,61 @@ impl Store {
         self.by_guid.get(guid)
     }
 
-    /// The same, to change.
+    /// The same, to change. Marked for the next [`Self::flush`].
     pub fn edit(&mut self, guid: &str) -> Option<&mut Tone> {
-        self.by_guid.get_mut(guid)
+        let tone = self.by_guid.get_mut(guid)?;
+        #[cfg(feature = "native")]
+        if !self.sent.contains_key(guid) {
+            // What the chain has before this edit: the baseline a flush
+            // compares against.
+            self.sent
+                .insert(guid.to_owned(), crate::tone_bind::stages(tone));
+        }
+        self.dirty.insert(guid.to_owned());
+        Some(tone)
+    }
+
+    /// The engine edits for what changed since the last flush: each
+    /// edited track's chain given the rack's settings
+    /// (`crate::tone_bind`). A stage changed for the first time is switched
+    /// on and sent whole; after that, only what moved.
+    #[cfg(feature = "native")]
+    pub fn flush(&mut self) -> Vec<crate::engine::Edit> {
+        use crate::engine::Edit;
+        let mut edits = Vec::new();
+        for guid in std::mem::take(&mut self.dirty) {
+            let Some(tone) = self.by_guid.get(&guid) else {
+                continue;
+            };
+            let now = crate::tone_bind::stages(tone);
+            let was = self.sent.remove(&guid).unwrap_or_default();
+            for (fx, params) in &now {
+                let before = was
+                    .iter()
+                    .find(|(f, _)| f == fx)
+                    .map_or(&[][..], |(_, p)| p.as_slice());
+                if params.as_slice() == before {
+                    continue;
+                }
+                let first = self.on.insert((guid.clone(), fx));
+                let changed = params.iter().filter(|p| first || !before.contains(p));
+                edits.extend(changed.map(|(index, value)| {
+                    Edit::SetFxParam(guid.clone(), (*fx).to_owned(), *index, *value)
+                }));
+                if first {
+                    edits.push(Edit::SetFxEnabled(guid.clone(), (*fx).to_owned(), true));
+                }
+            }
+            self.sent.insert(guid, now);
+        }
+        edits
+    }
+
+    /// No engine to send to (a page): the edits only mark the store.
+    #[cfg(not(feature = "native"))]
+    pub fn flush(&mut self) -> Vec<crate::engine::Edit> {
+        self.dirty.clear();
+        Vec::new()
     }
 
     /// Render every reverb tail in the store, now, on this thread.

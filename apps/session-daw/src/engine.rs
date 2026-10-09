@@ -65,6 +65,12 @@ pub enum Edit {
     /// is heard only through its own sends, which is how a parallel
     /// path is built. The routing widget's first lane says which.
     SetParentSend(String, bool),
+    /// A parameter of an FX on a track's chain, found by its name
+    /// (`FTS Comp`): index and normalized value (0..1). What the strip's
+    /// Tone rack sends as it is turned (`tone::Store::flush`).
+    SetFxParam(String, String, u32, f64),
+    /// An FX on a track's chain switched on or bypassed, by its name.
+    SetFxEnabled(String, String, bool),
     /// Send this track to that one.
     ///
     /// Two guids, because a send is a relation and not a property: the
@@ -259,6 +265,8 @@ impl Edit {
             | Self::SetPhase(g, _)
             | Self::SetInputMonitor(g, _)
             | Self::SetParentSend(g, _)
+            | Self::SetFxParam(g, ..)
+            | Self::SetFxEnabled(g, ..)
             | Self::AddSend(g, _)
             | Self::RemoveRoute(g, _)
             | Self::SetRouteVolume(g, ..)
@@ -1278,6 +1286,15 @@ async fn apply(edit: &Edit) {
         Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
         Edit::SetInputMonitor(_, mode) => track.set_input_monitor(*mode).await,
         Edit::SetParentSend(_, enabled) => track.set_parent_send(*enabled).await,
+        Edit::SetFxParam(_, fx, index, value) => match track.fx_chain().by_name(fx).await {
+            Ok(Some(fx)) => fx.param(*index).set(*value).await,
+            other => other.map(|_| ()),
+        },
+        Edit::SetFxEnabled(_, fx, enabled) => match track.fx_chain().by_name(fx).await {
+            Ok(Some(fx)) if *enabled => fx.enable().await,
+            Ok(Some(fx)) => fx.disable().await,
+            other => other.map(|_| ()),
+        },
         // A send is addressed through the track that owns it, by the
         // number REAPER gave it. `by_index` costs a round trip of its
         // own to prove the route is still there — worth it, because
