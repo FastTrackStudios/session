@@ -132,11 +132,11 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
             "the {mixer} mixer shows {:?}",
             family(strips, "Process")
         );
-        // Negative control: the drums beside it are still there, every
-        // mic of the kick a strip — the kick's fold is the arrangement's.
+        // Negative control: the drums beside it are still there, the kit's
+        // pieces a strip each (each piece shut, as in the arrangement).
         let kit = family(strips, "Drum Kit");
         assert!(
-            kit.contains(&"3 In".to_owned()),
+            kit.iter().any(|r| r.ends_with(" Kick")),
             "the {mixer} mixer: {kit:?}"
         );
         // Every vocal source and return is a strip.

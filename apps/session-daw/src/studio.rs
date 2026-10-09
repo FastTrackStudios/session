@@ -101,7 +101,8 @@ impl Planner {
     /// The mixer's rows for `raw`: the scene laid out for the mixer — each
     /// track as wide as the scene opens it, the one it focuses selected —
     /// and every folder as the scene leaves it, the way the scene renders
-    /// (`tests/golden_scenes.rs`). `extent` is the panel's height.
+    /// (`tests/golden_scenes.rs`), then as the window's folds leave it.
+    /// `extent` is the panel's height.
     #[must_use]
     pub fn plan_mixer(
         &self,
@@ -117,9 +118,12 @@ impl Planner {
             .or(self.scene)
             .and_then(dynamic_template::scenes::scene)
         else {
-            return RowsRef(Arc::new(planned));
+            return RowsRef(Arc::new(crate::folds::apply(planned)));
         };
-        RowsRef(Arc::new(crate::plan::apply_scene(
+        // And the folders the window shut (`crate::folds`), over the
+        // scene's: shut in the arrangement, shut here — and a folder
+        // opened or shut on a strip in Mix mode is.
+        RowsRef(Arc::new(crate::folds::apply(crate::plan::apply_scene(
             &planned,
             &self.kinds,
             scene,
@@ -130,7 +134,7 @@ impl Planner {
                 extent,
                 active_language: None,
             },
-        )))
+        ))))
     }
 }
 
@@ -852,5 +856,47 @@ mod source_tests {
             }
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod mixer_fold_tests {
+    /// Mix mode's mixer is folded as the window is: a session opens with
+    /// its top-level folders shut there too, and one opened opens there.
+    #[test]
+    fn the_mix_mode_mixer_follows_the_folds() {
+        let track = |guid: &str, folder: bool, depth: i32, parent: Option<&str>| daw_proto::Track {
+            guid: guid.to_owned(),
+            name: guid.to_owned(),
+            is_folder: folder,
+            folder_depth: depth,
+            visible_in_tcp: true,
+            visible_in_mixer: true,
+            parent_guid: parent.map(str::to_owned),
+            ..daw_proto::Track::default()
+        };
+        let raw = daw_ui::studio::project::Project {
+            tracks: vec![
+                track("Bass", true, 1, None),
+                track("Bass DI", false, -1, Some("Bass")),
+            ],
+            ..daw_ui::studio::project::Project::default()
+        };
+        let planner = super::Planner {
+            raw: std::sync::Arc::new(raw.clone()),
+            scene: None,
+            kinds: std::sync::Arc::new(crate::plan::Kinds::default()),
+        };
+        let strips = |planner: &super::Planner| -> Vec<String> {
+            planner
+                .plan_mixer(&raw, None, crate::settings::Settings::default(), 800.0)
+                .as_slice()
+                .iter()
+                .map(|(t, _)| t.guid.clone())
+                .collect()
+        };
+        assert_eq!(strips(&planner), ["Bass"], "shut as it opens");
+        crate::folds::toggle("Bass", false);
+        assert_eq!(strips(&planner), ["Bass", "Bass DI"], "opened");
     }
 }

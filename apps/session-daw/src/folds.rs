@@ -150,13 +150,16 @@ pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)>
     out
 }
 
-/// Whether a top-level folder is the guitars' (`Electric GTR`, `GTR E`,
-/// `Guitars`), by the organizer's classification.
-fn is_guitars(name: &str) -> bool {
+/// Whether a top-level folder is one whose own folders start shut: the
+/// guitars' (`Electric GTR`, `GTR E`, `Guitars`) — each a part — and the
+/// drums' — each a piece of the kit (Kick, Snare, Toms, Cymbals, Rooms) —
+/// by the organizer's classification. Opened, the family is a short list
+/// of rows, not every mic.
+fn shuts_its_folders(name: &str) -> bool {
     dynamic_template::track_schema::classify_track(name)
         .matched_groups
         .first()
-        .is_some_and(|g| g == "Guitars")
+        .is_some_and(|g| g == "Guitars" || g == "Drums")
 }
 
 /// Whether a folder name is a side of a stereo part: `L`, `R`, `C`.
@@ -193,8 +196,9 @@ fn parts_and_sides(rows: &[(daw_proto::Track, u32)]) -> std::collections::HashSe
             out.extend(sides.iter().map(|t| t.guid.clone()));
         }
         // A guitars folder's own folders are its parts (`Clean`, `Rhythm`,
-        // `Solo`), sides or none: each one row.
-        if *depth == 0 && is_guitars(&track.name) {
+        // `Solo`), sides or none; a drums folder's, the kit's pieces: each
+        // one row.
+        if *depth == 0 && shuts_its_folders(&track.name) {
             out.extend(
                 children
                     .iter()
@@ -207,7 +211,8 @@ fn parts_and_sides(rows: &[(daw_proto::Track, u32)]) -> std::collections::HashSe
 }
 
 /// Whether a folder starts shut until it is opened: the bus tree, the
-/// reference material, and the guide's rendered prints. Buses are wiring and references are for listening
+/// reference material and the rehearsal in it, and the guide's rendered
+/// prints. Buses are wiring and references are for listening
 /// against, not tracks you work on — opened, they were rows of nothing
 /// between the instruments.
 fn shut_by_default(track: &daw_proto::Track) -> bool {
@@ -215,6 +220,7 @@ fn shut_by_default(track: &daw_proto::Track) -> bool {
     [
         dynamic_template::buses::names::MIX,
         dynamic_template::apply::REFERENCES_FOLDER,
+        dynamic_template::apply::REHEARSAL_FOLDER,
         dynamic_template::apply::PRINTS_FOLDER,
     ]
     .iter()
@@ -288,10 +294,10 @@ mod tests {
         crate::folds::set_tops(false);
         let rows = vec![
             row("Click", false, 0),
-            row("Drums", true, 0),
-            row("Kick", false, 1),
-            row("Toms", true, 1),
-            row("Tom 1", false, 2),
+            row("Keys", true, 0),
+            row("Piano", false, 1),
+            row("Pads", true, 1),
+            row("Pad 1", false, 2),
             row("Bass", true, 0),
             row("DI", false, 1),
         ];
@@ -301,19 +307,19 @@ mod tests {
             "nothing chosen, nothing folded"
         );
 
-        toggle("Drums", true);
+        toggle("Keys", true);
         assert_eq!(
             names(&apply(rows.clone())),
-            ["Click", "Drums", "Bass", "DI"],
+            ["Click", "Keys", "Bass", "DI"],
             "a shut folder keeps its row and hides what is in it, however deep"
         );
 
         set_tops(true);
-        assert_eq!(names(&apply(rows.clone())), ["Click", "Drums", "Bass"]);
+        assert_eq!(names(&apply(rows.clone())), ["Click", "Keys", "Bass"]);
         toggle("Bass", false);
         assert_eq!(
             names(&apply(rows.clone())),
-            ["Click", "Drums", "Bass", "DI"],
+            ["Click", "Keys", "Bass", "DI"],
             "one folder opened out of the folded whole"
         );
 
@@ -352,6 +358,8 @@ mod default_tests {
             row("vox", "VOX BUS", false, 1),
             row("refs", "REFERENCES", true, 0),
             row("mixdown", "Mixdown", false, 1),
+            row("rehearsal", "REHEARSAL", true, 1),
+            row("reh-kick", "Kick - Song", false, 2),
             row("guide", "Guide", true, 0),
             row("prints", "PRINTS", true, 1),
             row("clickprint", "ClickPrint", false, 2),
@@ -365,8 +373,24 @@ mod default_tests {
         );
         super::toggle("mix", false);
         assert_eq!(
-            names(super::apply(rows)),
+            names(super::apply(rows.clone())),
             ["drums", "kick", "mix", "vox", "refs", "guide", "prints"]
+        );
+        // The references opened: the rehearsal in them is still shut.
+        super::toggle("refs", false);
+        assert_eq!(
+            names(super::apply(rows)),
+            [
+                "drums",
+                "kick",
+                "mix",
+                "vox",
+                "refs",
+                "mixdown",
+                "rehearsal",
+                "guide",
+                "prints"
+            ]
         );
     }
 }
@@ -407,5 +431,59 @@ mod part_tests {
             .map(|(t, _)| t.guid)
             .collect();
         assert_eq!(shown, ["Electric GTR", "Clean", "Solo", "Kick", "In"]);
+    }
+
+    /// The drums opened are the kit's pieces, each shut: Kick, Snare,
+    /// Toms, Cymbals, Rooms — a loose drum track still shown — not
+    /// every mic.
+    #[test]
+    fn the_drums_open_to_the_kit_pieces_shut() {
+        crate::folds::set_tops(false);
+        let row = |guid: &str, folder: bool, depth: u32| {
+            (
+                daw_proto::Track {
+                    guid: guid.to_owned(),
+                    name: guid.to_owned(),
+                    is_folder: folder,
+                    ..daw_proto::Track::default()
+                },
+                depth,
+            )
+        };
+        let rows = vec![
+            row("Drums", true, 0),
+            row("Kick", true, 1),
+            row("Kick In", false, 2),
+            row("Kick Out", false, 2),
+            row("Snare", true, 1),
+            row("Snare Top", false, 2),
+            row("Toms", true, 1),
+            row("Tom 1", false, 2),
+            row("Cymbals", true, 1),
+            row("OH L", false, 2),
+            row("Rooms", true, 1),
+            row("Room L", false, 2),
+            row("Drum Loop", false, 1),
+            row("Bass", true, 0),
+            row("Bass DI", false, 1),
+        ];
+        let shown: Vec<String> = super::apply(rows)
+            .into_iter()
+            .map(|(t, _)| t.guid)
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                "Drums",
+                "Kick",
+                "Snare",
+                "Toms",
+                "Cymbals",
+                "Rooms",
+                "Drum Loop",
+                "Bass",
+                "Bass DI"
+            ]
+        );
     }
 }
