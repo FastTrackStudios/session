@@ -3,17 +3,15 @@
 //! Whatever this window can do is an action in its Action List
 //! (`crate::actions`); this puts a model on it while you work — on
 //! `http://127.0.0.1:47811/mcp` (`FTS_MCP_PORT` to move it, `FTS_MCP=0`
-//! for none), behind a token. The address and the token are written to
-//! `~/.config/fts/session-mcp.json` for a client to read — Claude Code:
+//! for none). Found without asking: the repository's `.mcp.json` names
+//! it for Claude Code, and `~/.config/fts/session-mcp.json` says where it
+//! is for any other client.
 //!
-//! ```sh
-//! claude mcp add --transport http session http://127.0.0.1:47811/mcp \
-//!     --header "Authorization: Bearer $(jq -r .token ~/.config/fts/session-mcp.json)"
-//! ```
-//!
-//! Only this machine reaches it: it listens on loopback, wants the token,
-//! and refuses a browser's request from anywhere else
-//! (`architect_mcp::http`).
+//! Only this machine reaches it: it listens on loopback and refuses a
+//! browser's request from anywhere else (`architect_mcp::http`). A token
+//! is optional — `FTS_MCP_TOKEN` sets one, and then a client must send it
+//! as `Authorization: Bearer …`; unset, there is none, so a model on this
+//! machine connects with nothing to configure.
 
 use std::path::PathBuf;
 
@@ -32,11 +30,11 @@ hits — run it on the piece's Trig — with times, bars and beats and levels, p
 actions are the window's own: what its keys do. TRACK_SET changes a track's fader, pan, mute or \
 solo.";
 
-/// Where it is being served, and the token to reach it.
+/// Where it is being served, and the token to reach it, if it wants one.
 #[derive(Clone, Debug)]
 pub struct Serving {
     pub url: String,
-    pub token: String,
+    pub token: Option<String>,
 }
 
 /// Serve the Action List on the engine's runtime, unless `FTS_MCP=0`;
@@ -60,8 +58,8 @@ pub fn start() -> Option<Serving> {
     if listener.set_nonblocking(true).is_err() {
         return None;
     }
-    let token = std::env::var("FTS_MCP_TOKEN")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().simple().to_string());
+    // Optional: a token only when one is asked for.
+    let token = std::env::var("FTS_MCP_TOKEN").ok().filter(|t| !t.is_empty());
     let url = format!("http://127.0.0.1:{port}/mcp");
     let server = architect_mcp::Server::new(
         "FastTrackStudio Session",
@@ -69,7 +67,7 @@ pub fn start() -> Option<Serving> {
         crate::actions::list().clone(),
     )
     .with_instructions(INSTRUCTIONS);
-    let guarded = Some(token.clone());
+    let guarded = token.clone();
     runtime.spawn(async move {
         let listener = match tokio::net::TcpListener::from_std(listener) {
             Ok(l) => l,
@@ -86,6 +84,7 @@ pub fn start() -> Option<Serving> {
     write_config(&serving);
     tracing::info!(
         mcp.url = %serving.url,
+        mcp.token = serving.token.is_some(),
         mcp.actions = crate::actions::list().len(),
         "mcp: serving the Action List"
     );
@@ -97,7 +96,8 @@ fn config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("fts").join("session-mcp.json"))
 }
 
-/// Say where it is, readable by this user only — the token is in it.
+/// Say where it is, readable by this user only — a token, if any, is in
+/// it.
 fn write_config(serving: &Serving) {
     let Some(path) = config_path() else { return };
     if let Some(dir) = path.parent()
