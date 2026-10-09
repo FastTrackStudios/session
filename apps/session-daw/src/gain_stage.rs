@@ -88,7 +88,9 @@ pub fn role(path: &[&str]) -> Option<Role> {
     let under = |what: &str| lower.iter().any(|p| p.contains(what));
     // A trigger is a sampler's source; the references, a rehearsal's
     // `Kick - Song` among them, are for listening against.
-    if has("trig")
+    // Process holds the kit's parallel chains, not mics.
+    if under(&dynamic_template::apply::PROCESS_FOLDER.to_lowercase())
+        || has("trig")
         || has("trigger")
         || under(&dynamic_template::apply::REFERENCES_FOLDER.to_lowercase())
     {
@@ -750,6 +752,11 @@ mod tests {
             "a guitar DI never"
         );
         assert_eq!(role(&["Drums", "Kick", "Trig"]), None, "a trigger never");
+        assert_eq!(
+            role(&["Drums", "Process", "FX", "Room Sim"]),
+            None,
+            "a parallel chain is no mic"
+        );
         assert_eq!(role(&["Vocals", "Lead Vocal"]), None);
         assert_eq!(
             role(&["REFERENCES", "REHEARSAL", "Drums", "Kick - Unbreakable"]),

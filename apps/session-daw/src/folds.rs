@@ -150,7 +150,7 @@ pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)>
     out
 }
 
-/// Whether a top-level folder is one whose own folders start shut: the
+/// Whether a folder is one whose own folders start shut: the
 /// guitars' (`Electric GTR`, `GTR E`, `Guitars`) — each a part — and the
 /// drums' — each a piece of the kit (Kick, Snare, Toms, Cymbals, Rooms) —
 /// by the organizer's classification. Opened, the family is a short list
@@ -198,7 +198,9 @@ fn parts_and_sides(rows: &[(daw_proto::Track, u32)]) -> std::collections::HashSe
         // A guitars folder's own folders are its parts (`Clean`, `Rhythm`,
         // `Solo`), sides or none; a drums folder's, the kit's pieces: each
         // one row.
-        if *depth == 0 && shuts_its_folders(&track.name) {
+        // At any depth: Drums opens to Drum Kit and Process, Drum Kit to
+        // its pieces.
+        if shuts_its_folders(&track.name) {
             out.extend(
                 children
                     .iter()

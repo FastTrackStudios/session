@@ -711,16 +711,28 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         self.mute_where(super::is_trigger)
     }
 
-    /// The golden template's drum Process folder, for a session with a
-    /// top-level Drums folder and none yet: what the kit is sent to —
-    /// `Compress` (Dry, Tight, Punch, Smash, Crunch: parallel compressors
-    /// from dry to crushed) and `FX` (a Room Sim, and a `Verb` bank to
-    /// pick the room the band is in: Wood Room, Music Club, Stadium, RMX
-    /// 16, Nonlin, Brick Wall). The kit sends to every one; the folder
-    /// goes to DRUM BUS, not its parent. Every chain starts muted: a
-    /// palette to pick from, not all of it under the kit at once. Their
-    /// FX are written with the session (`crate::process_fx`). Returns
-    /// the tracks made; none when there is no kit or a Process already.
+    /// The golden template's drum Process folder, inside the session's
+    /// top-level Drums folder, for a session with one and no Process yet.
+    ///
+    /// The kit is wrapped in a `Drum Kit` folder (the golden template's
+    /// name for it) and `Process` is put beside it, inside Drums:
+    ///
+    /// ```text
+    /// Drums                 -> DRUM BUS, as organized
+    ///   Drum Kit            -> sends to every chain below
+    ///     Kick, Snare, Toms, Cymbals, Rooms …
+    ///   Process
+    ///     Compress          Dry, Tight, Punch, Smash, Crunch
+    ///     FX                Room Sim; Verb: Wood Room, Music Club,
+    ///                       Stadium, RMX 16, Nonlin, Brick Wall
+    /// ```
+    ///
+    /// The kit, not Drums, feeds the chains: Drums sums Process, so a send
+    /// from it would come back round. Every chain starts muted: a palette
+    /// to pick from, not all of it under the kit at once. Their FX are
+    /// written with the project (`session_daw::mix_export`). Returns the
+    /// tracks made; none when there is no Drums folder or a Process
+    /// already.
     ///
     /// # Errors
     ///
@@ -729,7 +741,7 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         use super::TemplateTarget as _;
         let project = self.project.clone();
         let tracks = Tracks::all(&self.daw, project.clone());
-        let Some(kit) = tracks.iter().find(|t| {
+        let Some(drums_at) = tracks.iter().position(|t| {
             t.parent_guid.is_none() && t.is_folder && t.name.trim().eq_ignore_ascii_case("drums")
         }) else {
             return Ok(Vec::new());
@@ -740,46 +752,57 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         {
             return Ok(Vec::new());
         }
-        let kit = kit.guid.clone();
+        // The Drums block: the folder and everything to the track closing it.
+        let mut running = 0_i32;
+        let mut end = drums_at;
+        for (i, t) in tracks.iter().enumerate().skip(drums_at) {
+            running = running.saturating_add(t.folder_depth);
+            end = i;
+            if running <= 0 {
+                break;
+            }
+        }
         // (name, folder depth change, the kit sends to it)
-        let mut layout: Vec<(&str, i32, bool)> =
+        let mut chains: Vec<(&str, i32, bool)> =
             vec![(super::PROCESS_FOLDER, 1, false), ("Compress", 1, false)];
-        layout.extend(super::PROCESS_COMPRESS.iter().map(|n| (*n, 0, true)));
-        if let Some(last) = layout.last_mut() {
+        chains.extend(super::PROCESS_COMPRESS.iter().map(|n| (*n, 0, true)));
+        if let Some(last) = chains.last_mut() {
             last.1 = -1;
         }
-        layout.push(("FX", 1, false));
-        layout.push(("Room Sim", 0, true));
-        layout.push(("Verb", 1, false));
-        layout.extend(super::PROCESS_VERBS.iter().map(|n| (*n, 0, true)));
-        if let Some(last) = layout.last_mut() {
-            // Closes Verb, FX and Process.
-            last.1 = -3;
+        chains.push(("FX", 1, false));
+        chains.push(("Room Sim", 0, true));
+        chains.push(("Verb", 1, false));
+        chains.extend(super::PROCESS_VERBS.iter().map(|n| (*n, 0, true)));
+        if let Some(last) = chains.last_mut() {
+            // Closes Verb, FX, Process — and Drums.
+            last.1 = -4;
         }
-        let mut made = Vec::new();
-        let mut process = None;
-        for (name, depth, fed) in layout {
+        let kit = self.append_track("Drum Kit")?;
+        let mut made = vec!["Drum Kit".to_string()];
+        let mut process: Vec<(String, i32)> = Vec::new();
+        for (name, depth, fed) in chains {
             let track = self.append_track(name)?;
-            self.daw
-                .set_folder_depth(project.clone(), TrackRef::Guid(track.clone()), depth)?;
             if fed {
                 self.add_send(&kit, &track)?;
-                Tracks::set_muted(
-                    &self.daw,
-                    project.clone(),
-                    TrackRef::Guid(track.clone()),
-                    true,
-                )?;
+                Tracks::set_muted(&self.daw, project.clone(), TrackRef::Guid(track.clone()), true)?;
             }
-            if process.is_none() {
-                process = Some(track.clone());
-            }
+            process.push((track, depth));
             made.push(name.to_string());
         }
-        if let (Some(process), Some(bus)) = (process, self.find_track("DRUM BUS")) {
-            self.set_parent_send(&process, false)?;
-            self.add_send(&process, &bus)?;
+        // The whole project laid out again: the kit's pieces under Drum
+        // Kit — the piece closing Drums now closes Drum Kit instead, the
+        // same count — and Process after them, closing Drums.
+        let mut layout: Vec<(String, i32)> = Vec::new();
+        for (i, t) in tracks.iter().enumerate() {
+            layout.push((t.guid.clone(), t.folder_depth));
+            if i == drums_at {
+                layout.push((kit.clone(), 1));
+            }
+            if i == end {
+                layout.extend(process.iter().cloned());
+            }
         }
+        self.apply_layout(&layout)?;
         Ok(made)
     }
 
