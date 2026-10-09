@@ -480,6 +480,11 @@ const PIECES: [&str; 5] = ["Kick", "Snare", "Toms", "Cymbals", "Rooms"];
 /// The kit's taxonomy path.
 const KIT: [&str; 2] = ["Drums", "Drum Kit"];
 
+/// The kit's parallel chains: in Drums, beside the pieces — a folder of
+/// the session's, not a template group, so addressed where it sits
+/// (the pieces are addressed by their group, [`KIT`], wherever they are).
+const PROCESS: [&str; 2] = ["Drums", "process"];
+
 /// One rule per kit piece: the piece folder and everything under it.
 fn per_piece(effect: Effect) -> Vec<Rule> {
     PIECES
@@ -560,7 +565,7 @@ impl Set {
                     },
                     Effect::at(Size::Working),
                 ),
-                Rule::new(under(&["process"]), Effect::at(Size::Minimum)),
+                Rule::new(under(&PROCESS), Effect::at(Size::Minimum)),
                 hide_the_bus_tree(),
             ],
         }
@@ -587,7 +592,7 @@ impl Set {
                 Effect::at(Size::Working).folded(Fold::Collapsed),
             ));
         }
-        rules.push(Rule::new(under(&["process"]), Effect::hidden()));
+        rules.push(Rule::new(under(&PROCESS), Effect::hidden()));
         rules.push(hide_the_bus_tree());
         Scene {
             name: format!("{} Tracking Overview", title(self.instrument)),
@@ -648,7 +653,7 @@ impl Set {
             ));
         }
         rules.extend([
-            Rule::new(under(&["process"]), Effect::hidden()),
+            Rule::new(under(&PROCESS), Effect::hidden()),
             hide_the_bus_tree(),
         ]);
         Scene {
@@ -1037,7 +1042,7 @@ fn drum_tracking_overview() -> Scene {
             Effect::at(Size::Working).folded(Fold::Collapsed),
         ));
     }
-    rules.push(Rule::new(under(&["process"]), Effect::hidden()));
+    rules.push(Rule::new(under(&PROCESS), Effect::hidden()));
     rules.push(hide_the_bus_tree());
     Scene {
         name: "Drum Tracking Overview".to_owned(),
@@ -1093,7 +1098,7 @@ fn drum_editing() -> Scene {
         ));
     }
     rules.extend([
-        Rule::new(under(&["process"]), Effect::hidden()),
+        Rule::new(under(&PROCESS), Effect::hidden()),
         hide_the_bus_tree(),
     ]);
     Scene {
@@ -1163,7 +1168,7 @@ fn drum_tracking() -> Scene {
             ),
             // What the kit is sent to is present and no more: a tracking
             // pass does not touch the parallel chain.
-            Rule::new(under(&["process"]), Effect::at(Size::Minimum)),
+            Rule::new(under(&PROCESS), Effect::at(Size::Minimum)),
             hide_the_bus_tree(),
         ],
     }
@@ -1318,7 +1323,7 @@ fn drum_advanced() -> Scene {
         // The instrument returns are not the kit's: they came along for
         // the kind, and this scene is about what hangs off the pieces.
         Rule::new(under(&["fx"]), Effect::at(Size::Compact)),
-        Rule::new(under(&["process"]), Effect::at(Size::Minimum)),
+        Rule::new(under(&PROCESS), Effect::at(Size::Minimum)),
         hide_the_bus_tree(),
     ]);
     Scene {
@@ -1384,7 +1389,7 @@ fn drum_fx() -> Scene {
             Rule::new(
                 Selector {
                     role: Role::Leaf,
-                    ..under(&["process"])
+                    ..under(&PROCESS)
                 },
                 Effect::at(Size::Minimum),
             ),
@@ -1399,7 +1404,7 @@ fn drum_fx() -> Scene {
                 Selector {
                     kind: Some("fx".to_owned()),
                     role: Role::Bus,
-                    ..under(&["process"])
+                    ..under(&PROCESS)
                 },
                 Effect::at(Size::Compact),
             ),
@@ -1407,7 +1412,7 @@ fn drum_fx() -> Scene {
                 Selector {
                     kind: Some("verb".to_owned()),
                     role: Role::Bus,
-                    ..under(&["process"])
+                    ..under(&PROCESS)
                 },
                 Effect::at(Size::Compact),
             ),
@@ -1510,7 +1515,9 @@ fn guitar_fx() -> Scene {
             },
             Effect::at(Size::Focus),
         ),
-        Rule::new(under(&KIT), Effect::hidden()),
+        // The drums, all of them: the folder the kit is in as well as the
+        // kit, and its Process.
+        Rule::new(under(&KIT[..1]), Effect::hidden()),
         Rule::new(
             Selector {
                 kind: Some("process".to_owned()),
@@ -1997,16 +2004,17 @@ mod tests {
     #[test]
     fn the_overview_is_the_session_one_level_down() {
         use crate::scenes::Surface;
-        let kit = scene_paths("overview", Surface::Arrange, "Drum Kit");
+        // The kit is Drums: its pieces one row each, Process not drawn.
+        let kit = scene_paths("overview", Surface::Arrange, "Drums");
         assert_eq!(
             kit,
             [
-                "Drum Kit",
-                "Drum Kit/Kick",
-                "Drum Kit/Snare",
-                "Drum Kit/Toms",
-                "Drum Kit/Cymbals",
-                "Drum Kit/Rooms",
+                "Drums",
+                "Drums/Kick",
+                "Drums/Snare",
+                "Drums/Toms",
+                "Drums/Cymbals",
+                "Drums/Rooms",
             ]
         );
         let electric = scene_paths("overview", Surface::Arrange, "Electric");
@@ -2020,7 +2028,7 @@ mod tests {
         );
         assert!(scene_paths("overview", Surface::Arrange, "HEADPHONE MIXES").is_empty());
         // Negative control: the mixer keeps every strip.
-        assert!(scene_paths("overview", Surface::Mixer, "Drum Kit").len() > kit.len());
+        assert!(scene_paths("overview", Surface::Mixer, "Drums").len() > kit.len());
     }
 
     /// Overview TOP: each top folder one row; the Orchestra open over
@@ -2029,8 +2037,8 @@ mod tests {
     fn overview_top_folds_every_top_folder_but_the_orchestra() {
         use crate::scenes::Surface;
         assert_eq!(
-            scene_paths("overview-top", Surface::Arrange, "Drum Kit"),
-            ["Drum Kit"]
+            scene_paths("overview-top", Surface::Arrange, "Drums"),
+            ["Drums"]
         );
         assert_eq!(
             scene_paths("overview-top", Surface::Arrange, "Vocals"),

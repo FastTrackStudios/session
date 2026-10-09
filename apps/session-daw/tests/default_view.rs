@@ -99,7 +99,7 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
     assert_eq!(family(&arranged, "BGVs"), ["0 BGVs"]);
     assert_eq!(family(&arranged, "Choir"), ["0 Choir"]);
     // The toms are one row, folded over Tom 1–4.
-    let kit = family(&arranged, "Drum Kit");
+    let kit = family(&arranged, "Drums");
     assert!(kit.iter().any(|r| r == "1 Toms"), "{kit:?}");
     assert!(kit.iter().all(|r| !r.contains("Tom 1")), "{kit:?}");
     // Folded, not dropped: a part's row carries its sources' items.
@@ -134,7 +134,7 @@ fn the_default_view_folds_the_vocals_and_keeps_process_out_of_view() {
         );
         // Negative control: the drums beside it are still there, the kit's
         // pieces a strip each (each piece shut, as in the arrangement).
-        let kit = family(strips, "Drum Kit");
+        let kit = family(strips, "Drums");
         assert!(
             kit.iter().any(|r| r.ends_with(" Kick")),
             "the {mixer} mixer: {kit:?}"

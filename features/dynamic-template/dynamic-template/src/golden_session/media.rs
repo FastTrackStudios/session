@@ -177,9 +177,9 @@ mod tests {
 
     #[test]
     fn media_is_deterministic_and_a_valid_wav() {
-        let a = samples("Drum Kit/Kick/Sum/In");
-        assert_eq!(a, samples("Drum Kit/Kick/Sum/In"));
-        assert_ne!(a, samples("Drum Kit/Kick/Sum/Out"));
+        let a = samples("Drums/Kick/Sum/In");
+        assert_eq!(a, samples("Drums/Kick/Sum/In"));
+        assert_ne!(a, samples("Drums/Kick/Sum/Out"));
         assert_eq!(a.len(), 44_100);
         let bytes = wav(&a, 1);
         assert_eq!(bytes.get(..4), Some(b"RIFF".as_slice()));
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn the_tone_swings_both_ways_and_decays() {
-        let a = samples("Drum Kit/Snare/Sum/Top");
+        let a = samples("Drums/Snare/Sum/Top");
         let peak = a.iter().copied().max().unwrap_or(0);
         let trough = a.iter().copied().min().unwrap_or(0);
         assert!(i32::from(peak) > PEAK / 2, "peak {peak}");

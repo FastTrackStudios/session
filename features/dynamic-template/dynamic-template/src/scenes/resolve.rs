@@ -109,6 +109,14 @@ pub fn resolve(
     active_language: Option<Language>,
     order: Option<&PerformerOrder<'_>>,
 ) -> Vec<Row> {
+    // What is in the mixer only is never an arrangement row.
+    let kept: Vec<Fact>;
+    let facts = if surface == Surface::Arrange && facts.iter().any(|f| f.mixer_only) {
+        kept = facts.iter().filter(|f| !f.mixer_only).cloned().collect();
+        kept.as_slice()
+    } else {
+        facts
+    };
     let effects = effects_for(scene, facts, surface, mode, active_language);
     let rows = walk(facts, &effects);
     if scene.group_by == GroupBy::Performer {

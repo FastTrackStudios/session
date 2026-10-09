@@ -25,7 +25,7 @@ fn read(path: &Path) -> (Project, String) {
     let kit = project
         .tracks
         .iter()
-        .find(|t| t.name == "Drum Kit")
+        .find(|t| t.name == "Drums")
         .expect("the kit")
         .guid
         .clone();

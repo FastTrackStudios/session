@@ -1,10 +1,10 @@
 window 2.000000 4.000000
 take 0
 
-folder Drum Kit
+folder Drums
 children 37
 takes 1
-revision f41317553e7fdc12
+revision 105b62d4bd2b2ba5
 mute-mask 0000000000000000
   child In role Kick side None muted false hidden false takes 1
   child Out role Kick side None muted false hidden false takes 1
@@ -305,7 +305,7 @@ columns 256
 folder Snare
 children 8
 takes 1
-revision cce7069b10bd16a8
+revision cd8d975b4bcfa0cd
 mute-mask 0000000000000000
   child Top role Snare side None muted false hidden false takes 1
   child Bottom role Snare side None muted false hidden false takes 1

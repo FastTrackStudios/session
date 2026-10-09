@@ -127,17 +127,17 @@ fn fx_names(t: &Flat) -> Vec<&str> {
 
 fn drum_pieces(g: &Golden) -> bool {
     const FAMILY: [(&str, u32); 6] = [
-        ("Drum Kit", 0x00B2_3A3F),
-        ("Drum Kit/Kick", 0x008C_2F35),
-        ("Drum Kit/Snare", 0x00C9_4540),
-        ("Drum Kit/Toms", 0x00B8_613F),
-        ("Drum Kit/Cymbals", 0x00C7_6B7A),
-        ("Drum Kit/Rooms", 0x0093_425C),
+        ("Drums", 0x00B2_3A3F),
+        ("Drums/Kick", 0x008C_2F35),
+        ("Drums/Snare", 0x00C9_4540),
+        ("Drums/Toms", 0x00B8_613F),
+        ("Drums/Cymbals", 0x00C7_6B7A),
+        ("Drums/Rooms", 0x0093_425C),
     ];
     names_eq(
         g,
-        "Drum Kit",
-        &["Kick", "Snare", "Toms", "Cymbals", "Rooms"],
+        "Drums",
+        &["Kick", "Snare", "Toms", "Cymbals", "Rooms", "Process"],
     ) && FAMILY.iter().all(|(path, colour)| {
         g.track(path)
             .is_some_and(|t| t.is_folder && t.colour == *colour)
@@ -165,30 +165,30 @@ fn sums_beside_sends(g: &Golden) -> bool {
 fn kick(g: &Golden) -> bool {
     summed(
         g,
-        "Drum Kit/Kick",
+        "Drums/Kick",
         &["In", "Out", "Trig", "Sample"],
         &["Sub", "Verb"],
-    ) && names_eq(g, "Drum Kit/Kick/Verb", &["Room"])
+    ) && names_eq(g, "Drums/Kick/Verb", &["Room"])
 }
 
 fn snare(g: &Golden) -> bool {
     summed(
         g,
-        "Drum Kit/Snare",
+        "Drums/Snare",
         &["Top", "Bottom", "Trig", "Sample", "Fund"],
         &["Verb"],
-    ) && names_eq(g, "Drum Kit/Snare/Verb", &["Plate", "Hall", "Nonlin"])
+    ) && names_eq(g, "Drums/Snare/Verb", &["Plate", "Hall", "Nonlin"])
 }
 
 fn toms(g: &Golden) -> bool {
     names_eq(
         g,
-        "Drum Kit/Toms",
+        "Drums/Toms",
         &["Tom 1", "Tom 2", "Tom 3", "Tom 4", "Verb"],
     ) && (1..=4).all(|n| {
         names_eq(
             g,
-            &format!("Drum Kit/Toms/Tom {n}"),
+            &format!("Drums/Toms/Tom {n}"),
             &[
                 &format!("T{n}"),
                 &format!("T{n} Trig"),
@@ -196,14 +196,14 @@ fn toms(g: &Golden) -> bool {
                 "Fund",
             ],
         )
-    }) && names_eq(g, "Drum Kit/Toms/Verb", &["Room", "Nonlin"])
+    }) && names_eq(g, "Drums/Toms/Verb", &["Room", "Nonlin"])
 }
 
 fn cymbals_and_rooms(g: &Golden) -> bool {
-    names_eq(g, "Drum Kit/Cymbals", &["OH", "Hi-Hat", "Ride"])
-        && names_eq(g, "Drum Kit/Rooms", &["Rooms", "Rooms Far"])
-        && is_stereo_leaf(g, "Drum Kit/Rooms/Rooms")
-        && is_stereo_leaf(g, "Drum Kit/Rooms/Rooms Far")
+    names_eq(g, "Drums/Cymbals", &["OH", "Hi-Hat", "Ride"])
+        && names_eq(g, "Drums/Rooms", &["Rooms", "Rooms Far"])
+        && is_stereo_leaf(g, "Drums/Rooms/Rooms")
+        && is_stereo_leaf(g, "Drums/Rooms/Rooms Far")
 }
 
 fn one_note_chains(g: &Golden) -> bool {
@@ -255,7 +255,22 @@ fn process_fx(g: &Golden) -> bool {
 }
 
 fn drums_to_drum_bus(g: &Golden) -> bool {
-    sends_to(g, "Drum Kit", "DRUM BUS") && sends_to(g, "Process", "DRUM BUS")
+    // Process is in Drums: it reaches DRUM BUS with the kit, through it.
+    sends_to(g, "Drums", "DRUM BUS")
+        && g.track("Drums/Process")
+            .is_some_and(|t| t.routing.parent_send())
+}
+
+/// Process — the folder and everything in it — is in the mixer and out of
+/// the track panel: mixing, not arranging.
+fn process_in_the_mixer_only(g: &Golden) -> bool {
+    let process: Vec<&super::Flat> = g
+        .built
+        .tracks
+        .iter()
+        .filter(|t| t.path == "Drums/Process" || t.path.starts_with("Drums/Process/"))
+        .collect();
+    !process.is_empty() && process.iter().all(|t| t.mixer_only)
 }
 
 fn drum_scenes(g: &Golden) -> bool {
@@ -575,7 +590,7 @@ fn buses_scene(g: &Golden) -> bool {
     g.has_scene("buses")
 }
 
-const DRUMS: &str = "Drums — `Drum Kit/`, `Process/`";
+const DRUMS: &str = "Drums — the kit's pieces and `Process/`, in one folder";
 const GUIDE: &str = "Guide and Keyflow — `Guide/`, `Keyflow/`";
 const PERCUSSION: &str = "Percussion — `Percussion/`";
 const BASS: &str = "Bass — `Bass/`";
@@ -634,8 +649,13 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: DRUMS,
-        text: "The kit and Process reach the mix by a send to **DRUM BUS**.",
+        text: "Drums — the kit and Process in it — reaches the mix by a send to\n**DRUM BUS**.",
         check: Some(drums_to_drum_bus),
+    },
+    Item {
+        section: DRUMS,
+        text: "**Process** is in the mixer and out of the track panel, all of it.",
+        check: Some(process_in_the_mixer_only),
     },
     Item {
         section: DRUMS,
@@ -924,7 +944,7 @@ mod tests {
         let mut g = golden();
         // Take the kick's Sub away: the kick item is no longer true and
         // the render says so, while the snare's tick is unaffected.
-        g.built.tracks.retain(|t| t.path != "Drum Kit/Kick/Sub");
+        g.built.tracks.retain(|t| t.path != "Drums/Kick/Sub");
         let text = render(&g);
         assert!(text.contains("- [ ] **Kick**: In, Out, Trig, Sample; Sub; **Verb/** Room."));
         assert!(text.contains("- [x] **Snare**: Top, Bottom, Trig, Sample, Fund;"));

@@ -108,6 +108,9 @@ pub struct Fact {
     /// One half of a stereo pair — see the engine invariant in
     /// [`super::resolve`].
     pub pair_half: bool,
+    /// In the mixer and not the track panel (the drums' Process): never a
+    /// row on the arrangement, whatever a scene says.
+    pub mixer_only: bool,
 }
 
 impl Fact {

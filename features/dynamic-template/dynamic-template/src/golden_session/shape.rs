@@ -113,6 +113,8 @@ pub struct Node {
     pub fx: Vec<Fx>,
     /// No items at all — a lane that is real and waiting.
     pub no_items: bool,
+    /// In the mixer and not the track panel: mixing, not arranging.
+    pub mixer_only: bool,
     /// Whether this track's items hold MIDI.
     ///
     /// Not derivable from `Kind`: a trigger is always MIDI, but the
@@ -148,6 +150,7 @@ impl Node {
             stereo: false,
             fx: Vec::new(),
             no_items: false,
+            mixer_only: false,
             midi: false,
             strip: None,
         }
@@ -194,6 +197,21 @@ impl Node {
     #[must_use]
     pub const fn dead_end(mut self) -> Self {
         self.routing = Routing::DeadEnd;
+        self
+    }
+
+    /// No items, its routing as it is: a return, fed by sends, that has
+    /// nothing recorded on it.
+    #[must_use]
+    pub const fn without_items(mut self) -> Self {
+        self.no_items = true;
+        self
+    }
+
+    /// In the mixer only, out of the track panel.
+    #[must_use]
+    pub const fn mixer_only(mut self) -> Self {
+        self.mixer_only = true;
         self
     }
 
@@ -484,16 +502,22 @@ fn bus(name: &str, colour: u32) -> Node {
     Node::new(name, colour, Kind::Bus).fx(BUS_CHAIN)
 }
 
-/// The kit: every piece a folder, each piece's close mics under a Sum
-/// with its sends beside rather than inside it.
+/// The drums: every piece a folder, each piece's close mics under a Sum
+/// with its sends beside rather than inside it — and, after the pieces,
+/// the kit's [`process`] chains, in the mixer only.
+///
+/// One kit is no folder of its own: the pieces are Drums' (a level is a
+/// folder only when it has more than one member). They still stand for
+/// the template's `Drums/Drum Kit/…` groups, which is what a scene
+/// selects them by.
 ///
 /// The bus tree — the dynamic template's canonical one without GUITAR
 /// BUS, with the three electric buses under ELECTRIC BUS, in the bus
 /// list rather than in the folder.
 #[must_use]
-pub fn drum_kit() -> Node {
-    Node::new("Drum Kit", DRUMS, Kind::Group)
-        .template(&["Drums", "Drum Kit"])
+pub fn drums() -> Node {
+    Node::new("Drums", DRUMS, Kind::Group)
+        .template(&["Drums"])
         .send("DRUM BUS")
         .children(vec![
             summed(
@@ -557,6 +581,7 @@ pub fn drum_kit() -> Node {
             Node::new("Rooms", ROOMS, Kind::Group)
                 .template(&["Drums", "Drum Kit", "Rooms"])
                 .children(vec![pair("Rooms", ROOMS), pair("Rooms Far", ROOMS)]),
+            process(),
         ])
 }
 
@@ -569,16 +594,16 @@ pub fn drum_kit() -> Node {
 /// list rather than in the folder.
 fn process() -> Node {
     Node::new("Process", PROCESS, Kind::Process)
-        .send("DRUM BUS")
+        .mixer_only()
         .children(vec![
             Node::new("Compress", PROCESS, Kind::Compress).children(
                 ["Dry", "Tight", "Punch", "Smash", "Crunch"]
                     .iter()
-                    .map(|n| part(n, PROCESS))
+                    .map(|n| part(n, PROCESS).without_items())
                     .collect(),
             ),
             Node::new("FX", PROCESS, Kind::Fx).children(vec![
-                part("Room Sim", PROCESS),
+                part("Room Sim", PROCESS).without_items(),
                 verb("Verb", PROCESS).children(
                     [
                         "Wood Room",
@@ -589,7 +614,7 @@ fn process() -> Node {
                         "Brick Wall",
                     ]
                     .iter()
-                    .map(|n| verb(n, PROCESS))
+                    .map(|n| verb(n, PROCESS).without_items())
                     .collect(),
                 ),
             ]),
@@ -1161,9 +1186,8 @@ pub fn maximal() -> Shape {
             // against (`flow.scenes.guide-folder`).
             guide(),
             keyflow(),
-            drum_kit(),
+            drums(),
             percussion(),
-            process(),
             bass(),
             electric(),
             acoustic(),

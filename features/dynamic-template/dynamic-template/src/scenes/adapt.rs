@@ -46,7 +46,7 @@ pub fn from_flat(flats: &[Flat]) -> Vec<Fact> {
             let template: Option<Vec<String>> = flat
                 .template
                 .map(|path| path.iter().map(|s| (*s).to_owned()).collect());
-            walk.step(
+            let mut fact = walk.step(
                 index,
                 &Node {
                     guid: &flat.guid,
@@ -56,7 +56,9 @@ pub fn from_flat(flats: &[Flat]) -> Vec<Fact> {
                     kind: Some(flat.kind),
                     template: template.as_deref(),
                 },
-            )
+            );
+            fact.mixer_only = flat.mixer_only;
+            fact
         })
         .collect()
 }
@@ -109,6 +111,7 @@ pub fn from_tracks<S: std::hash::BuildHasher>(
             if !track.is_folder {
                 fact.performer = performer_of(&track.guid, &track.name, ext, sends);
             }
+            fact.mixer_only = !track.visible_in_tcp && track.visible_in_mixer;
             fact
         })
         .collect()
@@ -234,6 +237,7 @@ impl Walk {
             arrangement: None,
             language,
             pair_half: is_pair_half(name),
+            mixer_only: false,
         }
     }
 }
@@ -266,7 +270,7 @@ mod tests {
             by("Room Sim")
                 .path
                 .iter()
-                .zip(["process", "fx"])
+                .zip(["drums", "process", "fx"])
                 .all(|(seg, want)| seg.answers_to(want)),
             "{:?}",
             by("Room Sim").path

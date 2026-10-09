@@ -947,7 +947,7 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
     ///
     /// A backend call failed.
     pub fn apply_golden_kit(&mut self) -> eyre::Result<Vec<String>> {
-        let golden = crate::golden_session::shape::drum_kit();
+        let golden = crate::golden_session::shape::drums();
         let tracks = Tracks::all(&self.daw, self.project.clone());
         let Some(drums) = tracks.iter().find(|t| {
             t.parent_guid.is_none()

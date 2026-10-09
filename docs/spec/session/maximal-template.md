@@ -21,7 +21,7 @@ fixed tree.
 
 ## Checklist
 
-### Drums — `Drum Kit/`, `Process/`
+### Drums — the kit's pieces and `Process/`, in one folder
 
 - [x] Every piece a folder: **Kick, Snare, Toms, Cymbals, Rooms**, in one
       red family (folder crimson, pieces oxblood → scarlet → terracotta →
@@ -35,13 +35,15 @@ fixed tree.
       and Rooms Far.
 - [x] One-note tracks (Fund, Sub) get Gate → band-pass at the fundamental
       → Sat; triggers get nothing.
-- [x] **Process/Compress/**: Dry, Tight, Punch, Smash, Crunch — a balance
+- [ ] **Process/Compress/**: Dry, Tight, Punch, Smash, Crunch — a balance
       group (`session-daw::balance`): one fader up, the others down by the
       same amount between them; a fader at silence is out.
-- [x] **Process/FX/**: Room Sim (captured rooms, compressed fast on the
+- [ ] **Process/FX/**: Room Sim (captured rooms, compressed fast on the
       way back) and a **Verb** bank: Wood Room, Music Club, Stadium,
       RMX 16, Nonlin, Brick Wall.
-- [x] The kit and Process reach the mix by a send to **DRUM BUS**.
+- [x] Drums — the kit and Process in it — reaches the mix by a send to
+      **DRUM BUS**.
+- [x] **Process** is in the mixer and out of the track panel, all of it.
 - [x] Scenes: Tracking, Mixing, Overview (pieces collapsed), Advanced,
       FX.
 

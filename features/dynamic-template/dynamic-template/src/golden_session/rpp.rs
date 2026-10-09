@@ -25,14 +25,14 @@ use super::shape::{
 /// the tree decides about it.
 #[derive(Debug, Clone)]
 pub struct Flat {
-    /// The node path, `/`-joined, e.g. `Drum Kit/Kick/Sum/In`.
+    /// The node path, `/`-joined, e.g. `Drums/Kick/Sum/In`.
     pub path: String,
     /// Which RECORDING this track's items belong to.
     ///
     /// The mics of one drum are one performance: the same punches, the
     /// same comp, the same edits. So they share an item layout, and the
     /// key they share is the piece they are mics of — `In`, `Out` and
-    /// `Trig` all say `Drum Kit/Kick/Sum`.
+    /// `Trig` all say `Drums/Kick/Sum`.
     ///
     /// Parallel colour does not: a Sub, a Verb bank and a Fundamental
     /// are fed from the take rather than being it, and giving them the
@@ -61,6 +61,8 @@ pub struct Flat {
     pub aux: Vec<String>,
     /// No items at all — a lane that is real and waiting.
     pub no_items: bool,
+    /// In the mixer only ([`super::shape::Node::mixer_only`]).
+    pub mixer_only: bool,
     /// The items hold notes rather than audio.
     pub midi: bool,
     /// Track grouping.
@@ -119,7 +121,7 @@ impl Flat {
     }
 }
 
-/// A file-safe name for a track path: `Drum Kit/Kick/Sum/In` →
+/// A file-safe name for a track path: `Drums/Kick/Sum/In` →
 /// `drum-kit-kick-sum-in`.
 ///
 /// The signs the pitch returns are named by are spelled out, so `Oct+`
@@ -206,6 +208,18 @@ pub fn flatten(shape: &Shape) -> Vec<Flat> {
     for root in &shape.roots {
         flatten_node(root, &mut Vec::new(), false, None, &mut out);
     }
+    // What is in a mixer-only folder is mixer-only too: the panel shows
+    // none of Process, not its folder alone.
+    let folders: Vec<String> = out
+        .iter()
+        .filter(|t| t.mixer_only && t.is_folder)
+        .map(|t| format!("{}/", t.path))
+        .collect();
+    for track in &mut out {
+        if folders.iter().any(|f| track.path.starts_with(f)) {
+            track.mixer_only = true;
+        }
+    }
     out
 }
 
@@ -254,6 +268,7 @@ fn flatten_node(
         routing: node.routing,
         aux: node.aux.clone(),
         no_items: node.no_items,
+        mixer_only: node.mixer_only,
         midi: node.midi,
         group: node.group,
         stereo: node.stereo,
@@ -788,6 +803,9 @@ fn build_track(track: &Flat, context: &TrackContext) -> dawfile_reaper::types::T
     if context.selected {
         builder = builder.selected();
     }
+    if track.mixer_only {
+        builder = builder.mixer_only();
+    }
     if context.layout == Layout::Maximal && track.auxiliary() {
         builder = builder.height(MIN_HEIGHT);
     }
@@ -959,13 +977,13 @@ mod tests {
         // with no Sum; the FX folder with one real child counts as one.
         let tracks = flatten(&maximal());
         let by_path = |p: &str| tracks.iter().find(|t| t.path == p);
-        assert!(by_path("Drum Kit/Kick/Sum").is_some_and(|t| t.piece));
-        assert!(by_path("Drum Kit/Kick/Sum/In").is_some_and(|t| !t.piece));
-        assert!(by_path("Drum Kit/Toms/Tom 1").is_some_and(|t| t.piece));
-        assert!(by_path("Drum Kit/Toms/Tom 1/T1").is_some_and(|t| !t.piece));
-        assert!(by_path("Process/FX").is_some_and(|t| t.piece));
-        assert!(by_path("Process/FX/Room Sim").is_some_and(|t| !t.piece));
-        assert!(by_path("Drum Kit/Snare/Verb").is_some_and(|t| t.auxiliary() && t.is_folder));
+        assert!(by_path("Drums/Kick/Sum").is_some_and(|t| t.piece));
+        assert!(by_path("Drums/Kick/Sum/In").is_some_and(|t| !t.piece));
+        assert!(by_path("Drums/Toms/Tom 1").is_some_and(|t| t.piece));
+        assert!(by_path("Drums/Toms/Tom 1/T1").is_some_and(|t| !t.piece));
+        assert!(by_path("Drums/Process/FX").is_some_and(|t| t.piece));
+        assert!(by_path("Drums/Process/FX/Room Sim").is_some_and(|t| !t.piece));
+        assert!(by_path("Drums/Snare/Verb").is_some_and(|t| t.auxiliary() && t.is_folder));
         // The maximal session, all of it: the instruments, the monitor
         // side (Guide, Keyflow, the headphone buses, talkback), the
         // three vocal languages across every lead, BGV part and choir
@@ -1043,11 +1061,11 @@ mod tests {
 
     #[test]
     fn items_are_deterministic_per_pass_and_cover_the_song() {
-        let a = items_for(Layout::Maximal, "Drum Kit/Kick/Sum/In", 64);
-        assert_eq!(a, items_for(Layout::Maximal, "Drum Kit/Kick/Sum/In", 64));
+        let a = items_for(Layout::Maximal, "Drums/Kick/Sum/In", 64);
+        assert_eq!(a, items_for(Layout::Maximal, "Drums/Kick/Sum/In", 64));
         // One pass, one layout: every mic of the kit was cut where the
         // others were, so its folded row lines up.
-        assert_eq!(a, items_for(Layout::Maximal, "Drum Kit/Snare/Sum/Top", 64));
+        assert_eq!(a, items_for(Layout::Maximal, "Drums/Snare/Sum/Top", 64));
         // Another pass is cut its own way.
         assert_ne!(a, items_for(Layout::Maximal, "Bass/DI", 64));
         assert!(a.iter().all(|p| p.bar < 64));
@@ -1058,7 +1076,7 @@ mod tests {
 
     #[test]
     fn slugs_are_file_safe() {
-        assert_eq!(slug("Drum Kit/Kick/Sum/In"), "drum-kit-kick-sum-in");
+        assert_eq!(slug("Drums/Kick/Sum/In"), "drums-kick-sum-in");
         assert_eq!(
             slug("Vox Lead/Vox FX/Pitch/Oct+"),
             "vox-lead-vox-fx-pitch-oct-plus"
@@ -1067,9 +1085,6 @@ mod tests {
             slug("Vox Lead/Vox FX/Pitch/Oct+"),
             slug("Vox Lead/Vox FX/Pitch/Oct-")
         );
-        assert_eq!(
-            slug("Drum Kit/Cymbals/Hi-Hat"),
-            "drum-kit-cymbals-hi-minus-hat"
-        );
+        assert_eq!(slug("Drums/Cymbals/Hi-Hat"), "drums-cymbals-hi-minus-hat");
     }
 }

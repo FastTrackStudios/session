@@ -490,7 +490,7 @@ fn kit_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
 /// it is a stereo part rather than a folder because in a session that
 /// has not grown its channels out a double IS one stereo track.
 const SHEET: [(&str, session_daw::folder_item::GroupBy); 3] = [
-    ("Drum Kit", session_daw::folder_item::GroupBy::Role),
+    ("Drums", session_daw::folder_item::GroupBy::Role),
     ("Snare", session_daw::folder_item::GroupBy::Role),
     ("Rhythm", session_daw::folder_item::GroupBy::Side),
 ];
@@ -911,9 +911,17 @@ fn mixer_shot(
         return;
     };
     let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
-    let (visible, depths) =
-        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
-    let mut planned: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
+    // The mixer's strips: every track it shows, at its folder depth — not
+    // the track panel's visibility (`FolderState::visible`), which a track
+    // kept for mixing only (the drums' Process) is out of.
+    let mut planned: Vec<(daw_proto::Track, u32)> = Vec::new();
+    let mut depth = 0_u32;
+    for track in project.tracks.iter() {
+        if track.visible_in_mixer {
+            planned.push((track.clone(), depth));
+        }
+        depth = depth.saturating_add_signed(track.folder_depth);
+    }
     // A scene, if one is asked for: the visibility manager's answer to
     // which strips and how wide — `FTS_BENCH_SCENE=lead-vocal-fx`.
     //

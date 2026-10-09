@@ -141,7 +141,8 @@ pub fn performance(path: &str) -> Option<(String, Perf)> {
                 },
             ))
         }
-        ["Drum Kit", rest @ ..] => {
+        // The kit's pieces — not its Process, which is mixing, not a take.
+        ["Drums", rest @ ..] if rest.first() != Some(&"Process") => {
             let mic = Mic::of(rest)?;
             Some((format!("perf-{}", key(parts.len())), Perf::Kit(mic)))
         }
@@ -163,8 +164,9 @@ pub fn performance(path: &str) -> Option<(String, Perf)> {
 /// anything else is its own.
 #[must_use]
 pub fn pass(path: &str) -> String {
-    if path == "Drum Kit" || path.starts_with("Drum Kit/") {
-        return "Drum Kit".to_owned();
+    let in_process = path == "Drums/Process" || path.starts_with("Drums/Process/");
+    if !in_process && (path == "Drums" || path.starts_with("Drums/")) {
+        return "Drums".to_owned();
     }
     performance(path).map_or_else(|| path.to_owned(), |(key, _)| key)
 }
@@ -497,9 +499,9 @@ mod tests {
             file("Electric/Rhythm/Main/R/DI")
         );
         // Every kit mic is its own file: one groove, each mic's balance.
-        assert_ne!(file("Drum Kit/Kick/Sum/In"), file("Drum Kit/Kick/Sum/Out"));
+        assert_ne!(file("Drums/Kick/Sum/In"), file("Drums/Kick/Sum/Out"));
         assert!(matches!(
-            performance("Drum Kit/Toms/Tom 2/T2"),
+            performance("Drums/Toms/Tom 2/T2"),
             Some((_, Perf::Kit(Mic { tom: Some(2), .. })))
         ));
         assert_eq!(file("Process/FX/Room Sim"), None);

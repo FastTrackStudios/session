@@ -1,6 +1,6 @@
 0	Guide	86
 0	Keyflow	86
-0	Drum Kit	86
+0	Drums	86
 1	Unassigned	86
 2	Kick	86
 3	Sum	86
@@ -53,27 +53,27 @@
 2	Rooms	86
 3	Rooms	86
 3	Rooms Far	86
+2	Process	86
+3	Compress	86
+4	Dry	86
+4	Tight	86
+4	Punch	86
+4	Smash	86
+4	Crunch	86
+3	FX	86
+4	Room Sim	86
+4	Verb	86
+5	Wood Room	86
+5	Music Club	86
+5	Stadium	86
+5	RMX 16	86
+5	Nonlin	86
+5	Brick Wall	86
 0	Percussion	86
 1	Unassigned	86
 2	Shaker	86
 2	Tambourine	86
 2	Claps	86
-0	Process	86
-1	Compress	86
-2	Dry	86
-2	Tight	86
-2	Punch	86
-2	Smash	86
-2	Crunch	86
-1	FX	86
-2	Room Sim	86
-2	Verb	86
-3	Wood Room	86
-3	Music Club	86
-3	Stadium	86
-3	RMX 16	86
-3	Nonlin	86
-3	Brick Wall	86
 0	Bass	86
 1	Unassigned	86
 2	Guitar	86
