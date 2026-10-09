@@ -188,18 +188,109 @@ pub fn stamp_lyrics(
     session::lyrics::stamp_lines(daw, project, &lyrics).map_err(|e| eyre::eyre!("lyrics: {e}"))
 }
 
-/// The song's name: the project's, less a working copy's suffix
-/// (`unbreakable.current` is "unbreakable").
+/// The song's name, "Title - Artist": the project's name less a working
+/// copy's suffix, title-cased (`unbreakable.current` is "Unbreakable"),
+/// and the artist the folder above the song's own is named for, less a
+/// snapshot's date (`crescendum-2026-10-08/unbreakable/` is "Crescendum").
 fn song_name(daw: &daw_standalone::sync::Standalone, project: &ProjectContext) -> Option<String> {
     use daw::service::Projects as _;
-    let name = daw.info(project.clone()).ok()?.name;
-    let name = [".current", ".organized", ".raw"]
+    let info = daw.info(project.clone()).ok()?;
+    let title = title_case(strip_working_suffix(&info.name));
+    if title.is_empty() {
+        return None;
+    }
+    let artist = std::path::Path::new(&info.path)
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .map(|folder| title_case(&strip_date(folder)))
+        .filter(|artist| !artist.is_empty());
+    Some(match artist {
+        Some(artist) => format!("{title} - {artist}"),
+        None => title,
+    })
+}
+
+/// Remove the markers that only name the song (`unbreakable.organized`,
+/// a title an earlier tool left at the start): the SONG region names it
+/// now. Returns their names.
+fn drop_title_markers(
+    daw: &daw_standalone::sync::Standalone,
+    project: &ProjectContext,
+) -> Vec<String> {
+    use daw::service::{Markers, Projects as _};
+    let Ok(info) = daw.info(project.clone()) else {
+        return Vec::new();
+    };
+    let title = strip_working_suffix(&info.name).to_lowercase();
+    let mut dropped = Vec::new();
+    for marker in Markers::all(daw, project.clone()) {
+        if strip_working_suffix(&marker.name).to_lowercase() == title
+            && let Some(id) = marker.id
+            && Markers::remove(daw, project.clone(), id).is_ok()
+        {
+            dropped.push(marker.name);
+        }
+    }
+    dropped
+}
+
+/// `unbreakable.current` → `unbreakable`.
+fn strip_working_suffix(name: &str) -> &str {
+    [".current", ".organized", ".raw"]
         .iter()
         .find_map(|suffix| name.strip_suffix(suffix))
-        .unwrap_or(&name)
+        .unwrap_or(name)
         .trim()
-        .to_string();
-    (!name.is_empty()).then_some(name)
+}
+
+/// `crescendum-2026-10-08` → `crescendum`: a trailing `-YYYY-MM-DD`.
+fn strip_date(folder: &str) -> String {
+    let parts: Vec<&str> = folder.split('-').collect();
+    let digits =
+        |part: &str, len: usize| part.len() == len && part.bytes().all(|b| b.is_ascii_digit());
+    match parts.as_slice() {
+        [head @ .., year, month, day]
+            if !head.is_empty() && digits(year, 4) && digits(month, 2) && digits(day, 2) =>
+        {
+            head.join("-").trim().to_string()
+        }
+        _ => folder.trim().to_string(),
+    }
+}
+
+/// Each word's first letter capitalised, the rest as written
+/// (`it knows my name` → `It Knows My Name`, `AG GTR` stays).
+fn title_case(text: &str) -> String {
+    text.split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().chain(chars).collect()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod song_name_tests {
+    #[test]
+    fn a_song_is_named_title_dash_artist() {
+        assert_eq!(
+            super::strip_working_suffix("unbreakable.current"),
+            "unbreakable"
+        );
+        assert_eq!(super::strip_date("crescendum-2026-10-08"), "crescendum");
+        assert_eq!(super::strip_date("Crescendum"), "Crescendum");
+        assert_eq!(
+            super::strip_date("north-point-2026-1-08"),
+            "north-point-2026-1-08"
+        );
+        assert_eq!(super::title_case("it knows my name"), "It Knows My Name");
+        assert_eq!(super::title_case("unbreakable"), "Unbreakable");
+    }
 }
 
 /// Where the song ends: where most of what is still playing at its last
@@ -207,7 +298,7 @@ fn song_name(daw: &daw_standalone::sync::Standalone, project: &ProjectContext) -
 /// latest end: a guitar take left running, a click rendered long, a
 /// rehearsal in the references runs on for minutes past the song. The
 /// references and the guide are not counted; with nothing else, all of it.
-fn media_end(daw: &daw_standalone::sync::Standalone, project: &ProjectContext) -> f64 {
+fn media_end(daw: &daw_standalone::sync::Standalone, project: &ProjectContext) -> MediaEnd {
     use daw::service::{Items as _, Markers, Tracks};
     let tracks = Tracks::all(daw, project.clone());
     let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
@@ -249,9 +340,127 @@ fn media_end(daw: &daw_standalone::sync::Standalone, project: &ProjectContext) -
             .filter(|end| *end > last_marker)
             .collect();
         ends.sort_by(f64::total_cmp);
-        ends.get(ends.len() / 2).copied()
+        Some((*ends.get(ends.len() / 2)?, *ends.last()?))
     };
-    ends(true).or_else(|| ends(false)).unwrap_or(last_marker)
+    let (median, latest) = ends(true)
+        .or_else(|| ends(false))
+        .unwrap_or((last_marker, last_marker));
+    MediaEnd {
+        last_marker,
+        median,
+        latest,
+        hidden: tracks
+            .iter()
+            .filter(|t| t.parent_guid.is_none() && referenced(&t.guid) && !t.muted)
+            .map(|t| t.guid.clone())
+            .collect(),
+    }
+}
+
+/// Where a song's media runs to, past its last marker ([`media_end`]).
+struct MediaEnd {
+    last_marker: f64,
+    /// The median end of the tracks still playing at the last marker.
+    median: f64,
+    /// The latest of them.
+    latest: f64,
+    /// The top-level folders not counted (REFERENCES, the Guide), unmuted.
+    hidden: Vec<String>,
+}
+
+/// Where the song ends: the bar line after its sound dies away.
+///
+/// The mix from the last marker to where the media runs out is rendered
+/// — the references and the guide muted for it — and the song ends at the
+/// first bar line after the last moment it is within [`HEARD_DB`] of its
+/// loudest there: the last hit's ring-out heard, the silence after it not.
+/// unbreakable's guitars hit on bar 181 and ring through 184; its media
+/// runs on to 317 s. Without a render (a page), the median end
+/// ([`media_end`]), on a bar line too.
+fn song_end(
+    daw: &daw_standalone::sync::Standalone,
+    project_guid: &str,
+    project: &ProjectContext,
+) -> f64 {
+    use daw::service::TempoMap as _;
+    let media = media_end(daw, project);
+    #[cfg(feature = "native")]
+    let heard = heard_end(daw, project_guid, project, &media);
+    #[cfg(not(feature = "native"))]
+    let heard: Option<f64> = {
+        let _ = project_guid;
+        None
+    };
+    let end = heard.unwrap_or(media.median);
+    // On a bar line: this one when it is on one, else the next.
+    let (measure, beat, fraction) = daw.time_to_musical(project.clone(), end);
+    if beat == 1 && fraction < 1e-3 {
+        return end;
+    }
+    daw.musical_to_time(project.clone(), measure.saturating_add(1), 1, 0.0)
+}
+
+/// How far under the song's loudest its end still counts as heard: the
+/// last hit's ring at -48 dB is the song's, the room's hiss under it not.
+const HEARD_DB: f32 = 48.0;
+
+/// The last moment the mix past the last marker is heard ([`HEARD_DB`]),
+/// rendered with the references and the guide muted.
+#[cfg(feature = "native")]
+fn heard_end(
+    daw: &daw_standalone::sync::Standalone,
+    project_guid: &str,
+    project: &ProjectContext,
+    media: &MediaEnd,
+) -> Option<f64> {
+    use daw::service::{TrackRef, Tracks};
+    use std::time::Duration;
+    const RATE: u32 = 48_000;
+    // 50 ms, in frames: one block and one peak.
+    const CHUNK: usize = 2_400;
+    const CHUNK_FRAMES: u64 = 2_400;
+    let frame = |seconds: f64| {
+        let nanos = Duration::try_from_secs_f64(seconds.max(0.0))
+            .ok()?
+            .as_nanos();
+        u64::try_from(nanos.checked_mul(u128::from(RATE))? / 1_000_000_000).ok()
+    };
+    let (from, to) = (frame(media.last_marker)?, frame(media.latest)?);
+    for guid in &media.hidden {
+        let _ = Tracks::set_muted(daw, project.clone(), TrackRef::Guid(guid.clone()), true);
+    }
+    let renderer =
+        daw::standalone::audio_engine::render::ProjectRenderer::new(daw, project_guid, RATE);
+    let mut peaks: Vec<(u64, f32)> = Vec::new();
+    let mut at = from;
+    while at < to {
+        let block = renderer.render_block(at, CHUNK);
+        let peak = block.samples.iter().fold(0.0_f32, |p, s| p.max(s.abs()));
+        peaks.push((at, peak));
+        at = at.saturating_add(CHUNK_FRAMES);
+    }
+    for guid in &media.hidden {
+        let _ = Tracks::set_muted(daw, project.clone(), TrackRef::Guid(guid.clone()), false);
+    }
+    let loudest = peaks.iter().fold(0.0_f32, |p, (_, peak)| p.max(*peak));
+    if loudest <= 0.0 {
+        return None;
+    }
+    let floor = loudest * 10.0_f32.powf(-HEARD_DB / 20.0);
+    peaks
+        .iter()
+        .rev()
+        .find(|(_, peak)| *peak >= floor)
+        .map(|(at, _)| {
+            let frames = at.saturating_add(CHUNK_FRAMES);
+            Duration::from_nanos(
+                frames
+                    .saturating_mul(1_000_000_000)
+                    .checked_div(u64::from(RATE))
+                    .unwrap_or(0),
+            )
+            .as_secs_f64()
+        })
 }
 
 /// The one `.kf` chart in the project's folder, if there is exactly one.
@@ -377,14 +586,17 @@ pub fn steps(
         // own markers — the sections made regions, the song's region and
         // bounds placed, the notes left marks — before the guide, whose
         // cues follow the sections.
-        let converted = session::keyflow::actions::convert_markers_in(
+        let mut converted = session::keyflow::actions::convert_markers_in(
             daw,
             &project,
             song_name(daw, &project).as_deref(),
-            Some(media_end(daw, &project)),
+            Some(song_end(daw, project_guid, &project)),
         )
         .map_err(|e| eyre::eyre!("markers: {e}"))?;
+        let dropped = drop_title_markers(daw, &project);
+        converted.marks.retain(|mark| !dropped.contains(mark));
         tracing::info!(
+            dropped = ?dropped,
             sections = ?converted.sections,
             marks = ?converted.marks,
             song = ?converted.song,
