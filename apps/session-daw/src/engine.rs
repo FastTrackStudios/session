@@ -235,6 +235,9 @@ pub enum Edit {
     /// prediction. What the guid buys is a picture that is right on the
     /// next frame rather than whenever the session answers.
     CopyItem(String, f64, String),
+    /// Put an item on a fixed lane (REAPER 7's comping lanes): a comp's
+    /// piece onto the comp lane.
+    SetItemLane(String, u32),
     DeleteItem(String),
 }
 
@@ -290,6 +293,7 @@ impl Edit {
             | Self::TrimItem(g, ..)
             | Self::SplitItem(g, ..)
             | Self::CopyItem(g, ..)
+            | Self::SetItemLane(g, _)
             | Self::SlipItem(g, _)
             | Self::DeleteItem(g) => g,
         }
@@ -328,6 +332,7 @@ impl Edit {
                 | Self::TrimItem(..)
                 | Self::SplitItem(..)
                 | Self::CopyItem(..)
+                | Self::SetItemLane(..)
                 | Self::SlipItem(..)
                 | Self::DeleteItem(_)
         )
@@ -1205,6 +1210,7 @@ async fn apply(edit: &Edit) {
                 }
                 Err(error) => Err(error),
             },
+            Edit::SetItemLane(_, lane) => item.set_fixed_lane(*lane).await,
             Edit::DeleteItem(_) => item.delete().await,
             _ => Ok(()),
         };
@@ -1327,6 +1333,7 @@ async fn apply(edit: &Edit) {
         | Edit::TrimItem(..)
         | Edit::SplitItem(..)
         | Edit::CopyItem(..)
+        | Edit::SetItemLane(..)
         | Edit::SlipItem(..)
         | Edit::DeleteItem(_)
         // Already handled above, where they did not need a track.

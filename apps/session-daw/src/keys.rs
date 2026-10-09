@@ -46,6 +46,9 @@ pub enum Action {
     GainStage {
         clear: bool,
     },
+    /// Ctrl+N: comp the razor areas from take N — on a folded row, every
+    /// mic in the folder at once (`arrange_edit::Editor::comp`).
+    CompTake(u32),
     DeleteSelectedItems,
     SelectAllItems,
     /// Escape: no time selection, nothing selected.
@@ -103,6 +106,10 @@ pub fn action_of(id: &str) -> Action {
         "FTS_QUANTIZE_DRUMS" => Action::QuantizeDrums,
         "FTS_GAIN_STAGE" => Action::GainStage { clear: false },
         "FTS_GAIN_STAGE_CLEAR" => Action::GainStage { clear: true },
+        comp if comp.starts_with("FTS_COMP_TAKE_") => comp
+            .trim_start_matches("FTS_COMP_TAKE_")
+            .parse()
+            .map_or_else(|_| Action::Unbound(comp.to_owned()), Action::CompTake),
         "40006" | "40697" => Action::DeleteSelectedItems,
         "40035" | "40182" => Action::SelectAllItems,
         "40020" => Action::ClearSelection,
@@ -629,6 +636,27 @@ mod tests {
         assert_eq!(
             keys.press(KeyCode::Character("g".into()), alt),
             vec![Action::GainStage { clear: true }]
+        );
+    }
+
+    /// Ctrl+N comps from take N.
+    #[test]
+    fn the_shipped_profile_comps_on_ctrl_digits() {
+        let profile = input_keybinds::embedded::fasttrackstudio().expect("the embedded profile");
+        let mut keys = Keys {
+            processor: InputProcessor::from_config(profile.keymap).expect("a processor"),
+            context: ActionContext::new(),
+            source: "test".into(),
+            labels: HashMap::new(),
+            pending: Vec::new(),
+        };
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(
+            keys.press(KeyCode::Character("2".into()), ctrl),
+            vec![Action::CompTake(2)]
         );
     }
 

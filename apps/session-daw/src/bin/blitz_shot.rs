@@ -267,6 +267,62 @@ fn open(path: &std::path::Path, audio: bool) -> StudioSession {
         });
         tracing::info!(?said, "blitz: gain staging");
     }
+    // `FTS_BLITZ_COMP=Folder:take:from:to`: a swipe comp of that folder
+    // from that take, through the engine, and the first lane track's comp
+    // lane read back.
+    if let Some((folder, take, from, to)) = std::env::var("FTS_BLITZ_COMP").ok().and_then(|spec| {
+        let parts: Vec<String> = spec.split(':').map(str::to_owned).collect();
+        Some((
+            parts.first()?.clone(),
+            parts.get(1)?.parse::<u32>().ok()?,
+            parts.get(2)?.parse::<f64>().ok()?,
+            parts.get(3)?.parse::<f64>().ok()?,
+        ))
+    }) {
+        let mut project = session_daw::studio::fetch().expect("read the project back");
+        let folder = project
+            .tracks
+            .iter()
+            .find(|t| t.is_folder && t.name.trim().eq_ignore_ascii_case(&folder))
+            .map(|t| t.guid.clone())
+            .expect("the folder");
+        let mut effects = Vec::new();
+        session_daw::arrange_edit::Editor::comp(
+            &mut project,
+            &folder,
+            take,
+            from,
+            to,
+            &mut effects,
+        );
+        let sent = effects
+            .iter()
+            .filter_map(|e| match e {
+                session_daw::arrange_edit::Effect::Send(edit) => Some(edit),
+                _ => None,
+            })
+            .filter(|edit| session_daw::engine::apply_now(edit))
+            .count();
+        let back = session_daw::studio::fetch().expect("read it back");
+        let lane = back
+            .tracks
+            .iter()
+            .find(|t| t.lane_count > 0)
+            .expect("a lane track");
+        let comp = session_daw::arrange_edit::comp_lane(lane);
+        let pieces: Vec<(f64, f64, f64)> = back
+            .items
+            .get(&lane.guid)
+            .into_iter()
+            .flatten()
+            .filter(|i| i.fixed_lane == comp)
+            .map(|i| {
+                let at = i.position.as_seconds();
+                (at, at + i.length.as_seconds(), i.start_offset.as_seconds())
+            })
+            .collect();
+        tracing::info!(sent, track = %lane.name, ?comp, ?pieces, "blitz: comp");
+    }
     let raw = session_daw::studio::fetch().expect("read the project back");
     // `FTS_BLITZ_OPEN=Drums,Kick` (or `*`): those folders opened, as a
     // click on each would — the shot of what is under a folder that

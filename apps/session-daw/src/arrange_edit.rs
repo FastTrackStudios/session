@@ -1310,6 +1310,7 @@ impl Editor {
                 self.cursor.click(0.0);
             }
             Action::SplitAtCursor => self.split_at(self.cursor.at, project, effects),
+            Action::CompTake(take) => return self.comp_razors(take, project, rows, effects),
             Action::DeleteSelectedItems => {
                 // A razor area first of all. It is the most deliberate
                 // thing on screen — you drew a rectangle and it is
@@ -1739,6 +1740,199 @@ impl Editor {
             as_one_step("Quantize drums", from, effects);
             effects.push(Effect::ReRecord);
         }
+    }
+}
+
+/// The comp lane of a track with fixed lanes: the first named `C…` (REAPER
+/// 7's `C1`), else the first lane that plays. `None` for a track without
+/// lanes.
+#[must_use]
+pub fn comp_lane(track: &daw_proto::Track) -> Option<u32> {
+    if track.lane_count == 0 {
+        return None;
+    }
+    let named = track.lane_names.iter().position(|name| {
+        name.strip_prefix('C')
+            .is_some_and(|rest| rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit()))
+    });
+    named.and_then(|lane| u32::try_from(lane).ok()).or_else(|| {
+        (0..track.lane_count.min(64)).find(|lane| track.lane_play_mask & (1_u64 << lane) != 0)
+    })
+}
+
+/// The lane take `number` is on: the lane named for it (`"2"`), else lane
+/// `number` itself.
+fn take_lane(track: &daw_proto::Track, number: u32) -> u32 {
+    let name = number.to_string();
+    track
+        .lane_names
+        .iter()
+        .position(|lane| lane.trim() == name)
+        .and_then(|lane| u32::try_from(lane).ok())
+        .unwrap_or(number)
+}
+
+/// Every track under the folder `folder`, however deep — or, for a track
+/// that is not a folder, the track itself.
+fn under(project: &Project, folder: &str) -> Vec<String> {
+    if project
+        .tracks
+        .iter()
+        .any(|t| t.guid == folder && !t.is_folder)
+    {
+        return vec![folder.to_owned()];
+    }
+    let mut inside: HashSet<String> = HashSet::from([folder.to_owned()]);
+    let mut out = Vec::new();
+    // Tracks come parent before child, so one walk finds every level.
+    for track in &project.tracks {
+        if track
+            .parent_guid
+            .as_deref()
+            .is_some_and(|parent| inside.contains(parent))
+        {
+            inside.insert(track.guid.clone());
+            out.push(track.guid.clone());
+        }
+    }
+    out
+}
+
+impl Editor {
+    /// Swipe-comp a folder: every track under `folder` (or `folder` itself,
+    /// a track with lanes) takes take `take`'s audio — the lane named
+    /// `take` ("1", "2"), else lane `take` — for `from..to` onto its comp lane
+    /// ([`comp_lane`]) — the whole kit from one take at once, so its mics
+    /// stay one performance, in phase. What the comp lane held there is
+    /// cut away; what it held either side stays. The pieces meet with a
+    /// short crossfade. One undo step.
+    pub fn comp(
+        project: &mut Project,
+        folder: &str,
+        take: u32,
+        from: f64,
+        to: f64,
+        effects: &mut Vec<Effect>,
+    ) {
+        const JOIN: f64 = 0.005;
+        if to <= from {
+            return;
+        }
+        let start = effects.len();
+        let secs = daw_proto::primitives::Duration::from_seconds;
+        let at = daw_proto::primitives::PositionInSeconds::from_seconds;
+        for guid in under(project, folder) {
+            let Some(track) = project.tracks.iter().find(|t| t.guid == guid).cloned() else {
+                continue;
+            };
+            let take = take_lane(&track, take);
+            let Some(comp) = comp_lane(&track).filter(|comp| *comp != take) else {
+                continue;
+            };
+            let on = |item: &daw_proto::Item, lane: u32| {
+                let start = item.position.as_seconds();
+                let end = start + item.length.as_seconds();
+                item.fixed_lane == Some(lane) && end > from && start < to
+            };
+            // The comp lane cleared over the range: cut at its edges, and
+            // the pieces inside gone. Gathered again for each edge: the
+            // first cut's right half is a new item the second must find.
+            for edge in [from, to] {
+                let comped: HashSet<String> = project
+                    .items
+                    .get(&guid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| on(item, comp))
+                    .map(|item| item.guid.clone())
+                    .collect();
+                effects.extend(cut(project, edge, &comped).into_iter().map(Effect::Send));
+            }
+            if let Some(lane) = project.items.get_mut(&guid) {
+                lane.retain(|item| {
+                    let inside = on(item, comp)
+                        && item.position.as_seconds() >= from - 1e-6
+                        && item.position.as_seconds() + item.length.as_seconds() <= to + 1e-6;
+                    if inside {
+                        effects.push(Effect::Send(Edit::DeleteItem(item.guid.clone())));
+                    }
+                    !inside
+                });
+            }
+            // The take's audio over the range, onto the comp lane.
+            let sources: Vec<daw_proto::Item> = project
+                .items
+                .get(&guid)
+                .into_iter()
+                .flatten()
+                .filter(|item| on(item, take))
+                .cloned()
+                .collect();
+            for source in sources {
+                let begin = source.position.as_seconds();
+                let piece_from = from.max(begin);
+                let piece_to = to.min(begin + source.length.as_seconds());
+                let mut piece = source.clone();
+                piece.guid = format!("{}-comp@{piece_from:.3}", source.guid);
+                piece.fixed_lane = Some(comp);
+                piece.position = at(piece_from);
+                piece.length = secs(piece_to - piece_from);
+                piece.start_offset = secs(source.start_offset.as_seconds() + (piece_from - begin));
+                piece.fade_in_length = secs(JOIN);
+                piece.fade_out_length = secs(JOIN);
+                piece.selected = false;
+                effects.extend(
+                    [
+                        Edit::CopyItem(source.guid.clone(), begin, piece.guid.clone()),
+                        Edit::SetItemLane(piece.guid.clone(), comp),
+                        Edit::TrimItem(piece.guid.clone(), piece_from, piece_to - piece_from),
+                        Edit::SlipItem(piece.guid.clone(), piece.start_offset.as_seconds()),
+                        Edit::SetFadeIn(piece.guid.clone(), JOIN, piece.fade_in_shape),
+                        Edit::SetFadeOut(piece.guid.clone(), JOIN, piece.fade_out_shape),
+                    ]
+                    .into_iter()
+                    .map(Effect::Send),
+                );
+                if let Some(lane) = project.items.get_mut(&guid) {
+                    lane.push(piece);
+                    lane.sort_by(|a, b| {
+                        a.position.as_seconds().total_cmp(&b.position.as_seconds())
+                    });
+                }
+            }
+        }
+        if effects.len() > start {
+            project.item_count = project.items.values().map(Vec::len).sum();
+            as_one_step("Comp", start, effects);
+            effects.push(Effect::ReRecord);
+        }
+    }
+    /// Ctrl+N: comp every razor area from take N ([`Self::comp`]) — on a
+    /// folded row, the whole folder; on a track with lanes, that track.
+    /// The areas go once used. `false` with no razor drawn.
+    pub fn comp_razors(
+        &mut self,
+        take: u32,
+        project: &mut Project,
+        rows: &[(Track, u32)],
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        if self.razor.is_empty() {
+            return false;
+        }
+        let areas = self.razor.areas.clone();
+        for area in &areas {
+            for row in area.row_lo..=area.row_hi {
+                let Some((track, _)) = usize::try_from(row).ok().and_then(|row| rows.get(row))
+                else {
+                    continue;
+                };
+                let guid = track.guid.clone();
+                Self::comp(project, &guid, take, area.t0, area.t1, effects);
+            }
+        }
+        self.razor.clear();
+        true
     }
 }
 
@@ -4043,5 +4237,150 @@ mod ruler_tests {
             editor.selected.contains("an-item"),
             "the item selection was taken as well"
         );
+    }
+}
+
+#[cfg(test)]
+mod comp_tests {
+    use super::*;
+
+    fn item(guid: &str, track: &str, lane: u32, from: f64, to: f64) -> daw_proto::Item {
+        daw_proto::Item {
+            guid: guid.into(),
+            track_guid: track.into(),
+            fixed_lane: Some(lane),
+            position: daw_proto::primitives::PositionInSeconds::from_seconds(from),
+            length: daw_proto::primitives::Duration::from_seconds(to - from),
+            ..daw_proto::Item::default()
+        }
+    }
+
+    /// A swipe on take 2 over 4–6 s comps the whole kit: on every mic the
+    /// comp lane keeps take 1 either side and takes take 2's audio, from
+    /// 4 s into it, in between — and a track outside the folder is left.
+    #[test]
+    fn a_swipe_comps_every_mic_of_the_folder_from_one_take() {
+        let lanes = |guid: &str, parent: Option<&str>| daw_proto::Track {
+            guid: guid.into(),
+            name: guid.into(),
+            parent_guid: parent.map(Into::into),
+            is_folder: parent.is_none(),
+            lane_count: if parent.is_some() { 3 } else { 0 },
+            lane_play_mask: 0b1,
+            lane_names: vec!["C1".into(), "1".into(), "2".into()],
+            ..daw_proto::Track::default()
+        };
+        let mut project = Project {
+            tracks: vec![
+                lanes("drums", None),
+                lanes("in", Some("drums")),
+                lanes("top", Some("drums")),
+                lanes("bass", None),
+            ],
+            ..Project::default()
+        };
+        for mic in ["in", "top"] {
+            project.items.insert(
+                mic.into(),
+                vec![
+                    item(&format!("{mic}-c"), mic, 0, 0.0, 10.0),
+                    item(&format!("{mic}-1"), mic, 1, 0.0, 10.0),
+                    item(&format!("{mic}-2"), mic, 2, 0.0, 10.0),
+                ],
+            );
+        }
+        let mut effects = Vec::new();
+        Editor::comp(&mut project, "drums", 2, 4.0, 6.0, &mut effects);
+        for mic in ["in", "top"] {
+            let comp: Vec<(f64, f64, f64)> = project.items[mic]
+                .iter()
+                .filter(|i| i.fixed_lane == Some(0))
+                .map(|i| {
+                    let start = i.position.as_seconds();
+                    (
+                        start,
+                        start + i.length.as_seconds(),
+                        i.start_offset.as_seconds(),
+                    )
+                })
+                .collect();
+            assert_eq!(comp.len(), 3, "{mic}: {comp:?}");
+            assert_eq!((comp[0].0, comp[0].1), (0.0, 4.0), "take 1 before");
+            assert_eq!(comp[1], (4.0, 6.0, 4.0), "take 2, 4 s into it");
+            assert_eq!((comp[2].0, comp[2].1), (6.0, 10.0), "take 1 after");
+            assert_eq!(
+                project.items[mic]
+                    .iter()
+                    .filter(|i| i.fixed_lane == Some(2))
+                    .count(),
+                1,
+                "the take itself stays"
+            );
+        }
+        let sent: Vec<&Edit> = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Send(edit) => Some(edit),
+                _ => None,
+            })
+            .collect();
+        assert!(sent.iter().any(|e| matches!(e, Edit::SetItemLane(_, 0))));
+        assert!(matches!(effects.last(), Some(Effect::ReRecord)));
+    }
+
+    /// Ctrl+N on a razor over a folded row comps the folder, and the
+    /// razor goes; with no razor, the key is not taken.
+    #[test]
+    fn a_razor_over_a_folded_row_comps_its_folder() {
+        let track = |guid: &str, parent: Option<&str>| daw_proto::Track {
+            guid: guid.into(),
+            parent_guid: parent.map(Into::into),
+            is_folder: parent.is_none(),
+            lane_count: if parent.is_some() { 3 } else { 0 },
+            lane_play_mask: 0b1,
+            lane_names: vec!["C1".into(), "1".into(), "2".into()],
+            ..daw_proto::Track::default()
+        };
+        let mut project = Project {
+            tracks: vec![track("drums", None), track("in", Some("drums"))],
+            ..Project::default()
+        };
+        project.items.insert(
+            "in".into(),
+            vec![
+                item("c", "in", 0, 0.0, 10.0),
+                item("t1", "in", 1, 0.0, 10.0),
+            ],
+        );
+        // The folder shut: its row is the only one.
+        let rows = vec![(project.tracks[0].clone(), 0)];
+        let mut editor = Editor::default();
+        let mut effects = Vec::new();
+        assert!(
+            !editor.comp_razors(1, &mut project, &rows, &mut effects),
+            "no razor"
+        );
+        editor.razor.add(razor::RazorArea::new(2.0, 3.0, 0, 0));
+        assert!(editor.comp_razors(1, &mut project, &rows, &mut effects));
+        assert!(editor.razor.is_empty(), "the razor used");
+        assert!(project.items["in"].iter().any(|i| i.fixed_lane == Some(0)
+            && (i.position.as_seconds() - 2.0).abs() < 1e-9
+            && (i.length.as_seconds() - 1.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn the_comp_lane_is_c1_else_the_one_playing() {
+        let mut track = daw_proto::Track {
+            lane_count: 3,
+            lane_play_mask: 0b100,
+            lane_names: vec!["1".into(), "C1".into(), "2".into()],
+            ..daw_proto::Track::default()
+        };
+        assert_eq!(comp_lane(&track), Some(1));
+        track.lane_names = vec!["A".into(), "B".into(), "C".into()];
+        assert_eq!(comp_lane(&track), Some(2), "C alone counts: C1's family");
+        track.lane_names.clear();
+        assert_eq!(comp_lane(&track), Some(2), "the playing lane");
+        assert_eq!(comp_lane(&daw_proto::Track::default()), None);
     }
 }
