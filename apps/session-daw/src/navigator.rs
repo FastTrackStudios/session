@@ -194,7 +194,7 @@ fn song_item(song: &Song, at: f64, progress: f64) -> (SongItemData, Option<usize
         },
     );
     let data = SongItemData {
-        label: song.name.clone(),
+        label: song.title(),
         progress: progress * 100.0,
         bright_color: song.color.clone(),
         muted_color: song.color.clone(),

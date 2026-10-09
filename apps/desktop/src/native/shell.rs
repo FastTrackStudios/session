@@ -291,7 +291,7 @@ pub fn Shell() -> Element {
             };
             let at = reading.map_or(0.0, |r| r.at);
             let now = NowPlaying {
-                title: song.name.clone(),
+                title: song.title(),
                 set: "Session".to_owned(),
                 elapsed: at - song.span.0,
                 duration: song.span.1 - song.span.0,

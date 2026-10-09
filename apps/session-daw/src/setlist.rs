@@ -133,6 +133,22 @@ impl Song {
         }
     }
 
+    /// What the song is shown as: its SONG region's name ("Unbreakable -
+    /// Crescendum", the one prepare gives it), else its [`Self::name`] —
+    /// the file's, which stays what the song is KNOWN by (collaboration
+    /// and the modes it was worked in are kept under it).
+    #[must_use]
+    pub fn title(&self) -> String {
+        self.session
+            .project
+            .sections
+            .iter()
+            .find(|s| s.lane == 0)
+            .map(|s| s.name.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| self.name.clone())
+    }
+
     /// How far through the song `at` seconds is, 0 before it and 1 at its
     /// end.
     #[must_use]
@@ -672,6 +688,37 @@ mod tests {
             left_at: 0.0,
             saved: None,
         }
+    }
+
+    /// A song is shown by its SONG region's name, and known by its file's.
+    #[test]
+    fn a_song_is_shown_by_its_song_region() {
+        let mut named = song("unbreakable.current");
+        assert_eq!(
+            named.title(),
+            "unbreakable.current",
+            "no SONG region: its name"
+        );
+        let mut project = daw_ui::studio::project::Project::default();
+        project.sections.push(daw_ui::studio::project::Section {
+            id: 0,
+            start: 0.0,
+            end: 8.0,
+            name: "Unbreakable - Crescendum".into(),
+            color: None,
+            lane: 0,
+        });
+        project.sections.push(daw_ui::studio::project::Section {
+            id: 1,
+            start: 0.0,
+            end: 8.0,
+            name: "IN".into(),
+            color: None,
+            lane: 1,
+        });
+        named.session.project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
+        assert_eq!(named.title(), "Unbreakable - Crescendum");
+        assert_eq!(named.name, "unbreakable.current", "still known by its file");
     }
 
     #[test]

@@ -1373,7 +1373,7 @@ pub fn SongTabs(
                                 style: "min-width:0; overflow:hidden; text-overflow:ellipsis; \
                                         white-space:nowrap; color:{ink}; font-size:12px; \
                                         font-weight:600;",
-                                "{song.name}"
+                                "{song.title()}"
                             }
                             {peer_dots(song.project.clone())}
                             // How far through the song: a line along the foot.

@@ -462,7 +462,7 @@ fn SongTable(setlist: Signal<Setlist>, on_pick: Option<EventHandler<usize>>) -> 
                                 },
                                 span {
                                     style: "font-size:15px; font-weight:650; overflow:hidden; text-overflow:ellipsis;",
-                                    "{song.name}"
+                                    "{song.title()}"
                                 }
                                 if current {
                                     span { style: "flex:none; font-size:11px; font-weight:700; color:{song.color};", "NOW" }
