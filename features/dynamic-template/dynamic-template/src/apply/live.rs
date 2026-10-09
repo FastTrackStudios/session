@@ -827,7 +827,18 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         if rehearsal.is_empty() && bounces.is_empty() {
             return Ok(Vec::new());
         }
+        let made = arranged.created.len();
         let references = self.folder_named(super::REFERENCES_FOLDER, arranged)?;
+        // Made here, it starts muted: a reference (DRUM REF, a mix print)
+        // is listened against on purpose, never under the song.
+        if arranged.created.len() > made {
+            let _ = Tracks::set_muted(
+                &self.daw,
+                self.project.clone(),
+                TrackRef::Guid(references.clone()),
+                true,
+            );
+        }
         in_use.insert(references.clone());
         let mut layout = vec![(references, 1)];
         if !rehearsal.is_empty() {

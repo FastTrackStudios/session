@@ -618,7 +618,7 @@ pub const KIT_LUFS: f64 = -23.0;
 ///
 /// Render the top-level `Drums` folder alone over `from..to` and set its
 /// fader so its loudest short-term loudness is
-/// [`KIT_LUFS`]. Returns that loudness at a unity fader, LUFS, and the
+/// [`KIT_LUFS`], and unmuted. Returns that loudness at a unity fader, LUFS, and the
 /// fader set, dB. `None` with no Drums folder or nothing heard in it.
 #[cfg(feature = "native")]
 #[must_use]
@@ -642,7 +642,16 @@ pub fn kit_headroom(
         to,
     )?;
     let fader = (KIT_LUFS - loudest).clamp(-MOST_DB, MOST_DB);
-    Tracks::set_volume(daw, project, at, 10.0_f64.powf(fader / 20.0)).ok()?;
+    Tracks::set_volume(
+        daw,
+        project.clone(),
+        at.clone(),
+        10.0_f64.powf(fader / 20.0),
+    )
+    .ok()?;
+    // A kit set to be heard is heard: unbreakable's Drums came muted from
+    // its RPP, and the staged kit was silent behind it.
+    Tracks::set_muted(daw, project, at, false).ok()?;
     Some((loudest, fader))
 }
 
