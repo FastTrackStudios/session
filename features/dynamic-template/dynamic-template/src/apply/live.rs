@@ -827,7 +827,6 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
     ///
     /// A backend call failed.
     pub fn key_drum_gates(&mut self) -> eyre::Result<Vec<String>> {
-        use daw_proto::{routing::SendMode, RouteLocation, RouteRef, RouteType};
         let project = self.project.clone();
         let tracks = Tracks::all(&self.daw, project.clone());
         let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
@@ -899,27 +898,18 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                     source.clone(),
                     false,
                 )?;
-                let Some(index) = Routing::add_send(
-                    &self.daw,
-                    project.clone(),
-                    source.clone(),
-                    TrackRef::Guid(piece.guid.clone()),
-                ) else {
-                    continue;
-                };
-                let send = RouteLocation {
-                    track: source,
-                    route_type: RouteType::Send,
-                    route: RouteRef::Index(index),
-                };
-                Routing::set_send_mode(
-                    &self.daw,
-                    project.clone(),
-                    send.track.clone(),
-                    send.route.clone(),
-                    SendMode::PreFx,
-                )?;
-                Routing::set_dest_channels(&self.daw, project.clone(), send, 2, 2)?;
+                // The piece, and its one-note tracks (`Fund`, the kick's
+                // `Sub`): their gates open on the same hits.
+                let one_notes = tracks.iter().filter(|t| {
+                    !t.is_folder
+                        && t.parent_guid
+                            .as_deref()
+                            .is_some_and(|p| p == piece.guid || sums.contains(&p))
+                        && super::is_one_note(&t.name)
+                });
+                for keyed_track in std::iter::once(piece).chain(one_notes) {
+                    self.key_from(&trigger.guid, &keyed_track.guid)?;
+                }
                 keyed.push(piece.name.clone());
             }
         }
@@ -1034,9 +1024,13 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             .iter()
             .filter(|n| n.kind == crate::golden_session::Kind::Fundamental)
         {
-            summed
-                .children
-                .push(self.make(one, &format!("{}/{}", at.name, sum.name), made)?);
+            // Fed by the piece's mics — not the Sum it sits in, whose
+            // sum would come round through it.
+            let fund = self.make(one, &format!("{}/{}", at.name, sum.name), made)?;
+            for mic in summed.children.iter().filter(|c| c.is_source()) {
+                feeds.push((mic.guid.clone(), fund.guid.clone()));
+            }
+            summed.children.push(fund);
         }
         let from = summed.guid.clone();
         at.children.push(summed);
@@ -1047,6 +1041,10 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         {
             let branch = self.make(beside, &at.name, made)?;
             branch.wire_bank(std::slice::from_ref(&from), feeds, quiet);
+            // The kick's Sub: fed by the Sum it sits beside.
+            if !branch.is_folder() && super::is_one_note(&branch.name) {
+                feeds.push((from.clone(), branch.guid.clone()));
+            }
             at.children.push(branch);
         }
         Ok(())
@@ -1109,9 +1107,11 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 .iter()
                 .filter(|n| n.kind == crate::golden_session::Kind::Fundamental)
             {
-                piece
-                    .children
-                    .push(self.make(one, &format!("{}/{}", at.name, tom.name), made)?);
+                let fund = self.make(one, &format!("{}/{}", at.name, tom.name), made)?;
+                for mic in piece.children.iter().filter(|c| c.is_source()) {
+                    feeds.push((mic.guid.clone(), fund.guid.clone()));
+                }
+                piece.children.push(fund);
             }
             pieces.push(piece.guid.clone());
             built.push(piece);
@@ -1239,6 +1239,35 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             branch.children.push(self.make(child, &path, made)?);
         }
         Ok(branch)
+    }
+
+    /// A pre-FX send from `trigger` onto `keyed`'s channels 3/4: its
+    /// sidechain, which keys the gate on it.
+    fn key_from(&self, trigger: &str, keyed: &str) -> eyre::Result<()> {
+        use daw_proto::{routing::SendMode, RouteRef};
+        let source = TrackRef::Guid(trigger.to_owned());
+        let Some(index) = Routing::add_send(
+            &self.daw,
+            self.project.clone(),
+            source.clone(),
+            TrackRef::Guid(keyed.to_owned()),
+        ) else {
+            return Ok(());
+        };
+        Routing::set_send_mode(
+            &self.daw,
+            self.project.clone(),
+            source.clone(),
+            RouteRef::Index(index),
+            SendMode::PreFx,
+        )?;
+        let send = daw_proto::RouteLocation {
+            track: source,
+            route_type: daw_proto::RouteType::Send,
+            route: RouteRef::Index(index),
+        };
+        Routing::set_dest_channels(&self.daw, self.project.clone(), send, 2, 2)?;
+        Ok(())
     }
 
     /// Mute every track whose name `matches` and is not muted yet.
@@ -1613,19 +1642,6 @@ mod rehearsal_group_tests {
     }
 }
 
-/// The last track of the folder at `at`: the one whose depth change
-/// closes it (`at` itself for a track that is no folder).
-fn block_end(tracks: &[daw_proto::Track], at: usize) -> usize {
-    let mut running = 0_i32;
-    for (i, t) in tracks.iter().enumerate().skip(at) {
-        running = running.saturating_add(t.folder_depth);
-        if running <= 0 {
-            return i;
-        }
-    }
-    tracks.len().saturating_sub(1).max(at)
-}
-
 /// A track and the tracks in it: the project as a folder tree, for a
 /// restructure built on the tree and written back as one layout
 /// ([`Branch::flatten`]).
@@ -1651,6 +1667,11 @@ impl Branch {
 
     const fn is_folder(&self) -> bool {
         !self.children.is_empty()
+    }
+
+    /// A mic or a direct source: a track, not a trigger, not one-note.
+    fn is_source(&self) -> bool {
+        !self.is_folder() && !super::is_trigger(&self.name) && !super::is_one_note(&self.name)
     }
 
     /// The project's tracks as a tree, in order.

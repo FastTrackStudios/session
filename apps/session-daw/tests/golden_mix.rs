@@ -290,9 +290,26 @@ fn prepare_builds_the_golden_template() {
             .as_deref(),
         Some("FTS Delay")
     );
-    assert_eq!(
-        first(find(&tracks, "Tom 1", "Fund")),
-        Some(("FTS Gate".to_owned(), false))
+    // The one-note chain in Dan Worrall's order — the band-pass rings,
+    // the gate after it tightens the ring — bypassed here, with no hits
+    // to tune it to. Fed by its mic, keyed by its trigger.
+    let fund = find(&tracks, "Tom 1", "Fund");
+    let names: Vec<String> = fx(fund).into_iter().map(|f| f.plugin_name).collect();
+    assert_eq!(names, ["FTS EQ", "FTS Gate", "FTS Comp", "FTS Saturate"]);
+    assert_eq!(first(fund), Some(("FTS EQ".to_owned(), false)));
+    assert!(fed_by(
+        &daw,
+        &project,
+        &fund.guid,
+        &find(&tracks, "Tom 1", "T1").guid
+    ));
+    let fund_keys = Routing::receives(&daw, project.clone(), TrackRef::Guid(fund.guid.clone()));
+    assert!(fund_keys.iter().any(|r| r.dest_channels.start_channel == 2
+        && r.dest_track_guid.as_deref() == Some(t1_trig.guid.as_str())));
+    let sub = find(&tracks, "Kick", "Sub");
+    assert!(
+        fed_by(&daw, &project, &sub.guid, &kick_sum.guid),
+        "the Sub, fed by the kick's Sum"
     );
     assert!(fx(t1_trig).is_empty(), "a trigger is a key, not a channel");
     assert!(fx(vox_fx).is_empty(), "a returns folder is no bus");

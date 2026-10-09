@@ -130,9 +130,15 @@ fn return_fx(
     })
 }
 
-/// A one-note track's chain (the template's `Fund` and `Sub`): a gate,
-/// a band-pass at the note, saturation — bypassed until it has a note.
-const ONE_NOTE: &[&str] = &["FTS Gate", "FTS EQ", "FTS Saturate"];
+/// A one-note track's chain (the template's `Fund` and `Sub`), in Dan
+/// Worrall's order: the band-pass rings, the gate after it tightens the
+/// ring into a note on every hit, the compressor evens the notes.
+const ONE_NOTE: &[&str] = &["FTS EQ", "FTS Gate", "FTS Comp", "FTS Saturate"];
+
+/// Where a one-note track's fader starts, dB: the band-pass's auto gain
+/// brings it back to the mics' level, all of it at one frequency — a
+/// blend under them, ridden from here in context.
+const ONE_NOTE_FADER_DB: f64 = -12.0;
 
 /// The gate on a keyed drum piece, before its threshold: Kick and Toms
 /// shut all the way, Snare to 20 dB under — its room stays in the
@@ -286,6 +292,9 @@ pub struct Chains {
     pub gates: Vec<(String, Option<f64>)>,
     /// Returns given their FX.
     pub returns: usize,
+    /// One-note tracks: name, piece, and the fundamental tuned to (Hz) —
+    /// `None` left bypassed, nothing to tune to.
+    pub one_notes: Vec<(String, String, Option<f64>)>,
     /// Settings a plugin did not know (`fx param=text`), said, not fatal.
     pub unknown: Vec<String>,
 }
@@ -316,6 +325,12 @@ pub fn add(
         let lower: Vec<String> = path.iter().map(|p| p.trim().to_lowercase()).collect();
         let under = |what: &str| lower.iter().rev().skip(1).any(|p| p == what);
         let name = track.name.trim();
+        // The template's one-note tracks: a band-pass at the drum's
+        // fundamental, found off its hits.
+        if !track.is_folder && dynamic_template::apply::is_one_note(name) {
+            one_note(daw, project, &chain, track, &tracks, &mut done)?;
+            continue;
+        }
         // A drum piece keyed from its trigger: the gate, then its tone.
         let keys: Vec<String> = daw_proto::Routing::receives(
             daw,
@@ -367,12 +382,6 @@ pub fn add(
                 settings.iter().map(|(p, v)| (*p, v.as_str())).collect();
             set_up(daw, project, &chain, fx, &settings, &mut done.unknown)?;
             done.returns += 1;
-            continue;
-        }
-        if !track.is_folder
-            && (name.eq_ignore_ascii_case("fund") || name.eq_ignore_ascii_case("sub"))
-        {
-            bypassed(daw, project, &chain, ONE_NOTE)?;
             continue;
         }
         if under(&dynamic_template::apply::PROCESS_FOLDER.to_lowercase()) {
@@ -604,4 +613,152 @@ fn floor_db(points: &[f64]) -> f64 {
         .get(at)
         .filter(|p| **p > 0.0)
         .map_or(-120.0, |p| 20.0 * p.log10())
+}
+
+/// A one-note track (`Fund`, the kick's `Sub`) dialled in to its drum —
+/// Dan Worrall's parallel band-pass:
+///
+/// - **FTS EQ**: one band-pass at the drum's fundamental, found off its
+///   hits ([`crate::fundamental`]), 12 dB/oct (steeper rings in odd
+///   ways), every other band off, auto gain on so the Q can go wide or
+///   narrow without the level jumping. The kick's is wider — a sub kick's
+///   weight; the snare's and toms' narrow, so they ring.
+/// - **FTS Gate**, keyed from the drum's trigger: the ring tightened into
+///   one solid note per hit. A tom's lets go slower than the snare's.
+/// - **FTS Comp**, on for a tom — they vary in tone more than the rest.
+/// - **FTS Saturate**, there, bypassed.
+///
+/// With no trigger or no fundamental to tune to, the chain goes on
+/// bypassed, as the template's: a slot ready, costing nothing.
+fn one_note(
+    daw: &daw_standalone::sync::Standalone,
+    project: &ProjectContext,
+    chain: &FxChainContext,
+    track: &daw_proto::Track,
+    tracks: &[daw_proto::Track],
+    done: &mut Chains,
+) -> eyre::Result<()> {
+    let receives = daw_proto::Routing::receives(
+        daw,
+        project.clone(),
+        daw::service::TrackRef::Guid(track.guid.clone()),
+    );
+    let (keys, feeds): (Vec<_>, Vec<_>) = receives
+        .into_iter()
+        .partition(|r| r.dest_channels.start_channel >= 2);
+    let keys: Vec<String> = keys.into_iter().filter_map(|r| r.dest_track_guid).collect();
+    // What feeds it — mics, or the kick's Sum — as the mics.
+    let mut sources: Vec<String> = Vec::new();
+    for feed in feeds.into_iter().filter_map(|r| r.dest_track_guid) {
+        match tracks.iter().find(|t| t.guid == feed) {
+            Some(t) if t.is_folder => sources.extend(
+                tracks
+                    .iter()
+                    .filter(|c| {
+                        !c.is_folder
+                            && c.parent_guid.as_deref() == Some(feed.as_str())
+                            && !dynamic_template::apply::is_trigger(&c.name)
+                            && !dynamic_template::apply::is_one_note(&c.name)
+                    })
+                    .map(|c| c.guid.clone()),
+            ),
+            Some(_) => sources.push(feed),
+            None => {}
+        }
+    }
+    // Which drum: the piece it is in (a Fund in a Sum is the piece's).
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let piece = crate::gain_stage::path_of(track, &by_guid)
+        .iter()
+        .rev()
+        .skip(1)
+        .find(|p| !p.trim().eq_ignore_ascii_case("sum"))
+        .map(|p| p.trim().to_lowercase())
+        .unwrap_or_default();
+    let (range, q, release) =
+        if track.name.trim().eq_ignore_ascii_case("sub") || piece.contains("kick") {
+            (crate::fundamental::KICK, "2.00", "200.0 ms")
+        } else if piece.contains("snare") {
+            (crate::fundamental::SNARE, "8.00", "150.0 ms")
+        } else {
+            (crate::fundamental::TOM, "8.00", "300.0 ms")
+        };
+    let tom = range == crate::fundamental::TOM;
+    let tuned = keys
+        .first()
+        .and_then(|trigger| crate::fundamental::find(daw, project, trigger, &sources, range));
+    let threshold = gate_threshold(daw, project, tracks, &keys);
+    let (Some(hz), Some(threshold)) = (tuned, threshold) else {
+        bypassed(daw, project, chain, ONE_NOTE)?;
+        done.one_notes.push((track.name.clone(), piece, None));
+        return Ok(());
+    };
+    // The band: B1 a band-pass at the note, every band after it off.
+    let mut eq: Vec<(String, String)> = vec![
+        ("Auto Gain".into(), "1".into()),
+        ("B1 On".into(), "On".into()),
+        ("B1 Type".into(), "Bandpass".into()),
+        ("B1 Freq".into(), format!("{hz:.1} Hz")),
+        ("B1 Q".into(), q.into()),
+        ("B1 Slope".into(), "12 dB/oct".into()),
+    ];
+    for n in 2_u32.. {
+        let on = format!("B{n} On");
+        if builtin_fx::setting("FTS EQ", &on, "Off").is_none() {
+            break;
+        }
+        eq.push((on, "Off".into()));
+    }
+    let eq: Vec<(&str, &str)> = eq.iter().map(|(p, v)| (p.as_str(), v.as_str())).collect();
+    set_up(daw, project, chain, "FTS EQ", &eq, &mut done.unknown)?;
+    let threshold = format!("{threshold:.1} dB");
+    set_up(
+        daw,
+        project,
+        chain,
+        "FTS Gate",
+        &[
+            ("Key", "Sidechain"),
+            ("Threshold", threshold.as_str()),
+            ("Attack", "0.50 ms"),
+            ("Hold", "10.0 ms"),
+            ("Release", release),
+        ],
+        &mut done.unknown,
+    )?;
+    set_up(
+        daw,
+        project,
+        chain,
+        "FTS Comp",
+        &[
+            ("Style", "Clean"),
+            ("Ratio", "3.0:1"),
+            ("Threshold", "-24.0 dB"),
+            ("Attack", "10.0 ms"),
+            ("Release", "150 ms"),
+        ],
+        &mut done.unknown,
+    )?;
+    if !tom {
+        Effects::set_enabled(
+            daw,
+            project.clone(),
+            FxTarget {
+                context: chain.clone(),
+                fx: FxRef::Index(2),
+            },
+            false,
+        )?;
+    }
+    bypassed(daw, project, chain, &["FTS Saturate"])?;
+    Tracks::set_volume(
+        daw,
+        project.clone(),
+        daw::service::TrackRef::Guid(track.guid.clone()),
+        10_f64.powf(ONE_NOTE_FADER_DB / 20.0),
+    )?;
+    done.one_notes.push((track.name.clone(), piece, Some(hz)));
+    Ok(())
 }

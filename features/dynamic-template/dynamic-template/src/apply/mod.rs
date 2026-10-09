@@ -988,6 +988,15 @@ pub const VOX_FX_START: &[(&str, &str, f64)] = &[
 /// Where the vocal returns that start muted sit.
 pub const VOX_FX_QUIET_DB: f64 = -20.0;
 
+/// Whether a track is one of the golden template's one-note tracks:
+/// a piece's `Fund`, the kick's `Sub` — a band-pass at the drum's
+/// fundamental, fed by its mics, gated by its hits.
+#[must_use]
+pub fn is_one_note(name: &str) -> bool {
+    let name = name.trim();
+    name.eq_ignore_ascii_case("fund") || name.eq_ignore_ascii_case("sub")
+}
+
 /// The drum kit's parallel chains' folder (the golden template's).
 pub const PROCESS_FOLDER: &str = "Process";
 

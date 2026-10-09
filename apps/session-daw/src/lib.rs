@@ -141,6 +141,7 @@ pub mod open {
     }
 }
 pub mod device_audio;
+pub mod fundamental;
 pub mod gain_stage;
 #[cfg(test)]
 mod hook_rules;

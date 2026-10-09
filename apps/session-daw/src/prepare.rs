@@ -752,6 +752,7 @@ pub fn steps(
                 buses = chains.buses,
                 process = chains.process,
                 gates = ?chains.gates,
+                one_notes = ?chains.one_notes,
                 returns = chains.returns,
                 unknown = ?chains.unknown,
                 "prepare: mix chains"

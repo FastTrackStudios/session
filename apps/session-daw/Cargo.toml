@@ -218,6 +218,8 @@ daw-standalone = { workspace = true, features = ["bootstrap", "rpp-project-wasm"
 dawfile-reaper = { workspace = true, optional = true }
 # The FTS processors as built-in FX (desktop: they are nice-plug plugins).
 builtin-fx = { workspace = true, optional = true }
+realfft = { workspace = true, optional = true }
+num-traits = { workspace = true }
 # The web demo's stems: Ogg proxies decoded a window at a time (`web_audio`).
 fts-sample = { workspace = true, optional = true, features = ["engine-core"] }
 # Streaming a song in from the Task library (song_stream::TaskSource).
@@ -247,6 +249,7 @@ default = ["native"]
 # in-process engine with its audio device, threads, the plugin-UI graph.
 native = [
     "dep:dioxus-native",
+    "dep:realfft",
     "dep:anyrender_vello",
     "dep:wgpu",
     "dep:wgpu-context-07",
