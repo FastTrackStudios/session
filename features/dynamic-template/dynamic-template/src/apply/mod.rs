@@ -967,6 +967,15 @@ pub fn is_capture(name: &str) -> bool {
         .any(|w| w.eq_ignore_ascii_case("di") || w.eq_ignore_ascii_case("d.i."))
 }
 
+/// Whether a track or folder is a drum trigger — a `Trig` or `Trigger`
+/// word in its name (`Trig`, `T1 Trig`, `KICK TRIG`): a source for sample
+/// replacement, silent until a sampler is put on it.
+#[must_use]
+pub fn is_trigger(name: &str) -> bool {
+    name.split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+        .any(|w| w.eq_ignore_ascii_case("trig") || w.eq_ignore_ascii_case("trigger"))
+}
+
 /// The folder the guide's rendered prints (`ClickPrint`, `ShakePrint`)
 /// go in, inside the Guide — the `Prints` group's name.
 pub const PRINTS_FOLDER: &str = "PRINTS";
@@ -1445,5 +1454,18 @@ mod rehearsal_tests {
         assert!(path.iter().any(|g| g == "Acoustic"), "{path:?}");
         let pedal = crate::track_schema::classify_track("Pedal Steel").matched_groups;
         assert!(pedal.iter().any(|g| g == "Steel"), "{pedal:?}");
+    }
+}
+
+#[cfg(test)]
+mod trigger_tests {
+    #[test]
+    fn a_trigger_is_named_trig() {
+        for name in ["Trig", "T1 Trig", "KICK TRIG", "Snare Trigger", "Tom_trig"] {
+            assert!(super::is_trigger(name), "{name}");
+        }
+        for name in ["Kick In", "Trigga", "Triangle", "Strings"] {
+            assert!(!super::is_trigger(name), "{name}");
+        }
     }
 }

@@ -697,6 +697,31 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         Ok(hidden)
     }
 
+    /// Mute every drum trigger track and folder ([`super::is_trigger`]):
+    /// sources for sample replacement, unmuted when a sampler is put on
+    /// them, never heard raw under the kit. Returns the names muted.
+    /// Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn mute_triggers(&mut self) -> eyre::Result<Vec<String>> {
+        let project = self.project.clone();
+        let mut muted = Vec::new();
+        for track in Tracks::all(&self.daw, project.clone()) {
+            if !track.muted && super::is_trigger(&track.name) {
+                Tracks::set_muted(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(track.guid.clone()),
+                    true,
+                )?;
+                muted.push(track.name);
+            }
+        }
+        Ok(muted)
+    }
+
     /// The folder `name` a group's tracks go in: one of the project's with
     /// no media and not already in use, or a new one.
     fn group_folder(

@@ -291,7 +291,13 @@ pub fn steps(
             .map_err(|e| eyre::eyre!("organize: {e}"))?;
         let hidden = target.hide_captures()?;
         let buses = target.hide_buses()?;
-        tracing::info!(hidden = ?hidden, buses = ?buses, "prepare: captures and buses hidden");
+        let triggers = target.mute_triggers()?;
+        tracing::info!(
+            hidden = ?hidden,
+            buses = ?buses,
+            triggers = ?triggers,
+            "prepare: captures and buses hidden, triggers muted"
+        );
         tracing::info!(
             tracks = organized.existing,
             buses = organized.buses.len(),
