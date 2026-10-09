@@ -404,6 +404,8 @@ pub struct ArrangementWidget {
     /// Whether the window is in Record mode, set by the panel from the
     /// window's mode: the track panel's arm is shown only then.
     recording: Rc<Cell<bool>>,
+    /// The panel's Mix-mode flag: every item in its track's colour.
+    mixing: Rc<Cell<bool>>,
     /// Whether the editor took the last press and has not been let go
     /// of yet.
     ///
@@ -583,6 +585,7 @@ impl ArrangementWidget {
             meters_lit: Cell::new(false),
             compact: Rc::new(Cell::new(false)),
             recording: Rc::new(Cell::new(true)),
+            mixing: Rc::new(Cell::new(false)),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
             project,
@@ -642,7 +645,7 @@ impl ArrangementWidget {
             previews,
             crate::tcp::Tcp {
                 compact,
-                recording: true,
+                ..crate::tcp::Tcp::FULL
             },
         );
         let bpm = scene.bpm;
@@ -706,6 +709,13 @@ impl ArrangementWidget {
     #[must_use]
     pub fn with_compact(mut self, compact: Rc<Cell<bool>>) -> Self {
         self.compact = compact;
+        self
+    }
+
+    /// Share the panel's Mix-mode flag: items in their tracks' colours.
+    #[must_use]
+    pub fn with_mixing(mut self, mixing: Rc<Cell<bool>>) -> Self {
+        self.mixing = mixing;
         self
     }
 
@@ -1495,6 +1505,7 @@ impl ArrangementWidget {
             crate::tcp::Tcp {
                 compact: self.compact.get(),
                 recording: self.recording.get(),
+                mixing: self.mixing.get(),
             },
         );
         self.scene.lettering = lettering;
@@ -1799,6 +1810,7 @@ impl Widget for ArrangementWidget {
             || self.scene.tcp.compact != self.compact.get()
             // …or the window changed mode: the arm comes or goes.
             || self.scene.tcp.recording != self.recording.get()
+            || self.scene.tcp.mixing != self.mixing.get()
             // Other people's pointers glide and their play cursors move
             // with nothing happening here.
             || crate::ghosts::active()
@@ -2514,6 +2526,7 @@ impl ArrangementWidget {
             self.recut();
         } else if self.scene.tcp.compact != self.compact.get()
             || self.scene.tcp.recording != self.recording.get()
+            || self.scene.tcp.mixing != self.mixing.get()
         {
             self.recut();
         }

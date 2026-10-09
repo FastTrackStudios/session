@@ -302,10 +302,11 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     // the track panel's arm only in Record mode. No mode to read — a
     // panel outside the window's shell — and it stays as it was.
     let recording = use_hook(|| Rc::new(Cell::new(true)));
-    recording.set(
-        try_use_context::<Signal<session::modes::Mode>>()
-            .is_none_or(|mode| mode() == session::modes::Mode::Record),
-    );
+    let mode = try_use_context::<Signal<session::modes::Mode>>().map(|mode| mode());
+    recording.set(mode.is_none_or(|mode| mode == session::modes::Mode::Record));
+    // And Mix mode: every item in its track's colour.
+    let mixing = use_hook(|| Rc::new(Cell::new(false)));
+    mixing.set(mode == Some(session::modes::Mode::Mix));
     let ui = use_hook(|| Rc::new(Cell::new(crate::touch::arrange_zoom(touch, 0.0))));
     crate::ruler::set_slim(touch);
     let shape = use_signal(|| compact.get());
@@ -362,6 +363,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         .with_planner(session.planner.clone(), Rc::clone(&content_h))
         .with_compact(Rc::clone(&compact))
         .with_recording(Rc::clone(&recording))
+        .with_mixing(Rc::clone(&mixing))
         .with_touch(touch)
         .with_ui(Rc::clone(&ui))
         .with_redraw(crate::touch::redraw_hook())
@@ -904,6 +906,7 @@ impl ArrangementPanel {
             // The arm only in Record mode; with no mixer to say which
             // mode it is, as it always was.
             recording: self.recording.get(),
+            ..crate::tcp::Tcp::FULL
         }
     }
 
@@ -962,7 +965,7 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
     // Read as a signal so a toggle re-renders what is sized to the panel.
     let tcp_w = crate::tcp::Tcp {
         compact: (panel.shape)(),
-        recording: true,
+        ..crate::tcp::Tcp::FULL
     }
     .width();
     rsx! {

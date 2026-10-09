@@ -193,16 +193,22 @@ pub struct Tcp {
     /// Recording: the record arm is shown only then — in any other mode
     /// it is a button for a job you are not doing.
     pub recording: bool,
+    /// Mixing: every item drawn in its track's colour. In the other modes
+    /// an item's own colour shows — which take it is — and in a mix that
+    /// is noise: what reads there is which track it is.
+    pub mixing: bool,
 }
 
 impl Tcp {
     pub const FULL: Self = Self {
         compact: false,
         recording: true,
+        mixing: false,
     };
     pub const COMPACT: Self = Self {
         compact: true,
         recording: true,
+        mixing: false,
     };
 
     /// The panel's width.

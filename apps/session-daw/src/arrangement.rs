@@ -893,9 +893,7 @@ impl Arrangement {
                 // everything that has not been slipped, which is why
                 // adding it moves no picture that was right before.
                 let slip = item.start_offset.as_seconds();
-                let color = item.color.map_or(track_color, |rgb| {
-                    rgb24(rgb, if item.muted { 0x66 } else { 0xff })
-                });
+                let color = item_color(item, track_color, tcp.mixing);
                 // The body, dimmed, and the waveform over it in the
                 // full colour: the item is read by its waveform, and a
                 // solid block of colour was a waveform you could not
@@ -2923,5 +2921,39 @@ mod kit_layer_tests {
             guitars.layers.is_empty() && guitars.wave.is_some(),
             "one envelope"
         );
+    }
+}
+
+/// An item's colour: its own, which take it is — dimmed when it is muted —
+/// or with none of its own, its track's. Mixing, always its track's: a
+/// take's colour means nothing in a mix ([`crate::tcp::Tcp::mixing`]).
+fn item_color(item: &daw_proto::Item, track_color: Color, mixing: bool) -> Color {
+    item.color.filter(|_| !mixing).map_or(track_color, |rgb| {
+        rgb24(rgb, if item.muted { 0x66 } else { 0xff })
+    })
+}
+
+#[cfg(test)]
+mod item_color_tests {
+    /// A take's colour shows in every mode but Mix; mixing, the track's.
+    #[test]
+    fn mixing_draws_every_item_in_its_tracks_colour() {
+        let track = super::Color::from_rgb8(0x20, 0x40, 0x60);
+        let take = daw_proto::Item {
+            color: Some(0x00_ff_00_00),
+            ..daw_proto::Item::default()
+        };
+        assert_ne!(
+            super::item_color(&take, track, false),
+            track,
+            "a take's own colour"
+        );
+        assert_eq!(
+            super::item_color(&take, track, true),
+            track,
+            "mixing: the track's"
+        );
+        let plain = daw_proto::Item::default();
+        assert_eq!(super::item_color(&plain, track, false), track);
     }
 }
