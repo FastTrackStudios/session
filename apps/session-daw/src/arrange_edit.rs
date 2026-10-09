@@ -1449,6 +1449,7 @@ impl Editor {
             | Action::Visibility(_)
             | Action::ToggleScene(_)
             | Action::QuantizeDrums
+            | Action::GainStage { .. }
             | Action::ToggleMixer
             | Action::ToggleEditor
             | Action::ToggleFx

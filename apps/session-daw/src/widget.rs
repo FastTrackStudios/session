@@ -448,6 +448,10 @@ pub struct ArrangementWidget {
     /// A quantize's hits, read off the kit's peaks away from the frame
     /// and applied on the next one: `(row, hits)` per folded row.
     quantized: QuantizeHits,
+    /// A gain staging run (Shift+G) or clear (Alt+G) that has finished
+    /// off the frame: what to say about it. The next frame reads the
+    /// session back — the item volumes the waveforms are drawn through.
+    staged: std::sync::Arc<std::sync::Mutex<Option<&'static str>>>,
     /// The scene the rows were planned by before an overview took over,
     /// to go back to: `Some(previous)` while one is up.
     scene_before: Option<Option<&'static str>>,
@@ -597,6 +601,7 @@ impl ArrangementWidget {
             keys: crate::keys::Keys::load(),
             notice: None,
             quantized: std::sync::Arc::default(),
+            staged: std::sync::Arc::default(),
             scene_before: None,
             last_name: None,
             turning: None,
@@ -834,6 +839,84 @@ impl ArrangementWidget {
         let mut effects = Vec::new();
         crate::arrange_edit::Editor::quantize(&mut self.project, &rows, step, 1.0, &mut effects);
         self.settle(effects);
+        self.dirty.set(true);
+    }
+
+    /// Shift+G: gain stage the session ([`crate::gain_stage::stage_live`]);
+    /// Alt+G (`clear`): every staged item back at an item volume of 1. Off
+    /// the frame; [`Self::settle_stage`] reads the result back.
+    fn gain_stage(&self, clear: bool) -> bool {
+        let out = std::sync::Arc::clone(&self.staged);
+        let work = async move {
+            let Some(daw) = daw::rpc::Daw::try_get() else {
+                return;
+            };
+            let Ok(project) = daw.current_project().await else {
+                return;
+            };
+            let said = if clear {
+                match crate::gain_stage::clear_live(&project).await {
+                    Ok(cleared) => {
+                        tracing::info!(stage.cleared = cleared.len(), "gain staging cleared");
+                        "gain staging cleared"
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "gain staging could not be cleared");
+                        "gain staging could not be cleared"
+                    }
+                }
+            } else {
+                match crate::gain_stage::stage_live(&project).await {
+                    Ok(report) => {
+                        tracing::info!(
+                            stage.staged = report.staged.len(),
+                            stage.silent = report.silent.len(),
+                            "gain staged"
+                        );
+                        "gain staged"
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "gain staging failed");
+                        "gain staging failed"
+                    }
+                }
+            };
+            *out.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(said);
+        };
+        #[cfg(feature = "native")]
+        {
+            let Some(runtime) = crate::open::runtime() else {
+                return false;
+            };
+            runtime.spawn(work);
+        }
+        #[cfg(not(feature = "native"))]
+        wasm_bindgen_futures::spawn_local(work);
+        true
+    }
+
+    /// Whether a staging run has finished and is waiting to be shown.
+    fn stage_ready(&self) -> bool {
+        self.staged
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+    }
+
+    /// A finished staging run, shown: the session read back (the item
+    /// volumes the waveforms are drawn through) and what it did said.
+    fn settle_stage(&mut self) {
+        let Some(said) = self
+            .staged
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        else {
+            return;
+        };
+        self.resync();
+        self.notice = Some(crate::notice::Notice::new(said, None));
         self.dirty.set(true);
     }
 
@@ -1427,6 +1510,10 @@ impl ArrangementWidget {
                 handled |= self.quantize_drums();
                 continue;
             }
+            if let crate::keys::Action::GainStage { clear } = action {
+                handled |= self.gain_stage(clear);
+                continue;
+            }
             if action == crate::keys::Action::ToggleMixer {
                 if let Some(links) = &self.mixer {
                     links.toggle.set(true);
@@ -1795,6 +1882,7 @@ impl Widget for ArrangementWidget {
         // engine asked for.
         self.dirty.get()
             || self.quantize_ready()
+            || self.stage_ready()
             || crate::studio::resync_pending()
             || self
                 .notice
@@ -1891,6 +1979,7 @@ impl ArrangementWidget {
     /// returns, and what the web host draws into its canvas.
     pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
         self.settle_quantize();
+        self.settle_stage();
         self.dirty.set(false);
         let generation = self.previews.generation();
         if generation != self.previews_seen {

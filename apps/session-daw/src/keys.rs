@@ -41,6 +41,11 @@ pub enum Action {
     /// Quantize the kit under the selected folded rows: cut every mic
     /// before each hit and move the slices onto the grid together.
     QuantizeDrums,
+    /// Gain stage the session (Shift+G), or with `clear` (Alt+G) put every
+    /// staged item back at an item volume of 1 (`crate::gain_stage`).
+    GainStage {
+        clear: bool,
+    },
     DeleteSelectedItems,
     SelectAllItems,
     /// Escape: no time selection, nothing selected.
@@ -96,6 +101,8 @@ pub fn action_of(id: &str) -> Action {
         "40042" => Action::GoToStart,
         "40757" | "40012" => Action::SplitAtCursor,
         "FTS_QUANTIZE_DRUMS" => Action::QuantizeDrums,
+        "FTS_GAIN_STAGE" => Action::GainStage { clear: false },
+        "FTS_GAIN_STAGE_CLEAR" => Action::GainStage { clear: true },
         "40006" | "40697" => Action::DeleteSelectedItems,
         "40035" | "40182" => Action::SelectAllItems,
         "40020" => Action::ClearSelection,
@@ -596,6 +603,32 @@ mod tests {
         assert_eq!(
             keys.press(KeyCode::Character("q".into()), shift()),
             vec![Action::QuantizeDrums]
+        );
+    }
+
+    /// The profile the app ships gain stages on Shift+G and clears it on
+    /// Alt+G.
+    #[test]
+    fn the_shipped_profile_gain_stages_on_g() {
+        let profile = input_keybinds::embedded::fasttrackstudio().expect("the embedded profile");
+        let mut keys = Keys {
+            processor: InputProcessor::from_config(profile.keymap).expect("a processor"),
+            context: ActionContext::new(),
+            source: "test".into(),
+            labels: HashMap::new(),
+            pending: Vec::new(),
+        };
+        assert_eq!(
+            keys.press(KeyCode::Character("g".into()), shift()),
+            vec![Action::GainStage { clear: false }]
+        );
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(
+            keys.press(KeyCode::Character("g".into()), alt),
+            vec![Action::GainStage { clear: true }]
         );
     }
 

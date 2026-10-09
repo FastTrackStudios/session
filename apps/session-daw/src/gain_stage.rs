@@ -229,7 +229,7 @@ pub struct Staged {
     pub gain_db: f64,
 }
 
-/// What [`stage`] did.
+/// What [`plan`] decided, and [`stage`] / [`stage_live`] did.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Report {
     pub staged: Vec<Staged>,
@@ -239,9 +239,102 @@ pub struct Report {
     pub toms: Vec<(String, f64)>,
 }
 
-/// Stage every track with a [`role`] in `project`: the item volume, the
-/// fader at unity, the toms and the pairs panned. Idempotent — the level
-/// is read from the peaks, which do not carry the item volume.
+/// One track's part of a [`Plan`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Move {
+    pub track: String,
+    /// The item volume every one of its items gets.
+    pub volume: f64,
+    /// Its pan, when it is set.
+    pub pan: Option<f64>,
+    pub items: Vec<String>,
+}
+
+/// Everything staging changes, decided before any of it is done.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Plan {
+    pub moves: Vec<Move>,
+    pub report: Report,
+}
+
+/// Decide the staging of `tracks`: `items` every item of the project,
+/// `wave` an item's peaks ([`crate::midi::Wave`], read from its active
+/// take), asked only of the items on a playing lane.
+#[must_use]
+pub fn plan(
+    tracks: &[daw_proto::Track],
+    items: &[daw_proto::Item],
+    mut wave: impl FnMut(&daw_proto::Item) -> Option<crate::midi::Wave>,
+) -> Plan {
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let mut out = Plan::default();
+    let mut toms: Vec<usize> = Vec::new();
+    for track in tracks.iter().filter(|t| !t.is_folder) {
+        let Some(role) = role(&path_of(track, &by_guid)) else {
+            continue;
+        };
+        let own: Vec<&daw_proto::Item> = items
+            .iter()
+            .filter(|i| i.track_guid == track.guid)
+            .collect();
+        // Read from what plays: a fixed-lane track's other lanes hold
+        // other takes (unbreakable's, another song's), at their own
+        // levels. The gain goes on every item, so a lane switched to is
+        // staged alike.
+        let mut points: Vec<f32> = Vec::new();
+        let mut step = 0.0;
+        for item in own
+            .iter()
+            .filter(|item| daw_ui::studio::project::on_playing_lane(track, item))
+        {
+            if let Some(read) = wave(item) {
+                step = read.step;
+                points.extend(
+                    read.points
+                        .iter()
+                        .map(|(max, min)| max.abs().max(min.abs())),
+                );
+            }
+        }
+        let Some(level) = level(&points, step) else {
+            out.report.silent.push(track.name.clone());
+            continue;
+        };
+        let gain_db = (target(role) - level).clamp(-MOST_DB, MOST_DB);
+        if role == Role::Tom {
+            toms.push(out.moves.len());
+        }
+        out.moves.push(Move {
+            track: track.guid.clone(),
+            volume: 10.0_f64.powf(gain_db / 20.0),
+            pan: side(&track.name),
+            items: own.iter().map(|i| i.guid.clone()).collect(),
+        });
+        out.report.staged.push(Staged {
+            name: track.name.clone(),
+            role,
+            level,
+            gain_db,
+        });
+    }
+    for (at, pan) in toms.iter().zip(tom_pans(toms.len())) {
+        if let Some(each) = out.moves.get_mut(*at) {
+            each.pan = Some(pan);
+            let name = out
+                .report
+                .staged
+                .get(*at)
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+            out.report.toms.push((name, pan));
+        }
+    }
+    out
+}
+
+/// Stage `project` on an engine in hand (prepare's): [`plan`], then the
+/// item volumes, the faders at unity and the pans.
 ///
 /// # Errors
 ///
@@ -251,73 +344,110 @@ where
     D: Tracks + Items + Peaks,
 {
     let tracks = Tracks::all(daw, project.clone());
-    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
-        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
-    let mut report = Report::default();
-    let mut toms: Vec<&daw_proto::Track> = Vec::new();
-    for track in tracks.iter().filter(|t| !t.is_folder) {
-        let Some(role) = role(&path_of(track, &by_guid)) else {
-            continue;
-        };
-        let at = TrackRef::Guid(track.guid.clone());
-        let items = daw.get_items(project.clone(), at.clone());
-        let mut points: Vec<f32> = Vec::new();
-        let mut step = 0.0;
-        // Read from what plays: a fixed-lane track's other lanes hold other
-        // takes (unbreakable's, another song's), at their own levels. The
-        // gain goes on every item, so a lane switched to is staged alike.
-        for item in items
-            .iter()
-            .filter(|item| daw_ui::studio::project::on_playing_lane(track, item))
-        {
-            let data = daw.take_peaks(
-                project.clone(),
-                ItemRef::Guid(item.guid.clone()),
-                TakeRef::Active,
-                crate::midi::WAVE_BLOCK,
-            );
-            if let Some(wave) = crate::midi::Wave::from_peaks(&data) {
-                step = wave.step;
-                points.extend(
-                    wave.points
-                        .iter()
-                        .map(|(max, min)| max.abs().max(min.abs())),
-                );
-            }
-        }
-        let Some(level) = level(&points, step) else {
-            report.silent.push(track.name.clone());
-            continue;
-        };
-        let gain_db = (target(role) - level).clamp(-MOST_DB, MOST_DB);
-        let volume = 10.0_f64.powf(gain_db / 20.0);
-        for item in &items {
+    let items = daw.get_all_items(project.clone());
+    let planned = plan(&tracks, &items, |item| {
+        let data = daw.take_peaks(
+            project.clone(),
+            ItemRef::Guid(item.guid.clone()),
+            TakeRef::Active,
+            crate::midi::WAVE_BLOCK,
+        );
+        crate::midi::Wave::from_peaks(&data)
+    });
+    for each in &planned.moves {
+        for item in &each.items {
             Items::set_volume(
                 daw,
                 project.clone(),
-                ItemRef::Guid(item.guid.clone()),
-                volume,
+                ItemRef::Guid(item.clone()),
+                each.volume,
             )?;
         }
+        let at = TrackRef::Guid(each.track.clone());
         Tracks::set_volume(daw, project.clone(), at.clone(), 1.0)?;
-        if let Some(pan) = side(&track.name) {
+        if let Some(pan) = each.pan {
             Tracks::set_pan(daw, project.clone(), at, pan)?;
         }
-        if role == Role::Tom {
-            toms.push(track);
+    }
+    Ok(planned.report)
+}
+
+/// Stage the session through the facade — whatever this window drives,
+/// the engine or REAPER: [`plan`], then the same changes as [`stage`].
+///
+/// # Errors
+///
+/// A facade call failed.
+pub async fn stage_live(project: &daw_control::Project) -> eyre::Result<Report> {
+    let tracks = project.tracks().all().await?;
+    let items = project.items().all().await?;
+    let mut waves: std::collections::HashMap<String, crate::midi::Wave> =
+        std::collections::HashMap::new();
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    for item in &items {
+        // Only what [`plan`] will ask for: a staged track's playing lane.
+        let Some(track) = by_guid.get(item.track_guid.as_str()) else {
+            continue;
+        };
+        if role(&path_of(track, &by_guid)).is_none()
+            || !daw_ui::studio::project::on_playing_lane(track, item)
+        {
+            continue;
         }
-        report.staged.push(Staged {
-            name: track.name.clone(),
-            role,
-            level,
-            gain_db,
-        });
+        let Ok(Some(handle)) = project.items().by_guid(&item.guid).await else {
+            continue;
+        };
+        if let Ok(data) = handle.active_take().peaks(crate::midi::WAVE_BLOCK).await
+            && let Some(wave) = crate::midi::Wave::from_peaks(&data)
+        {
+            waves.insert(item.guid.clone(), wave);
+        }
     }
-    for (tom, pan) in toms.iter().zip(tom_pans(toms.len())) {
-        Tracks::set_pan(daw, project.clone(), TrackRef::Guid(tom.guid.clone()), pan)?;
-        report.toms.push((tom.name.clone(), pan));
+    let planned = plan(&tracks, &items, |item| waves.remove(&item.guid));
+    for each in &planned.moves {
+        for guid in &each.items {
+            if let Some(item) = project.items().by_guid(guid).await? {
+                item.set_volume(each.volume).await?;
+            }
+        }
+        if let Some(track) = project.tracks().by_guid(&each.track).await? {
+            track.set_volume(1.0).await?;
+            if let Some(pan) = each.pan {
+                track.set_pan(pan).await?;
+            }
+        }
     }
-    Ok(report)
+    Ok(planned.report)
+}
+
+/// Undo staging through the facade: every item of a track staging would
+/// stage back at an item volume of 1 — the track as it was recorded.
+/// Faders and pans stay where they are. Returns the tracks cleared.
+///
+/// # Errors
+///
+/// A facade call failed.
+pub async fn clear_live(project: &daw_control::Project) -> eyre::Result<Vec<String>> {
+    let tracks = project.tracks().all().await?;
+    let items = project.items().all().await?;
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let mut cleared = Vec::new();
+    for track in tracks.iter().filter(|t| !t.is_folder) {
+        if role(&path_of(track, &by_guid)).is_none() {
+            continue;
+        }
+        for item in items.iter().filter(|i| i.track_guid == track.guid) {
+            if (item.volume - 1.0).abs() > 1e-9
+                && let Some(handle) = project.items().by_guid(&item.guid).await?
+            {
+                handle.set_volume(1.0).await?;
+            }
+        }
+        cleared.push(track.name.clone());
+    }
+    Ok(cleared)
 }
 
 #[cfg(test)]
@@ -368,6 +498,88 @@ mod tests {
         let read = level(&points, step).expect("a level");
         assert!((read - -6.0).abs() < 0.1, "{read}");
         assert_eq!(level(&[0.0; 10], step), None, "silence");
+    }
+
+    /// The plan: a staged track's gain on all its items, read from its
+    /// playing lane only; a silent tom left out of the spread; a guitar
+    /// DI untouched.
+    #[test]
+    fn the_plan_stages_what_plays_and_spreads_the_toms_heard() {
+        let folder = |guid: &str, name: &str, parent: Option<&str>| daw_proto::Track {
+            guid: guid.into(),
+            name: name.into(),
+            is_folder: true,
+            parent_guid: parent.map(Into::into),
+            ..daw_proto::Track::default()
+        };
+        let track = |guid: &str, name: &str, parent: &str| daw_proto::Track {
+            guid: guid.into(),
+            name: name.into(),
+            parent_guid: Some(parent.into()),
+            ..daw_proto::Track::default()
+        };
+        let mut kick_in = track("in", "In", "kick");
+        kick_in.lane_count = 2;
+        kick_in.lane_play_mask = 0b1;
+        let tracks = vec![
+            folder("drums", "Drums", None),
+            folder("kick", "Kick", Some("drums")),
+            kick_in,
+            folder("toms", "Toms", Some("drums")),
+            track("t1", "T1", "toms"),
+            track("t2", "T2", "toms"),
+            track("t3", "T3", "toms"),
+            folder("gtr", "Guitars", None),
+            track("di", "DI", "gtr"),
+        ];
+        let item = |guid: &str, on: &str, lane: Option<u32>| daw_proto::Item {
+            guid: guid.into(),
+            track_guid: on.into(),
+            fixed_lane: lane,
+            ..daw_proto::Item::default()
+        };
+        let items = vec![
+            item("in-play", "in", Some(0)),
+            item("in-other", "in", Some(1)),
+            item("t1-a", "t1", None),
+            item("t3-a", "t3", None),
+            item("di-a", "di", None),
+        ];
+        let at = |db: f32| crate::midi::Wave {
+            step: 0.02,
+            points: vec![(10.0_f32.powf(db / 20.0), 0.0); 50],
+        };
+        let mut asked = Vec::new();
+        let planned = super::plan(&tracks, &items, |item| {
+            asked.push(item.guid.clone());
+            match item.guid.as_str() {
+                "in-play" => Some(at(-12.0)),
+                "in-other" => Some(at(-1.0)),
+                "t1-a" | "t3-a" => Some(at(-20.0)),
+                _ => None,
+            }
+        });
+        assert!(
+            !asked.contains(&"in-other".to_string()),
+            "the other lane is not read"
+        );
+        assert!(
+            !asked.contains(&"di-a".to_string()),
+            "a guitar DI is not read"
+        );
+        let kick = &planned.moves[0];
+        assert_eq!(
+            kick.items,
+            ["in-play", "in-other"],
+            "but every item gets the gain"
+        );
+        assert!(
+            20.0_f64.mul_add(kick.volume.log10(), -12.0).abs() < 0.1,
+            "-12 to 0: +12 dB"
+        );
+        assert_eq!(planned.report.silent, ["T2"]);
+        let toms: Vec<(String, f64)> = planned.report.toms.clone();
+        assert_eq!(toms, [("T1".to_string(), -0.8), ("T3".to_string(), 0.8)]);
     }
 
     #[test]

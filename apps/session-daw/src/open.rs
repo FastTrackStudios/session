@@ -402,7 +402,7 @@ where
 /// Run `future` to completion on the engine runtime from sync code — on a
 /// scoped thread of its own when the caller is already inside a runtime,
 /// where blocking on another would panic. `None` before there is one.
-pub(crate) fn block_on_engine<T: Send>(
+pub fn block_on_engine<T: Send>(
     future: impl std::future::Future<Output = T> + Send,
 ) -> Option<T> {
     let rt = runtime()?;

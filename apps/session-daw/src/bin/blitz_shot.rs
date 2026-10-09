@@ -239,6 +239,34 @@ fn open(path: &std::path::Path, audio: bool) -> StudioSession {
         ),
         Err(_) => SCENE,
     };
+    // `FTS_BLITZ_STAGE=stage` / `clear`: Shift+G / Alt+G, through the
+    // facade as the keys run them.
+    if let Ok(how) = std::env::var("FTS_BLITZ_STAGE") {
+        let clear = how == "clear";
+        let said = session_daw::open::block_on_engine(async move {
+            let daw = daw::rpc::Daw::try_get().ok_or_else(|| eyre::eyre!("no facade"))?;
+            let project = daw.current_project().await?;
+            if clear {
+                session_daw::gain_stage::clear_live(&project)
+                    .await
+                    .map(|cleared| format!("cleared {}", cleared.len()))
+            } else {
+                session_daw::gain_stage::stage_live(&project)
+                    .await
+                    .map(|report| {
+                        format!(
+                            "staged {:?}",
+                            report
+                                .staged
+                                .iter()
+                                .map(|s| (s.name.clone(), (s.gain_db * 10.0).round() / 10.0))
+                                .collect::<Vec<_>>()
+                        )
+                    })
+            }
+        });
+        tracing::info!(?said, "blitz: gain staging");
+    }
     let raw = session_daw::studio::fetch().expect("read the project back");
     // `FTS_BLITZ_OPEN=Drums,Kick` (or `*`): those folders opened, as a
     // click on each would — the shot of what is under a folder that
