@@ -1936,11 +1936,14 @@ dependencies = [
  "modulation-plugin",
  "nice-plug",
  "num-traits",
+ "pitch-plugin",
  "reverb-plugin",
  "saturate-plugin",
  "serde",
  "serde_json",
  "tracing",
+ "tune-plugin",
+ "unison-plugin",
 ]
 
 [[package]]
@@ -12286,6 +12289,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pitch-plugin"
+version = "0.1.0"
+dependencies = [
+ "audiocore-dsp",
+ "nice-plug",
+ "pitch-dsp",
+]
+
+[[package]]
 name = "pixels"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17203,12 +17215,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "tune"
+version = "0.1.0"
+dependencies = [
+ "tune-dsp",
+]
+
+[[package]]
 name = "tune-dsp"
 version = "0.1.0"
 dependencies = [
  "pitch-dsp",
  "realfft",
  "world-sys",
+]
+
+[[package]]
+name = "tune-plugin"
+version = "0.1.0"
+dependencies = [
+ "audiocore-dsp",
+ "nice-plug",
+ "tune",
 ]
 
 [[package]]
@@ -17405,6 +17433,15 @@ name = "unicode_categories"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39ec24b3121d976906ece63c9daad25b85969647682eee313cb5779fdd69e14e"
+
+[[package]]
+name = "unison-plugin"
+version = "0.1.0"
+dependencies = [
+ "audiocore-dsp",
+ "nice-plug",
+ "pitch-dsp",
+]
 
 [[package]]
 name = "universal-hash"

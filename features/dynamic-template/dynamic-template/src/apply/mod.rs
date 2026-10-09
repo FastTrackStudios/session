@@ -976,6 +976,20 @@ pub fn is_trigger(name: &str) -> bool {
         .any(|w| w.eq_ignore_ascii_case("trig") || w.eq_ignore_ascii_case("trigger"))
 }
 
+/// The drum pieces given a reverb return inside them, the return's name
+/// and starting level (dB) — the golden mix's.
+pub const PIECE_VERBS: &[(&str, &str, f64)] =
+    &[("Kick", "Verb", -22.8), ("Snare", "NonLin", -19.9)];
+
+/// The vocal returns fed by the vocals' `Input`, and their starting
+/// levels (dB) — the golden mix's.
+pub const VOCAL_FX: &[(&str, f64)] = &[
+    ("Long Verb", -28.6),
+    ("Short Verb", -16.5),
+    ("Slap", -6.7),
+    ("Oct Down", -29.4),
+];
+
 /// The drum kit's parallel chains' folder (the golden template's).
 pub const PROCESS_FOLDER: &str = "Process";
 

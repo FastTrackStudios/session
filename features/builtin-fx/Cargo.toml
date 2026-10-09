@@ -26,6 +26,9 @@ meter-plugin = { workspace = true }
 modulation-plugin = { workspace = true }
 reverb-plugin = { workspace = true }
 saturate-plugin = { workspace = true }
+pitch-plugin = { workspace = true }
+tune-plugin = { workspace = true }
+unison-plugin = { workspace = true }
 
 [dev-dependencies]
 # A song to put them in, as the app opens one.

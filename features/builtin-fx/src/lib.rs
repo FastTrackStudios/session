@@ -528,6 +528,18 @@ const ENTRIES: &[Entry] = &[
         name: <modulation_plugin::FtsModulation as Plugin>::NAME,
         make: make::<modulation_plugin::FtsModulation>,
     },
+    Entry {
+        name: <pitch_plugin::FtsPitch as Plugin>::NAME,
+        make: make::<pitch_plugin::FtsPitch>,
+    },
+    Entry {
+        name: <tune_plugin::FtsTune as Plugin>::NAME,
+        make: make::<tune_plugin::FtsTune>,
+    },
+    Entry {
+        name: <unison_plugin::FtsUnison as Plugin>::NAME,
+        make: make::<unison_plugin::FtsUnison>,
+    },
 ];
 
 /// The name a plugin goes by, however it is written: `FTS EQ`, `CLAP: FTS

@@ -623,6 +623,19 @@ pub fn steps(
         // compressors and rooms, sent from the kit, to DRUM BUS.
         let process = target.add_drum_process()?;
         tracing::info!(process = process.len(), "prepare: drum process");
+        // The golden mix's shape inside the kit and the vocals: each
+        // piece's gate keyed from its trigger, Kick's and Snare's reverb
+        // returns beside a SUM of their mics, the vocal effects fed from
+        // one Input.
+        let keyed = target.key_drum_gates()?;
+        let piece_verbs = target.add_piece_verbs()?;
+        let vocal_fx = target.add_vocal_fx()?;
+        tracing::info!(
+            keyed = ?keyed,
+            piece_verbs = ?piece_verbs,
+            vocal_fx = vocal_fx.len(),
+            "prepare: golden mix structure"
+        );
         // The mix's processing: the FTS processors built in (Tone on every
         // recorded track and EQ/Comp on the buses, bypassed; the Process
         // chains set).
@@ -633,6 +646,8 @@ pub fn steps(
                 tone = chains.tone,
                 buses = chains.buses,
                 process = chains.process,
+                gates = ?chains.gates,
+                returns = chains.returns,
                 unknown = ?chains.unknown,
                 "prepare: mix chains"
             );

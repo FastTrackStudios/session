@@ -784,7 +784,12 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             let track = self.append_track(name)?;
             if fed {
                 self.add_send(&kit, &track)?;
-                Tracks::set_muted(&self.daw, project.clone(), TrackRef::Guid(track.clone()), true)?;
+                Tracks::set_muted(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(track.clone()),
+                    true,
+                )?;
             }
             process.push((track, depth));
             made.push(name.to_string());
@@ -800,6 +805,308 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             }
             if i == end {
                 layout.extend(process.iter().cloned());
+            }
+        }
+        self.apply_layout(&layout)?;
+        Ok(made)
+    }
+
+    /// Each drum piece's gate keyed from its trigger, as the golden mix
+    /// wires it: a piece (`Kick`, `Snare`, `Toms` — a folder in the
+    /// Drums folder) with a trigger among its children (`Trig`, or a
+    /// `Trig` folder of `T1 Trig` …) gets a pre-FX send from it onto the
+    /// piece's channels 3/4, which keys the gate on the piece
+    /// (`session_daw::mix_chains`).
+    ///
+    /// The trigger is then unmuted — a muted track's sends are muted, in
+    /// REAPER as here — and taken off its parent instead: alive to key,
+    /// never heard under the kit. Returns the pieces keyed. Idempotent: a
+    /// trigger already keying a piece is left alone.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn key_drum_gates(&mut self) -> eyre::Result<Vec<String>> {
+        use daw_proto::{RouteLocation, RouteRef, RouteType, routing::SendMode};
+        let project = self.project.clone();
+        let tracks = Tracks::all(&self.daw, project.clone());
+        let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+            tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+        let in_drums = |t: &daw_proto::Track| {
+            let mut at = t.parent_guid.as_deref();
+            while let Some(guid) = at {
+                let Some(parent) = by_guid.get(guid) else {
+                    break;
+                };
+                if parent.parent_guid.is_none() && parent.name.trim().eq_ignore_ascii_case("drums")
+                {
+                    return true;
+                }
+                at = parent.parent_guid.as_deref();
+            }
+            false
+        };
+        let mut keyed = Vec::new();
+        // A piece, not the SUM of one's mics (`add_piece_verbs`), where its
+        // trigger goes after it is keyed.
+        let piece_like = |t: &&daw_proto::Track| {
+            t.is_folder
+                && !super::is_trigger(&t.name)
+                && !t.name.trim().eq_ignore_ascii_case("sum")
+                && in_drums(t)
+        };
+        for piece in tracks.iter().filter(piece_like) {
+            let triggers = tracks.iter().filter(|t| {
+                t.parent_guid.as_deref() == Some(piece.guid.as_str()) && super::is_trigger(&t.name)
+            });
+            for trigger in triggers {
+                let source = TrackRef::Guid(trigger.guid.clone());
+                let sends = Routing::sends(&self.daw, project.clone(), source.clone());
+                // Keying something already: this piece, or the one its SUM
+                // is in.
+                if sends.iter().any(|s| s.dest_channels.start_channel >= 2) {
+                    continue;
+                }
+                // The trigger and, for a folder of them, every one inside.
+                for track in tracks.iter().filter(|t| {
+                    t.guid == trigger.guid
+                        || t.parent_guid.as_deref() == Some(trigger.guid.as_str())
+                }) {
+                    if track.muted {
+                        Tracks::set_muted(
+                            &self.daw,
+                            project.clone(),
+                            TrackRef::Guid(track.guid.clone()),
+                            false,
+                        )?;
+                    }
+                }
+                Routing::set_parent_send_enabled(
+                    &self.daw,
+                    project.clone(),
+                    source.clone(),
+                    false,
+                )?;
+                let Some(index) = Routing::add_send(
+                    &self.daw,
+                    project.clone(),
+                    source.clone(),
+                    TrackRef::Guid(piece.guid.clone()),
+                ) else {
+                    continue;
+                };
+                let send = RouteLocation {
+                    track: source,
+                    route_type: RouteType::Send,
+                    route: RouteRef::Index(index),
+                };
+                Routing::set_send_mode(
+                    &self.daw,
+                    project.clone(),
+                    send.track.clone(),
+                    send.route.clone(),
+                    SendMode::PreFx,
+                )?;
+                Routing::set_dest_channels(&self.daw, project.clone(), send, 2, 2)?;
+                keyed.push(piece.name.clone());
+            }
+        }
+        Ok(keyed)
+    }
+
+    /// A reverb return inside the pieces the golden mix gives one
+    /// ([`super::PIECE_VERBS`]: Kick's room, Snare's non-linear), with
+    /// the piece's own tracks put in a `SUM` folder that feeds it:
+    ///
+    /// ```text
+    /// Kick                  gate, EQ, comp, saturation
+    ///   Verb                <- SUM
+    ///   SUM
+    ///     In, Out, Trig
+    /// ```
+    ///
+    /// The return sits inside the piece, so its gate shapes the tail too.
+    /// Starts at the golden mix's level. Returns the returns made; a piece
+    /// that already has a `SUM` is left alone.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn add_piece_verbs(&mut self) -> eyre::Result<Vec<String>> {
+        use super::TemplateTarget as _;
+        let mut made = Vec::new();
+        for (piece_name, verb_name, level_db) in super::PIECE_VERBS {
+            let project = self.project.clone();
+            let tracks = Tracks::all(&self.daw, project.clone());
+            let Some(at) = tracks.iter().position(|t| {
+                t.is_folder
+                    && t.name.trim().eq_ignore_ascii_case(piece_name)
+                    && t.parent_guid.as_deref().is_some_and(|p| {
+                        tracks.iter().any(|d| {
+                            d.guid == p
+                                && (d.name.trim().eq_ignore_ascii_case("drum kit")
+                                    || d.name.trim().eq_ignore_ascii_case("drums"))
+                        })
+                    })
+            }) else {
+                continue;
+            };
+            let Some(piece) = tracks.get(at) else {
+                continue;
+            };
+            if tracks.iter().any(|t| {
+                t.parent_guid.as_deref() == Some(piece.guid.as_str())
+                    && t.name.trim().eq_ignore_ascii_case("sum")
+            }) {
+                continue;
+            }
+            // The piece's block: it and everything to the track closing it.
+            let end = block_end(&tracks, at);
+            if end == at {
+                continue;
+            }
+            let verb = self.append_track(verb_name)?;
+            let sum = self.append_track("SUM")?;
+            self.add_send(&sum, &verb)?;
+            Tracks::set_volume(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(verb.clone()),
+                10_f64.powf(level_db / 20.0),
+            )?;
+            // Verb and SUM go first in the piece; the track that closed the
+            // piece now closes SUM as well.
+            let mut layout: Vec<(String, i32)> = Vec::new();
+            for (i, t) in tracks.iter().enumerate() {
+                let depth = if i == end {
+                    t.folder_depth.saturating_sub(1)
+                } else {
+                    t.folder_depth
+                };
+                layout.push((t.guid.clone(), depth));
+                if i == at {
+                    layout.push((verb.clone(), 0));
+                    layout.push((sum.clone(), 1));
+                }
+            }
+            self.apply_layout(&layout)?;
+            made.push(format!("{piece_name} {verb_name}"));
+        }
+        Ok(made)
+    }
+
+    /// The golden mix's vocal effects, at the end of the top-level Vocals
+    /// folder, for a session with one and no `FX` in it yet:
+    ///
+    /// ```text
+    /// Vocals
+    ///   …
+    ///   FX
+    ///     Input             <- the lead vocals; fader down, not heard
+    ///     Long Verb, Short Verb, Slap, Oct Down   <- Input, pre-FX
+    /// ```
+    ///
+    /// One `Input` gathers the leads so every return hears the same thing
+    /// and a lead added later is one send, not four. The leads are the
+    /// `Main` folder when there is one, else the tracks named lead. Each
+    /// return starts at the golden mix's level ([`super::VOCAL_FX`]).
+    /// Returns the tracks made.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn add_vocal_fx(&mut self) -> eyre::Result<Vec<String>> {
+        use super::TemplateTarget as _;
+        use daw_proto::{RouteRef, routing::SendMode};
+        let project = self.project.clone();
+        let tracks = Tracks::all(&self.daw, project.clone());
+        let Some(at) = tracks.iter().position(|t| {
+            t.parent_guid.is_none() && t.is_folder && t.name.trim().eq_ignore_ascii_case("vocals")
+        }) else {
+            return Ok(Vec::new());
+        };
+        let Some(vocals) = tracks.get(at).map(|t| t.guid.clone()) else {
+            return Ok(Vec::new());
+        };
+        let inside = |t: &daw_proto::Track| t.parent_guid.as_deref() == Some(vocals.as_str());
+        if tracks
+            .iter()
+            .any(|t| inside(t) && t.name.trim().eq_ignore_ascii_case("fx"))
+        {
+            return Ok(Vec::new());
+        }
+        let leads: Vec<String> = tracks
+            .iter()
+            .find(|t| inside(t) && t.is_folder && t.name.trim().eq_ignore_ascii_case("main"))
+            .map_or_else(
+                || {
+                    tracks
+                        .iter()
+                        .filter(|t| {
+                            !t.is_folder
+                                && t.name.to_ascii_lowercase().contains("lead")
+                                && self.has_items(&t.guid)
+                        })
+                        .map(|t| t.guid.clone())
+                        .collect()
+                },
+                |main| vec![main.guid.clone()],
+            );
+        let end = block_end(&tracks, at);
+        if end == at {
+            return Ok(Vec::new());
+        }
+        let fx = self.append_track("FX")?;
+        let input = self.append_track("Input")?;
+        Tracks::set_volume(
+            &self.daw,
+            project.clone(),
+            TrackRef::Guid(input.clone()),
+            0.0,
+        )?;
+        for lead in &leads {
+            self.add_send(lead, &input)?;
+        }
+        let mut made = vec!["FX".to_string(), "Input".to_string()];
+        let mut block = vec![(fx, 1), (input.clone(), 0)];
+        for (name, level_db) in super::VOCAL_FX {
+            let ret = self.append_track(name)?;
+            if let Some(index) = Routing::add_send(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(input.clone()),
+                TrackRef::Guid(ret.clone()),
+            ) {
+                Routing::set_send_mode(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(input.clone()),
+                    RouteRef::Index(index),
+                    SendMode::PreFx,
+                )?;
+            }
+            Tracks::set_volume(
+                &self.daw,
+                project.clone(),
+                TrackRef::Guid(ret.clone()),
+                10_f64.powf(level_db / 20.0),
+            )?;
+            block.push((ret, 0));
+            made.push((*name).to_string());
+        }
+        // The last return closes FX and Vocals; the track that closed
+        // Vocals stays inside it.
+        let closed = tracks.get(end).map_or(0, |t| t.folder_depth);
+        if let Some(last) = block.last_mut() {
+            last.1 = -2;
+        }
+        let mut layout: Vec<(String, i32)> = Vec::new();
+        for (i, t) in tracks.iter().enumerate() {
+            if i == end {
+                layout.push((t.guid.clone(), closed.saturating_add(1)));
+                layout.extend(block.iter().cloned());
+            } else {
+                layout.push((t.guid.clone(), t.folder_depth));
             }
         }
         self.apply_layout(&layout)?;
@@ -1176,4 +1483,17 @@ mod rehearsal_group_tests {
         assert_eq!(group(""), None);
         assert_eq!(group(" - stem"), None);
     }
+}
+
+/// The last track of the folder at `at`: the one whose depth change
+/// closes it (`at` itself for a track that is no folder).
+fn block_end(tracks: &[daw_proto::Track], at: usize) -> usize {
+    let mut running = 0_i32;
+    for (i, t) in tracks.iter().enumerate().skip(at) {
+        running = running.saturating_add(t.folder_depth);
+        if running <= 0 {
+            return i;
+        }
+    }
+    tracks.len().saturating_sub(1).max(at)
 }
