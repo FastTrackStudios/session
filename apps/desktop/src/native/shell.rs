@@ -91,6 +91,8 @@ pub fn Shell() -> Element {
     let mut setlist = use_context_provider(|| Signal::new(opened));
     // Each song in the mode it was last worked in.
     session_daw::song_modes::use_song_modes(setlist, mode);
+    // In Mix mode, the guide folder muted.
+    session_daw::mix_guide::use_mix_guide(setlist, mode);
     // A streamed set's songs after the first, as each opens behind it.
     use_future(move || async move {
         let Some(mut arrivals) = session_daw::stream_set::take_arrivals() else {

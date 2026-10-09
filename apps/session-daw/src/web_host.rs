@@ -553,6 +553,8 @@ fn DemoView(engine: crate::web_engine::EngineRef, setlist: crate::setlist::Setli
     let mut setlist = use_context_provider(|| Signal::new(setlist));
     // Each song in the mode it was last worked in.
     crate::song_modes::use_song_modes(setlist, mode);
+    // In Mix mode, the guide folder muted.
+    crate::mix_guide::use_mix_guide(setlist, mode);
     // The set's other songs, as they open behind the one on screen: each
     // takes its tab's place.
     use_future(move || async move {

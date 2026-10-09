@@ -382,6 +382,8 @@ pub struct ArrangementWidget {
     previews_seen: u64,
     /// The folds the rows were planned at ([`crate::folds::generation`]).
     folds_seen: u64,
+    /// The outside edits the rows were planned at ([`edit_song`]).
+    edited_seen: u64,
     /// The ruler's own furniture, for hit testing.
     sections: Vec<daw_ui::studio::project::Section>,
     markers: Vec<daw_ui::studio::project::Marker>,
@@ -586,6 +588,7 @@ impl ArrangementWidget {
             project,
             previews_seen: previews.generation(),
             folds_seen: crate::folds::generation(),
+            edited_seen: EDITED.with(Cell::get),
             previews,
             renaming: None,
             keys: crate::keys::Keys::load(),
@@ -1696,6 +1699,28 @@ thread_local! {
 /// it ([`song_as_left`]).
 type Left = Rc<RefCell<daw_ui::studio::project::Project>>;
 
+thread_local! {
+    /// How many times a song's kept copy was edited from outside an
+    /// arrangement ([`edit_song`]): one showing it compares this with the
+    /// value it planned at, as it does the folds.
+    static EDITED: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Change `planner`'s song as the arrangement has it, from outside one —
+/// Mix mode muting the guide. `f` says what changed (`Some`), and an
+/// arrangement showing the song plans its rows again; `None`, nothing did.
+pub(crate) fn edit_song<R>(
+    planner: &crate::studio::Planner,
+    f: impl FnOnce(&mut daw_ui::studio::project::Project) -> Option<R>,
+) -> Option<R> {
+    let raw = song_as_left(planner);
+    let out = f(&mut raw.borrow_mut());
+    if out.is_some() {
+        EDITED.with(|edited| edited.set(edited.get().wrapping_add(1)));
+    }
+    out
+}
+
 /// `planner`'s song as its arrangement left it, kept from now on.
 fn song_as_left(planner: &crate::studio::Planner) -> Left {
     LEFT.with(|all| {
@@ -1788,6 +1813,7 @@ impl Widget for ArrangementWidget {
             // paint re-cuts the rows for them.
             || self.previews.generation() != self.previews_seen
             || crate::folds::generation() != self.folds_seen
+            || EDITED.with(Cell::get) != self.edited_seen
     }
 
     fn handle_event(&mut self, event: &UiEvent) {
@@ -1861,9 +1887,12 @@ impl ArrangementWidget {
         }
         // A folder opened or shut — here, in the mixer, all at once: the
         // rows planned again, and the mixer given them.
+        // Or the song changed from outside (Mix mode's guide mute).
         let folds = crate::folds::generation();
-        if folds != self.folds_seen {
+        let edited = EDITED.with(Cell::get);
+        if folds != self.folds_seen || edited != self.edited_seen {
             self.folds_seen = folds;
+            self.edited_seen = edited;
             self.replan_rows();
         }
         // Blitz hands a widget its size in device pixels and the pointer in

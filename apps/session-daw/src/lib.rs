@@ -64,6 +64,7 @@ pub mod organize;
 pub mod plugin_faces;
 pub mod rig;
 #[cfg(any(feature = "native", feature = "web"))]
+pub mod mix_guide;
 pub mod song_modes;
 pub mod song_stream;
 #[cfg(feature = "native")]
