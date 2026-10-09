@@ -83,7 +83,10 @@ pub fn shut(rows: &[(daw_proto::Track, u32)], index: usize) -> bool {
     let Some((track, depth)) = rows.get(index) else {
         return false;
     };
-    track.is_folder && !rows.get(index + 1).is_some_and(|(_, next)| next > depth)
+    track.is_folder
+        && rows
+            .get(index.saturating_add(1))
+            .is_none_or(|(_, next)| next <= depth)
 }
 
 /// Open the folder `guid` if it is shut (`open` = whether it shows open
@@ -114,8 +117,9 @@ pub fn set_tops(on: bool) {
 /// contents left out: each folder keeps its row.
 #[must_use]
 pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)> {
-    let state = state();
+    // Worked out before the lock: a scan of every row, no state in it.
     let parts = parts_and_sides(&rows);
+    let state = state();
     let mut out = Vec::with_capacity(rows.len());
     // The depth of the shut folder whose contents are being skipped.
     let mut skipping: Option<u32> = None;
