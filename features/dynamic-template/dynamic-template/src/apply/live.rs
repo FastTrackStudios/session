@@ -308,6 +308,8 @@ fn rehearsal_group(name: &str) -> Option<String> {
 /// section, then the harmony, then the voices.
 const INSTRUMENT_ORDER: &[&str] = &[
     "Drums",
+    // The kit's parallel chains, beside it (`DawTarget::add_drum_process`).
+    super::PROCESS_FOLDER,
     "Percussion",
     "Bass",
     "Guitars",
@@ -706,10 +708,88 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
     ///
     /// A backend call failed.
     pub fn mute_triggers(&mut self) -> eyre::Result<Vec<String>> {
+        self.mute_where(super::is_trigger)
+    }
+
+    /// The golden template's drum Process folder, for a session with a
+    /// top-level Drums folder and none yet: what the kit is sent to —
+    /// `Compress` (Dry, Tight, Punch, Smash, Crunch: parallel compressors
+    /// from dry to crushed) and `FX` (a Room Sim, and a `Verb` bank to
+    /// pick the room the band is in: Wood Room, Music Club, Stadium, RMX
+    /// 16, Nonlin, Brick Wall). The kit sends to every one; the folder
+    /// goes to DRUM BUS, not its parent. Every chain starts muted: a
+    /// palette to pick from, not all of it under the kit at once. Their
+    /// FX are written with the session (`crate::process_fx`). Returns
+    /// the tracks made; none when there is no kit or a Process already.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn add_drum_process(&mut self) -> eyre::Result<Vec<String>> {
+        use super::TemplateTarget as _;
+        let project = self.project.clone();
+        let tracks = Tracks::all(&self.daw, project.clone());
+        let Some(kit) = tracks.iter().find(|t| {
+            t.parent_guid.is_none() && t.is_folder && t.name.trim().eq_ignore_ascii_case("drums")
+        }) else {
+            return Ok(Vec::new());
+        };
+        if tracks
+            .iter()
+            .any(|t| t.name.trim().eq_ignore_ascii_case(super::PROCESS_FOLDER))
+        {
+            return Ok(Vec::new());
+        }
+        let kit = kit.guid.clone();
+        // (name, folder depth change, the kit sends to it)
+        let mut layout: Vec<(&str, i32, bool)> =
+            vec![(super::PROCESS_FOLDER, 1, false), ("Compress", 1, false)];
+        layout.extend(super::PROCESS_COMPRESS.iter().map(|n| (*n, 0, true)));
+        if let Some(last) = layout.last_mut() {
+            last.1 = -1;
+        }
+        layout.push(("FX", 1, false));
+        layout.push(("Room Sim", 0, true));
+        layout.push(("Verb", 1, false));
+        layout.extend(super::PROCESS_VERBS.iter().map(|n| (*n, 0, true)));
+        if let Some(last) = layout.last_mut() {
+            // Closes Verb, FX and Process.
+            last.1 = -3;
+        }
+        let mut made = Vec::new();
+        let mut process = None;
+        for (name, depth, fed) in layout {
+            let track = self.append_track(name)?;
+            self.daw
+                .set_folder_depth(project.clone(), TrackRef::Guid(track.clone()), depth)?;
+            if fed {
+                self.add_send(&kit, &track)?;
+                Tracks::set_muted(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(track.clone()),
+                    true,
+                )?;
+            }
+            if process.is_none() {
+                process = Some(track.clone());
+            }
+            made.push(name.to_string());
+        }
+        if let (Some(process), Some(bus)) = (process, self.find_track("DRUM BUS")) {
+            self.set_parent_send(&process, false)?;
+            self.add_send(&process, &bus)?;
+        }
+        Ok(made)
+    }
+
+    /// Mute every track whose name `matches` and is not muted yet.
+    /// Returns the names muted.
+    fn mute_where(&self, matches: impl Fn(&str) -> bool) -> eyre::Result<Vec<String>> {
         let project = self.project.clone();
         let mut muted = Vec::new();
         for track in Tracks::all(&self.daw, project.clone()) {
-            if !track.muted && super::is_trigger(&track.name) {
+            if !track.muted && matches(&track.name) {
                 Tracks::set_muted(
                     &self.daw,
                     project.clone(),
@@ -1011,13 +1091,16 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             } else if let Some(i) = last.iter().position(|n| n.eq_ignore_ascii_case(&name)) {
                 (2, i)
             } else {
+                // By its own name when the order names it (Process, beside
+                // the kit), else by the group it classifies into.
                 let group = block.first().and_then(|(g, _)| group_of.get(g));
-                let at = group
-                    .and_then(|g| {
-                        INSTRUMENT_ORDER
-                            .iter()
-                            .position(|o| o.eq_ignore_ascii_case(g))
-                    })
+                let place = |of: &str| {
+                    INSTRUMENT_ORDER
+                        .iter()
+                        .position(|o| o.eq_ignore_ascii_case(of))
+                };
+                let at = place(&name)
+                    .or_else(|| group.and_then(|g| place(g)))
                     .unwrap_or(INSTRUMENT_ORDER.len());
                 (1, at)
             }

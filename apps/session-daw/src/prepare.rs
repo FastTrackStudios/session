@@ -619,6 +619,10 @@ pub fn steps(
         let hidden = target.hide_captures()?;
         let buses = target.hide_buses()?;
         let triggers = target.mute_triggers()?;
+        // The golden template's drum Process folder: the kit's parallel
+        // compressors and rooms, sent from the kit, to DRUM BUS.
+        let process = target.add_drum_process()?;
+        tracing::info!(process = process.len(), "prepare: drum process");
         // The recorded tracks at the reference kit's levels, as item
         // volume: nothing rendered, the audio as it was recorded.
         let staged = crate::gain_stage::stage(daw, &project)?;

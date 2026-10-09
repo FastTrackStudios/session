@@ -976,6 +976,22 @@ pub fn is_trigger(name: &str) -> bool {
         .any(|w| w.eq_ignore_ascii_case("trig") || w.eq_ignore_ascii_case("trigger"))
 }
 
+/// The drum kit's parallel chains' folder (the golden template's).
+pub const PROCESS_FOLDER: &str = "Process";
+
+/// The kit's parallel compressors, dry to crushed.
+pub const PROCESS_COMPRESS: &[&str] = &["Dry", "Tight", "Punch", "Smash", "Crunch"];
+
+/// The kit's reverb bank: the room the band is in.
+pub const PROCESS_VERBS: &[&str] = &[
+    "Wood Room",
+    "Music Club",
+    "Stadium",
+    "RMX 16",
+    "Nonlin",
+    "Brick Wall",
+];
+
 /// The folder the guide's rendered prints (`ClickPrint`, `ShakePrint`)
 /// go in, inside the Guide — the `Prints` group's name.
 pub const PRINTS_FOLDER: &str = "PRINTS";

@@ -229,6 +229,16 @@ fn open(path: &std::path::Path, audio: bool) -> StudioSession {
     {
         tracing::error!(error = %e, "preparing the session failed; opening it as it was");
     }
+    // `FTS_BLITZ_EXPORT=name`: the prepared song written as `name.RPP`
+    // beside its source, to finish the mix in REAPER.
+    if let Ok(name) = std::env::var("FTS_BLITZ_EXPORT") {
+        match session_daw::mix_export::write_rpp(&opened.daw, &opened.project_guid, &name) {
+            Ok(done) => {
+                tracing::info!(path = %done.path.display(), chained = ?done.chained, "blitz: exported")
+            }
+            Err(e) => tracing::error!(error = %e, "blitz: export failed"),
+        }
+    }
     // `FTS_BLITZ_LEVELS=from:to`: the staged tracks as heard — each
     // rendered alone over that span — against their targets, then the
     // drum folder's peak and the mix's.
