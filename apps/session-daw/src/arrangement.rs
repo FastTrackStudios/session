@@ -504,6 +504,15 @@ impl Arrangement {
         Some((top, (bottom - top - DIVIDER).max(0.5)))
     }
 
+    /// An item's band in session coordinates — its row's, narrowed to its
+    /// lane on a track showing fixed lanes: `(top, height)`.
+    #[must_use]
+    pub fn item_box(&self, item: &ItemBox) -> Option<(f64, f64)> {
+        let (top, height) = self.row_box(item.row)?;
+        let (from, to) = item.band;
+        Some((from.mul_add(height, top), ((to - from) * height).max(0.5)))
+    }
+
     /// A row's band ON SCREEN: where [`Self::row_box`] puts it, after
     /// the vertical zoom.
     ///
@@ -886,7 +895,40 @@ impl Arrangement {
             // row shrinks, so a collapsed session still shows its items
             // as bands rather than as empty lanes.
             let inset = (body * 0.05).clamp(0.0, 2.0);
-            for item in project.sounding(track) {
+            // A track showing its fixed lanes (REAPER 7's, as REAPER draws
+            // them): every lane's items, each in its lane's strip, the
+            // lanes that do not play dimmed — the takes, the comp and the
+            // edit side by side. A shut folder's row is a summary, and a
+            // track showing one lane shows the lane that plays.
+            let lanes_shown = shows_lanes(track) && !project.folds.contains_key(&track.guid);
+            let lane_count = track.lane_count.max(1);
+            let row_items: Vec<&daw_proto::Item> = if lanes_shown {
+                project.lane(&track.guid).iter().collect()
+            } else {
+                project.sounding(track)
+            };
+            if lanes_shown {
+                for lane in 1..lane_count {
+                    let (at, _) = lane_band(lane, lane_count);
+                    let line = at.mul_add(body, y);
+                    lanes.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        palette.divider.multiply_alpha(0.6),
+                        None,
+                        &Rect::new(0.0, line - 0.25, project.length_secs.max(1.0), line + 0.25),
+                    );
+                    index.x.push((f64::MIN, f64::MAX));
+                }
+            }
+            for item in row_items {
+                let band = if lanes_shown {
+                    lane_band(item.fixed_lane.unwrap_or(0).min(lane_count.saturating_sub(1)), lane_count)
+                } else {
+                    (0.0, 1.0)
+                };
+                let plays = !lanes_shown || daw_ui::studio::project::on_playing_lane(track, item);
+                let (y, body) = (band.0.mul_add(body, y), (band.1 - band.0) * body);
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
                 // How far into the source this item starts. Zero for
@@ -894,6 +936,13 @@ impl Arrangement {
                 // adding it moves no picture that was right before.
                 let slip = item.start_offset.as_seconds();
                 let color = item_color(item, track_color, tcp.mixing);
+                // A lane that does not play is there to be chosen from,
+                // not heard: drawn faint.
+                let color = if plays {
+                    color
+                } else {
+                    color.multiply_alpha(0.45)
+                };
                 // The body, dimmed, and the waveform over it in the
                 // full colour: the item is read by its waveform, and a
                 // solid block of colour was a waveform you could not
@@ -997,6 +1046,7 @@ impl Arrangement {
                     // A shut folder's row stands for many items: no one
                     // item volume to show or turn.
                     volume: (!is_folder).then_some(item.volume),
+                    band,
                 });
                 if let Some(name) = project.title(item) {
                     titles.push(Title {
@@ -1064,12 +1114,19 @@ impl Arrangement {
         x: f64,
         content_y: f64,
     ) -> Option<(usize, ItemZone)> {
-        let (top, height) = self.row_box(row)?;
         let scale = view.pps;
         // Last drawn is on top, so the last match wins.
         let mut found = None;
         for (index, item) in self.items.iter().enumerate() {
             if item.row != row {
+                continue;
+            }
+            // Its lane's strip, on a track showing its lanes: a click in
+            // another lane is not on it.
+            let Some((top, height)) = self.item_box(item) else {
+                continue;
+            };
+            if content_y < top - 1.0 || content_y > top + height + 1.0 {
                 continue;
             }
             let x0 = item.x0.mul_add(scale, -view.scroll_x);
@@ -1310,6 +1367,10 @@ pub struct ItemBox {
     /// Its item volume (linear), shown and turned on its dial
     /// ([`item_dial`]). `None` for a shut folder's row.
     pub volume: Option<f64>,
+    /// Which part of its row it fills, top to bottom, as fractions: all
+    /// of it, or — on a track showing its fixed lanes — its lane's
+    /// strip ([`lane_band`]).
+    pub band: (f64, f64),
 }
 
 /// An item's two fades: how long, and what shape.
@@ -1419,7 +1480,7 @@ pub fn fade_overlay(
     let x_of = |t: f64| t.mul_add(view.pps, ox);
     if let Some((index, fades)) = in_flight
         && let Some(item) = scene.item(index)
-        && let Some((top, height)) = scene.row_box(item.row)
+        && let Some((top, height)) = scene.item_box(item)
     {
         let inset = (height * 0.05).clamp(0.0, 2.0);
         let (top, bottom) = (
@@ -1448,7 +1509,7 @@ pub fn fade_overlay(
     let Some(item) = scene.item(index) else {
         return;
     };
-    let Some((top, _)) = scene.row_box(item.row) else {
+    let Some((top, _)) = scene.item_box(item) else {
         return;
     };
     let fades = in_flight.map_or(item.fades, |(_, f)| f);
@@ -1521,7 +1582,7 @@ pub fn volume_overlay(
         if x1 < 0.0 || x0 > view.width {
             continue;
         }
-        let Some((top, height)) = scene.row_box(item.row) else {
+        let Some((top, height)) = scene.item_box(item) else {
             continue;
         };
         let top = top.mul_add(view.zoom_y, oy);
@@ -1616,7 +1677,7 @@ pub fn slip_overlay(
     let Some(item) = scene.item(index) else {
         return;
     };
-    let Some((top, height)) = scene.row_box(item.row) else {
+    let Some((top, height)) = scene.item_box(item) else {
         return;
     };
     // The same three numbers the record pass works from, so the cover
@@ -1780,7 +1841,7 @@ pub fn selection_overlay(
         .iter()
         .filter(|i| rows.contains(&i.row) && selected.contains(&i.guid))
     {
-        let Some((top, height)) = scene.row_box(item.row) else {
+        let Some((top, height)) = scene.item_box(item) else {
             continue;
         };
         let inset = (height * 0.05).clamp(0.0, 2.0);
@@ -1800,7 +1861,7 @@ pub fn selection_overlay(
     }
     if let Some((index, x0, x1)) = ghost
         && let Some(item) = scene.item(index)
-        && let Some((top, height)) = scene.row_box(item.row)
+        && let Some((top, height)) = scene.item_box(item)
     {
         let inset = (height * 0.05).clamp(0.0, 2.0);
         let r = Rect::new(
@@ -3132,4 +3193,20 @@ mod dial_tests {
             "the stop"
         );
     }
+}
+
+/// Whether `track`'s row shows its fixed lanes: it has more than one,
+/// and is not set to show only the one that plays.
+#[must_use]
+pub fn shows_lanes(track: &daw_proto::Track) -> bool {
+    track.lane_count > 1 && track.lane_display != daw_proto::LaneDisplay::One
+}
+
+/// Lane `lane` of `count`'s strip of its row, top to bottom, as
+/// fractions — the first lane at the top, as REAPER stacks them.
+#[must_use]
+pub fn lane_band(lane: u32, count: u32) -> (f64, f64) {
+    let count = f64::from(count.max(1));
+    let lane = f64::from(lane);
+    (lane / count, (lane + 1.0) / count)
 }

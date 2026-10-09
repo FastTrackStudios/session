@@ -659,7 +659,7 @@ impl Editor {
         let click = travel <= view_gestures::SLOP;
         let span = view_gestures::Span::new(drag.from, drag.to);
         let hits = scene.item_boxes().iter().filter_map(|item| {
-            let (top, height) = scene.row_box(item.row)?;
+            let (top, height) = scene.item_box(item)?;
             span.touches(item.x0, item.x1, top, top + height)
                 .then(|| item.guid.clone())
         });
