@@ -115,6 +115,7 @@ pub fn set_tops(on: bool) {
 #[must_use]
 pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)> {
     let state = state();
+    let parts = parts_and_sides(&rows);
     let mut out = Vec::with_capacity(rows.len());
     // The depth of the shut folder whose contents are being skipped.
     let mut skipping: Option<u32> = None;
@@ -126,16 +127,72 @@ pub fn apply(rows: Vec<(daw_proto::Track, u32)>) -> Vec<(daw_proto::Track, u32)>
             skipping = None;
         }
         if track.is_folder {
-            let open = state
-                .chosen
-                .get(&track.guid)
-                .copied()
-                .unwrap_or_else(|| !(shut_by_default(&track) || state.tops && depth == 0));
+            let open = state.chosen.get(&track.guid).copied().unwrap_or_else(|| {
+                !(shut_by_default(&track)
+                    || parts.contains(track.guid.as_str())
+                    || state.tops && depth == 0)
+            });
             if !open {
                 skipping = Some(depth);
             }
         }
         out.push((track, depth));
+    }
+    out
+}
+
+/// Whether a top-level folder is the guitars' (`Electric GTR`, `GTR E`,
+/// `Guitars`), by the organizer's classification.
+fn is_guitars(name: &str) -> bool {
+    dynamic_template::track_schema::classify_track(name)
+        .matched_groups
+        .first()
+        .is_some_and(|g| g == "Guitars")
+}
+
+/// Whether a folder name is a side of a stereo part: `L`, `R`, `C`.
+fn is_side(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "l" | "r" | "c" | "left" | "right" | "center" | "centre"
+    )
+}
+
+/// The folders that start shut because they are one part played to
+/// several sides: a part (`Clean`, `Rhythm`, `Lead Harm` — a folder whose
+/// children are its `L`/`R`/`C` sides) and each side. Shut, the part is
+/// one row, its folder item showing what is under it; the sides and their
+/// mics are there when it is opened. By guid.
+fn parts_and_sides(rows: &[(daw_proto::Track, u32)]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for (i, (track, depth)) in rows.iter().enumerate() {
+        if !track.is_folder {
+            continue;
+        }
+        let children = rows
+            .iter()
+            .skip(i.saturating_add(1))
+            .take_while(|(_, d)| d > depth)
+            .filter(|(_, d)| *d == depth.saturating_add(1));
+        let children: Vec<&daw_proto::Track> = children.map(|(t, _)| t).collect();
+        let sides: Vec<&&daw_proto::Track> = children
+            .iter()
+            .filter(|t| t.is_folder && is_side(&t.name))
+            .collect();
+        if !sides.is_empty() {
+            out.insert(track.guid.clone());
+            out.extend(sides.iter().map(|t| t.guid.clone()));
+        }
+        // A guitars folder's own folders are its parts (`Clean`, `Rhythm`,
+        // `Solo`), sides or none: each one row.
+        if *depth == 0 && is_guitars(&track.name) {
+            out.extend(
+                children
+                    .iter()
+                    .filter(|t| t.is_folder)
+                    .map(|t| t.guid.clone()),
+            );
+        }
     }
     out
 }
@@ -281,5 +338,42 @@ mod default_tests {
             names(super::apply(rows)),
             ["drums", "kick", "mix", "vox", "refs", "guide", "prints"]
         );
+    }
+}
+
+#[cfg(test)]
+mod part_tests {
+    /// A part played to sides starts as one row; a folder of plain tracks
+    /// (a kick's mics) does not.
+    #[test]
+    fn a_part_and_its_sides_start_shut() {
+        let row = |guid: &str, folder: bool, depth: u32| {
+            (
+                daw_proto::Track {
+                    guid: guid.to_owned(),
+                    name: guid.to_owned(),
+                    is_folder: folder,
+                    ..daw_proto::Track::default()
+                },
+                depth,
+            )
+        };
+        let rows = vec![
+            row("Electric GTR", true, 0),
+            row("Clean", true, 1),
+            row("L", true, 2),
+            row("Main", false, 3),
+            row("R", true, 2),
+            row("Main 2", false, 3),
+            row("Solo", true, 1),
+            row("Main 3", false, 2),
+            row("Kick", true, 0),
+            row("In", false, 1),
+        ];
+        let shown: Vec<String> = super::apply(rows)
+            .into_iter()
+            .map(|(t, _)| t.guid)
+            .collect();
+        assert_eq!(shown, ["Electric GTR", "Clean", "Solo", "Kick", "In"]);
     }
 }
