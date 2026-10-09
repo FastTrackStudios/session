@@ -964,6 +964,15 @@ impl ArrangementWidget {
         self.restructure((*project.0).clone(), rows.as_slice().to_vec());
     }
 
+    /// The rows planned again from the tracks they are planned from — a
+    /// folder opened or shut.
+    fn replan_rows(&mut self) {
+        if let Some((planner, raw)) = self.replan.as_ref() {
+            let (project, rows) = planner.plan(raw);
+            self.restructure((*project.0).clone(), rows.as_slice().to_vec());
+        }
+    }
+
     /// Take a new set of rows (tracks shown or hidden): everything the
     /// rows are drawn and hit-tested from, then the recording.
     fn restructure(
@@ -1619,6 +1628,7 @@ impl ArrangementWidget {
                 .tracks
                 .iter_mut()
                 .chain(self.rows.iter_mut().map(|(track, _)| track))
+                .chain(planned_from(&mut self.replan))
             {
                 if track.guid == *guid {
                     track.selected = true;
@@ -1649,12 +1659,22 @@ impl ArrangementWidget {
             .tracks
             .iter_mut()
             .chain(self.rows.iter_mut().map(|(track, _)| track))
+            .chain(planned_from(&mut self.replan))
             .filter(|track| track.guid == guid)
         {
             change(track);
         }
         self.values_changed();
     }
+}
+
+/// The tracks the rows are planned from, for an edit to land in too: a
+/// fold or a scene plans the rows again from them, and an edit only in
+/// the rows it replaced — a mute, a rename — was undone by it.
+fn planned_from(
+    replan: &mut Option<(crate::studio::Planner, daw_ui::studio::project::Project)>,
+) -> impl Iterator<Item = &mut daw_proto::Track> {
+    replan.iter_mut().flat_map(|(_, raw)| raw.tracks.iter_mut())
 }
 
 /// The MIDI items of `fresh` whose notes `previews` has not read.
@@ -1788,10 +1808,7 @@ impl ArrangementWidget {
         let folds = crate::folds::generation();
         if folds != self.folds_seen {
             self.folds_seen = folds;
-            if let Some((planner, raw)) = self.replan.as_ref() {
-                let (project, rows) = planner.plan(raw);
-                self.restructure((*project.0).clone(), rows.as_slice().to_vec());
-            }
+            self.replan_rows();
         }
         // Blitz hands a widget its size in device pixels and the pointer in
         // CSS pixels; the page hands both in CSS pixels (and `scale` 1).
@@ -3198,6 +3215,50 @@ mod tests {
         assert!(widget.visibility(&Visibility::HideAll));
         assert!(widget.visibility(&Visibility::ShowAll));
         assert_eq!(names_shown(&widget), names);
+    }
+
+    /// A mute, solo or rename made in the arrangement outlives the rows
+    /// being planned again (a folder opened or shut): it lands in the
+    /// tracks they are planned from, not only in the rows a fold replaces.
+    #[test]
+    fn a_mute_survives_a_fold() {
+        let tracks: Vec<daw_proto::Track> = ["Kick", "Bass"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| daw_proto::Track {
+                guid: format!("g{i}"),
+                name: (*name).to_owned(),
+                index: u32::try_from(i).unwrap(),
+                ..daw_proto::Track::default()
+            })
+            .collect();
+        let raw = daw_ui::studio::project::Project {
+            tracks,
+            ..daw_ui::studio::project::Project::default()
+        };
+        let planner = crate::studio::Planner {
+            raw: std::sync::Arc::new(raw),
+            scene: None,
+            kinds: std::sync::Arc::new(crate::plan::Kinds::default()),
+        };
+        let content_h = std::rc::Rc::new(std::cell::Cell::new(0.0));
+        let mut widget = widget().with_planner(planner, content_h);
+        widget.replan_rows();
+        widget.assume(&Edit::ToggleMute("g0".into()));
+        widget.assume(&Edit::ToggleSolo("g1".into()));
+        widget.assume(&Edit::Rename("g1".into(), "Bass DI".into()));
+        widget.replan_rows();
+        let row = |guid: &str| {
+            widget
+                .rows
+                .iter()
+                .find(|(t, _)| t.guid == guid)
+                .map(|(t, _)| t.clone())
+                .expect("the row")
+        };
+        assert!(row("g0").muted, "the mute is still lit");
+        assert!(row("g1").soloed && row("g1").name == "Bass DI");
+        assert!(widget.tracks.iter().any(|t| t.guid == "g0" && t.muted));
     }
 
     #[test]
