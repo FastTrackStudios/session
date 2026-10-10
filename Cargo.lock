@@ -5241,6 +5241,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "drum-hits"
+version = "0.1.0"
+dependencies = [
+ "hound",
+ "num-traits",
+ "rayon",
+]
+
+[[package]]
 name = "dsp-core"
 version = "0.1.0"
 

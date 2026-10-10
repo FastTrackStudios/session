@@ -16,6 +16,7 @@ members = [
     "libs/vendor/dioxus-native-dom",
     "libs/vendor/dioxus-native",
     "features/builtin-fx",
+    "features/drum-hits",
     "features/signal-fx",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
@@ -467,6 +468,7 @@ totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 
 # ── Dynamic session templates (subtree-imported into the tree) ────────
 dynamic-template = { path = "features/dynamic-template/dynamic-template", default-features = false }
+drum-hits = { path = "features/drum-hits" }
 patch-list = { path = "features/patch-list" }
 dynamic-template-proto = { path = "features/dynamic-template/dynamic-template-proto" }
 chord-tool = { path = "features/chord-tool/chord-tool" }
