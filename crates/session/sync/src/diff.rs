@@ -81,6 +81,8 @@ pub enum TrackField {
     Lanes,
     /// Its part in the track groups.
     Grouping,
+    /// Its ext-state.
+    Ext,
     /// Its FX chain: an FX added, removed, moved, bypassed or set.
     Fx,
     Sends,
@@ -257,6 +259,7 @@ fn track_fields(a: &TrackState, b: &TrackState) -> Vec<TrackField> {
         ),
         (a.lanes != b.lanes, TrackField::Lanes),
         (a.grouping != b.grouping, TrackField::Grouping),
+        (a.ext != b.ext, TrackField::Ext),
         (a.fx != b.fx, TrackField::Fx),
         (a.sends != b.sends, TrackField::Sends),
         (a.envelopes != b.envelopes, TrackField::Envelopes),

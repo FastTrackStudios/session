@@ -1372,6 +1372,15 @@ static REDO: ActionMeta = meta(
 );
 
 #[cfg(feature = "native")]
+static MARK_KINDS: ActionMeta = meta(
+    "SESSION_MARK_KINDS",
+    "session_mark_kinds",
+    "Mark the kit's kinds",
+    "Write on every track of the kit what the golden template says it is — piece, Sum, mic, trigger, sub, sample, reverb — matched by name, for a song prepared before kinds were kept on the track. The scenes (Edit mode's rows above all) read them there. One undo step. Says how many tracks were marked.",
+    "Session",
+    "",
+);
+
 static CHECKPOINT: ActionMeta = meta(
     "SESSION_CHECKPOINT",
     "session_checkpoint",
@@ -1664,6 +1673,16 @@ fn register_save(list: &ActionList) {
         )
         .map_err(|e| e.to_string())?;
         Ok(guid)
+    });
+    list.register(&MARK_KINDS, Effect::Mutating, |_: NoArg| {
+        let (daw, project) = song()?;
+        daw::service::Projects::begin_undo_block(daw, project.clone(), "Mark the kit's kinds");
+        let marked =
+            dynamic_template::apply::DawTarget::on(daw.clone(), project.clone()).mark_kit_kinds();
+        daw::service::Projects::end_undo_block(daw, project, "Mark the kit's kinds", None);
+        let marked = marked.map_err(|e| e.to_string())?;
+        crate::studio::request_resync();
+        Ok(format!("{marked} tracks marked"))
     });
     list.register(&CHECKPOINT, Effect::Mutating, |a: CheckpointArg| {
         let (daw, project) = song()?;

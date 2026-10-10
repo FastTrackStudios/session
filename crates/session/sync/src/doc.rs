@@ -783,6 +783,15 @@ fn track_fields(t: &TrackState) -> Fields {
             LoroValue::I64(i64::from_ne_bytes(t.lanes.play_mask.to_ne_bytes())),
         ),
         ("grouping", grouping_value(&t.grouping)),
+        (
+            "ext",
+            LoroValue::from(
+                t.ext
+                    .iter()
+                    .map(|(k, v)| (k.clone(), LoroValue::from(v.as_str())))
+                    .collect::<HashMap<String, LoroValue>>(),
+            ),
+        ),
     ]
 }
 
@@ -855,6 +864,13 @@ fn read_track(fields: &HashMap<String, LoroValue>, folder: Option<&str>) -> Opti
             play_mask: u64::from_ne_bytes(g.i64("lanes.play", 0).to_ne_bytes()),
         },
         grouping: read_grouping(fields.get("grouping")),
+        ext: match fields.get("ext") {
+            Some(LoroValue::Map(map)) => map
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), as_string(v)?)))
+                .collect(),
+            _ => BTreeMap::new(),
+        },
         fx: Vec::new(),
         sends: Vec::new(),
         envelopes: BTreeMap::new(),

@@ -81,6 +81,24 @@ async fn run() -> eyre::Result<()> {
     println!("engine read           {:>7} ms", t.elapsed().as_millis());
     drop(model);
     let t = Instant::now();
+    let read_back = bridge.doc().read();
+    println!(
+        "doc read to model     {:>7} ms   ({} items)",
+        t.elapsed().as_millis(),
+        read_back.items.len()
+    );
+    let t = Instant::now();
+    let steps = session_sync::diff(bridge.shown(), &read_back);
+    println!(
+        "diff with shown       {:>7} ms   ({} steps)",
+        t.elapsed().as_millis(),
+        steps.len()
+    );
+    for step in &steps {
+        let text = format!("{step:?}");
+        println!("  {}", &text[..text.len().min(400)]);
+    }
+    let t = Instant::now();
     let ctx = daw_proto::ProjectContext::Project("song".into());
     let items = session_sync::direct::read_items(
         local.as_deref().ok_or_else(|| eyre::eyre!("direct"))?,
@@ -137,6 +155,12 @@ async fn run() -> eyre::Result<()> {
         "moved again, as a step  {:>7} ms   (update {} bytes)",
         t.elapsed().as_millis(),
         bridge.doc().updates_since(&before)?.len()
+    );
+    let t = Instant::now();
+    let undone = bridge.undo().await?;
+    println!(
+        "undo                  {:>7} ms   ({undone:?})",
+        t.elapsed().as_millis()
     );
     Ok(())
 }

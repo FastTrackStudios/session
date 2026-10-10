@@ -64,6 +64,9 @@ pub struct TrackState {
     /// Its part in each track group: a family's lead or follow mask by
     /// name (`recarm_lead`, `media_edit_follow`, …), the non-zero ones.
     pub grouping: BTreeMap<String, u128>,
+    /// What extensions and the template wrote on it (`FTS:kind` →
+    /// `piece`): REAPER's `P_EXT`, by key.
+    pub ext: BTreeMap<String, String>,
     /// Its FX, in chain order.
     pub fx: Vec<FxState>,
     /// Its sends, in order.

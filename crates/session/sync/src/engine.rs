@@ -278,6 +278,12 @@ async fn read_tracks(
             ..TrackState::default()
         };
         if let Some(handle) = project.tracks().by_guid(&state.guid).await? {
+            state.ext = handle
+                .ext_state()
+                .await?
+                .into_iter()
+                .map(|e| (e.key, e.value))
+                .collect();
             read_track_parts(&handle, &mut state, blobs, ids).await?;
         }
         tracks.push(state);
@@ -671,6 +677,7 @@ const ALL_TRACK_FIELDS: &[TrackField] = &[
     TrackField::VisibleInTcp,
     TrackField::Lanes,
     TrackField::Grouping,
+    TrackField::Ext,
     TrackField::Fx,
     TrackField::Sends,
     TrackField::Envelopes,
@@ -710,6 +717,22 @@ async fn set_track_fields(
                 h.set_lane_play_mask(track.lanes.play_mask).await?;
             }
             TrackField::Grouping => apply_grouping(&h, track).await?,
+            TrackField::Ext => {
+                let now: BTreeMap<String, String> = h
+                    .ext_state()
+                    .await?
+                    .into_iter()
+                    .map(|e| (e.key, e.value))
+                    .collect();
+                for key in now.keys().filter(|k| !track.ext.contains_key(*k)) {
+                    h.set_ext_state(key, "").await?;
+                }
+                for (key, value) in &track.ext {
+                    if now.get(key) != Some(value) {
+                        h.set_ext_state(key, value).await?;
+                    }
+                }
+            }
             // After the structure: see `apply`.
             TrackField::Fx | TrackField::Sends | TrackField::Envelopes => {}
         }

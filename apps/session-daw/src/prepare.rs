@@ -733,10 +733,13 @@ pub fn steps(
         // beside it, the toms as pieces, the Vox FX the leads feed — then
         // each piece's gate keyed from its trigger where it now sits.
         let kit = target.apply_golden_kit()?;
+        // What each kit track is, on the track: the scenes read it there.
+        let marked = target.mark_kit_kinds()?;
         let vox_fx = target.apply_vox_fx()?;
         let keyed = target.key_drum_gates()?;
         tracing::info!(
             kit = ?kit,
+            kinds_marked = marked,
             vox_fx = vox_fx.len(),
             keyed = ?keyed,
             "prepare: golden template"

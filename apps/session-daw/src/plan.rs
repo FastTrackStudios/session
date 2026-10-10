@@ -60,6 +60,55 @@ impl Kinds {
         }
     }
 
+    /// The kinds the engine holds for `project`'s tracks: their ext-state
+    /// (`FTS:kind`, `FTS:group`) — what a song opened from its project
+    /// file has, where there is no text to read.
+    #[must_use]
+    pub fn from_engine<D: daw_proto::Tracks>(daw: &D, project: &str) -> Self {
+        use dynamic_template::golden_session::{GROUP_KEY, KIND_KEY, Kind};
+        let ctx = daw_proto::ProjectContext::Project(project.to_owned());
+        let by_guid = daw
+            .all(ctx.clone())
+            .into_iter()
+            .filter_map(|track| {
+                let ext = daw.ext_state(ctx.clone(), daw_proto::TrackRef::Guid(track.guid.clone()));
+                let value = |key: &str| ext.iter().find(|e| e.key == key).map(|e| e.value.clone());
+                let kind = value(KIND_KEY).and_then(|k| Kind::parse(&k));
+                let group = value(GROUP_KEY);
+                (kind.is_some() || group.is_some()).then(|| {
+                    (
+                        track.guid.clone(),
+                        TrackExt {
+                            guid: track.guid,
+                            name: track.name,
+                            kind,
+                            group,
+                        },
+                    )
+                })
+            })
+            .collect();
+        Self { by_guid }
+    }
+
+    /// The open song's kinds: from the engine, else from the project at
+    /// `path`'s text.
+    #[must_use]
+    pub fn current(path: &std::path::Path) -> Self {
+        let engine = crate::open::local_engine()
+            .and_then(|daw| {
+                use daw::service::Projects as _;
+                let song = crate::open::current_song().or_else(|| daw.current().map(|p| p.guid))?;
+                Some(Self::from_engine(daw, &song))
+            })
+            .unwrap_or_default();
+        if engine.is_empty() {
+            Self::read(path)
+        } else {
+            engine
+        }
+    }
+
     /// How many tracks it knows about.
     #[must_use]
     pub fn len(&self) -> usize {

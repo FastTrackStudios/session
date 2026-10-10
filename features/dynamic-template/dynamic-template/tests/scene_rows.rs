@@ -255,14 +255,16 @@ fn the_tracking_overview_is_one_row_per_piece_and_no_mics() {
     }
 }
 
-/// **Drum Editing**: the same fold as the docked stack, so what is
-/// selected in one is what is edited in the other — and the Process
-/// folder and the bus tree gone, because editing is about takes and a
-/// send has no hits in it.
+/// **Drum Editing**: each piece, and under it where its recording is —
+/// its mics and its trigger, lifted out of the Sum that adds them up —
+/// and nothing made from them: no sub, sample or reverb return, no Sum
+/// row, no Process folder or bus tree, because editing is about takes
+/// and a send has no hits in it. The pieces start shut in the window,
+/// which folds them; the scene leaves them openable.
 ///
 /// r[verify flow.drums.editing.scene]
 #[test]
-fn drum_editing_folds_like_the_stack_and_hides_the_sends() {
+fn drum_editing_shows_where_the_recording_is() {
     let rows = rows_of("drum-editing");
     let named: Vec<&str> = rows
         .lines()
@@ -272,19 +274,41 @@ fn drum_editing_folds_like_the_stack_and_hides_the_sends() {
     for piece in ["Kick", "Snare", "Toms"] {
         assert!(named.contains(&piece), "no {piece} row to edit: {named:?}");
     }
+    // The kit's rows: from Drums to what follows it.
+    let kit: Vec<&str> = named
+        .iter()
+        .skip_while(|n| **n != "Drums")
+        .take_while(|n| **n != "Percussion")
+        .copied()
+        .collect();
+    for recorded in ["In", "Out", "Top", "Trig"] {
+        assert!(
+            kit.contains(&recorded),
+            "no {recorded} under its piece: {kit:?}"
+        );
+    }
+    for gone in ["Sum", "Sub", "Sample", "Fund", "Verb"] {
+        assert!(
+            !kit.contains(&gone),
+            "the kit's {gone} reached the edit scene: {kit:?}"
+        );
+    }
     for gone in ["Process", "MIX BUS"] {
         assert!(
             !named.contains(&gone),
             "{gone} reached the edit scene: {named:?}"
         );
     }
+    // The mics sit right under their piece, the Sum lifted away.
+    let depth = |name: &str| {
+        rows.lines()
+            .find(|l| l.split('\t').nth(1) == Some(name))
+            .and_then(|l| l.split('\t').next()?.trim().parse::<u32>().ok())
+    };
     assert_eq!(
-        rows_of("drum-editing")
-            .lines()
-            .filter(|l| l.split('\t').nth(1) == Some("In"))
-            .count(),
-        0,
-        "the mics should be folded into their piece"
+        depth("In"),
+        depth("Kick").map(|d| d + 1),
+        "In a level under Kick"
     );
 }
 

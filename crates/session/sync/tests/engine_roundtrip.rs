@@ -134,6 +134,9 @@ async fn round_trip(
     let a = daw.project(from).await?;
     let kick = a.tracks().add_with_guid("{KICK}", "Kick", None).await?;
     let oh = a.tracks().add_with_guid("{OH}", "OHs", None).await?;
+    kick.set_ext_state("FTS:kind", "piece").await?;
+    kick.set_ext_state("FTS:group", "Drums/Drum Kit/Kick")
+        .await?;
     let fx = kick.fx_chain().add("Keeper").await?;
     fx.set_state_chunk(b"kit=heavy thwacky".to_vec()).await?;
     let fx_guid = fx.info().await?.guid;
@@ -239,6 +242,11 @@ async fn round_trip(
     assert_eq!(kick.fx.len(), 1, "the FX was read: {kick:?}");
     assert!(kick.fx[0].state.is_some(), "with its state");
     assert_eq!(kick.sends.len(), 1);
+    assert_eq!(
+        kick.ext.get("FTS:kind").map(String::as_str),
+        Some("piece"),
+        "its kind read"
+    );
     assert_eq!(kick.envelopes.len(), 2, "{:?}", kick.envelopes.keys());
     assert_eq!(built.items["{SLICE}"].take.stretch.len(), 1);
     assert_eq!(

@@ -336,6 +336,52 @@ pub struct Arranged {
 }
 
 impl<D: Tracks + Routing + Items> DawTarget<D> {
+    /// Write what the template says `guid` is on the track
+    /// ([`crate::golden_session::KIND_KEY`]), as REAPER's `P_EXT`: what
+    /// the scenes read a track's kind from, kept with the song.
+    fn mark(&self, guid: &str, kind: crate::golden_session::Kind) -> eyre::Result<()> {
+        Tracks::set_ext_state(
+            &self.daw,
+            self.project.clone(),
+            TrackRef::Guid(guid.to_owned()),
+            crate::golden_session::KIND_KEY,
+            kind.as_str(),
+        )?;
+        Ok(())
+    }
+
+    /// [`Self::mark`] with what `node` is, and the template group it
+    /// stands for when it stands for one
+    /// ([`crate::golden_session::GROUP_KEY`]: `Drums/Drum Kit/Kick`).
+    fn mark_node(&self, guid: &str, node: &crate::golden_session::shape::Node) -> eyre::Result<()> {
+        self.mark(guid, node.kind)?;
+        if let Some(group) = node.template {
+            Tracks::set_ext_state(
+                &self.daw,
+                self.project.clone(),
+                TrackRef::Guid(guid.to_owned()),
+                crate::golden_session::GROUP_KEY,
+                &group.join("/"),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// A piece's recorded tracks marked by what they are: its trigger, or
+    /// a mic.
+    fn mark_recorded(&self, tracks: &[Branch]) -> eyre::Result<()> {
+        use crate::golden_session::Kind;
+        for track in tracks.iter().filter(|t| !t.is_folder()) {
+            let kind = if super::is_trigger(&track.name) {
+                Kind::Trigger
+            } else {
+                Kind::Source
+            };
+            self.mark(&track.guid, kind)?;
+        }
+        Ok(())
+    }
+
     fn has_items(&self, guid: &str) -> bool {
         !Items::get_items(
             &self.daw,
@@ -1028,6 +1074,64 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         Ok(made)
     }
 
+    /// Mark what every track of the kit is, from the golden template's
+    /// shape, matched by name: each piece, its Sum, the mics and trigger
+    /// in it, and what the template made beside them. For a kit laid out
+    /// before kinds were written; [`Self::apply_golden_kit`] marks what it
+    /// makes as it goes. Returns how many tracks were marked.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn mark_kit_kinds(&mut self) -> eyre::Result<usize> {
+        let golden = crate::golden_session::shape::drums();
+        let tracks = Tracks::all(&self.daw, self.project.clone());
+        let Some(drums) = tracks.iter().find(|t| {
+            t.parent_guid.is_none()
+                && t.is_folder
+                && (t.name.trim().eq_ignore_ascii_case("drums")
+                    || t.name.trim().eq_ignore_ascii_case("drum kit"))
+        }) else {
+            return Ok(0);
+        };
+        let forest = Branch::forest(&tracks);
+        let Some(kit) = forest.iter().find(|b| b.guid == drums.guid) else {
+            return Ok(0);
+        };
+        self.mark_node(&kit.guid, &golden)?;
+        let mut marked = 1_usize;
+        self.mark_like(&golden.children, &kit.children, &mut marked)?;
+        Ok(marked)
+    }
+
+    /// `tracks` marked by the `shape` nodes of the same names, and what is
+    /// in them by the nodes' children; a Sum's tracks as what they record.
+    fn mark_like(
+        &self,
+        shape: &[crate::golden_session::shape::Node],
+        tracks: &[Branch],
+        marked: &mut usize,
+    ) -> eyre::Result<()> {
+        use crate::golden_session::Kind;
+        for track in tracks {
+            let Some(node) = shape
+                .iter()
+                .find(|n| n.name.trim().eq_ignore_ascii_case(track.name.trim()))
+            else {
+                continue;
+            };
+            self.mark_node(&track.guid, node)?;
+            *marked = marked.saturating_add(1);
+            if node.kind == Kind::Sum {
+                self.mark_recorded(&track.children)?;
+                *marked =
+                    marked.saturating_add(track.children.iter().filter(|t| !t.is_folder()).count());
+            }
+            self.mark_like(&node.children, &track.children, marked)?;
+        }
+        Ok(())
+    }
+
     /// One summed piece ([`Self::apply_golden_kit`]): its tracks under a
     /// `Sum`, the template's `Fund` in it, the tracks beside it made.
     fn golden_piece(
@@ -1049,8 +1153,11 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         }
         let guid = self.append_track(&sum.name)?;
         made.push(format!("{}/{}", at.name, sum.name));
+        self.mark_node(&guid, sum)?;
+        self.mark_node(&at.guid, piece)?;
         let mut summed = Branch::new(guid, &sum.name);
         summed.children = std::mem::take(&mut at.children);
+        self.mark_recorded(&summed.children)?;
         for one in &sum.children {
             self.add_made(
                 one,
@@ -1123,6 +1230,7 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
             };
             let guid = self.append_track(&tom.name)?;
             made.push(format!("{}/{}", at.name, tom.name));
+            self.mark_node(&guid, tom)?;
             let mut piece = Branch::new(guid, &tom.name);
             piece.children.push(mic);
             let trig = names
@@ -1130,6 +1238,7 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
                 .find(|(_, k)| *k == crate::golden_session::Kind::Trigger)
                 .and_then(|(trig, _)| Branch::take(&mut at.children, trig));
             piece.children.extend(trig);
+            self.mark_recorded(&piece.children)?;
             for one in &tom.children {
                 self.add_made(
                     one,
@@ -1298,6 +1407,7 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
     ) -> eyre::Result<Branch> {
         use super::TemplateTarget as _;
         let guid = self.append_track(&node.name)?;
+        self.mark_node(&guid, node)?;
         let path = format!("{at}/{}", node.name);
         made.push(path.clone());
         let mut branch = Branch::new(guid, &node.name);

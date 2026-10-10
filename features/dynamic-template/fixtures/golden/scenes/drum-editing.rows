@@ -2,10 +2,33 @@
 0	Keyflow	86
 0	Drums	86
 1	Kick	133
+2	In	86
+2	Out	86
+2	Trig	86
 1	Snare	133
+2	Top	86
+2	Bottom	86
+2	Trig	86
 1	Toms	133
+2	Tom 1	133
+3	T1	86
+3	T1 Trig	86
+2	Tom 2	133
+3	T2	86
+3	T2 Trig	86
+2	Tom 3	133
+3	T3	86
+3	T3 Trig	86
+2	Tom 4	133
+3	T4	86
+3	T4 Trig	86
 1	Cymbals	133
+2	OH	86
+2	Hi-Hat	86
+2	Ride	86
 1	Rooms	133
+2	Rooms	86
+2	Rooms Far	86
 0	Percussion	86
 1	Shaker	86
 1	Tambourine	86

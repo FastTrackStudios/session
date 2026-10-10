@@ -1068,8 +1068,8 @@ fn drum_tracking_overview() -> Scene {
 /// hold what was recorded.
 ///
 /// The arrangement's counterpart of the docked stack's lanes: a piece
-/// folded is every mic of it at once, so an edit to the piece is an edit
-/// to all of them. Opened, a piece shows where its recording is — its
+/// shut (as the window starts it) is every mic of it at once, so an edit
+/// to the piece is an edit to all of them. Opened, a piece shows where its recording is — its
 /// mics and its trigger, `In`, `Out`, `Trig` — lifted out of the Sum that
 /// adds them up, and nothing derived from them: no sub, fundamental,
 /// sample or reverb return, which have no hits of their own. The Process
@@ -1080,6 +1080,9 @@ fn drum_tracking_overview() -> Scene {
 // r[impl flow.drums.editing.scene]
 // r[impl flow.scenes.follow-mode]
 fn drum_editing() -> Scene {
+    // The pieces at working height and left to the window to fold: it
+    // starts each piece shut, and a click opens it — a fold the scene made
+    // would take the rows away for good.
     let mut rules = Vec::new();
     for piece in PIECES {
         rules.push(Rule::new(
@@ -1087,7 +1090,7 @@ fn drum_editing() -> Scene {
                 role: Role::Bus,
                 ..under(&[KIT[0], KIT[1], piece])
             },
-            Effect::at(Size::Working).folded(Fold::Collapsed),
+            Effect::at(Size::Working),
         ));
     }
     // The Sum's row goes, its mics stay; what is made from the mics goes.

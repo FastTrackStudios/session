@@ -329,12 +329,20 @@ impl StudioSession {
         let planner = Planner {
             raw: Arc::new(raw),
             scene: Some(SCENE),
-            kinds: Arc::new(
-                path.filter(|p| p.exists())
-                    .and_then(|p| crate::open::project_text(p).ok())
-                    .map(|read| crate::plan::Kinds::from_text(&read.text))
-                    .unwrap_or_default(),
-            ),
+            kinds: Arc::new({
+                let engine = crate::open::local_engine()
+                    .zip(crate::open::current_song())
+                    .map(|(daw, song)| crate::plan::Kinds::from_engine(daw, &song))
+                    .unwrap_or_default();
+                if engine.is_empty() {
+                    path.filter(|p| p.exists())
+                        .and_then(|p| crate::open::project_text(p).ok())
+                        .map(|read| crate::plan::Kinds::from_text(&read.text))
+                        .unwrap_or_default()
+                } else {
+                    engine
+                }
+            }),
         };
         let planning = std::time::Instant::now();
         let (project, rows) = planner.plan(&planner.raw);
@@ -419,7 +427,7 @@ pub fn plan_rows(
     scene: Option<&str>,
     project_path: &std::path::Path,
 ) -> (ProjectRef, RowsRef) {
-    plan_rows_with(raw, scene, &crate::plan::Kinds::read(project_path))
+    plan_rows_with(raw, scene, &crate::plan::Kinds::current(project_path))
 }
 
 /// [`plan_rows`], with the track kinds already read.
