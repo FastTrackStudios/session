@@ -42,7 +42,11 @@ pub fn Versions() -> Element {
     let mut name = use_signal(String::new);
     let mut said = use_signal(|| None::<(bool, String)>);
     let mut listed = use_signal(Vec::<Version>::new);
-    let mut refresh = move || listed.set(crate::actions::open_song_versions());
+    let mut unsaved = use_signal(|| None::<bool>);
+    let mut refresh = move || {
+        listed.set(crate::actions::open_song_versions());
+        unsaved.set(crate::actions::open_song_unsaved());
+    };
     // A version picked to open, while asking whether to save this one.
     let mut switching = use_signal(|| None::<Version>);
     let back = try_use_context::<crate::shell::Back>();
@@ -124,6 +128,11 @@ pub fn Versions() -> Element {
                         onclick: move |_| run("SESSION_SAVE", String::new()),
                         "Save the song  ·  Ctrl+S"
                     }
+                    match unsaved() {
+                        Some(true) => rsx! { span { style: "color:{NO}; font-size:12px;", "● Unsaved changes" } },
+                        Some(false) => rsx! { span { style: "color:{OK}; font-size:12px;", "Saved" } },
+                        None => rsx! {},
+                    }
                     span { style: "color:{DIM}; font-size:12px; line-height:1.4;",
                         "A checkpoint saves the song as it is now, beside it, under a name — and keeps you in the song."
                     }
@@ -167,7 +176,14 @@ pub fn Versions() -> Element {
                                             border-radius:6px; border:none; text-align:left; font-family:inherit; font-size:13px; \
                                             background:{row_bg(version.open)}; color:{TEXT}; cursor:pointer;",
                                     disabled: version.open,
-                                    onclick: move |_| switching.set(Some(version.clone())),
+                                    onclick: move |_| {
+                                        // Nothing to lose: straight there.
+                                        if unsaved() == Some(false) {
+                                            switch(version.clone(), false);
+                                        } else {
+                                            switching.set(Some(version.clone()));
+                                        }
+                                    },
                                     span { "{version.name}" }
                                     span { style: "color:{DIM};", if version.open { "open" } else { "{version.when}" } }
                                 }

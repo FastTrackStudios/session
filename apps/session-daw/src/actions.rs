@@ -1292,6 +1292,17 @@ static RECENT: ActionMeta = meta(
     "",
 );
 
+/// Whether the open song has changes it was not saved with; `None` when
+/// that is not known.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn open_song_unsaved() -> Option<bool> {
+    let (daw, ProjectContext::Project(guid)) = song().ok()? else {
+        return None;
+    };
+    crate::projects::unsaved(daw, &guid)
+}
+
 /// The open song's versions, for the top bar's Versions.
 ///
 /// The song's own (`"The song"`) and its checkpoints, the newest first —
@@ -1383,8 +1394,13 @@ fn register_save(list: &ActionList) {
             return Err("no song open".to_owned());
         };
         let base = song_base(daw, guid)?;
+        let unsaved = match crate::projects::unsaved(daw, guid) {
+            Some(true) => " (unsaved changes)",
+            Some(false) => " (saved)",
+            None => "",
+        };
         let mut out = vec![format!(
-            "the song: {}",
+            "the song{unsaved}: {}",
             crate::projects::main_of(&base)
                 .map_or_else(|| "(not saved yet)".to_owned(), |p| p.display().to_string())
         )];
@@ -1428,7 +1444,7 @@ fn register_save(list: &ActionList) {
         let ProjectContext::Project(guid) = &project else {
             return Err("no song open".to_owned());
         };
-        let dir = if let Some(to) = a.to {
+        let dir = if let Some(to) = a.to.clone() {
             std::path::PathBuf::from(to)
         } else {
             let from = std::path::PathBuf::from(
@@ -1441,7 +1457,13 @@ fn register_save(list: &ActionList) {
                 from.with_extension("session")
             }
         };
+        let own = a.to.is_none();
         let at = crate::session_file::save_session(daw, guid, &dir)?;
+        if own {
+            // The song itself, saved: nothing unsaved now. (A copy saved
+            // elsewhere leaves the song as unsaved as it was.)
+            crate::projects::mark_saved(daw, guid);
+        }
         Ok(format!("saved to {}", at.display()))
     });
     list.register(&CHECK_SAVED, Effect::ReadOnly, |a: CheckSavedArg| {

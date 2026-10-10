@@ -240,6 +240,36 @@ fn modified(path: &Path) -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// Each open song's fingerprint as it was opened or last saved
+/// (`daw::standalone::digest::fingerprint`), by project: what it is held
+/// up to for "unsaved changes".
+static SAVED: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>> =
+    std::sync::Mutex::new(None);
+
+/// The song `project` is saved as it is now (or was just opened so).
+pub fn mark_saved(daw: &daw::standalone::Standalone, project: &str) {
+    if let Some(print) = daw::standalone::digest::fingerprint(daw, project) {
+        SAVED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_or_insert_with(std::collections::HashMap::new)
+            .insert(project.to_owned(), print);
+    }
+}
+
+/// Whether the song `project` has changed since it was opened or last
+/// saved; `None` if that is not known (opened some other way).
+#[must_use]
+pub fn unsaved(daw: &daw::standalone::Standalone, project: &str) -> Option<bool> {
+    let saved = SAVED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()?
+        .get(project)
+        .copied()?;
+    Some(daw::standalone::digest::fingerprint(daw, project)? != saved)
+}
+
 /// What to open once the start screen is back: a version picked from
 /// inside a song (the top bar's Versions) goes back out of the song and
 /// in again as that version.

@@ -282,6 +282,10 @@ impl StudioSession {
         };
         let engine = began.elapsed();
         crate::open::prepare_and_save(crate::folder::disk(), &opened, &plan, prepare);
+        // The song as opened (and prepared): what "unsaved changes" is
+        // measured from.
+        #[cfg(feature = "native")]
+        crate::projects::mark_saved(&opened.daw, &opened.project_guid);
         let prepared = began.elapsed();
         let session = Self::read_current(Some(plan.open.as_path()), prepare.chart.clone())?;
         // One line per song: where its opening went.
