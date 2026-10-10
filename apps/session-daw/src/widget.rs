@@ -917,10 +917,11 @@ impl ArrangementWidget {
     /// drums folder's folded rows, each with the moves inside its span —
     /// the whole kit cut and moved as one ([`crate::arrange_edit::Editor::slip`]).
     /// False when the drums are not folded to a row here.
-    fn slip_drums(&mut self, moves: &[(i64, i64)], cut: crate::arrange_edit::SlipCut) -> bool {
-        // Every audio track under the drums folder — the kit, whatever is
-        // folded or open here, never its Process — and every take on it
-        // that plays: one unit, cut and moved together.
+    /// The kit's takes an edit works on ([`crate::drum_edit::is_edited`]):
+    /// every audio track under the top-level Drums folder — whatever is
+    /// folded or open here, never its Process — or, `only` named, those
+    /// tracks of it.
+    fn kit_items(&self, only: &[String]) -> Vec<String> {
         let Some(drums) = self
             .project
             .tracks
@@ -932,7 +933,7 @@ impl ArrangementWidget {
             })
             .map(|t| t.guid.clone())
         else {
-            return false;
+            return Vec::new();
         };
         let mut inside: std::collections::HashSet<String> =
             std::collections::HashSet::from([drums]);
@@ -945,22 +946,55 @@ impl ArrangementWidget {
                 continue;
             }
             inside.insert(track.guid.clone());
-            if !track.is_folder {
+            if !track.is_folder && (only.is_empty() || only.contains(&track.guid)) {
                 kit.push(track);
             }
         }
-        let items: Vec<String> = kit
-            .iter()
+        kit.iter()
             .flat_map(|track| {
                 self.project
                     .items
                     .get(&track.guid)
                     .into_iter()
                     .flatten()
-                    .filter(|item| daw_ui::studio::project::on_playing_lane(track, item))
+                    .filter(|item| crate::drum_edit::is_edited(track, item))
                     .map(|item| item.guid.clone())
             })
-            .collect();
+            .collect()
+    }
+
+    /// Take `from..to` out of the kit's edited takes — `tracks` of it, or
+    /// all of it ([`crate::arrange_edit::Editor::remove_range`]).
+    fn remove_range(&mut self, tracks: &[String], (from, to): (f64, f64)) -> bool {
+        let items = self.kit_items(tracks);
+        if items.is_empty() {
+            return false;
+        }
+        let mut effects = Vec::new();
+        crate::arrange_edit::Editor::remove_range(
+            &mut self.project,
+            &items,
+            (from, to),
+            "Remove from the drums",
+            &mut effects,
+        );
+        tracing::info!(
+            remove.takes = items.len(),
+            remove.from = from,
+            remove.to = to,
+            remove.edits = effects.len(),
+            "drums: a stretch removed"
+        );
+        self.settle(effects);
+        self.replan_rows();
+        crate::detect_overlay::clear();
+        self.dirty.set(true);
+        true
+    }
+
+    fn slip_drums(&mut self, moves: &[(i64, i64)], cut: crate::arrange_edit::SlipCut) -> bool {
+        // The kit's takes: one unit, cut and moved together.
+        let items = self.kit_items(&[]);
         if items.is_empty() {
             return false;
         }
@@ -1729,16 +1763,28 @@ impl ArrangementWidget {
                 handled = true;
                 continue;
             }
+            if let crate::keys::Action::RemoveRange {
+                tracks,
+                from_us,
+                to_us,
+            } = &action
+            {
+                let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1e6;
+                handled |= self.remove_range(tracks, (seconds(*from_us), seconds(*to_us)));
+                continue;
+            }
             if let crate::keys::Action::SlipDrums {
                 moves,
                 pre_roll_us,
                 crossfade_us,
+                stretch_over_us,
             } = &action
             {
                 let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1e6;
                 let cut = crate::arrange_edit::SlipCut {
                     pre_roll: seconds(*pre_roll_us),
                     crossfade: seconds(*crossfade_us),
+                    stretch_over: (*stretch_over_us > 0).then(|| seconds(*stretch_over_us)),
                 };
                 handled |= self.slip_drums(moves, cut);
                 continue;
@@ -2157,6 +2203,9 @@ impl Widget for ArrangementWidget {
         self.dirty.get()
             || window_queued()
             || crate::detect_overlay::version() != self.detection_seen.get()
+            // Edits made and not yet sent: the panel sends them at the
+            // top of a frame, and this one is owed.
+            || !self.edits.borrow().is_empty()
             || crate::wave_detail::generation() != self.detail_seen.get()
             || self.view_drawn.get() != Self::framing(&self.view.borrow())
             || self.quantize_ready()
@@ -2260,6 +2309,12 @@ impl ArrangementWidget {
         // than a key (a model, a menu): done before the picture is.
         #[cfg(feature = "native")]
         if crate::actions::window_pending() {
+            // What the engine changed first (a lane set up from the Action
+            // List): an action carried out on the session as it was would
+            // edit takes that are no longer there.
+            if crate::studio::take_resync() {
+                self.resync();
+            }
             let _ = self.apply_actions(crate::actions::take_window());
         }
         self.settle_quantize();

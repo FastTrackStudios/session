@@ -87,6 +87,9 @@ pub struct Settings {
     pub lead_ms: f64,
     /// The crossfade across each seam, ms.
     pub xfade_ms: f64,
+    /// A gap a slip leaves longer than this (ms) is filled by stretching
+    /// the decay before it — the last resort; none, never.
+    pub stretch_gaps_ms: Option<f64>,
     pub fills: Fills,
 }
 
@@ -109,6 +112,7 @@ impl Default for Settings {
             strength: 1.0,
             lead_ms: 5.0,
             xfade_ms: 5.0,
+            stretch_gaps_ms: None,
             fills: Fills::Skip,
         }
     }
@@ -133,6 +137,8 @@ pub struct Patch {
     pub strength: Option<f64>,
     pub lead_ms: Option<f64>,
     pub xfade_ms: Option<f64>,
+    /// 0 (or less): never.
+    pub stretch_gaps_ms: Option<f64>,
     pub fills: Option<Fills>,
 }
 
@@ -170,6 +176,11 @@ impl Settings {
             strength: pick(patch.strength, self.strength).clamp(0.0, 1.0),
             lead_ms: pick(patch.lead_ms, self.lead_ms).max(0.0),
             xfade_ms: pick(patch.xfade_ms, self.xfade_ms).max(0.0),
+            stretch_gaps_ms: match patch.stretch_gaps_ms {
+                Some(ms) if ms > 0.0 => Some(ms),
+                Some(_) => None,
+                None => self.stretch_gaps_ms,
+            },
             fills: patch.fills.unwrap_or(self.fills),
         }
     }

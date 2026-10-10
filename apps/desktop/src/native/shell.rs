@@ -75,6 +75,9 @@ pub fn Shell() -> Element {
             if let Some(next) = session_daw::actions::take_mode_request() {
                 asked.set(next);
             }
+            // In Edit mode the kit plays its phase's lane: Comp the comp,
+            // Edit the edit.
+            session_daw::drum_lanes::follow_phase(*asked.peek());
             architect::platform::sleep(std::time::Duration::from_millis(100)).await;
         }
     });
@@ -136,6 +139,7 @@ pub fn Shell() -> Element {
                     if moving
                         || session_daw::actions::window_pending()
                         || session_daw::actions::frame_owed()
+                        || session_daw::studio::resync_pending()
                     {
                         window.request_redraw();
                     }

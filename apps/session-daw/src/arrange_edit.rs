@@ -55,7 +55,7 @@ pub type LanesOrigin = (f64, f64);
 /// The least and most the arrangement zooms to, in pixels a second
 /// and in row scale.
 pub const PPS_RANGE: (f64, f64) = (2.0, 48_000.0 * 20.0);
-pub const ZOOM_Y_RANGE: (f64, f64) = (0.1, 8.0);
+pub const ZOOM_Y_RANGE: (f64, f64) = (0.1, 40.0);
 
 /// What an interaction asks the window to do beyond the picture.
 #[derive(Clone, Debug, PartialEq)]
@@ -1452,6 +1452,7 @@ impl Editor {
             | Action::QuantizeDrums
             | Action::SlipDrums { .. }
             | Action::Frame { .. }
+            | Action::RemoveRange { .. }
             | Action::GainStage { .. }
             | Action::ToggleMixer
             | Action::ToggleEditor
@@ -1734,6 +1735,108 @@ impl Editor {
     }
 }
 
+/// The fade across each edge a removal leaves, seconds: enough that the
+/// cut does not click.
+pub const REMOVE_FADE: f64 = 0.002;
+
+/// A piece left past a removal shorter than this, beside a longer one
+/// starting where it does, is a crossfade's tail, seconds.
+const REMOVE_TAIL: f64 = 0.010;
+
+impl Editor {
+    /// Remove `from..to` from the takes `items` (item guids): each cut at
+    /// both ends, what lies between deleted, a short fade on each edge
+    /// left — a stray hit taken out of a trigger, or a hit nobody meant
+    /// out of the whole kit. One undo step.
+    pub fn remove_range(
+        project: &mut Project,
+        items: &[String],
+        (from, to): (f64, f64),
+        label: &str,
+        effects: &mut Vec<Effect>,
+    ) {
+        use daw_proto::primitives::Duration;
+        if to <= from {
+            return;
+        }
+        let start = effects.len();
+        let pieces = |project: &Project| -> HashSet<String> {
+            project
+                .items
+                .values()
+                .flatten()
+                .filter(|i| items.iter().any(|m| piece_of(&i.guid, m)))
+                .map(|i| i.guid.clone())
+                .collect()
+        };
+        let mine = pieces(project);
+        effects.extend(cut(project, from, &mine).into_iter().map(Effect::Send));
+        let mine = pieces(project);
+        effects.extend(cut(project, to, &mine).into_iter().map(Effect::Send));
+        let mine = pieces(project);
+        let shape = daw_proto::item::FadeShape::default();
+        for lane in project.items.values_mut() {
+            let before = lane.len();
+            // Where two pieces start at the far edge, the shorter is the
+            // tail of a slice that reached over its seam by the
+            // crossfade: it goes too, or it plays on over the next.
+            let starting: Vec<(String, f64)> = lane
+                .iter()
+                .filter(|i| mine.contains(&i.guid) && (i.position.as_seconds() - to).abs() < 1e-6)
+                .map(|i| (i.guid.clone(), i.length.as_seconds()))
+                .collect();
+            let longest = starting.iter().map(|s| s.1).fold(0.0, f64::max);
+            let tails: HashSet<String> = starting
+                .into_iter()
+                .filter(|(_, length)| *length < REMOVE_TAIL && *length < longest)
+                .map(|(guid, _)| guid)
+                .collect();
+            lane.retain(|i| {
+                let (a, b) = (
+                    i.position.as_seconds(),
+                    i.position.as_seconds() + i.length.as_seconds(),
+                );
+                let inside = (mine.contains(&i.guid) && a >= from - 1e-6 && b <= to + 1e-6)
+                    || tails.contains(&i.guid);
+                if inside {
+                    effects.push(Effect::Send(Edit::DeleteItem(i.guid.clone())));
+                }
+                !inside
+            });
+            if lane.len() == before {
+                continue;
+            }
+            for item in lane.iter_mut().filter(|i| mine.contains(&i.guid)) {
+                let (a, b) = (
+                    item.position.as_seconds(),
+                    item.position.as_seconds() + item.length.as_seconds(),
+                );
+                if (b - from).abs() < 1e-6 {
+                    item.fade_out_length = Duration::from_seconds(REMOVE_FADE);
+                    effects.push(Effect::Send(Edit::SetFadeOut(
+                        item.guid.clone(),
+                        REMOVE_FADE,
+                        shape,
+                    )));
+                }
+                if (a - to).abs() < 1e-6 {
+                    item.fade_in_length = Duration::from_seconds(REMOVE_FADE);
+                    effects.push(Effect::Send(Edit::SetFadeIn(
+                        item.guid.clone(),
+                        REMOVE_FADE,
+                        shape,
+                    )));
+                }
+            }
+        }
+        project.item_count = project.items.values().map(Vec::len).sum();
+        if effects.len() > start {
+            as_one_step(label, start, effects);
+            effects.push(Effect::ReRecord);
+        }
+    }
+}
+
 /// The slip itself, on `mics` (item guids — a kit's takes) by `moves`:
 /// every take cut a moment before each hit, each slice moved by its
 /// hit's shift, the seams closed.
@@ -1771,7 +1874,42 @@ fn slip_takes(
         .map(|&(hit, shift)| (hit - cut.pre_roll, shift))
         .filter(|(at, _)| *at > start + cut.pre_roll && *at < end - cut.pre_roll)
         .collect();
+    // A cut just after where a slice already starts is that slice's hit:
+    // a second pass over an edited kit moves the slices it has, rather
+    // than cutting a sliver off each beside its seam. Just after, because
+    // a slice moved later reached back over its gap — its start is up to
+    // its shift before its hit.
+    let mut starts: Vec<f64> = project
+        .items
+        .values()
+        .flatten()
+        .filter(|i| mics.iter().any(|m| piece_of(&i.guid, m)))
+        .map(|i| i.position.as_seconds())
+        .collect();
+    starts.sort_by(f64::total_cmp);
+    // The cuts that are seams already: a move, never a split — the slice
+    // before reaches over its seam by the crossfade, and must not be cut
+    // there.
+    let mut seams: Vec<f64> = Vec::new();
+    for cut in &mut cuts {
+        let at = starts.partition_point(|s| *s <= cut.0 + SEAM_SNAP);
+        if let Some(seam) = at
+            .checked_sub(1)
+            .and_then(|i| starts.get(i))
+            .copied()
+            .filter(|s| cut.0 - s <= SEAM_REACH)
+        {
+            cut.0 = seam;
+            seams.push(seam);
+        }
+    }
+    seams.sort_by(f64::total_cmp);
+    let is_seam = |at: f64| {
+        let i = seams.partition_point(|s| *s < at - 1e-9);
+        seams.get(i).is_some_and(|s| (s - at).abs() <= 1e-9)
+    };
     cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    cuts.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9);
     for lane in project.items.values_mut() {
         if !lane.iter().any(|i| mic_set.contains(i.guid.as_str())) {
             continue;
@@ -1787,7 +1925,12 @@ fn slip_takes(
             let from = cuts.partition_point(|c| c.0 <= take_start + 1e-3);
             let mut pieces: Vec<daw_proto::Item> = Vec::new();
             let mut last = item.clone();
-            for &(at, _) in cuts.iter().skip(from).take_while(|c| c.0 < take_end - 1e-3) {
+            for &(at, _) in cuts
+                .iter()
+                .skip(from)
+                .take_while(|c| c.0 < take_end - 1e-3)
+                .filter(|c| !is_seam(c.0))
+            {
                 let left_start = last.position.as_seconds();
                 let mut right = last.clone();
                 right.guid = format!("{take}-split@{at:.3}");
@@ -1838,7 +1981,7 @@ fn slip_takes(
         }
     }
     for mic in mics {
-        close_seams(project, mic, (start, end), cut.crossfade, effects);
+        close_seams(project, mic, (start, end), cut, effects);
     }
 }
 
@@ -2053,12 +2196,12 @@ fn close_seams(
     project: &mut Project,
     mic: &str,
     (from, to): (f64, f64),
-    crossfade: f64,
+    cut: SlipCut,
     effects: &mut Vec<Effect>,
 ) {
     use daw_proto::primitives::{Duration, PositionInSeconds};
     let fade = if crate::options::AUTO_CROSSFADE.get() {
-        crossfade
+        cut.crossfade
     } else {
         0.0
     };
@@ -2080,8 +2223,29 @@ fn close_seams(
         .collect();
     pieces.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
     let mut prev_end: Option<f64> = None;
-    for (k, piece) in pieces.iter_mut().enumerate() {
+    for k in 0..pieces.len() {
+        let (before, rest) = pieces.split_at_mut(k);
+        let Some(piece) = rest.first_mut() else {
+            continue;
+        };
         let start = piece.position.as_seconds();
+        // A long gap, the last resort: the slice before drawn out over it.
+        if let (Some(ends), Some(over), Some(prev)) =
+            (prev_end, cut.stretch_over, before.last_mut())
+            && start - ends > over
+            && let Some(markers) = draw_out(prev, start + fade)
+        {
+            effects.push(Effect::Send(Edit::TrimItem(
+                prev.guid.clone(),
+                prev.position.as_seconds(),
+                prev.length.as_seconds(),
+            )));
+            effects.push(Effect::Send(Edit::SetStretchMarkers(
+                prev.guid.clone(),
+                markers,
+            )));
+            prev_end = Some(prev.position.as_seconds() + prev.length.as_seconds());
+        }
         if let Some(ends) = prev_end
             && ends + fade < start
         {
@@ -2133,8 +2297,48 @@ fn close_seams(
     }
 }
 
+/// How much of a slice's start a stretch leaves as it was, seconds: its
+/// attack — the part of a hit an ear times it by.
+pub const STRETCH_KEEP: f64 = 0.030;
+
+/// The slowest a stretched decay plays, as a rate: past this the pitch
+/// it takes on (the engine stretches by rate) is heard, and the gap is
+/// filled the usual way instead.
+pub const STRETCH_LEAST_RATE: f64 = 0.8;
+
+/// `item` drawn out to end at `to`: its first [`STRETCH_KEEP`] as it was,
+/// the rest slowed to reach — the markers that say so, `(take time,
+/// source time)`, and the item lengthened. `None`, and the item left, when
+/// that would slow it below [`STRETCH_LEAST_RATE`].
+fn draw_out(item: &mut daw_proto::Item, to: f64) -> Option<Vec<(f64, f64)>> {
+    use daw_proto::primitives::Duration;
+    let length = item.length.as_seconds();
+    let longer = to - item.position.as_seconds();
+    let keep = STRETCH_KEEP.min(length / 2.0);
+    let decay = length - keep;
+    if longer <= length || decay <= 0.0 || decay / (longer - keep) < STRETCH_LEAST_RATE {
+        return None;
+    }
+    let offset = item.start_offset.as_seconds();
+    item.length = Duration::from_seconds(longer);
+    Some(vec![
+        (0.0, offset),
+        (keep, offset + keep),
+        (longer, offset + length),
+    ])
+}
+
 /// The crossfade across a quantize's seams, with auto-crossfade on.
 pub const QUANTIZE_CROSSFADE: f64 = 0.005;
+
+/// How near a slice's start a cut is taken to be that start, seconds:
+/// this much before it…
+pub const SEAM_SNAP: f64 = 0.004;
+
+/// …or this much after — a slice starts its lead before its hit, and as
+/// much again as it reached back over a gap (a guided slip moves 30 ms
+/// at most).
+pub const SEAM_REACH: f64 = 0.035;
 
 /// Where a slip cuts and how its seams are joined — Perfect Timing!'s
 /// Lead and Xfade, in seconds.
@@ -2145,6 +2349,11 @@ pub struct SlipCut {
     /// The crossfade across each seam, with auto-crossfade on
     /// ([`QUANTIZE_CROSSFADE`]).
     pub crossfade: f64,
+    /// A gap longer than this (seconds) is filled by drawing the slice
+    /// before it out — its decay stretched, its attack kept — rather than
+    /// by the slice after reaching back into audio it already played.
+    /// `None`: never; stretching is the last resort.
+    pub stretch_over: Option<f64>,
 }
 
 impl Default for SlipCut {
@@ -2152,6 +2361,7 @@ impl Default for SlipCut {
         Self {
             pre_roll: QUANTIZE_PRE_ROLL,
             crossfade: QUANTIZE_CROSSFADE,
+            stretch_over: None,
         }
     }
 }
@@ -3519,6 +3729,240 @@ mod tests {
     /// A quantize on a folded row cuts every mic before each hit and
     /// moves each slice onto the grid together — one undo step, the
     /// other take untouched, and each slice still playing its own audio.
+    /// A second slip over an edited kit moves the slices it has: a cut
+    /// that lands beside a seam is that seam — no sliver is cut off
+    /// beside it — and the slice there moves by the new shift.
+    #[test]
+    fn a_second_slip_moves_the_slices_it_has() {
+        let mut project = folded_project();
+        let takes = vec!["in1".to_owned(), "out1".to_owned()];
+        let mut first = Vec::new();
+        Editor::slip_items(
+            &mut project,
+            &takes,
+            &[(3.0, 0.010)],
+            ("Slip", SlipCut::default()),
+            &mut first,
+        );
+        let seam = 3.0 - QUANTIZE_PRE_ROLL + 0.010;
+        let pieces = |project: &Project| -> Vec<String> {
+            project
+                .items
+                .values()
+                .flatten()
+                .filter(|i| i.guid.starts_with("in1") || i.guid.starts_with("out1"))
+                .map(|i| i.guid.clone())
+                .collect()
+        };
+        let after_first = pieces(&project);
+        assert_eq!(after_first.len(), 4, "two mics, one cut: {after_first:?}");
+        // Where the moved slice starts now: before its hit by the lead and
+        // by the gap it reached back over.
+        let was = project
+            .items
+            .values()
+            .flatten()
+            .find(|i| i.guid.starts_with("in1-split"))
+            .map(|i| i.position.as_seconds())
+            .expect("the slice");
+        assert!(was < seam && seam - was <= SEAM_REACH, "{was} for {seam}");
+        // The hit is found again a hair after where it was put.
+        let mut second = Vec::new();
+        Editor::slip_items(
+            &mut project,
+            &after_first,
+            &[(seam + QUANTIZE_PRE_ROLL + 0.0003, -0.002)],
+            ("Slip", SlipCut::default()),
+            &mut second,
+        );
+        assert_eq!(pieces(&project).len(), 4, "no sliver beside the seam");
+        assert!(
+            !sends(&second)
+                .iter()
+                .any(|e| matches!(e, Edit::SplitItem(..))),
+            "nothing cut again"
+        );
+        let moved: Vec<f64> = sends(&second)
+            .iter()
+            .filter_map(|e| match e {
+                Edit::MoveItem(_, at) => Some(*at),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(moved.len(), 2, "each mic's slice: {moved:?}");
+        assert!(
+            moved.iter().all(|at| (at - (was - 0.002)).abs() < 1e-9),
+            "{moved:?}"
+        );
+    }
+
+    /// A stretch removed from a take: cut at both ends, the middle gone, a
+    /// fade on each edge left — and the take's other mic untouched when
+    /// only one is named.
+    #[test]
+    fn a_range_is_removed_from_the_takes_named() {
+        let mut project = folded_project();
+        let mut effects = Vec::new();
+        Editor::remove_range(
+            &mut project,
+            &["in1".to_owned()],
+            (3.0, 3.03),
+            "Remove",
+            &mut effects,
+        );
+        let sent = sends(&effects);
+        assert_eq!(
+            sent.iter()
+                .filter(|e| matches!(e, Edit::SplitItem(..)))
+                .count(),
+            2
+        );
+        assert_eq!(
+            sent.iter()
+                .filter(|e| matches!(e, Edit::DeleteItem(..)))
+                .count(),
+            1
+        );
+        let spans: Vec<(f64, f64)> = project.items["in"]
+            .iter()
+            .filter(|i| i.guid.starts_with("in1"))
+            .map(|i| {
+                (
+                    i.position.as_seconds(),
+                    i.position.as_seconds() + i.length.as_seconds(),
+                )
+            })
+            .collect();
+        assert_eq!(spans.len(), 2, "{spans:?}");
+        assert!(
+            spans
+                .iter()
+                .all(|&(a, b)| b <= 3.0 + 1e-9 || a >= 3.03 - 1e-9),
+            "{spans:?}"
+        );
+        assert!(
+            sent.iter().any(
+                |e| matches!(e, Edit::SetFadeOut(_, f, _) if (*f - REMOVE_FADE).abs() < 1e-12)
+            )
+        );
+        assert!(
+            sent.iter()
+                .any(|e| matches!(e, Edit::SetFadeIn(_, f, _) if (*f - REMOVE_FADE).abs() < 1e-12))
+        );
+        assert_eq!(project.items["out"].len(), 2, "the other mic untouched");
+
+        // Two slices crossfaded over their seam: the removal across the
+        // seam leaves no tail of the first playing on over the second.
+        let mut project = folded_project();
+        let lane = project.items.get_mut("in").expect("the lane");
+        lane.retain(|i| i.guid != "in1");
+        lane.push(daw_proto::Item {
+            guid: "a".to_owned(),
+            track_guid: "in".to_owned(),
+            position: PositionInSeconds::from_seconds(2.0),
+            length: Duration::from_seconds(1.005),
+            ..daw_proto::Item::default()
+        });
+        lane.push(daw_proto::Item {
+            guid: "b".to_owned(),
+            track_guid: "in".to_owned(),
+            position: PositionInSeconds::from_seconds(3.0),
+            length: Duration::from_seconds(1.0),
+            ..daw_proto::Item::default()
+        });
+        let mut effects = Vec::new();
+        Editor::remove_range(
+            &mut project,
+            &["a".to_owned(), "b".to_owned()],
+            (2.99, 3.003),
+            "Remove",
+            &mut effects,
+        );
+        let starts_at_edge = project.items["in"]
+            .iter()
+            .filter(|i| (i.position.as_seconds() - 3.003).abs() < 1e-6)
+            .count();
+        assert_eq!(starts_at_edge, 1, "{:?}", project.items["in"]);
+    }
+
+    /// Past the stretch threshold a gap is filled by drawing the slice
+    /// before it out — its attack as it was, its decay slowed to reach —
+    /// and the slice after it stays where it was put, reaching back over
+    /// nothing.
+    #[test]
+    fn a_long_gap_is_stretched_over_when_asked() {
+        let mut project = folded_project();
+        let mut effects = Vec::new();
+        Editor::slip_items(
+            &mut project,
+            &["in1".to_owned()],
+            &[(3.0, 0.020)],
+            (
+                "Slip",
+                SlipCut {
+                    stretch_over: Some(0.010),
+                    ..SlipCut::default()
+                },
+            ),
+            &mut effects,
+        );
+        let sent = sends(&effects);
+        let markers = sent
+            .iter()
+            .find_map(|e| match e {
+                Edit::SetStretchMarkers(g, m) if g == "in1" => Some(m.clone()),
+                _ => None,
+            })
+            .expect("the slice before stretched");
+        let keep = markers.get(1).copied().expect("the attack kept");
+        assert!((keep.0 - STRETCH_KEEP).abs() < 1e-9 && (keep.1 - STRETCH_KEEP).abs() < 1e-9);
+        let last = markers.last().copied().expect("the end");
+        assert!(
+            (last.1 - (2.995 - 2.0)).abs() < 1e-9,
+            "the source runs to the cut: {markers:?}"
+        );
+        assert!(
+            !sent
+                .iter()
+                .any(|e| matches!(e, Edit::SlipItem(g, _) if g.starts_with("in1-split"))),
+            "the slice after does not reach back"
+        );
+        // Without the setting the slice after reaches back, as before.
+        let mut project = folded_project();
+        let mut effects = Vec::new();
+        Editor::slip_items(
+            &mut project,
+            &["in1".to_owned()],
+            &[(3.0, 0.020)],
+            ("Slip", SlipCut::default()),
+            &mut effects,
+        );
+        assert!(
+            !sends(&effects)
+                .iter()
+                .any(|e| matches!(e, Edit::SetStretchMarkers(..)))
+        );
+    }
+
+    /// A slice too short to slow that far is not stretched.
+    #[test]
+    fn a_short_slice_is_not_drawn_out_past_its_rate() {
+        let mut item = daw_proto::Item {
+            position: PositionInSeconds::from_seconds(1.0),
+            length: Duration::from_seconds(0.08),
+            ..daw_proto::Item::default()
+        };
+        assert!(
+            super::draw_out(&mut item, 1.12).is_none(),
+            "50 ms over 90: too slow"
+        );
+        assert!(
+            (item.length.as_seconds() - 0.08).abs() < 1e-12,
+            "and left as it was"
+        );
+        assert!(super::draw_out(&mut item, 1.09).is_some());
+    }
+
     #[test]
     fn quantizing_a_folded_row_moves_every_mic_together() {
         let mut project = folded_project();

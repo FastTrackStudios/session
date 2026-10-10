@@ -30,8 +30,10 @@ pub const WHEEL_LINE: f64 = 40.0;
 /// How far in each zoom may go: across, to twenty pixels a sample at
 /// 48 kHz ([`crate::studio::PPS`] a second unzoomed) — an edit is placed
 /// on the sample, and the waveform is drawn down to them
-/// ([`crate::wave_detail`]).
-const ZOOM_IN: (f64, f64) = (48_000.0 * 20.0 / crate::studio::PPS, 6.0);
+/// ([`crate::wave_detail`]); down, until one row fills the view, as
+/// framing a track does in REAPER (a row is 32 pixels unzoomed at its
+/// least).
+const ZOOM_IN: (f64, f64) = (48_000.0 * 20.0 / crate::studio::PPS, 40.0);
 
 /// A mouse button, as the panel cares about it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

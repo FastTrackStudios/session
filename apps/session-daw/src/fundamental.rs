@@ -150,7 +150,7 @@ pub fn detect_audio(
     track: &str,
 ) -> DetectAudio {
     let mut reader = Reader::new(daw, project);
-    let items = reader.playing(track);
+    let items = reader.edited(track);
     let print: Fingerprint = items
         .iter()
         .map(|i| {
@@ -414,6 +414,23 @@ impl<'a> Reader<'a> {
     }
 
     /// The items on `track` the song plays: its playing lane's.
+    /// The takes an edit of `track` works on ([`crate::drum_edit::is_edited`]):
+    /// what the detectors read, so a hit is found where it is being moved.
+    fn edited(&self, track: &str) -> Vec<daw_proto::Item> {
+        let Some(t) = Tracks::get(
+            self.daw,
+            self.project.clone(),
+            TrackRef::Guid(track.to_owned()),
+        ) else {
+            return Vec::new();
+        };
+        self.daw
+            .get_items(self.project.clone(), TrackRef::Guid(track.to_owned()))
+            .into_iter()
+            .filter(|i| !i.muted && crate::drum_edit::is_edited(&t, i))
+            .collect()
+    }
+
     fn playing(&self, track: &str) -> Vec<daw_proto::Item> {
         let Some(t) = Tracks::get(
             self.daw,

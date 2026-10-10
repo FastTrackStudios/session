@@ -145,6 +145,8 @@ pub mod actions;
 pub mod detect_overlay;
 pub mod device_audio;
 pub mod drum_edit;
+#[cfg(feature = "native")]
+pub mod drum_lanes;
 pub mod drum_reference;
 pub mod drum_settings;
 pub mod fundamental;

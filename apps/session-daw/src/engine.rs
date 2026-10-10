@@ -246,6 +246,9 @@ pub enum Edit {
     SetItemLane(String, u32),
     /// An item's volume (linear): its dial, or gain staging.
     SetItemVolume(String, f64),
+    /// An item's active take's stretch markers, `(take time, source
+    /// time)` each — a slice's decay drawn out over the gap a slip left.
+    SetStretchMarkers(String, Vec<(f64, f64)>),
     DeleteItem(String),
 }
 
@@ -305,6 +308,7 @@ impl Edit {
             | Self::CopyItem(g, ..)
             | Self::SetItemLane(g, _)
             | Self::SetItemVolume(g, _)
+            | Self::SetStretchMarkers(g, _)
             | Self::SlipItem(g, _)
             | Self::DeleteItem(g) => g,
         }
@@ -345,6 +349,7 @@ impl Edit {
                 | Self::CopyItem(..)
                 | Self::SetItemLane(..)
                 | Self::SetItemVolume(..)
+                | Self::SetStretchMarkers(..)
                 | Self::SlipItem(..)
                 | Self::DeleteItem(_)
         )
@@ -1098,6 +1103,34 @@ fn made(guid: &str) -> String {
         .unwrap_or_else(|| guid.to_owned())
 }
 
+/// Set the stretch markers of the item `guid`'s active take, on this
+/// window's own engine — the one place a take's markers are written from
+/// here (see `Edit::SetStretchMarkers`). Nothing to do without one.
+fn stretch(guid: &str, markers: &[(f64, f64)]) {
+    #[cfg(feature = "native")]
+    {
+        use daw_proto::StretchMarkers as _;
+        let (Some(daw), Some(song)) = (crate::open::local_engine(), crate::open::current_song())
+        else {
+            return;
+        };
+        let take = daw_proto::StretchTakeRef::new(
+            daw::service::ProjectContext::Project(song),
+            daw::service::ItemRef::Guid(guid.to_owned()),
+            daw::service::TakeRef::Active,
+        );
+        let markers = markers
+            .iter()
+            .map(|&(at, source)| daw_proto::StretchMarker::new(at, source))
+            .collect();
+        if let Err(error) = daw.set_stretch_markers(take, markers) {
+            tracing::warn!(error = %error, "the engine refused the stretch markers");
+        }
+    }
+    #[cfg(not(feature = "native"))]
+    let _ = (guid, markers);
+}
+
 /// Split `item` at `split_at`, keeping the audio on both sides (see
 /// `Edit::SplitItem`).
 async fn split(item: &daw::rpc::ItemHandle, split_at: f64, new_guid: &str) -> daw::rpc::Result<()> {
@@ -1242,6 +1275,10 @@ async fn apply(edit: &Edit) {
             },
             Edit::SetItemLane(_, lane) => item.set_fixed_lane(*lane).await,
             Edit::SetItemVolume(_, volume) => item.set_volume(*volume).await,
+            Edit::SetStretchMarkers(_, markers) => {
+                stretch(item.guid(), markers);
+                Ok(())
+            }
             Edit::DeleteItem(_) => item.delete().await,
             _ => Ok(()),
         };
@@ -1375,6 +1412,7 @@ async fn apply(edit: &Edit) {
         | Edit::CopyItem(..)
         | Edit::SetItemLane(..)
         | Edit::SetItemVolume(..)
+        | Edit::SetStretchMarkers(..)
         | Edit::SlipItem(..)
         | Edit::DeleteItem(_)
         // Already handled above, where they did not need a track.

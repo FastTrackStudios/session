@@ -166,7 +166,12 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         }
         // Already the list's own answer (`DRUMS_SLIP`), or a binding the
         // window does not do: straight to the window.
-        Action::Unbound(_) | Action::SlipDrums { .. } | Action::Frame { .. } => return None,
+        Action::Unbound(_)
+        | Action::SlipDrums { .. }
+        | Action::Frame { .. }
+        | Action::RemoveRange { .. } => {
+            return None;
+        }
     })
 }
 
@@ -1107,7 +1112,9 @@ fn reference(
 }
 
 fn register_reference(list: &ActionList) {
+    register_items(list);
     register_lanes(list);
+    register_remove(list);
     register_slip(list);
     register_peaks(list);
     register_reference_map(list);
@@ -1132,41 +1139,6 @@ static PLAY_LANE: ActionMeta = meta(
     "",
 );
 
-/// The kit's tracks: every track under the top-level Drums folder with
-/// something on it, but none in its Process (the mix, not the
-/// recording).
-fn kit_tracks(
-    daw: &daw::standalone::Standalone,
-    project: &ProjectContext,
-) -> Vec<daw_proto::Track> {
-    let tracks = Tracks::all(daw, project.clone());
-    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
-        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
-    tracks
-        .iter()
-        .filter(|t| !t.is_folder)
-        .filter(|t| {
-            let path = crate::gain_stage::path_of(t, &by_guid);
-            path.first()
-                .is_some_and(|p| p.trim().eq_ignore_ascii_case("drums"))
-                && !path
-                    .iter()
-                    .any(|p| p.trim().eq_ignore_ascii_case("process"))
-        })
-        .cloned()
-        .collect()
-}
-
-/// A lane by name on `track`.
-fn lane_named(track: &daw_proto::Track, name: &str) -> Option<u32> {
-    track
-        .lane_names
-        .iter()
-        .position(|n| n.trim().eq_ignore_ascii_case(name.trim()))
-        .and_then(|i| u32::try_from(i).ok())
-        .filter(|&i| i < track.lane_count)
-}
-
 /// Whether to only say.
 #[derive(Facet)]
 struct LanesArg {
@@ -1187,101 +1159,127 @@ struct PlayLaneArg {
     lane: String,
 }
 
+static REMOVE: ActionMeta = meta(
+    "DRUMS_REMOVE",
+    "drums_remove",
+    "Remove from the drums",
+    "Take `from`..`to` (seconds) out of the kit's edited takes (its EDIT lane, once it has one): cut at both ends, the stretch between deleted, a 2 ms fade on each edge. `tracks` (paths or GUIDs) names which — a Trig, to take a stray or doubled trigger spike out so it fires no gate and no sample; left out, the whole kit, for a hit that should not be there at all. One undo step. Look first: AUDIO_PEAKS on the Trig and its mics, and the drum MIDI (DRUMS_REFERENCE).",
+    "Drums",
+    "",
+);
+
+/// What to take out.
+#[derive(Facet)]
+struct RemoveArg {
+    from: f64,
+    to: f64,
+    tracks: Option<Vec<String>>,
+}
+
+fn register_remove(list: &ActionList) {
+    list.register(&REMOVE, Effect::Destructive, |a: RemoveArg| {
+        if a.to <= a.from {
+            return Err("`to` must be after `from`".to_owned());
+        }
+        if a.to - a.from > 2.0 {
+            return Err("more than two seconds: this takes out a hit, not a passage".to_owned());
+        }
+        let (daw, project) = song()?;
+        let tracks = a
+            .tracks
+            .iter()
+            .flatten()
+            .map(|t| resolve(daw, &project, t))
+            .collect::<Result<Vec<String>, String>>()?;
+        let us = |s: f64| num_traits::ToPrimitive::to_i64(&(s * 1_000_000.0).round()).unwrap_or(0);
+        queue(Action::RemoveRange {
+            tracks,
+            from_us: us(a.from),
+            to_us: us(a.to),
+        });
+        Ok(())
+    });
+}
+
+static ITEMS: ActionMeta = meta(
+    "TRACK_ITEMS",
+    "track_items",
+    "A track's items",
+    "A track's items from `from` to `to` (seconds; all, unless given): each one's GUID, position, length and end, how far into its source it starts, its lane (and whether that plays), fades — to see what an edit made: the slices, where they sit, what they play. 500 at most.",
+    "Data",
+    "",
+);
+
+/// Which items.
+#[derive(Facet)]
+struct ItemsArg {
+    track: String,
+    from: Option<f64>,
+    to: Option<f64>,
+}
+
+/// One item.
+#[derive(Facet)]
+struct ItemRow {
+    guid: String,
+    position: f64,
+    length: f64,
+    end: f64,
+    source_offset: f64,
+    lane: u32,
+    plays: bool,
+    fade_in_ms: f64,
+    fade_out_ms: f64,
+}
+
+fn register_items(list: &ActionList) {
+    list.register(&ITEMS, Effect::ReadOnly, |a: ItemsArg| {
+        let (daw, project) = song()?;
+        let guid = resolve(daw, &project, &a.track)?;
+        let track = Tracks::get(daw, project.clone(), TrackRef::Guid(guid.clone()))
+            .ok_or("the track went")?;
+        let (from, to) = (
+            a.from.unwrap_or(f64::NEG_INFINITY),
+            a.to.unwrap_or(f64::INFINITY),
+        );
+        let mut rows: Vec<ItemRow> =
+            daw::service::Items::get_items(daw, project, TrackRef::Guid(guid))
+                .into_iter()
+                .filter_map(|i| {
+                    let position = i.position.as_seconds();
+                    let end = position + i.length.as_seconds();
+                    (end >= from && position <= to).then(|| ItemRow {
+                        lane: i.fixed_lane.unwrap_or(0),
+                        plays: daw_ui::studio::project::on_playing_lane(&track, &i),
+                        guid: i.guid.clone(),
+                        position,
+                        length: i.length.as_seconds(),
+                        end,
+                        source_offset: i.start_offset.as_seconds(),
+                        fade_in_ms: i.fade_in_length.as_seconds() * 1_000.0,
+                        fade_out_ms: i.fade_out_length.as_seconds() * 1_000.0,
+                    })
+                })
+                .collect();
+        rows.sort_by(|a, b| a.position.total_cmp(&b.position));
+        rows.truncate(500);
+        Ok(rows)
+    });
+}
+
 fn register_lanes(list: &ActionList) {
     list.register(&EDIT_LANES, Effect::Mutating, |a: LanesArg| {
-        use daw::service::{ItemRef, Items as _};
         let (daw, project) = song()?;
         let dry = a.dry_run.unwrap_or(false);
-        let all = Tracks::all(daw, project.clone());
-        let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
-            all.iter().map(|t| (t.guid.as_str(), t)).collect();
-        let mut said = Vec::new();
-        for track in kit_tracks(daw, &project) {
-            let path = crate::gain_stage::path_of(&track, &by_guid).join("/");
-            let at = TrackRef::Guid(track.guid.clone());
-            if lane_named(&track, "EDIT").is_some() {
-                said.push(format!("{path}: already set up"));
-                continue;
-            }
-            let items = daw.get_items(project.clone(), at.clone());
-            if items.is_empty() {
-                continue;
-            }
-            // The comp that plays: the comping lane, else the lowest lane
-            // playing, else the first.
-            let comp = daw
-                .comping(project.clone(), at.clone())
-                .ok()
-                .and_then(|c| c.comp_lane)
-                .or_else(|| {
-                    (track.lane_play_mask != 0).then(|| track.lane_play_mask.trailing_zeros())
-                })
-                .unwrap_or(0);
-            let (count, edit) = if track.lane_count == 0 {
-                (2, 1)
-            } else {
-                (track.lane_count.saturating_add(1), track.lane_count)
-            };
-            let on_comp: Vec<&daw_proto::Item> = items
-                .iter()
-                .filter(|i| i.fixed_lane.unwrap_or(0) == comp)
-                .collect();
-            said.push(format!(
-                "{path}: lane {comp} → COMP, lane {edit} → EDIT ({} items copied), EDIT plays",
-                on_comp.len()
-            ));
-            if dry {
-                continue;
-            }
-            let fail = |e: daw_proto::DawError| format!("{path}: {e}");
-            daw.set_lane_count(project.clone(), at.clone(), count)
-                .map_err(fail)?;
-            daw.set_lane_name(project.clone(), at.clone(), comp, "COMP")
-                .map_err(fail)?;
-            daw.set_lane_name(project.clone(), at.clone(), edit, "EDIT")
-                .map_err(fail)?;
-            for item in on_comp {
-                let copy = daw
-                    .duplicate_item(project.clone(), ItemRef::Guid(item.guid.clone()))
-                    .ok_or_else(|| format!("{path}: an item would not copy"))?;
-                daw.set_fixed_lane(project.clone(), ItemRef::Guid(copy), edit)
-                    .map_err(fail)?;
-            }
-            daw.set_lane_play_mask(project.clone(), at, 1_u64.checked_shl(edit).unwrap_or(0))
-                .map_err(fail)?;
-        }
-        if !dry && !said.is_empty() {
-            crate::studio::request_resync();
-            crate::actions::list().changed("drums.lanes", "the kit's lanes were set up");
-        }
+        let tracks = crate::drum_lanes::set_up(daw, &project, dry)?;
         Ok(LanesOut {
-            tracks: said,
+            tracks,
             applied: !dry,
         })
     });
     list.register(&PLAY_LANE, Effect::Mutating, |a: PlayLaneArg| {
         let (daw, project) = song()?;
-        let mut played = 0_u32;
-        for track in kit_tracks(daw, &project) {
-            if let Some(lane) = lane_named(&track, &a.lane) {
-                daw.set_lane_play_mask(
-                    project.clone(),
-                    TrackRef::Guid(track.guid.clone()),
-                    1_u64.checked_shl(lane).unwrap_or(0),
-                )
-                .map_err(|e| e.to_string())?;
-                played = played.saturating_add(1);
-            }
-        }
-        if played == 0 {
-            return Err(format!(
-                "no drum track has a lane named {} — DRUMS_EDIT_LANES makes COMP and EDIT",
-                a.lane
-            ));
-        }
-        crate::studio::request_resync();
-        crate::actions::list().changed("drums.lanes", "the kit plays another lane");
-        Ok(played)
+        crate::drum_lanes::play(daw, &project, &a.lane)
     });
 }
 
@@ -2113,6 +2111,10 @@ fn register_slip(list: &ActionList) {
             (found.targets, found.fills)
         };
         let mut in_fills = 0_u32;
+        // The hits left out (a fill's, while fills are skipped): still cut
+        // where they are, so the slice before them moving does not drag
+        // them with it.
+        let mut left_out: Vec<f64> = Vec::new();
         let pairs: Vec<(f64, Option<f64>)> = pairs
             .into_iter()
             .filter(|(h, _)| *h >= span.0 && *h <= span.1)
@@ -2126,10 +2128,24 @@ fn register_slip(list: &ActionList) {
                 if held && !keep {
                     in_fills = in_fills.saturating_add(1);
                 }
+                if !keep {
+                    left_out.push(*h);
+                }
                 keep
             })
             .collect();
-        let mut result = judge(daw, &project, &settings, &pairs, a.dry_run.unwrap_or(false));
+        let anchors = if a.moves.is_some() {
+            Vec::new()
+        } else {
+            left_out
+        };
+        let mut result = judge(
+            daw,
+            &project,
+            &settings,
+            (&pairs, &anchors),
+            a.dry_run.unwrap_or(false),
+        );
         result.in_fills = in_fills;
         result.fills = fills.iter().map(|f| fill_out(daw, &project, f)).collect();
         Ok(result)
@@ -2351,7 +2367,7 @@ fn judge(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     settings: &crate::drum_settings::Settings,
-    pairs: &[(f64, Option<f64>)],
+    (pairs, left_out): (&[(f64, Option<f64>)], &[f64]),
     dry: bool,
 ) -> SlipResult {
     let tolerance = settings.tolerance_ms / 1_000.0;
@@ -2387,13 +2403,26 @@ fn judge(
     biggest.sort_by(|x, y| y.1.abs().total_cmp(&x.1.abs()));
     if !dry && !moves.is_empty() {
         let us = |s: f64| num_traits::ToPrimitive::to_i64(&(s * 1_000_000.0).round()).unwrap_or(0);
+        // Every hit not moved is cut where it is, unmoved: a hit left in a
+        // slice rides with it, and the slice before it moving would take
+        // it along — off its mark by that hit's shift.
+        let mut cuts: Vec<(i64, i64)> = moves
+            .iter()
+            .map(|(h, _, shift)| (us(*h), us(*shift)))
+            .chain(
+                pairs
+                    .iter()
+                    .filter(|(h, t)| t.is_none_or(|t| (t - h).abs() <= tolerance))
+                    .map(|(h, _)| (us(*h), 0))
+                    .chain(left_out.iter().map(|h| (us(*h), 0))),
+            )
+            .collect();
+        cuts.sort_unstable();
         queue(Action::SlipDrums {
-            moves: moves
-                .iter()
-                .map(|(h, _, shift)| (us(*h), us(*shift)))
-                .collect(),
+            moves: cuts,
             pre_roll_us: us(settings.lead_ms / 1_000.0),
             crossfade_us: us(settings.xfade_ms / 1_000.0),
+            stretch_over_us: settings.stretch_gaps_ms.map_or(0, |ms| us(ms / 1_000.0)),
         });
     }
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);

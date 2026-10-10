@@ -52,11 +52,20 @@ pub enum Action {
         time: Option<(i64, i64)>,
         tracks: Vec<String>,
     },
+    /// Take `from..to` (µs) out of these tracks' edited takes (by GUID),
+    /// or the whole kit's when there are none.
+    RemoveRange {
+        tracks: Vec<String>,
+        from_us: i64,
+        to_us: i64,
+    },
     SlipDrums {
         moves: Vec<(i64, i64)>,
         /// The cut before each hit and the seams' crossfade, µs.
         pre_roll_us: i64,
         crossfade_us: i64,
+        /// A gap longer than this is stretched over (0: never).
+        stretch_over_us: i64,
     },
     /// Gain stage the session (Shift+G), or with `clear` (Alt+G) put every
     /// staged item back at an item volume of 1 (`crate::gain_stage`).
