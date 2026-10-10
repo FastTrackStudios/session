@@ -2083,9 +2083,21 @@ fn documents_dir() -> Option<PathBuf> {
 /// An entry's name, as a person reads it: a `.setlist` or a project
 /// without its extension.
 fn title_of(path: &std::path::Path) -> String {
-    let is_list = path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("setlist") || e.eq_ignore_ascii_case("rpp"));
+    // A checkpoint is its song's: "Unbreakable · Organized".
+    if let (Some(alt), Some(base)) = (
+        session_daw::projects::alternative_name(path),
+        session_daw::projects::base_of(path),
+    ) {
+        let song = base
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        return format!("{song} · {alt}");
+    }
+    let is_list = path.extension().is_some_and(|e| {
+        e.eq_ignore_ascii_case("setlist")
+            || e.eq_ignore_ascii_case("rpp")
+            || e.eq_ignore_ascii_case("session")
+    });
     let name = if is_list {
         path.file_stem()
     } else {
