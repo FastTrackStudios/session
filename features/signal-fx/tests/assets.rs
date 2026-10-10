@@ -156,6 +156,19 @@ mod assets {
         dot / norms.max(1e-12)
     }
 
+    /// The kit's note map, read: the kick on 36, a 10" rack tom on 45.
+    #[test]
+    fn a_note_names_its_piece() {
+        if !present(&kit_preset()) {
+            return;
+        }
+        let piece = |n| signal_fx::kit::piece_for_note(&kit_preset(), n);
+        assert_eq!(piece(36).as_deref(), Some("kick"));
+        assert_eq!(piece(45).as_deref(), Some("rtom-a"));
+        assert_eq!(piece(41).as_deref(), Some("ftom-a"));
+        assert!(piece(20).is_none());
+    }
+
     /// Two voices fed the same notes pick the same sample each hit — the
     /// round robin follows the notes — so a piece's mics on different tracks
     /// stay one hit. (The same sample, not the same samples: a hit's tail

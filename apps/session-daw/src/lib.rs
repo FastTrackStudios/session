@@ -148,6 +148,8 @@ pub mod drum_edit;
 #[cfg(feature = "native")]
 pub mod drum_lanes;
 pub mod drum_reference;
+#[cfg(feature = "signal")]
+pub mod drum_samples;
 pub mod drum_settings;
 pub mod fundamental;
 pub mod gain_stage;

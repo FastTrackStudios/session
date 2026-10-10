@@ -63,6 +63,20 @@ pub fn wants(wanted: &[String], id: &str) -> bool {
         })
 }
 
+/// The piece the kit `preset` plays for `note`, by its id (`kick`,
+/// `rtom-a`).
+///
+/// As its note map says — the first of them, for a layered note. `None`
+/// for a preset that will not read, or a note it maps to nothing.
+#[must_use]
+pub fn piece_for_note(preset: &Path, note: u8) -> Option<String> {
+    let spec = signal_sampler::preset_spec::PresetSpec::from_file(preset).ok()?;
+    spec.note_routing
+        .iter()
+        .find(|r| r.note == note)
+        .and_then(|r| r.targets.first().cloned())
+}
+
 /// One piece's voices: its id, its preset settings, an engine per mic.
 struct Piece {
     id: String,

@@ -1112,6 +1112,8 @@ fn reference(
 }
 
 fn register_reference(list: &ActionList) {
+    #[cfg(feature = "signal")]
+    register_samples(list);
     register_items(list);
     register_lanes(list);
     register_remove(list);
@@ -1198,6 +1200,55 @@ fn register_remove(list: &ActionList) {
             to_us: us(a.to),
         });
         Ok(())
+    });
+}
+
+#[cfg(feature = "signal")]
+static SAMPLES: ActionMeta = meta(
+    "DRUMS_SAMPLES",
+    "drums_samples",
+    "Drum samples under the kit",
+    "Blend signal's sampled kit under the recorded drums, from the hits the triggers caught (the drum-edit detector, on the EDIT lane once there is one): each piece's hits written as notes on its Sample track (the kit's GM note, velocity from the hit's level) with an FTS Kit Mic there playing that piece's close mics; an OH Sample and a Room Sample track playing every piece's overhead and room mics, sent into the recorded overheads and rooms. A piece's voices get the same notes, so each hit is one sample on all of them. `preset` (a `.signalpreset`; GGD Modern and Massive 2's Heavy Thwacky unless given), `dry_run`.",
+    "Drums",
+    "",
+);
+
+/// Which kit.
+#[cfg(feature = "signal")]
+#[derive(Facet)]
+struct SamplesArg {
+    preset: Option<String>,
+    dry_run: Option<bool>,
+}
+
+/// What it did.
+#[cfg(feature = "signal")]
+#[derive(Facet)]
+struct SamplesOut {
+    tracks: Vec<String>,
+    notes: u32,
+    applied: bool,
+}
+
+/// The kit samples blend in unless told otherwise.
+#[cfg(feature = "signal")]
+const DEFAULT_KIT: &str = "/run/media/AudioHaven/Signal/Libraries/Drum Kits/GGD Modern and Massive 2/Presets/Heavy Thwacky.signalpreset";
+
+#[cfg(feature = "signal")]
+fn register_samples(list: &ActionList) {
+    list.register(&SAMPLES, Effect::Mutating, |a: SamplesArg| {
+        let (daw, project) = song()?;
+        let preset = std::path::PathBuf::from(a.preset.as_deref().unwrap_or(DEFAULT_KIT));
+        if !preset.exists() {
+            return Err(format!("no kit preset at {}", preset.display()));
+        }
+        let dry = a.dry_run.unwrap_or(false);
+        let report = crate::drum_samples::set_up(daw, &project, &preset, dry)?;
+        Ok(SamplesOut {
+            tracks: report.tracks,
+            notes: u32::try_from(report.notes).unwrap_or(u32::MAX),
+            applied: !dry,
+        })
     });
 }
 
@@ -1796,7 +1847,7 @@ struct SlipResult {
 const KIT_MERGE: f64 = 0.015;
 
 /// One live piece of the kit: its name, what it is, its hits.
-type KitPiece = (
+pub(crate) type KitPiece = (
     String,
     crate::drum_edit::Piece,
     Vec<crate::drum_edit::KitHit>,
@@ -1805,7 +1856,7 @@ type KitPiece = (
 /// The kit's live pieces and their hits by the settings' detector, each
 /// hit's loudness against its piece's loudest. The audio is read once
 /// and kept, so this is quick the second time.
-fn kit(
+pub(crate) fn kit(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     settings: &crate::drum_settings::Settings,

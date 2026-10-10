@@ -28,6 +28,37 @@ pub struct RefNote {
     pub velocity: u8,
 }
 
+/// How many quarter notes from `start` to `end` (seconds) through the
+/// tempo map — [`seconds_after`]'s inverse: where a note at `end` goes in
+/// a take that starts at `start`.
+#[must_use]
+pub fn qn_between(start: f64, end: f64, tempos: &[(f64, f64)], default_bpm: f64) -> f64 {
+    let bpm_at = |t: f64| {
+        tempos
+            .iter()
+            .take_while(|(at, _)| *at <= t + 1e-9)
+            .last()
+            .map_or(default_bpm, |(_, bpm)| *bpm)
+            .max(1.0)
+    };
+    let mut time = start;
+    let mut qn = 0.0;
+    loop {
+        let per_qn = 60.0 / bpm_at(time);
+        let next = tempos
+            .iter()
+            .map(|(at, _)| *at)
+            .find(|at| *at > time + 1e-9 && *at < end);
+        match next {
+            Some(change) => {
+                qn += (change - time) / per_qn;
+                time = change;
+            }
+            None => return qn + (end - time) / per_qn,
+        }
+    }
+}
+
 /// Seconds at `qn` quarter notes after `start` seconds, through
 /// `tempos` (`(seconds, bpm)`, by time; the tempo before the first point
 /// is `default_bpm`). Each tempo holds until the next point.
@@ -303,7 +334,22 @@ pub fn pieces(
 
 #[cfg(test)]
 mod tests {
-    use super::{RefNote, compare, learn_map, seconds_after};
+    use super::{RefNote, compare, learn_map, qn_between, seconds_after};
+
+    /// Quarters from a time and seconds after them are one walk read both
+    /// ways, across tempo changes too.
+    #[test]
+    fn quarters_between_undo_seconds_after() {
+        let tempos = [(0.0, 120.0), (2.0, 60.0), (5.0, 150.0)];
+        for (start, qn) in [(0.0, 3.0), (1.0, 7.5), (2.5, 4.25), (0.3, 12.0)] {
+            let end = seconds_after(start, qn, &tempos, 120.0);
+            assert!(
+                (qn_between(start, end, &tempos, 120.0) - qn).abs() < 1e-9,
+                "{start} {qn}"
+            );
+        }
+        assert!((qn_between(1.0, 3.0, &[], 120.0) - 4.0).abs() < 1e-9);
+    }
 
     /// A quarter at 120 is half a second; across a change to 60, the rest
     /// is a second a quarter.
