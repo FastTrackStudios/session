@@ -90,6 +90,7 @@ pub fn through_list(actions: Vec<Action>) -> Vec<Action> {
     let list = list();
     for action in actions {
         match id_and_args(&action) {
+            Some((id, args)) if behind_the_window(id) => off_the_window(id, args),
             Some((id, args)) => {
                 if let Err(e) = list.run_json(id, args.as_bytes()) {
                     tracing::warn!(action.id = id, error = %e, "key action refused");
@@ -183,6 +184,44 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
             return None;
         }
     })
+}
+
+/// Whether a key's action runs behind the window rather than on its
+/// thread: one that reads the whole song or writes its file (an undo, a
+/// save) would hold the window still while it did.
+#[cfg(feature = "native")]
+fn behind_the_window(id: &str) -> bool {
+    [UNDO.id, REDO.id, SAVE.id].contains(&id)
+}
+
+#[cfg(not(feature = "native"))]
+const fn behind_the_window(_id: &str) -> bool {
+    false
+}
+
+/// Run a key's action on the one thread that runs them behind the window,
+/// in the order they were pressed; the window redraws when each is done,
+/// as it does for a model's.
+fn off_the_window(id: &'static str, args: String) {
+    static WORKER: std::sync::OnceLock<
+        std::sync::Mutex<std::sync::mpsc::Sender<(&'static str, String)>>,
+    > = std::sync::OnceLock::new();
+    let worker = WORKER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<(&'static str, String)>();
+        let _ = std::thread::Builder::new()
+            .name("key-actions".into())
+            .spawn(move || {
+                for (id, args) in rx {
+                    if let Err(e) = list().run_json(id, args.as_bytes()) {
+                        tracing::warn!(action.id = id, error = %e, "key action refused");
+                    }
+                }
+            });
+        std::sync::Mutex::new(tx)
+    });
+    if let Ok(tx) = worker.lock() {
+        let _ = tx.send((id, args));
+    }
 }
 
 /// An action's description, as the list and its menus show it.

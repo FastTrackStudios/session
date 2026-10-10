@@ -326,14 +326,19 @@ fn append(open: &mut Open, label: &str) -> Result<(), String> {
 /// that song is open from it — on a thread of its own, so the window
 /// never waits on a read of the engine. Steps that finish while one is
 /// being recorded are read together, as one commit named for them all.
+/// Steps the engine finished that the recorder has not recorded yet.
+static PENDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn record_steps() {
     static LISTENING: std::sync::Once = std::sync::Once::new();
     LISTENING.call_once(|| {
         let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
         let tx = Mutex::new(tx);
         daw::standalone::steps::listen(Arc::new(move |project, label| {
-            if let Ok(tx) = tx.lock() {
-                let _ = tx.send((project.to_owned(), label.to_owned()));
+            if let Ok(tx) = tx.lock()
+                && tx.send((project.to_owned(), label.to_owned())).is_ok()
+            {
+                PENDING.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         }));
         let _ = std::thread::Builder::new()
@@ -341,7 +346,9 @@ fn record_steps() {
             .spawn(move || {
                 while let Ok(first) = rx.recv() {
                     let mut steps: Vec<(String, Vec<String>)> = Vec::new();
+                    let mut taken = 0_usize;
                     for (project, label) in std::iter::once(first).chain(rx.try_iter()) {
+                        taken = taken.saturating_add(1);
                         match steps.iter_mut().find(|(p, _)| *p == project) {
                             Some((_, labels)) => labels.push(label),
                             None => steps.push((project, vec![label])),
@@ -352,6 +359,7 @@ fn record_steps() {
                             tracing::warn!(project.guid = %project, why, "an edit step was not recorded");
                         }
                     }
+                    PENDING.fetch_sub(taken, std::sync::atomic::Ordering::SeqCst);
                 }
             });
     });
@@ -429,11 +437,14 @@ fn through_doc(daw: &Standalone, project_guid: &str, back: bool) -> Result<Undon
 }
 
 async fn step_back(open: &mut Open, pending: &str, back: bool) -> Result<Undone, String> {
-    if open
-        .bridge
-        .local_step(pending)
-        .await
-        .map_err(|e| e.to_string())?
+    // A step the recorder has not reached yet is recorded first, so it is
+    // the one undone; with none waiting, nothing to read.
+    if PENDING.load(std::sync::atomic::Ordering::SeqCst) > 0
+        && open
+            .bridge
+            .local_step(pending)
+            .await
+            .map_err(|e| e.to_string())?
     {
         append(open, pending)?;
     }

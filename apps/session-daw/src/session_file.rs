@@ -24,3 +24,26 @@ pub fn save_session(
         Err("a page saves nothing".to_owned())
     }
 }
+
+/// [`save_session`] behind the caller, on a thread of its own.
+///
+/// For a save that follows an edit (a chart rebuilt, the song's colour),
+/// so whoever made the edit — the window, often — does not wait on the
+/// file.
+pub fn save_session_behind(
+    daw: &daw::standalone::Standalone,
+    project_guid: &str,
+    path: &std::path::Path,
+) {
+    let (daw, guid, path) = (daw.clone(), project_guid.to_owned(), path.to_path_buf());
+    let saving = std::thread::Builder::new()
+        .name("save".into())
+        .spawn(move || {
+            if let Err(e) = save_session(&daw, &guid, &path) {
+                tracing::warn!(session.save_error = %e, "the song could not be saved");
+            }
+        });
+    if let Err(e) = saving {
+        tracing::warn!(session.save_error = %e, "no thread to save the song on");
+    }
+}

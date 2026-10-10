@@ -145,6 +145,9 @@ pub(crate) fn path_of(shape: &Shape) -> BezPath {
         Shape::Line { from, to } => Line::new((from.0, from.1), (to.0, to.1)).to_path(TOLERANCE),
         Shape::Poly(ref points) => {
             let mut path = BezPath::new();
+            if points.is_empty() {
+                return path;
+            }
             for (i, (px, py)) in points.iter().enumerate() {
                 let p = (*px, *py);
                 if i == 0 {

@@ -25,6 +25,34 @@ pub struct Version {
     pub open: bool,
 }
 
+/// `work` on a thread of its own, its answer awaited: what the panel asks
+/// of the song's file never holds the window still.
+async fn behind<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("versions".into())
+        .spawn(move || {
+            let _ = tx.send(work());
+        })
+        .ok()?;
+    rx.await.ok()
+}
+
+/// An action run behind the window: what it said, or why not.
+async fn run_behind(id: &'static str, args: String) -> Result<String, String> {
+    behind(move || {
+        crate::actions::list()
+            .run_json(id, args.as_bytes())
+            .map(|bytes| {
+                serde_json::from_slice::<String>(&bytes)
+                    .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned())
+            })
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|| Err("the action did not finish".to_owned()))
+}
+
 /// A version's row: the open one lit.
 const fn row_bg(open: bool) -> &'static str {
     if open { RAISED } else { "transparent" }
@@ -43,20 +71,28 @@ pub fn Versions() -> Element {
     let mut said = use_signal(|| None::<(bool, String)>);
     let mut listed = use_signal(Vec::<Version>::new);
     let mut unsaved = use_signal(|| None::<bool>);
-    let mut refresh = move || {
-        listed.set(crate::actions::open_song_versions());
-        unsaved.set(crate::actions::open_song_unsaved());
+    // The versions and whether the song is saved: read behind the window
+    // (a fingerprint of every item, the file opened), shown when read.
+    let refresh = move || {
+        spawn(async move {
+            if let Some((versions, dirty)) = behind(|| {
+                (
+                    crate::actions::open_song_versions(),
+                    crate::actions::open_song_unsaved(),
+                )
+            })
+            .await
+            {
+                listed.set(versions);
+                unsaved.set(dirty);
+            }
+        });
     };
     // A version picked to open, while asking whether to save this one.
     let mut switching = use_signal(|| None::<Version>);
     let back = try_use_context::<crate::shell::Back>();
     // Out of the song and in again as `to`, saved first if asked.
-    let mut switch = move |to: Version, save: bool| {
-        if save && let Err(e) = crate::actions::list().run_json("SESSION_SAVE", b"") {
-            said.set(Some((false, format!("not saved, so not switched: {e}"))));
-            switching.set(None);
-            return;
-        }
+    let mut leave = move |to: Version| {
         let Some(crate::shell::Back(back)) = back else {
             said.set(Some((
                 false,
@@ -69,17 +105,26 @@ pub fn Versions() -> Element {
         switching.set(None);
         back.call(());
     };
-    let mut run = move |id: &str, args: String| {
-        let outcome = crate::actions::list().run_json(id, args.as_bytes());
-        said.set(Some(match outcome {
-            Ok(bytes) => (
-                true,
-                serde_json::from_slice::<String>(&bytes)
-                    .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
-            ),
-            Err(e) => (false, e.to_string()),
-        }));
-        refresh();
+    let switch = move |to: Version, save: bool| {
+        spawn(async move {
+            if save && let Err(e) = run_behind("SESSION_SAVE", String::new()).await {
+                said.set(Some((false, format!("not saved, so not switched: {e}"))));
+                switching.set(None);
+                return;
+            }
+            leave(to);
+        });
+    };
+    let mut run = move |id: &'static str, args: String| {
+        said.set(Some((true, "…".to_owned())));
+        spawn(async move {
+            let outcome = run_behind(id, args).await;
+            said.set(Some(match outcome {
+                Ok(text) => (true, text),
+                Err(e) => (false, e),
+            }));
+            refresh();
+        });
     };
     let mut checkpoint = move || {
         let wanted = name.peek().trim().to_owned();

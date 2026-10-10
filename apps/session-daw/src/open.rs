@@ -479,10 +479,8 @@ pub fn set_song_color(project_guid: &str, rgb: u32, saved: Option<&Path>) {
         tracing::warn!(error = %e, "the song's colour could not be set");
         return;
     }
-    if let Some(dir) = saved
-        && let Err(e) = crate::session_file::save_session(daw, project_guid, dir)
-    {
-        tracing::warn!(session.save_error = %e, "the song's colour could not be saved");
+    if let Some(dir) = saved {
+        crate::session_file::save_session_behind(daw, project_guid, dir);
     }
 }
 

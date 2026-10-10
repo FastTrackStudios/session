@@ -573,6 +573,11 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
             v.map(|(max, min)| ((crate::num::coord(c) + 0.5).mul_add(1.0 / pps, a), max, min))
         })
         .collect();
+    // No column with anything in it (a sliver of an item, say): no
+    // envelope — a path of nothing but its close is no shape to fill.
+    if filled.is_empty() {
+        return None;
+    }
     let mut path = BezPath::new();
     for (i, &(x, max, min)) in filled.iter().enumerate() {
         let (top, _) = lane.ys(max, min);
@@ -3752,6 +3757,38 @@ mod lane_wave_tests {
         };
         assert_eq!(lines.len(), 1);
         assert!(!dots.is_empty(), "ten pixels a sample: each marked");
+    }
+
+    /// A sliver between two of the detail's points — a split's edge — has
+    /// no column with anything in it: no envelope, never a path that is
+    /// only its close (which panics the moment it is filled).
+    #[test]
+    fn a_sliver_between_detail_points_draws_no_envelope() {
+        let source = crate::wave_detail::Source {
+            guid: "fine-sliver-item".to_owned(),
+            at: 0.0,
+            length: 100.0,
+            offset: 0.0,
+        };
+        let mut lane = lane(100, false);
+        lane.sources = vec![source.clone()];
+        let samples: Vec<f64> = (0..4_800).map(|k| f64::from(k % 7) / 7.0 - 0.5).collect();
+        crate::wave_detail::hold(
+            &source,
+            crate::wave_detail::reduce(&samples, 1, 4_800.0, 10.0, 2),
+        );
+        for (from, to) in [(10.0002, 10.0003), (10.0, 11.0)] {
+            if let Some(Fine::Envelope(path)) = fine(&lane, from, to, 1_000.0, Affine::IDENTITY) {
+                assert!(
+                    matches!(
+                        path.elements().first(),
+                        Some(vello::kurbo::PathEl::MoveTo(_))
+                    ),
+                    "{from}–{to}: {:?}",
+                    path.elements().first()
+                );
+            }
+        }
     }
 
     fn elements(lane: &LaneWave, left: f64, right: f64, pps: f64) -> usize {

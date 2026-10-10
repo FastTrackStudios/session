@@ -144,40 +144,28 @@ pub async fn read(
     ids: &EngineIds,
     direct: Option<&dyn Direct>,
 ) -> daw_control::Result<SessionModel> {
-    let all = project.tracks().all().await?;
-    let parents: HashMap<String, Option<String>> = all
-        .iter()
-        .map(|t| (t.guid.clone(), t.parent_guid.clone()))
-        .collect();
-    let mut tracks = Vec::with_capacity(all.len());
-    for t in all {
-        let mut state = TrackState {
-            parent: parents.get(&t.guid).cloned().flatten(),
-            name: t.name,
-            color: t.color,
-            volume: t.volume,
-            pan: t.pan,
-            muted: t.muted,
-            soloed: t.soloed,
-            phase_inverted: t.phase_inverted,
-            parent_send: t.parent_send,
-            visible_in_tcp: t.visible_in_tcp,
-            visible_in_mixer: t.visible_in_mixer,
-            lanes: LaneState {
-                count: t.lane_count,
-                names: t.lane_names,
-                play_mask: t.lane_play_mask,
-            },
-            grouping: grouping_map(&t.grouping),
-            guid: t.guid,
-            ..TrackState::default()
-        };
-        if let Some(handle) = project.tracks().by_guid(&state.guid).await? {
-            read_track_parts(&handle, &mut state, blobs, ids).await?;
-        }
-        tracks.push(state);
-    }
+    read_keeping(project, media, blobs, ids, direct, None).await
+}
 
+/// As [`read`], with `tracks` kept as they are when given.
+///
+/// A step that touched no track (an item moved) leaves them as they were,
+/// and reading a song's tracks, FX state and all, is most of a read.
+///
+/// # Errors
+/// When a daw call fails.
+pub async fn read_keeping(
+    project: &Project,
+    media: &MediaRoot,
+    blobs: &dyn Blobs,
+    ids: &EngineIds,
+    direct: Option<&dyn Direct>,
+    tracks: Option<Vec<TrackState>>,
+) -> daw_control::Result<SessionModel> {
+    let tracks = match tracks {
+        Some(tracks) => tracks,
+        None => read_tracks(project, blobs, ids).await?,
+    };
     let items = read_items(project, media, ids, direct).await?;
 
     let markers = project
@@ -253,6 +241,48 @@ pub async fn read(
         tempo,
         chart: String::new(),
     })
+}
+
+/// Every track as the doc keeps it, its FX, sends and envelopes with it.
+async fn read_tracks(
+    project: &Project,
+    blobs: &dyn Blobs,
+    ids: &EngineIds,
+) -> daw_control::Result<Vec<TrackState>> {
+    let all = project.tracks().all().await?;
+    let parents: HashMap<String, Option<String>> = all
+        .iter()
+        .map(|t| (t.guid.clone(), t.parent_guid.clone()))
+        .collect();
+    let mut tracks = Vec::with_capacity(all.len());
+    for t in all {
+        let mut state = TrackState {
+            parent: parents.get(&t.guid).cloned().flatten(),
+            name: t.name,
+            color: t.color,
+            volume: t.volume,
+            pan: t.pan,
+            muted: t.muted,
+            soloed: t.soloed,
+            phase_inverted: t.phase_inverted,
+            parent_send: t.parent_send,
+            visible_in_tcp: t.visible_in_tcp,
+            visible_in_mixer: t.visible_in_mixer,
+            lanes: LaneState {
+                count: t.lane_count,
+                names: t.lane_names,
+                play_mask: t.lane_play_mask,
+            },
+            grouping: grouping_map(&t.grouping),
+            guid: t.guid,
+            ..TrackState::default()
+        };
+        if let Some(handle) = project.tracks().by_guid(&state.guid).await? {
+            read_track_parts(&handle, &mut state, blobs, ids).await?;
+        }
+        tracks.push(state);
+    }
+    Ok(tracks)
 }
 
 /// Every item, keyed by its doc id, with its active take — through the

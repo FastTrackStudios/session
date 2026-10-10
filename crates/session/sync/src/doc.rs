@@ -41,6 +41,7 @@
 //! differs. Writing the same model twice records nothing.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use loro::{
     ExportMode, LoroDoc, LoroEncodeError, LoroError, LoroMap, LoroResult, LoroText, LoroTree,
@@ -271,6 +272,81 @@ impl SessionDoc {
         }
     }
 
+    /// Note what each change to the doc touches, from now on, into the
+    /// returned [`Touched`] — until the subscription is dropped. A change
+    /// committed as [`ORIGIN_LOCAL`] is the engine's own, written from
+    /// what it shows, and is not noted: only what the engine has yet to
+    /// match is (another peer's edit, an undo).
+    #[must_use]
+    pub fn watch(&self) -> Watch {
+        let touched = Arc::new(Mutex::new(Touched::everything()));
+        let into = Arc::clone(&touched);
+        let subscription = self.doc.subscribe_root(Arc::new(move |event| {
+            if event.origin == ORIGIN_LOCAL {
+                return;
+            }
+            let Ok(mut touched) = into.lock() else {
+                return;
+            };
+            for diff in &event.events {
+                touched.note(diff);
+            }
+        }));
+        Watch {
+            touched,
+            subscription,
+        }
+    }
+
+    /// The doc as a model, read only where `touched` says it changed: the
+    /// rest taken from `base`, what the doc read as before those changes.
+    #[must_use]
+    pub fn read_touched(&self, base: &SessionModel, touched: &Touched) -> SessionModel {
+        if touched.everything {
+            return self.read();
+        }
+        let mut model = base.clone();
+        if touched.parts.tracks {
+            let mut tracks = self.read_tracks();
+            attach_parts(
+                &mut tracks,
+                &read_entities(&self.doc.get_map(FX), read_fx),
+                &read_entities(&self.doc.get_map(SENDS), read_send),
+                &read_entities(&self.doc.get_map(ENVELOPES), read_envelope),
+            );
+            model.tracks = tracks;
+        }
+        reread(
+            &self.doc.get_map(ITEMS),
+            &touched.items,
+            &mut model.items,
+            read_item,
+        );
+        reread(
+            &self.doc.get_map(MARKERS),
+            &touched.markers,
+            &mut model.markers,
+            read_marker,
+        );
+        reread(
+            &self.doc.get_map(REGIONS),
+            &touched.regions,
+            &mut model.regions,
+            read_region,
+        );
+        if touched.parts.meta {
+            model.tempo = map_value(&self.doc.get_map(META).get_deep_value())
+                .get("tempo")
+                .and_then(as_string)
+                .map(|s| decode_tempo(&s))
+                .unwrap_or_default();
+        }
+        if touched.parts.chart {
+            model.chart = self.doc.get_text(CHART).to_string();
+        }
+        model
+    }
+
     // ── tracks ──────────────────────────────────────────────────────
 
     /// Each live track node by guid, plus any second node for a guid
@@ -433,6 +509,133 @@ fn write_changed<T: PartialEq>(
         root.delete(guid)?;
     }
     Ok(())
+}
+
+/// What changes to the doc touched since it was last taken.
+///
+/// Which items, markers and regions by id; which whole parts (the tracks
+/// with their FX, sends and envelopes; the tempo; the chart). `everything`
+/// until the first take, and whenever a change could not be placed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Touched {
+    pub everything: bool,
+    pub parts: Whole,
+    pub items: std::collections::BTreeSet<String>,
+    pub markers: std::collections::BTreeSet<String>,
+    pub regions: std::collections::BTreeSet<String>,
+}
+
+/// What [`SessionDoc::watch`] notes into, while it is kept.
+pub struct Watch {
+    /// What has been touched since last taken.
+    pub touched: Arc<Mutex<Touched>>,
+    /// The doc's notes to it: dropped, they stop.
+    pub subscription: loro::Subscription,
+}
+
+/// The parts of the doc read back whole when touched.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Whole {
+    /// The track tree, and the FX, sends and envelopes on it.
+    pub tracks: bool,
+    /// The tempo map.
+    pub meta: bool,
+    pub chart: bool,
+}
+
+impl Touched {
+    /// Everything: read the whole doc.
+    #[must_use]
+    pub fn everything() -> Self {
+        Self {
+            everything: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether nothing at all was touched.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn note(&mut self, diff: &loro::event::ContainerDiff<'_>) {
+        // An entity's own map is a mergeable child of its root map, its id
+        // naming both (`🤝:$items>guid`). Otherwise the path runs from the
+        // root (its first step names the root itself) down to the target:
+        // the step after the root is the key, and a root map's own change
+        // names the keys it changed.
+        let (root, key) = if let Some((root, key)) = mergeable(diff.target) {
+            (Some(root), Some(key))
+        } else {
+            let root = diff
+                .path
+                .first()
+                .map_or_else(|| root_name(diff.target), |(id, _)| root_name(id));
+            let key = if let Some((_, loro::Index::Key(key))) = diff.path.get(1) {
+                Some(key.to_string())
+            } else {
+                None
+            };
+            (root, key)
+        };
+        let keys: Vec<String> = match (key, &diff.diff) {
+            (Some(key), _) => vec![key],
+            (None, loro::event::Diff::Map(delta)) => {
+                delta.updated.keys().map(ToString::to_string).collect()
+            }
+            (None, _) => Vec::new(),
+        };
+        match root.as_deref() {
+            Some(TRACKS | FX | SENDS | ENVELOPES) => self.parts.tracks = true,
+            Some(META) => self.parts.meta = true,
+            Some(CHART) => self.parts.chart = true,
+            Some(ITEMS) if !keys.is_empty() => self.items.extend(keys),
+            Some(MARKERS) if !keys.is_empty() => self.markers.extend(keys),
+            Some(REGIONS) if !keys.is_empty() => self.regions.extend(keys),
+            _ => self.everything = true,
+        }
+    }
+}
+
+/// A root container's name.
+fn root_name(id: &loro::ContainerID) -> Option<String> {
+    match id {
+        loro::ContainerID::Root { name, .. } => match mergeable(id) {
+            Some((root, _)) => Some(root),
+            None => Some(name.to_string()),
+        },
+        loro::ContainerID::Normal { .. } => None,
+    }
+}
+
+/// A mergeable child's root map and key, from its id's name.
+fn mergeable(id: &loro::ContainerID) -> Option<(String, String)> {
+    let loro::ContainerID::Root { name, .. } = id else {
+        return None;
+    };
+    let (root, key) = name.strip_prefix("🤝:$")?.split_once('>')?;
+    Some((root.to_owned(), key.to_owned()))
+}
+
+/// The entities of `keys` read again from `root` into `into`: those gone
+/// from the doc removed.
+fn reread<T>(
+    root: &LoroMap,
+    keys: &std::collections::BTreeSet<String>,
+    into: &mut BTreeMap<String, T>,
+    read: fn(&HashMap<String, LoroValue>) -> T,
+) {
+    for key in keys {
+        match root.get(key) {
+            Some(ValueOrContainer::Container(loro::Container::Map(map))) => {
+                into.insert(key.clone(), read(&map_value(&map.get_deep_value())));
+            }
+            _ => {
+                into.remove(key);
+            }
+        }
+    }
 }
 
 fn read_entities<T>(
@@ -1055,4 +1258,42 @@ fn decode_tempo(s: &str) -> Vec<TempoPoint> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod touched_tests {
+    use super::*;
+    use crate::model::ItemState;
+
+    fn with_item(at: f64) -> SessionModel {
+        let mut model = SessionModel::default();
+        model.items.insert(
+            "hit".into(),
+            ItemState {
+                position: at,
+                length: 1.0,
+                ..ItemState::default()
+            },
+        );
+        model
+    }
+
+    /// The engine's own writes are not noted; what it has yet to match —
+    /// an undo of one of them — is, down to the item.
+    #[test]
+    fn an_undo_is_touched_and_the_engines_own_write_is_not() {
+        let doc = SessionDoc::new();
+        doc.write(&with_item(1.0), ORIGIN_LOCAL).expect("written");
+        let watch = doc.watch();
+        let mut undo = loro::UndoManager::new(doc.loro());
+        let take = || std::mem::take(&mut *watch.touched.lock().expect("touched"));
+        take();
+        doc.write_step(&with_item(1.0), &with_item(3.0), ORIGIN_LOCAL, "Move")
+            .expect("a step");
+        assert!(take().is_empty(), "the engine's own step");
+        assert!(undo.undo().expect("undone"));
+        let undone = take();
+        assert!(undone.items.contains("hit"), "{undone:?}");
+        assert!((doc.read().items["hit"].position - 1.0).abs() < 1e-9);
+    }
 }

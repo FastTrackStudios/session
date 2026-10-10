@@ -14,7 +14,7 @@
 use daw_control::Project;
 
 use crate::diff::{Change, diff};
-use crate::doc::{ORIGIN_LOCAL, SessionDoc};
+use crate::doc::{ORIGIN_LOCAL, SessionDoc, Touched, Watch};
 use crate::engine::{self, Blobs, Direct, EngineIds, MediaRoot};
 use crate::model::SessionModel;
 
@@ -35,6 +35,9 @@ pub struct Bridge {
     undo: loro::UndoManager,
     /// The name the next step pushed onto either stack is given.
     naming: std::sync::Arc<std::sync::Mutex<String>>,
+    /// What changes to the doc have touched since the engine last matched
+    /// it — so a remote edit or an undo reads back only that.
+    watch: Watch,
 }
 
 /// An undo manager on `doc` whose steps carry the name `naming` holds
@@ -84,7 +87,8 @@ impl Bridge {
         shown.chart = chart;
         doc.write(&shown, ORIGIN_LOCAL)?;
         let (undo, naming) = undo_manager(&doc);
-        Ok(Self {
+        let watch = doc.watch();
+        let bridge = Self {
             doc,
             project,
             media,
@@ -94,7 +98,11 @@ impl Bridge {
             shown,
             undo,
             naming,
-        })
+            watch,
+        };
+        // What the engine showed is what the doc now holds.
+        bridge.take_touched();
+        Ok(bridge)
     }
 
     /// Join a session: `doc` already holds the host's state (imported
@@ -114,6 +122,7 @@ impl Bridge {
         let current =
             engine::read(&project, &media, blobs.as_ref(), &ids, direct.as_deref()).await?;
         let (undo, naming) = undo_manager(&doc);
+        let watch = doc.watch();
         let mut bridge = Self {
             doc,
             project,
@@ -124,6 +133,7 @@ impl Bridge {
             shown: current,
             undo,
             naming,
+            watch,
         };
         bridge.remote_changed().await?;
         Ok(bridge)
@@ -268,7 +278,11 @@ impl Bridge {
     /// When an engine call fails. The engine is re-read either way, so a
     /// half-applied change is reconciled on the next call.
     pub async fn remote_changed(&mut self) -> eyre::Result<Vec<Change>> {
-        let target = self.doc.read();
+        let touched = self.take_touched();
+        if touched.is_empty() {
+            return Ok(Vec::new());
+        }
+        let target = self.doc.read_touched(&self.shown, &touched);
         let changes = diff(&self.shown, &target);
         if changes.is_empty() {
             return Ok(changes);
@@ -283,17 +297,29 @@ impl Bridge {
             self.direct.as_deref(),
         )
         .await;
-        let mut now = engine::read(
+        // The tracks read again only if a change could have touched them.
+        let keep =
+            (!touched.everything && !touched.parts.tracks).then(|| self.shown.tracks.clone());
+        let mut now = engine::read_keeping(
             &self.project,
             &self.media,
             self.blobs.as_ref(),
             &self.ids,
             self.direct.as_deref(),
+            keep,
         )
         .await?;
         now.chart = target.chart;
         self.shown = now;
         applied?;
         Ok(changes)
+    }
+
+    /// What the doc's changes have touched since last asked, cleared.
+    fn take_touched(&self) -> Touched {
+        self.watch
+            .touched
+            .lock()
+            .map_or_else(|_| Touched::everything(), |mut t| std::mem::take(&mut *t))
     }
 }

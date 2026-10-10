@@ -364,10 +364,8 @@ fn apply(project: &str, file: Option<&std::path::Path>, text: &str) -> Outcome {
         let saved = daw
             .read_project(project, |p| std::path::PathBuf::from(&p.info.path))
             .filter(|path| crate::open::is_session(path));
-        if let Some(dir) = saved
-            && let Err(e) = crate::session_file::save_session(daw, project, &dir)
-        {
-            tracing::warn!(session.save_error = %e, "chart editor: the song could not be saved");
+        if let Some(dir) = saved {
+            crate::session_file::save_session_behind(daw, project, &dir);
         }
         Ok::<_, eyre::Report>(rebuilt)
     });
