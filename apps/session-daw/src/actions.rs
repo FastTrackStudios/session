@@ -612,6 +612,46 @@ struct TrackRow {
     pan: f64,
     items: u32,
     fx: Vec<String>,
+    /// Its fixed lanes, when it has them, named lanes and the playing
+    /// one first — then the rest only by count.
+    lanes: Vec<LaneRow>,
+}
+
+/// One fixed lane.
+#[derive(Facet)]
+struct LaneRow {
+    lane: u32,
+    name: String,
+    items: u32,
+    plays: bool,
+}
+
+/// `track`'s lanes worth listing: those named something other than their
+/// number, and those playing.
+fn lane_rows(track: &daw_proto::Track, items: &[daw_proto::Item]) -> Vec<LaneRow> {
+    (0..track.lane_count)
+        .filter_map(|lane| {
+            let name = usize::try_from(lane)
+                .ok()
+                .and_then(|i| track.lane_names.get(i))
+                .cloned()
+                .unwrap_or_default();
+            let plays = lane < 64 && track.lane_play_mask & (1_u64 << lane) != 0;
+            let numbered = name.trim().parse::<u32>().is_ok() || name.trim().is_empty();
+            (plays || !numbered).then(|| LaneRow {
+                lane,
+                items: u32::try_from(
+                    items
+                        .iter()
+                        .filter(|i| i.fixed_lane.unwrap_or(0) == lane)
+                        .count(),
+                )
+                .unwrap_or(u32::MAX),
+                name,
+                plays,
+            })
+        })
+        .collect()
 }
 
 /// Which hits.
@@ -1067,11 +1107,182 @@ fn reference(
 }
 
 fn register_reference(list: &ActionList) {
+    register_lanes(list);
     register_slip(list);
     register_peaks(list);
     register_reference_map(list);
     register_reference_notes(list);
     register_compare(list);
+}
+
+static EDIT_LANES: ActionMeta = meta(
+    "DRUMS_EDIT_LANES",
+    "drums_edit_lanes",
+    "Comp and edit lanes",
+    "Set the kit up to be edited, every drum track alike: its comping lane (the comp that plays) named COMP, and a new lane EDIT holding a copy of it, playing — so edits land on EDIT and COMP stays the comp they were made from (DRUMS_PLAY_LANE to hear either). The takes and their comp areas are untouched: EDIT is added after the last lane. A track already set up is left. `dry_run` says what it would do.",
+    "Drums",
+    "",
+);
+static PLAY_LANE: ActionMeta = meta(
+    "DRUMS_PLAY_LANE",
+    "drums_play_lane",
+    "Play a lane",
+    "Play the kit's lane named `lane` (COMP, EDIT, or any lane's name) on every drum track at once — the edited drums against the comp they were made from.",
+    "Drums",
+    "",
+);
+
+/// The kit's tracks: every track under the top-level Drums folder with
+/// something on it, but none in its Process (the mix, not the
+/// recording).
+fn kit_tracks(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+) -> Vec<daw_proto::Track> {
+    let tracks = Tracks::all(daw, project.clone());
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    tracks
+        .iter()
+        .filter(|t| !t.is_folder)
+        .filter(|t| {
+            let path = crate::gain_stage::path_of(t, &by_guid);
+            path.first()
+                .is_some_and(|p| p.trim().eq_ignore_ascii_case("drums"))
+                && !path
+                    .iter()
+                    .any(|p| p.trim().eq_ignore_ascii_case("process"))
+        })
+        .cloned()
+        .collect()
+}
+
+/// A lane by name on `track`.
+fn lane_named(track: &daw_proto::Track, name: &str) -> Option<u32> {
+    track
+        .lane_names
+        .iter()
+        .position(|n| n.trim().eq_ignore_ascii_case(name.trim()))
+        .and_then(|i| u32::try_from(i).ok())
+        .filter(|&i| i < track.lane_count)
+}
+
+/// Whether to only say.
+#[derive(Facet)]
+struct LanesArg {
+    dry_run: Option<bool>,
+}
+
+/// What setting the lanes up did, track by track.
+#[derive(Facet)]
+struct LanesOut {
+    /// `path: comp lane → EDIT lane (n items copied)`, or why it was left.
+    tracks: Vec<String>,
+    applied: bool,
+}
+
+/// A lane to play.
+#[derive(Facet)]
+struct PlayLaneArg {
+    lane: String,
+}
+
+fn register_lanes(list: &ActionList) {
+    list.register(&EDIT_LANES, Effect::Mutating, |a: LanesArg| {
+        use daw::service::{ItemRef, Items as _};
+        let (daw, project) = song()?;
+        let dry = a.dry_run.unwrap_or(false);
+        let all = Tracks::all(daw, project.clone());
+        let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+            all.iter().map(|t| (t.guid.as_str(), t)).collect();
+        let mut said = Vec::new();
+        for track in kit_tracks(daw, &project) {
+            let path = crate::gain_stage::path_of(&track, &by_guid).join("/");
+            let at = TrackRef::Guid(track.guid.clone());
+            if lane_named(&track, "EDIT").is_some() {
+                said.push(format!("{path}: already set up"));
+                continue;
+            }
+            let items = daw.get_items(project.clone(), at.clone());
+            if items.is_empty() {
+                continue;
+            }
+            // The comp that plays: the comping lane, else the lowest lane
+            // playing, else the first.
+            let comp = daw
+                .comping(project.clone(), at.clone())
+                .ok()
+                .and_then(|c| c.comp_lane)
+                .or_else(|| {
+                    (track.lane_play_mask != 0).then(|| track.lane_play_mask.trailing_zeros())
+                })
+                .unwrap_or(0);
+            let (count, edit) = if track.lane_count == 0 {
+                (2, 1)
+            } else {
+                (track.lane_count.saturating_add(1), track.lane_count)
+            };
+            let on_comp: Vec<&daw_proto::Item> = items
+                .iter()
+                .filter(|i| i.fixed_lane.unwrap_or(0) == comp)
+                .collect();
+            said.push(format!(
+                "{path}: lane {comp} → COMP, lane {edit} → EDIT ({} items copied), EDIT plays",
+                on_comp.len()
+            ));
+            if dry {
+                continue;
+            }
+            let fail = |e: daw_proto::DawError| format!("{path}: {e}");
+            daw.set_lane_count(project.clone(), at.clone(), count)
+                .map_err(fail)?;
+            daw.set_lane_name(project.clone(), at.clone(), comp, "COMP")
+                .map_err(fail)?;
+            daw.set_lane_name(project.clone(), at.clone(), edit, "EDIT")
+                .map_err(fail)?;
+            for item in on_comp {
+                let copy = daw
+                    .duplicate_item(project.clone(), ItemRef::Guid(item.guid.clone()))
+                    .ok_or_else(|| format!("{path}: an item would not copy"))?;
+                daw.set_fixed_lane(project.clone(), ItemRef::Guid(copy), edit)
+                    .map_err(fail)?;
+            }
+            daw.set_lane_play_mask(project.clone(), at, 1_u64.checked_shl(edit).unwrap_or(0))
+                .map_err(fail)?;
+        }
+        if !dry && !said.is_empty() {
+            crate::studio::request_resync();
+            crate::actions::list().changed("drums.lanes", "the kit's lanes were set up");
+        }
+        Ok(LanesOut {
+            tracks: said,
+            applied: !dry,
+        })
+    });
+    list.register(&PLAY_LANE, Effect::Mutating, |a: PlayLaneArg| {
+        let (daw, project) = song()?;
+        let mut played = 0_u32;
+        for track in kit_tracks(daw, &project) {
+            if let Some(lane) = lane_named(&track, &a.lane) {
+                daw.set_lane_play_mask(
+                    project.clone(),
+                    TrackRef::Guid(track.guid.clone()),
+                    1_u64.checked_shl(lane).unwrap_or(0),
+                )
+                .map_err(|e| e.to_string())?;
+                played = played.saturating_add(1);
+            }
+        }
+        if played == 0 {
+            return Err(format!(
+                "no drum track has a lane named {} — DRUMS_EDIT_LANES makes COMP and EDIT",
+                a.lane
+            ));
+        }
+        crate::studio::request_resync();
+        crate::actions::list().changed("drums.lanes", "the kit plays another lane");
+        Ok(played)
+    });
 }
 
 fn register_reference_map(list: &ActionList) {
@@ -1243,7 +1454,16 @@ fn register_tracks(list: &ActionList) {
                     .as_deref()
                     .is_none_or(|f| path.to_lowercase().contains(f))
             })
-            .map(|(t, path)| TrackRow {
+            .map(|(t, path)| {
+                let items = daw::service::Items::get_items(
+                    daw,
+                    project.clone(),
+                    TrackRef::Guid(t.guid.clone()),
+                );
+                (t, path, items)
+            })
+            .map(|(t, path, items)| TrackRow {
+                lanes: lane_rows(t, &items),
                 guid: t.guid.clone(),
                 name: t.name.clone(),
                 path,
@@ -1252,15 +1472,7 @@ fn register_tracks(list: &ActionList) {
                 soloed: t.soloed,
                 volume_db: 20.0 * t.volume.max(1e-9).log10(),
                 pan: t.pan,
-                items: u32::try_from(
-                    daw::service::Items::get_items(
-                        daw,
-                        project.clone(),
-                        TrackRef::Guid(t.guid.clone()),
-                    )
-                    .len(),
-                )
-                .unwrap_or(u32::MAX),
+                items: u32::try_from(items.len()).unwrap_or(u32::MAX),
                 fx: daw::service::Effects::list(
                     daw,
                     project.clone(),

@@ -31,7 +31,10 @@ actions are the window's own: what its keys do (SESSION_MODE Edit and SESSION_PH
 window where every cut shows). TRACK_SET changes a track's fader, pan, mute or solo. Drum editing: \
 the settings are sticky (DRUMS_EDIT_SETTINGS); tune them with DRUMS_EDIT_SET, which answers at once \
 with what they detect, look closer with DRUMS_DETECT over a span, find the fills with DRUMS_FILLS \
-(left as played by a slip unless asked), then DRUMS_SLIP — a dry run first. The drum MIDI is a guide, \
+(left as played by a slip unless asked), then DRUMS_SLIP — a dry run first; DRUMS_EDIT_LANES first puts the \
+edits on an EDIT lane beside the COMP they are made from (DRUMS_PLAY_LANE to hear either). \
+SESSION_VIEW frames bars, a section or seconds, and tracks, down to the samples; DRUMS_DETECT draws \
+what it finds over the kit in Edit mode. The drum MIDI is a guide, \
 not the truth: a live drummer plays other fills.";
 
 /// Where it is being served, and the token to reach it, if it wants one.
