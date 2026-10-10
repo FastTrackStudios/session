@@ -70,6 +70,7 @@ pub fn Shell() -> Element {
     // A mode asked for on the Action List (`SESSION_MODE`, a model over
     // MCP): taken up within a tenth of a second.
     let mut asked = mode;
+    let back = try_use_context::<session_daw::shell::Back>();
     use_future(move || async move {
         loop {
             if let Some(next) = session_daw::actions::take_mode_request() {
@@ -81,6 +82,14 @@ pub fn Shell() -> Element {
             // What the arrangement queued, to the engine — with no frame
             // coming (the window hidden), an action's edits would wait.
             session_daw::panel::send_pending();
+            // Another song or version asked for over the Action List
+            // (`SESSION_OPEN`): out of this one, and the start screen
+            // opens it.
+            if session_daw::projects::take_back()
+                && let Some(session_daw::shell::Back(back)) = back
+            {
+                back.call(());
+            }
             architect::platform::sleep(std::time::Duration::from_millis(100)).await;
         }
     });

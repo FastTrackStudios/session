@@ -240,6 +240,42 @@ fn modified(path: &Path) -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// What to open once the start screen is back: a version picked from
+/// inside a song (the top bar's Versions) goes back out of the song and
+/// in again as that version.
+static NEXT: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Open `path` as soon as the start screen is shown ([`take_next`]).
+pub fn open_next(path: PathBuf) {
+    *NEXT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(path);
+}
+
+/// Whether an open was asked for from outside the window (the Action
+/// List's `SESSION_OPEN`): the window goes back out of the song to take it.
+static BACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Open `path` from outside the window: as [`open_next`], and the window
+/// asked to go back out of the song for it ([`take_back`]).
+pub fn open_from_outside(path: PathBuf) {
+    open_next(path);
+    BACK.store(true, std::sync::atomic::Ordering::Release);
+}
+
+/// Whether the window should go back out of the song now — once.
+pub fn take_back() -> bool {
+    BACK.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
+/// What was asked to be opened next, once.
+#[must_use]
+pub fn take_next() -> Option<PathBuf> {
+    NEXT.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+}
+
 /// "just now", "5 min ago", "3 h ago", "2 days ago" — when `at` was.
 #[must_use]
 pub fn ago(at: u64) -> String {

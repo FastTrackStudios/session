@@ -117,6 +117,10 @@ const ROOT_CSS: &str = "html, body { margin: 0; padding: 0; background: #17181b;
 #[derive(Clone)]
 pub struct OpenFirst(pub Option<PathBuf>);
 
+/// Whether the launch's choice ([`OpenFirst`]) has been opened: it is the
+/// first start screen's to open, not every one after a Back.
+static LAUNCH_OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// The set, as the shell reads it.
 #[component]
 fn WithSetlist(setlist: Setlist, children: Element) -> Element {
@@ -301,7 +305,14 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
     // What the launch chose, opened as the window opens.
     let OpenFirst(first) = use_context();
     use_hook(move || {
-        if let Some(path) = first {
+        // A version picked from inside a song, which came back out here to
+        // open it (`session_daw::versions`, `SESSION_OPEN`) — or, the
+        // first time only, what the launch chose. Every time, that was
+        // reopened whenever the start screen came back: Back from a song
+        // the app was launched with went straight back into it.
+        let launch =
+            first.filter(|_| !LAUNCH_OPENED.swap(true, std::sync::atomic::Ordering::AcqRel));
+        if let Some(path) = session_daw::projects::take_next().or(launch) {
             open_path(path);
         }
     });

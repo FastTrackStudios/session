@@ -14,6 +14,22 @@ use crate::shell::{BAR_BG, BAR_H, DIM, RAISED, RULE, TEXT};
 const OK: &str = "#4ac26b";
 const NO: &str = "#e5a442";
 
+/// One of the song's versions: the song's own, or a checkpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Version {
+    pub name: String,
+    /// When it was saved ("5 min ago"); empty for the song's own.
+    pub when: String,
+    pub path: std::path::PathBuf,
+    /// Whether it is the one open now.
+    pub open: bool,
+}
+
+/// A version's row: the open one lit.
+const fn row_bg(open: bool) -> &'static str {
+    if open { RAISED } else { "transparent" }
+}
+
 /// A message's colour: good, or not.
 const fn tone(good: bool) -> &'static str {
     if good { OK } else { NO }
@@ -25,8 +41,30 @@ pub fn Versions() -> Element {
     let mut open = use_signal(|| false);
     let mut name = use_signal(String::new);
     let mut said = use_signal(|| None::<(bool, String)>);
-    let mut listed = use_signal(Vec::<(String, String)>::new);
-    let mut refresh = move || listed.set(crate::actions::open_song_alternatives());
+    let mut listed = use_signal(Vec::<Version>::new);
+    let mut refresh = move || listed.set(crate::actions::open_song_versions());
+    // A version picked to open, while asking whether to save this one.
+    let mut switching = use_signal(|| None::<Version>);
+    let back = try_use_context::<crate::shell::Back>();
+    // Out of the song and in again as `to`, saved first if asked.
+    let mut switch = move |to: Version, save: bool| {
+        if save && let Err(e) = crate::actions::list().run_json("SESSION_SAVE", b"") {
+            said.set(Some((false, format!("not saved, so not switched: {e}"))));
+            switching.set(None);
+            return;
+        }
+        let Some(crate::shell::Back(back)) = back else {
+            said.set(Some((
+                false,
+                "this window cannot open another version".to_owned(),
+            )));
+            return;
+        };
+        crate::projects::open_next(to.path);
+        open.set(false);
+        switching.set(None);
+        back.call(());
+    };
     let mut run = move |id: &str, args: String| {
         let outcome = crate::actions::list().run_json(id, args.as_bytes());
         said.set(Some(match outcome {
@@ -120,17 +158,50 @@ pub fn Versions() -> Element {
                     }
                     if !listed().is_empty() {
                         div {
-                            style: "display:flex; flex-direction:column; border-top:1px solid {RULE}; padding-top:8px; gap:4px;",
-                            span { style: "color:{DIM}; font-size:11px; text-transform:uppercase; letter-spacing:0.06em;", "Checkpoints" }
-                            for (alt, when) in listed() {
-                                div {
-                                    key: "{alt}",
-                                    style: "display:flex; justify-content:space-between; gap:8px;",
-                                    span { "{alt}" }
-                                    span { style: "color:{DIM};", "{when}" }
+                            style: "display:flex; flex-direction:column; border-top:1px solid {RULE}; padding-top:8px; gap:2px;",
+                            span { style: "color:{DIM}; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; padding-bottom:4px;", "Versions" }
+                            for version in listed() {
+                                button {
+                                    key: "{version.path.display()}",
+                                    style: "display:flex; justify-content:space-between; gap:8px; height:30px; padding:0 8px; \
+                                            border-radius:6px; border:none; text-align:left; font-family:inherit; font-size:13px; \
+                                            background:{row_bg(version.open)}; color:{TEXT}; cursor:pointer;",
+                                    disabled: version.open,
+                                    onclick: move |_| switching.set(Some(version.clone())),
+                                    span { "{version.name}" }
+                                    span { style: "color:{DIM};", if version.open { "open" } else { "{version.when}" } }
                                 }
                             }
-                            span { style: "color:{DIM}; font-size:11px;", "Open one from the start screen's Recent." }
+                        }
+                    }
+                    if let Some(to) = switching() {
+                        div {
+                            style: "display:flex; flex-direction:column; gap:8px; border-top:1px solid {RULE}; padding-top:8px;",
+                            span { style: "line-height:1.4;", "Open {to.name}? Save this version first, or leave it as it was last saved." }
+                            div {
+                                style: "display:flex; gap:8px;",
+                                button {
+                                    style: "flex:1; height:32px; border-radius:8px; border:none; background:#3aa0ff; color:#0b0c0e; \
+                                            font-family:inherit; font-size:13px; font-weight:650; cursor:pointer;",
+                                    onclick: {
+                                        let to = to.clone();
+                                        move |_| switch(to.clone(), true)
+                                    },
+                                    "Save and open"
+                                }
+                                button {
+                                    style: "flex:1; height:32px; border-radius:8px; border:1px solid {RULE}; background:{RAISED}; \
+                                            color:{TEXT}; font-family:inherit; font-size:13px; cursor:pointer;",
+                                    onclick: move |_| switch(to.clone(), false),
+                                    "Open"
+                                }
+                                button {
+                                    style: "flex:none; height:32px; padding:0 10px; border-radius:8px; border:none; background:transparent; \
+                                            color:{DIM}; font-family:inherit; font-size:13px; cursor:pointer;",
+                                    onclick: move |_| switching.set(None),
+                                    "Cancel"
+                                }
+                            }
                         }
                     }
                 }

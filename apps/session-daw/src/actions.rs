@@ -1265,6 +1265,24 @@ static ALTERNATIVES: ActionMeta = meta(
 );
 
 #[cfg(feature = "native")]
+static OPEN: ActionMeta = meta(
+    "SESSION_OPEN",
+    "session_open",
+    "Open a song or version",
+    "Leave the song open now and open another: `name` a version of this song (\"The song\", or a checkpoint's name — SESSION_ALTERNATIVES lists them), or `path` any song, setlist or `.session`. What is open is not saved first — SESSION_SAVE it if it should be. Through the start screen, as Back and a pick there would.",
+    "Session",
+    "",
+);
+
+/// Which to open: a version of this song by name, or anything by path.
+#[cfg(feature = "native")]
+#[derive(Facet)]
+struct OpenArg {
+    name: Option<String>,
+    path: Option<String>,
+}
+
+#[cfg(feature = "native")]
 static RECENT: ActionMeta = meta(
     "SESSION_RECENT",
     "session_recent",
@@ -1274,23 +1292,44 @@ static RECENT: ActionMeta = meta(
     "",
 );
 
-/// The open song's checkpoints, the newest first, as `(name, when)` —
-/// for the top bar's Versions. Empty with no song, or one with none.
+/// The open song's versions, for the top bar's Versions.
+///
+/// The song's own (`"The song"`) and its checkpoints, the newest first —
+/// each its name, when it was saved, where it is, and whether it is the
+/// one open.
 #[cfg(feature = "native")]
 #[must_use]
-pub fn open_song_alternatives() -> Vec<(String, String)> {
+pub fn open_song_versions() -> Vec<crate::versions::Version> {
     let Ok((daw, ProjectContext::Project(guid))) = song() else {
         return Vec::new();
     };
-    song_base(daw, &guid).map_or_else(
-        |_| Vec::new(),
-        |base| {
-            crate::projects::alternatives(&base)
-                .into_iter()
-                .map(|alt| (alt.name, crate::projects::ago(alt.saved)))
-                .collect()
-        },
-    )
+    let Some(open) = daw.read_project(&guid, |p| std::path::PathBuf::from(&p.info.path)) else {
+        return Vec::new();
+    };
+    let Ok(base) = song_base(daw, &guid) else {
+        return Vec::new();
+    };
+    let same = |a: &std::path::Path, b: &std::path::Path| {
+        std::path::absolute(a).ok() == std::path::absolute(b).ok()
+    };
+    let mut out: Vec<crate::versions::Version> = crate::projects::main_of(&base)
+        .map(|path| crate::versions::Version {
+            name: "The song".to_owned(),
+            when: String::new(),
+            open: crate::projects::alternative_name(&open).is_none(),
+            path,
+        })
+        .into_iter()
+        .collect();
+    out.extend(crate::projects::alternatives(&base).into_iter().map(|alt| {
+        crate::versions::Version {
+            open: same(&alt.path, &open),
+            name: alt.name,
+            when: crate::projects::ago(alt.saved),
+            path: alt.path,
+        }
+    }));
+    out
 }
 
 /// The open song's base ([`crate::projects::base_of`]): what its
@@ -1319,6 +1358,24 @@ fn register_save(list: &ActionList) {
             a.name.trim(),
             dir.display()
         ))
+    });
+    list.register(&OPEN, Effect::Mutating, |a: OpenArg| {
+        let path = match (a.name, a.path) {
+            (_, Some(path)) => std::path::PathBuf::from(path),
+            (Some(name), None) => open_song_versions()
+                .into_iter()
+                .find(|v| v.name.eq_ignore_ascii_case(name.trim()))
+                .map(|v| v.path)
+                .ok_or_else(|| {
+                    format!("no version {name:?} of this song (SESSION_ALTERNATIVES)")
+                })?,
+            (None, None) => return Err("`name` (a version of this song) or `path`".to_owned()),
+        };
+        if !path.exists() {
+            return Err(format!("{} is not there", path.display()));
+        }
+        crate::projects::open_from_outside(path.clone());
+        Ok(format!("opening {}", path.display()))
     });
     list.register(&ALTERNATIVES, Effect::ReadOnly, |(): ()| {
         let (daw, project) = song()?;
