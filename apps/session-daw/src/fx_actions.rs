@@ -346,6 +346,8 @@ fn moment(
         let into = beat - whole;
         let beat = whole.to_i32().ok_or_else(|| format!("no beat {whole}"))?;
         // The beat's start, then the fraction of it on.
+        // The bar as the song counts it.
+        let bar = crate::song_bars::measure(daw, &project, bar);
         let start = daw.musical_to_time(project.clone(), bar, beat, 0.0);
         let next = daw.musical_to_time(project.clone(), bar, beat.saturating_add(1), 0.0);
         return Ok(into.mul_add(next - start, start));
@@ -519,7 +521,7 @@ fn automation(a: &AutomationArg) -> Result<Vec<EnvelopeRow>, String> {
                     .iter()
                     .map(|pt| {
                         let secs = pt.time.as_seconds();
-                        let (bar, beat, frac) = daw.time_to_musical(project.clone(), secs);
+                        let (bar, beat, frac) = crate::song_bars::musical(daw, &project, secs);
                         PointRow {
                             bar: format!("{bar}:{}", f64::from(beat) + frac),
                             seconds: secs,

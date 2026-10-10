@@ -3323,7 +3323,7 @@ impl ArrangementWidget {
             &self.palette,
             &self.font,
             view,
-            self.scene.tempo(),
+            (self.scene.tempo(), self.scene.song_start()),
             (0.0, 0.0),
         );
         ruler::tempo(

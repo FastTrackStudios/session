@@ -207,6 +207,9 @@ pub struct Arrangement {
     pub bpm: f64,
     /// Where the tempo or the signature changes.
     tempo: Vec<daw_ui::studio::project::TempoChange>,
+    /// Where the song starts (its `SONGSTART` marker): the bar it falls
+    /// in is bar 1 on the ruler, the count-in before it counted down.
+    song_start: Option<f64>,
     /// Every item's title, by row, in seconds — drawn per frame in
     /// pixel space over the lanes, because recorded text would stretch
     /// with the zoom.
@@ -1258,6 +1261,7 @@ impl Arrangement {
             length_secs: project.length_secs,
             bpm: project.bpm,
             tempo: project.tempo.clone(),
+            song_start: crate::ruler::song_start_of(project),
             item_count: project.item_count,
             titles,
             items: boxes,
@@ -1471,6 +1475,12 @@ impl Arrangement {
     #[must_use]
     pub fn tempo(&self) -> &[daw_ui::studio::project::TempoChange] {
         &self.tempo
+    }
+
+    /// Where the song starts, its `SONGSTART`: the ruler's bar 1.
+    #[must_use]
+    pub const fn song_start(&self) -> Option<f64> {
+        self.song_start
     }
 
     /// The item titles on the rows a viewport shows, with where each

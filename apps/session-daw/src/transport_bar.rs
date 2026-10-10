@@ -85,10 +85,12 @@ fn TransportBarView(reading: crate::engine::Reading, big: bool) -> Element {
     let session: StudioSession = use_context();
     let density = crate::shell::use_density();
     let r = reading;
-    let (bar, beat) = crate::ruler::Timeline::new(&session.project.tempo)
-        .beats(r.at + 1e-6, 100_000)
-        .last()
-        .map_or((1, 1), |b| (b.measure, b.beat));
+    // Counted from the song, as the ruler counts.
+    let (bar, beat) = crate::ruler::song_bar_beat(
+        &session.project.tempo,
+        crate::ruler::song_start_of(&session.project),
+        r.at,
+    );
     let key = crate::arrangement::key_at(&session.project, r.at)
         .map(|name| short_key(&name))
         .unwrap_or_else(|| "—".to_owned());

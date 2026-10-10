@@ -195,6 +195,7 @@ pub mod rename;
 pub mod routes;
 pub mod row;
 pub mod ruler;
+pub mod section_colors;
 #[cfg(feature = "native")]
 pub mod session_file;
 pub mod setlist;
@@ -203,6 +204,7 @@ pub mod setup;
 pub mod shell;
 pub mod simulate;
 pub mod skin;
+pub mod song_bars;
 pub mod song_chart;
 pub mod strip;
 pub mod studio;

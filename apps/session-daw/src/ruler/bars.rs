@@ -124,7 +124,7 @@ pub fn ruler(
     palette: &Palette,
     font: &Font,
     view: Viewport,
-    tempo: &[daw_ui::studio::project::TempoChange],
+    (tempo, song_start): (&[daw_ui::studio::project::TempoChange], Option<f64>),
     origin: (f64, f64),
 ) {
     // The rails frame the view, so the ruler starts where they leave
@@ -166,10 +166,15 @@ pub fn ruler(
     if bar_px < 2.0 {
         return;
     }
-    let beats = Timeline::new(tempo).beats(to, MAX_BEATS);
+    // Far enough to reach the song's start, wherever the view is.
+    let beats = Timeline::new(tempo).beats(to.max(song_start.unwrap_or(0.0)), MAX_BEATS);
     let Some(first) = beats.first() else {
         return;
     };
+    // The bar the song starts in is bar 1.
+    let bar_one = song_start
+        .and_then(|at| beats.iter().rev().find(|b| b.at <= at + 1e-6))
+        .map_or(1, |b| b.measure);
     // Measured at the start rather than averaged: a ruler whose
     // spacing changed mid-screen would be harder to read than one
     // slightly too dense at one end.
@@ -226,7 +231,12 @@ pub fn ruler(
                 painter,
                 font,
                 palette.ruler_fg,
-                &written(beat.measure, into_bar, f64::from(beat.per_bar), every),
+                &written(
+                    from_song(beat.measure, bar_one),
+                    into_bar,
+                    f64::from(beat.per_bar),
+                    every,
+                ),
                 // Close to its own line, not floating between two. Four
                 // pixels put the number nearer the NEXT tick than its
                 // own at a beat-wide zoom, which is the one thing a
@@ -237,6 +247,46 @@ pub fn ruler(
             );
         }
     }
+}
+
+/// A measure counted from the song's: `bar_one` (a measure counted from
+/// the project's start) is bar 1, the ones after it 2, 3 …, the ones
+/// before it −1, −2 … — the count-in counting down to the song, with no
+/// bar 0, as REAPER numbers a measure offset.
+#[must_use]
+pub fn from_song(measure: u32, bar_one: u32) -> i64 {
+    let shown = i64::from(measure) - i64::from(bar_one) + 1;
+    if shown <= 0 { shown - 1 } else { shown }
+}
+
+/// Where `project`'s song starts: its `SONGSTART` marker, the ruler's
+/// bar 1.
+#[must_use]
+pub fn song_start_of(project: &daw_ui::studio::project::Project) -> Option<f64> {
+    project
+        .markers
+        .iter()
+        .find(|m| m.name == "SONGSTART")
+        .map(|m| m.at)
+}
+
+/// The bar and beat at `at`, counted from the song as the ruler counts
+/// them ([`from_song`]).
+#[must_use]
+pub fn song_bar_beat(
+    tempo: &[daw_ui::studio::project::TempoChange],
+    song_start: Option<f64>,
+    at: f64,
+) -> (i64, u32) {
+    let beats = Timeline::new(tempo).beats(at.max(song_start.unwrap_or(0.0)) + 1e-6, MAX_BEATS);
+    let bar_one = song_start
+        .and_then(|start| beats.iter().rev().find(|b| b.at <= start + 1e-6))
+        .map_or(1, |b| b.measure);
+    beats
+        .iter()
+        .rev()
+        .find(|b| b.at <= at + 1e-6)
+        .map_or((1, 1), |b| (from_song(b.measure, bar_one), b.beat))
 }
 
 /// How many beats a ruler will count before it gives up.
@@ -304,7 +354,7 @@ pub(super) const LABEL_ROOM: f64 = 56.0;
 /// of 0..999 — so a number read off this ruler is one you can type
 /// back in.
 #[must_use]
-pub fn written(measure: u32, into_bar: f64, per_bar: f64, step: f64) -> String {
+pub fn written(measure: i64, into_bar: f64, per_bar: f64, step: f64) -> String {
     let whole_beat = into_bar.floor();
     let fraction = into_bar - whole_beat;
     let beat_no = (whole_beat + 1.0).round() as i64;

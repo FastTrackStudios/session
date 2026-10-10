@@ -848,10 +848,8 @@ pub(crate) fn sections(
                     name: r.name,
                     start,
                     end,
-                    first_bar: daw.time_to_musical(project.clone(), start + 1e-6).0,
-                    last_bar: daw
-                        .time_to_musical(project.clone(), (end - 1e-6).max(start))
-                        .0,
+                    first_bar: crate::song_bars::musical(daw, &project, start + 1e-6).0,
+                    last_bar: crate::song_bars::musical(daw, &project, (end - 1e-6).max(start)).0,
                 }
             })
             .collect();
@@ -885,8 +883,11 @@ fn view_span(
         let (Some(&first), Some(&last)) = (bars.first(), bars.last()) else {
             return Err("`bars` is [first, last]".to_owned());
         };
-        let from = daw.musical_to_time(project.clone(), first.min(last), 1, 0.0);
-        let to = daw.musical_to_time(project.clone(), first.max(last).saturating_add(1), 1, 0.0);
+        // Bars as the song counts them; the bar after the last found in
+        // the engine's, where there is no bar 0 to step over.
+        let from = crate::song_bars::time(daw, &project, first.min(last), 1, 0.0);
+        let after = crate::song_bars::measure(daw, &project, first.max(last)).saturating_add(1);
+        let to = daw.musical_to_time(project.clone(), after, 1, 0.0);
         return Ok(Some((from, to)));
     }
     match (a.from, a.to) {
@@ -929,7 +930,7 @@ static PHASE: ActionMeta = meta(
     "SESSION_PHASE",
     "phase",
     "Phase",
-    "Put a mode in one of its phases — Edit: comp, edit; Mix: rescue, balance, tone, polish, relational, depth, creative, overview; Organize: import, tempo-map. `mode` defaults to Edit.",
+    "Put a mode in one of its phases — Mix: rescue, balance, tone, polish, relational, depth, creative, overview; Organize: import, tempo-map. `mode` defaults to Edit.",
     "View",
     "",
 );
@@ -1975,7 +1976,7 @@ fn register_samples(list: &ActionList) {
                         .filter(|t| near(**t, &times))
                         .take(24)
                         .map(|t| {
-                            let (bar, beat, _) = daw.time_to_musical(project.clone(), *t + 1e-6);
+                            let (bar, beat, _) = crate::song_bars::musical(daw, &project, *t + 1e-6);
                             format!("{bar}.{beat:.1}")
                         })
                         .collect();
@@ -2147,7 +2148,7 @@ fn register_reference_notes(list: &ActionList) {
             .skip(usize::try_from(offset).unwrap_or(usize::MAX))
             .take(usize::try_from(a.limit.unwrap_or(PAGE)).unwrap_or(usize::MAX))
             .map(|n| {
-                let (bar, beat, frac) = daw.time_to_musical(project.clone(), n.time);
+                let (bar, beat, frac) = crate::song_bars::musical(daw, &project, n.time);
                 NoteRow {
                     time: n.time,
                     bar,
@@ -2209,7 +2210,7 @@ fn register_compare(list: &ActionList) {
             .copied()
             .max_by(|x, y| x.abs().total_cmp(&y.abs()));
         let at = |t: f64| {
-            let (bar, beat, frac) = daw.time_to_musical(project.clone(), t);
+            let (bar, beat, frac) = crate::song_bars::musical(daw, &project, t);
             (bar, f64::from(beat) + frac)
         };
         let mut detail: Vec<NoteVsHit> = c
@@ -2327,7 +2328,7 @@ fn register_hits(list: &ActionList) {
             .skip(usize::try_from(offset).unwrap_or(usize::MAX))
             .take(usize::try_from(limit).unwrap_or(usize::MAX))
             .map(|h| {
-                let (bar, beat, frac) = daw.time_to_musical(project.clone(), h.time);
+                let (bar, beat, frac) = crate::song_bars::musical(daw, &project, h.time);
                 HitRow {
                     time: h.time,
                     bar,
@@ -2742,7 +2743,7 @@ fn fill_out(
     project: &ProjectContext,
     fill: &crate::drum_edit::Fill,
 ) -> FillOut {
-    let (bar, beat, frac) = daw.time_to_musical(project.clone(), fill.from + 1e-6);
+    let (bar, beat, frac) = crate::song_bars::musical(daw, &project, fill.from + 1e-6);
     FillOut {
         from: fill.from,
         to: fill.to,
@@ -3152,7 +3153,7 @@ fn detected_out(
             Mark::Stay => "stay",
             Mark::Move => "move",
         };
-        let (bar, beat, frac) = daw.time_to_musical(project.clone(), moment.time);
+        let (bar, beat, frac) = crate::song_bars::musical(daw, &project, moment.time);
         all.push(MomentOut {
             time: moment.time,
             bar,
@@ -3206,7 +3207,7 @@ fn judge(
     let tolerance = settings.tolerance_ms / 1_000.0;
     let strength = settings.strength;
     let at = |hit: f64, off: f64, shift: f64| {
-        let (bar, beat, frac) = daw.time_to_musical(project.clone(), hit);
+        let (bar, beat, frac) = crate::song_bars::musical(daw, &project, hit);
         SlipMove {
             time: hit,
             bar,

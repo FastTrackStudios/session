@@ -139,6 +139,13 @@ fn zooming_in_subdivides_the_bar() {
 #[test]
 fn a_position_is_written_the_way_a_daw_writes_one() {
     // Stepping in bars: bar numbers.
+    // Counted from the song: the bar it starts in is 1, the two before
+    // it −1 and −2, and there is no bar 0.
+    assert_eq!(super::bars::from_song(3, 3), 1);
+    assert_eq!(super::bars::from_song(4, 3), 2);
+    assert_eq!(super::bars::from_song(2, 3), -1);
+    assert_eq!(super::bars::from_song(1, 3), -2);
+    assert_eq!(written(-1, 3.0, 4.0, 1.0), "-1.4");
     assert_eq!(written(1, 0.0, 4.0, 4.0), "1");
     assert_eq!(written(2, 0.0, 4.0, 4.0), "2");
     // Stepping in beats: every label names its beat, downbeat too.
