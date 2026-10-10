@@ -1295,11 +1295,9 @@ impl ArrangementWidget {
         // cut elsewhere): their peaks read behind the window, each drawn
         // as it arrives, rather than left blank for good.
         let waves = unread_audio(&fresh, &self.previews);
-        if !waves.is_empty()
-            && let Some(runtime) = crate::open::runtime()
-        {
+        if !waves.is_empty() {
             let previews = self.previews.clone();
-            runtime.spawn(async move { previews.fill_waves(waves).await });
+            crate::wave_pool::spawn(move || previews.fill_waves_blocking(waves));
         }
         self.adopt(fresh);
     }
@@ -3160,6 +3158,18 @@ impl ArrangementWidget {
             &self.editor.selected,
             self.editor.ghost(),
         );
+        // In Edit mode, every cut on a shut folder's row.
+        if self.editing.get() && crate::folds::cuts_shown() {
+            crate::arrangement::cuts_overlay(
+                &mut out,
+                &self.palette,
+                &self.scene,
+                view,
+                lanes_at,
+                &self.rows,
+                &self.project,
+            );
+        }
         // In Edit mode, what the drum detection found, over the kit.
         self.detection_seen.set(crate::detect_overlay::version());
         if self.editing.get()

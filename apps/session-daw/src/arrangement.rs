@@ -2054,6 +2054,80 @@ pub fn detection_overlay(
     }
 }
 
+/// Every cut on a shut folder's row (Edit mode).
+///
+/// A thin line where one of its boxes starts as the one before it ends.
+/// The boxes are the mics' slices folded, the same colour edge to edge, so
+/// without a line a kit edited into a thousand slices reads as one take.
+/// Drawn per frame, a pixel wide at any zoom, for the rows and the stretch
+/// on screen only.
+pub fn cuts_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    rows: &[(daw_proto::Track, u32)],
+    project: &daw_ui::studio::project::Project,
+) {
+    /// Ends this close are one edge.
+    const TOUCH: f64 = 1e-3;
+    let (ox, oy) = origin;
+    let pps = view.pps.max(f64::EPSILON);
+    let (from, to) = ((view.panel_w - ox) / pps, (view.width - ox) / pps);
+    let thin = vello::kurbo::Stroke::new(1.0);
+    let ink = palette.divider;
+    for index in scene.visible_rows(view) {
+        let Some((track, _)) = rows.get(index) else {
+            continue;
+        };
+        let Some(fold) = project.folds.get(&track.guid) else {
+            continue;
+        };
+        let Some((top, h)) = scene.row_box(index) else {
+            continue;
+        };
+        let y0 = top.mul_add(view.zoom_y, oy).max(crate::ruler::ruler_h());
+        let y1 = (top + h).mul_add(view.zoom_y, oy).min(view.height);
+        if y1 <= y0 {
+            continue;
+        }
+        // Sorted by start, so the stretch on screen is found, not walked.
+        let items = &fold.items;
+        let first =
+            items.partition_point(|i| i.position.as_seconds() + i.length.as_seconds() < from);
+        let mut last_x = f64::NEG_INFINITY;
+        for pair in items
+            .get(first.saturating_sub(1)..)
+            .unwrap_or(&[])
+            .windows(2)
+        {
+            let (before, item) = (&pair[0], &pair[1]);
+            let at = item.position.as_seconds();
+            if at > to {
+                break;
+            }
+            let ends = before.position.as_seconds() + before.length.as_seconds();
+            if ends + TOUCH < at {
+                continue; // a gap: the boxes part on their own
+            }
+            let x = at.mul_add(pps, ox);
+            // Zoomed out, one line a pixel.
+            if x - last_x < 1.0 {
+                continue;
+            }
+            last_x = x;
+            painter.stroke(
+                &thin,
+                Affine::IDENTITY,
+                ink,
+                None,
+                &vello::kurbo::Line::new((x, y0), (x, y1)),
+            );
+        }
+    }
+}
+
 pub fn selection_overlay(
     painter: &mut impl PaintScene,
     palette: &Palette,

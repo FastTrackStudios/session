@@ -10,12 +10,15 @@
 //!
 //! The reads are off the paint: a frame asks ([`get`]), draws the coarse
 //! waveform while the detail is read, and the window is asked for a
-//! frame when it arrives ([`generation`]). What was read is kept for the
+//! frame when it arrives ([`generation`]). They run in parallel on the
+//! waveform pool (`crate::wave_pool`), the newest ask first: a
+//! slip-edited kit is thousands of items, each read on its own, and what
+//! is on screen now matters more than what was a scroll ago. What was read is kept for the
 //! item as it was read — a moved or slipped item is read again.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 
 /// A real item a lane draws: which, and where it was when asked.
 #[derive(Clone, Debug, PartialEq)]
@@ -134,14 +137,16 @@ type Want = (Source, f64, f64, f64);
 #[derive(Default)]
 struct Shared {
     held: HashMap<String, Held>,
-    wanted: HashMap<String, Want>,
+    /// What is wanted, with when it was asked (higher is newer).
+    wanted: HashMap<String, (Want, u64)>,
     /// Asked for and not yet read, so a frame does not ask again.
     reading: HashMap<String, Want>,
-    worker: bool,
+    /// Asks so far: the next one's order.
+    asked: u64,
 }
 
-static SHARED: std::sync::LazyLock<(Mutex<Shared>, Condvar)> =
-    std::sync::LazyLock::new(|| (Mutex::new(Shared::default()), Condvar::new()));
+static SHARED: std::sync::LazyLock<Mutex<Shared>> =
+    std::sync::LazyLock::new(|| Mutex::new(Shared::default()));
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Goes up each time detail arrives: a window compares it with the one
@@ -162,8 +167,7 @@ const MOST_SAMPLES: f64 = 4_000_000.0;
 /// pan does not read again) and this is `None`.
 #[must_use]
 pub fn get(source: &Source, a: f64, b: f64, step: f64) -> Option<Arc<Detail>> {
-    let (lock, wake) = &*SHARED;
-    let mut shared = lock.lock().ok()?;
+    let mut shared = SHARED.lock().ok()?;
     if let Some(held) = shared.held.get(&source.guid)
         && held.key == source.key()
         && held.detail.from <= a + 1e-9
@@ -179,19 +183,15 @@ pub fn get(source: &Source, a: f64, b: f64, step: f64) -> Option<Arc<Detail>> {
         (b + spare).min(source.at + source.length),
         step,
     );
-    if shared.reading.get(&source.guid) != Some(&want) {
-        shared.wanted.insert(source.guid.clone(), want);
-        if !shared.worker {
-            shared.worker = true;
-            let spawned = std::thread::Builder::new()
-                .name("wave-detail".to_owned())
-                .spawn(work);
-            if spawned.is_err() {
-                shared.worker = false;
-            }
-        }
+    if shared.reading.get(&source.guid) != Some(&want)
+        && shared.wanted.get(&source.guid).map(|(w, _)| w) != Some(&want)
+    {
+        shared.asked = shared.asked.wrapping_add(1);
+        let order = shared.asked;
+        shared.wanted.insert(source.guid.clone(), (want, order));
         drop(shared);
-        wake.notify_one();
+        // One read for each ask, of whatever is newest when it runs.
+        read_newest();
     }
     None
 }
@@ -199,7 +199,7 @@ pub fn get(source: &Source, a: f64, b: f64, step: f64) -> Option<Arc<Detail>> {
 /// Hold `detail` as `source`'s, as a read would.
 #[cfg(test)]
 pub fn hold(source: &Source, detail: Detail) {
-    if let Ok(mut shared) = SHARED.0.lock() {
+    if let Ok(mut shared) = SHARED.lock() {
         shared.held.insert(
             source.guid.clone(),
             Held {
@@ -210,42 +210,54 @@ pub fn hold(source: &Source, detail: Detail) {
     }
 }
 
-/// The reader: whatever is wanted, newest asks only, until the window
-/// closes.
-fn work() {
-    let (lock, wake) = &*SHARED;
-    loop {
-        let batch: Vec<(String, Want)> = {
-            let Ok(mut shared) = lock.lock() else { return };
-            while shared.wanted.is_empty() {
-                shared = match wake.wait(shared) {
-                    Ok(s) => s,
-                    Err(_) => return,
-                };
-            }
-            let batch: Vec<(String, Want)> = shared.wanted.drain().collect();
-            for (guid, want) in &batch {
-                shared.reading.insert(guid.clone(), want.clone());
-            }
-            batch
+/// Read the newest ask on the waveform pool. Each ask queues one of
+/// these; whichever runs takes what is newest then, so a stale ask is
+/// read last, if at all.
+#[cfg(feature = "native")]
+fn read_newest() {
+    crate::wave_pool::spawn(|| {
+        let (guid, want) = {
+            let Ok(mut shared) = SHARED.lock() else {
+                return;
+            };
+            let Some(guid) = newest(&shared.wanted) else {
+                return;
+            };
+            let Some((want, _)) = shared.wanted.remove(&guid) else {
+                return;
+            };
+            shared.reading.insert(guid.clone(), want.clone());
+            (guid, want)
         };
-        for (guid, want) in batch {
-            let read = read(&want);
-            if let Ok(mut shared) = lock.lock() {
+        let read = read(&want);
+        if let Ok(mut shared) = SHARED.lock() {
+            if shared.reading.get(&guid) == Some(&want) {
                 shared.reading.remove(&guid);
-                if let Some(detail) = read {
-                    shared.held.insert(
-                        guid,
-                        Held {
-                            key: want.0.key(),
-                            detail: Arc::new(detail),
-                        },
-                    );
-                    GENERATION.fetch_add(1, Ordering::Relaxed);
-                }
+            }
+            if let Some(detail) = read {
+                shared.held.insert(
+                    guid,
+                    Held {
+                        key: want.0.key(),
+                        detail: Arc::new(detail),
+                    },
+                );
+                GENERATION.fetch_add(1, Ordering::Relaxed);
             }
         }
-    }
+    });
+}
+
+/// Nowhere to read from in a page: the coarse waveform stays.
+#[cfg(not(feature = "native"))]
+const fn read_newest() {}
+
+/// The item asked for last.
+fn newest(wanted: &HashMap<String, (Want, u64)>) -> Option<String> {
+    wanted
+        .iter()
+        .max_by_key(|(_, (_, order))| *order)
+        .map(|(guid, _)| guid.clone())
 }
 
 /// Read one stretch from the engine.
@@ -257,6 +269,7 @@ fn read((source, a, b, step): &Want) -> Option<Detail> {
     let project = ProjectContext::Project(crate::open::current_song()?);
     let accessor =
         daw.create_take_accessor(project, ItemRef::Guid(source.guid.clone()), TakeRef::Active)?;
+
     // The source's own rate and channels: a read of none says them.
     let format = daw.get_samples(GetSamplesRequest {
         accessor_id: accessor.clone(),
@@ -291,6 +304,36 @@ const fn read(_: &Want) -> Option<Detail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reader takes the item asked for last: what is on screen now,
+    /// before what was a scroll ago.
+    #[test]
+    fn the_newest_ask_is_read_first() {
+        let want = |guid: &str| {
+            (
+                Source {
+                    guid: guid.to_owned(),
+                    at: 0.0,
+                    length: 1.0,
+                    offset: 0.0,
+                },
+                0.0,
+                1.0,
+                0.01,
+            )
+        };
+        let mut wanted = HashMap::new();
+        for (order, guid) in ["a", "b", "c"].iter().enumerate() {
+            wanted.insert(
+                (*guid).to_owned(),
+                (want(guid), u64::try_from(order).unwrap_or(0)),
+            );
+        }
+        wanted.insert("a".to_owned(), (want("a"), 9));
+        assert_eq!(newest(&wanted).as_deref(), Some("a"), "asked again, newest");
+        wanted.remove("a");
+        assert_eq!(newest(&wanted).as_deref(), Some("c"));
+    }
 
     /// Runs of samples become their loudest each way, both channels'.
     #[test]

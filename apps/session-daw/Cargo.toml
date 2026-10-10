@@ -47,6 +47,8 @@ editor-state = { workspace = true, optional = true }
 keyflow-editor-lang = { workspace = true, optional = true }
 # The chart editor's worker replies over it (what `use_coroutine` hands out).
 futures-channel = { workspace = true, optional = true }
+# The waveform readers' pool (`wave_pool`).
+rayon = { workspace = true, optional = true }
 daw-theme-art = { workspace = true }
 # The mix phases the mixer's left rail lists.
 session = { workspace = true }
@@ -288,6 +290,7 @@ native = [
     "dep:editor-state",
     "dep:keyflow-editor-lang",
     "dep:futures-channel",
+    "dep:rayon",
     "dep:futures-util",
     "session/collab",
     "dep:architect",

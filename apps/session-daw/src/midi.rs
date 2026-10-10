@@ -324,11 +324,48 @@ impl Previews {
     /// Read the peaks of every audio item named, now, on this thread —
     /// [`Self::fill_blocking`]'s twin, for the same reason: a window that
     /// opens on blank lanes and fills them in reads as a broken session.
+    ///
+    /// With the engine in this process, every item at once across the
+    /// waveform pool ([`crate::wave_pool`]); otherwise over the engine's
+    /// link, several at a time.
     pub fn fill_waves_blocking(&self, guids: Vec<String>) {
+        #[cfg(feature = "native")]
+        if self.fill_waves_local(&guids) {
+            return;
+        }
         let Some(runtime) = crate::open::runtime() else {
             return;
         };
         runtime.block_on(self.fill_waves(guids));
+    }
+
+    /// Read every item's peaks from the engine in this process, in
+    /// parallel on the waveform pool; `false` with no engine here.
+    #[cfg(feature = "native")]
+    fn fill_waves_local(&self, guids: &[String]) -> bool {
+        use daw::service::{ItemRef, ProjectContext, TakeRef};
+        use daw_proto::Peaks as _;
+        let (Some(daw), Some(song)) = (crate::open::local_engine(), crate::open::current_song())
+        else {
+            return false;
+        };
+        let project = ProjectContext::Project(song);
+        let read = crate::wave_pool::map(guids, |guid| {
+            let peaks = daw.take_peaks(
+                project.clone(),
+                ItemRef::Guid(guid.clone()),
+                TakeRef::Active,
+                WAVE_BLOCK,
+            );
+            Wave::from_peaks(&peaks).map(|wave| (guid.clone(), wave))
+        });
+        if let Ok(mut waves) = self.waves.lock() {
+            for (guid, wave) in read.into_iter().flatten() {
+                waves.insert(guid, Arc::new(wave));
+            }
+        }
+        self.arrived();
+        true
     }
 
     /// Read the peaks, awaited — the web build's way in.
