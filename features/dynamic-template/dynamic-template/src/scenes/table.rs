@@ -1064,30 +1064,23 @@ fn drum_tracking_overview() -> Scene {
     }
 }
 
-/// **Drum Editing**: one row per source piece, the mics folded into it.
+/// **Drum Editing**: one row per source piece; opened, the tracks that
+/// hold what was recorded.
 ///
-/// The arrangement's counterpart of the docked stack's lanes, and
-/// deliberately the same fold: what is selected in one is what is
-/// edited in the other, so an edit made in the stack lands where the
-/// arrangement says it should. The Process folder and the bus tree are
-/// hidden outright — editing is about the takes, and a send has no hits
-/// in it.
+/// The arrangement's counterpart of the docked stack's lanes: a piece
+/// folded is every mic of it at once, so an edit to the piece is an edit
+/// to all of them. Opened, a piece shows where its recording is — its
+/// mics and its trigger, `In`, `Out`, `Trig` — lifted out of the Sum that
+/// adds them up, and nothing derived from them: no sub, fundamental,
+/// sample or reverb return, which have no hits of their own. The Process
+/// folder and the bus tree are hidden outright — editing is about the
+/// takes, and a send has no hits in it.
 ///
 /// This is what Edit mode shows for the kit.
 // r[impl flow.drums.editing.scene]
 // r[impl flow.scenes.follow-mode]
 fn drum_editing() -> Scene {
-    let mut rules = vec![
-        // The mics fold into their piece: an edit to a piece is an edit
-        // to every mic of it at once, so the mic rows are noise here.
-        Rule::new(
-            Selector {
-                role: Role::Leaf,
-                ..under(&KIT)
-            },
-            Effect::hidden(),
-        ),
-    ];
+    let mut rules = Vec::new();
     for piece in PIECES {
         rules.push(Rule::new(
             Selector {
@@ -1095,6 +1088,26 @@ fn drum_editing() -> Scene {
                 ..under(&[KIT[0], KIT[1], piece])
             },
             Effect::at(Size::Working).folded(Fold::Collapsed),
+        ));
+    }
+    // The Sum's row goes, its mics stay; what is made from the mics goes.
+    rules.push(Rule::new(
+        Selector {
+            kind: Some("sum".to_owned()),
+            ..under(&KIT)
+        },
+        Effect {
+            size: None,
+            fold: Some(Fold::Lifted),
+        },
+    ));
+    for derived in ["sub", "fundamental", "sample", "verb"] {
+        rules.push(Rule::new(
+            Selector {
+                kind: Some(derived.to_owned()),
+                ..under(&KIT)
+            },
+            Effect::hidden(),
         ));
     }
     rules.extend([

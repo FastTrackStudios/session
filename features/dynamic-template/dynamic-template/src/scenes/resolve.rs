@@ -133,6 +133,9 @@ fn walk(facts: &[Fact], effects: &[Resolved]) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::with_capacity(facts.len());
     // The depth of the shallowest folded folder we are inside, if any.
     let mut folded: Option<u32> = None;
+    // The depths of the lifted folders we are inside: each lifts what it
+    // holds one level.
+    let mut lifted: Vec<u32> = Vec::new();
     for (fact, effect) in facts.iter().zip(effects) {
         if let Some(at) = folded {
             if fact.depth > at {
@@ -140,6 +143,16 @@ fn walk(facts: &[Fact], effects: &[Resolved]) -> Vec<Row> {
             }
             folded = None;
         }
+        while lifted.last().is_some_and(|at| fact.depth <= *at) {
+            lifted.pop();
+        }
+        if effect.fold == Fold::Lifted && fact.is_folder {
+            lifted.push(fact.depth);
+            continue;
+        }
+        let depth = fact
+            .depth
+            .saturating_sub(u32::try_from(lifted.len()).unwrap_or(u32::MAX));
         if effect.fold == Fold::Hidden {
             // A hidden leaf drops its own row; a hidden folder drops
             // everything under it as well.
@@ -158,7 +171,7 @@ fn walk(facts: &[Fact], effects: &[Resolved]) -> Vec<Row> {
         };
         out.push(Row {
             target: Target::Track(fact.guid.clone()),
-            depth: fact.depth,
+            depth,
             size,
             fold: effect.fold,
         });
@@ -446,6 +459,54 @@ mod tests {
         };
         assert_eq!(size("kit"), Size::Compact, "the default covers the folder");
         assert_eq!(size("in"), Size::Working, "the later rule won");
+    }
+
+    /// A lifted folder drops its own row and keeps what it holds, one
+    /// level up: a piece's Sum while editing, its mics under the piece.
+    #[test]
+    fn a_lifted_folder_leaves_its_rows_a_level_up() {
+        let drums = Segment::named("Drum Kit")
+            .of(Kind::Group)
+            .standing_for("Drum Kit");
+        let kick = Segment::named("Kick").of(Kind::Piece).standing_for("Kick");
+        let sum = Segment::named("Sum").of(Kind::Sum);
+        let facts = vec![
+            Fact::folder("kick", "Kick", 0, 0)
+                .of(Kind::Piece)
+                .at(vec![drums.clone(), kick.clone()]),
+            Fact::folder("sum", "Sum", 1, 1).of(Kind::Sum).at(vec![
+                drums.clone(),
+                kick.clone(),
+                sum.clone(),
+            ]),
+            Fact::leaf("in", "In", 2, 2).of(Kind::Source).at(vec![
+                drums.clone(),
+                kick.clone(),
+                sum,
+            ]),
+            Fact::leaf("sub", "Sub", 3, 1)
+                .of(Kind::Sub)
+                .at(vec![drums, kick]),
+        ];
+        let lifted = scene(
+            Effect::at(Size::Compact),
+            vec![Rule::new(
+                Selector {
+                    kind: Some("sum".to_owned()),
+                    ..Selector::default()
+                },
+                Effect {
+                    size: None,
+                    fold: Some(Fold::Lifted),
+                },
+            )],
+        );
+        let rows = resolve(&lifted, &facts, Surface::Arrange, None, None, None);
+        let placed: Vec<(&str, u32)> = rows
+            .iter()
+            .filter_map(|r| Some((r.guid()?, r.depth)))
+            .collect();
+        assert_eq!(placed, [("kick", 0), ("in", 1), ("sub", 1)]);
     }
 
     /// A collapsed folder keeps its own row and drops what it holds; a

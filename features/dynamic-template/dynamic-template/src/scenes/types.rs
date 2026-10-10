@@ -75,13 +75,17 @@ pub enum Fold {
     Collapsed,
     /// The folder and everything in it go.
     Hidden,
+    /// The folder's own row goes; the rows inside it stay, lifted to its
+    /// depth — a piece's Sum while editing, where the mics are the rows
+    /// that matter and the folder summing them is not.
+    Lifted,
 }
 
 impl Fold {
     /// Whether the rows beneath a folder in this state survive.
     #[must_use]
     pub const fn keeps_children(self) -> bool {
-        matches!(self, Self::Open | Self::Small)
+        matches!(self, Self::Open | Self::Small | Self::Lifted)
     }
 
     /// REAPER's `I_FOLDERCOMPACT` value for a folder in this state.
@@ -94,6 +98,9 @@ impl Fold {
             Self::Open => Some(0),
             Self::Small => Some(1),
             Self::Collapsed => Some(2),
+            // REAPER cannot drop a folder's row and keep its tracks: it
+            // shows the folder open.
+            Self::Lifted => Some(0),
             Self::Hidden => None,
         }
     }

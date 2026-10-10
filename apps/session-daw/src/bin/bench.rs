@@ -1559,6 +1559,15 @@ struct Session {
 impl Session {
     fn read(path: &std::path::Path) -> Option<Self> {
         let raw = session_daw::studio::fetch()?;
+        // `FTS_BENCH_OPEN=Kick,Snare`: those folders opened, as a click on
+        // their fold buttons would.
+        if let Ok(names) = std::env::var("FTS_BENCH_OPEN") {
+            for name in names.split(',').map(str::trim) {
+                for track in raw.tracks.iter().filter(|t| t.is_folder && t.name == name) {
+                    session_daw::folds::toggle(&track.guid, false);
+                }
+            }
+        }
         let scene = std::env::var("FTS_BENCH_SCENE").ok();
         let (project, rows) = session_daw::studio::plan_rows(&raw, scene.as_deref(), path);
         // Read before anything is recorded, not after: a renderer draws

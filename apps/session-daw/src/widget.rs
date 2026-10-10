@@ -1116,6 +1116,13 @@ impl ArrangementWidget {
                         tracing::info!(
                             stage.staged = report.staged.len(),
                             stage.silent = report.silent.len(),
+                            stage.silent_tracks = %report.silent.join(", "),
+                            stage.levels = %report
+                                .staged
+                                .iter()
+                                .map(|s| format!("{} {:.1}→{:+.1}", s.name, s.level, s.gain_db))
+                                .collect::<Vec<_>>()
+                                .join(", "),
                             "gain staged"
                         );
                         "gain staged"
