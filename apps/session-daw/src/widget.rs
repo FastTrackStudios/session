@@ -999,6 +999,20 @@ impl ArrangementWidget {
             return false;
         }
         let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1_000_000.0;
+        // A take whose waveform was never read (the EDIT lane's copy, made
+        // after the song opened): read now, one per drum track, so every
+        // slice cut from it shows its own part.
+        let unread: Vec<String> = items
+            .iter()
+            .filter(|guid| self.previews.wave(guid).is_none())
+            .cloned()
+            .collect();
+        #[cfg(feature = "native")]
+        if !unread.is_empty() {
+            self.previews.fill_waves_blocking(unread);
+        }
+        #[cfg(not(feature = "native"))]
+        let _ = unread;
         let moves: Vec<(f64, f64)> = moves
             .iter()
             .map(|&(hit, shift)| (seconds(hit), seconds(shift)))
@@ -1276,6 +1290,16 @@ impl ArrangementWidget {
         let unread = unread_midi(&fresh, &self.previews);
         if !unread.is_empty() {
             self.previews.fill_blocking(unread);
+        }
+        // Audio items made since the song opened (a lane's copy, a slice
+        // cut elsewhere): their peaks read behind the window, each drawn
+        // as it arrives, rather than left blank for good.
+        let waves = unread_audio(&fresh, &self.previews);
+        if !waves.is_empty()
+            && let Some(runtime) = crate::open::runtime()
+        {
+            let previews = self.previews.clone();
+            runtime.spawn(async move { previews.fill_waves(waves).await });
         }
         self.adopt(fresh);
     }
@@ -1604,6 +1628,16 @@ impl ArrangementWidget {
             C::Solo => Edit::ToggleSolo(guid),
             C::RecArm => Edit::ToggleArm(guid),
             C::Phase => Edit::SetPhase(guid, !track.phase_inverted),
+            C::LanePrev | C::LaneNext => {
+                let Some(mask) = crate::lanes::stepped(
+                    track,
+                    self.project.items.get(&guid).map_or(&[][..], Vec::as_slice),
+                    spot.control == C::LaneNext,
+                ) else {
+                    return;
+                };
+                Edit::SetLanePlays(guid, mask)
+            }
             C::Name => Edit::Select(guid),
             // A fold is an edit to the VIEW and not to a track: the
             // window's folds (`crate::folds`), which plan the rows again.
@@ -2079,6 +2113,7 @@ impl ArrangementWidget {
             Edit::ToggleSolo(guid) => (guid, &|t| t.soloed = !t.soloed),
             Edit::ToggleArm(guid) => (guid, &|t| t.armed = !t.armed),
             Edit::SetPhase(guid, on) => (guid, &|t| t.phase_inverted = *on),
+            Edit::SetLanePlays(guid, mask) => (guid, &|t| t.lane_play_mask = *mask),
             Edit::SetVolume(guid, gain) => (guid, &|t| t.volume = *gain),
             Edit::SetPan(guid, pan) => (guid, &|t| t.pan = *pan),
             Edit::Rename(guid, name) => (guid, &|t| t.name.clone_from(name)),
@@ -2190,6 +2225,21 @@ fn unread_midi(
         .flatten()
         .filter(|item| fresh.is_midi(&item.guid) && previews.get(&item.guid).is_none())
         .map(|item| (item.guid.clone(), item.length.as_seconds()))
+        .collect()
+}
+
+/// The audio items whose peaks have not been read.
+#[cfg(feature = "native")]
+fn unread_audio(
+    fresh: &daw_ui::studio::project::Project,
+    previews: &crate::midi::Previews,
+) -> Vec<String> {
+    fresh
+        .items
+        .values()
+        .flatten()
+        .filter(|item| !fresh.is_midi(&item.guid) && previews.wave(&item.guid).is_none())
+        .map(|item| item.guid.clone())
         .collect()
 }
 

@@ -54,6 +54,9 @@ pub enum Edit {
     /// the state to invert it would let a click disagree with the
     /// control it landed on.
     SetPhase(String, bool),
+    /// Which of the track's fixed lanes play (bit `n`, lane `n`): the
+    /// panel's lane steps play one lane at a time.
+    SetLanePlays(String, u64),
     /// Whether the track's input is monitored, and when.
     ///
     /// Three states rather than a toggle, because REAPER's is three:
@@ -266,6 +269,7 @@ impl Edit {
             | Self::SetPan(g, _)
             | Self::Rename(g, _)
             | Self::SetPhase(g, _)
+            | Self::SetLanePlays(g, _)
             | Self::SetInputMonitor(g, _)
             | Self::SetParentSend(g, _)
             | Self::SetFxParam(g, ..)
@@ -1525,6 +1529,7 @@ async fn apply(edit: &Edit) {
         Edit::SetPan(_, p) => track.set_pan(*p).await,
         Edit::Rename(_, name) => track.rename(name).await,
         Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
+        Edit::SetLanePlays(_, mask) => track.set_lane_play_mask(*mask).await,
         Edit::SetInputMonitor(_, mode) => track.set_input_monitor(*mode).await,
         Edit::SetParentSend(_, enabled) => track.set_parent_send(*enabled).await,
         Edit::SetFxParam(_, fx, index, value) => match track.fx_chain().by_name(fx).await {

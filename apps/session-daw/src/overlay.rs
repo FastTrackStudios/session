@@ -1754,7 +1754,8 @@ fn control_row(
         i32::try_from(*depth).unwrap_or(0),
         track.is_folder,
         scene.tcp,
-    );
+    )
+    .with_lanes(live.lane_count > 1);
     if row.density == crate::tcp::Density::Bar {
         return;
     }
@@ -1768,6 +1769,13 @@ fn control_row(
             control,
         })
     };
+
+    // The fixed lanes' line, under mute and solo: the lane that plays,
+    // between the steps to the one before and after. Over a theme's row
+    // as over the built-in one.
+    if let Some(band) = row.lane_line() {
+        lane_line(out, palette, font, live, &row, band, &look);
+    }
 
     // A theme's row draws its own live part — every value and the
     // pointer's state — over the recording it made.
@@ -2193,4 +2201,65 @@ mod panel_tests {
             drawn(&scene, &palette, &font, &rows, &tracks, &b)
         );
     }
+}
+
+/// The lane line ([`crate::row::Row::lane_line`]): a well, the steps at
+/// each end (lit under the pointer), the playing lane's name between.
+fn lane_line(
+    out: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    live: &Track,
+    row: &crate::row::Row,
+    band: vello::kurbo::Rect,
+    look: &dyn Fn(crate::row::Control) -> Interaction,
+) {
+    use crate::row::Control as C;
+    use vello::kurbo::{BezPath, RoundedRect};
+    use vello::peniko::Fill;
+    /// The name's type size.
+    const SIZE: f32 = 9.0;
+    out.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.divider.multiply_alpha(0.5),
+        None,
+        &RoundedRect::from_rect(band, 3.0),
+    );
+    for (control, forward) in [(C::LanePrev, false), (C::LaneNext, true)] {
+        let Some(r) = row.rect(control) else { continue };
+        let ink = match look(control) {
+            Interaction::Normal => palette.text_dim,
+            _ => palette.text,
+        };
+        let (cx, cy) = (r.center().x, r.center().y);
+        let (w, h) = (2.5, 3.5);
+        let mut arrow = BezPath::new();
+        if forward {
+            arrow.move_to((cx - w, cy - h));
+            arrow.line_to((cx + w, cy));
+            arrow.line_to((cx - w, cy + h));
+        } else {
+            arrow.move_to((cx + w, cy - h));
+            arrow.line_to((cx - w, cy));
+            arrow.line_to((cx + w, cy + h));
+        }
+        arrow.close_path();
+        out.fill(Fill::NonZero, Affine::IDENTITY, ink, None, &arrow);
+    }
+    let (Some(prev), Some(next)) = (row.rect(C::LanePrev), row.rect(C::LaneNext)) else {
+        return;
+    };
+    let room = (next.x0 - prev.x1).max(0.0);
+    let label = font.elide(&crate::lanes::label(live), SIZE, room);
+    let width = font.width(&label, SIZE);
+    crate::tcp::glyphs(
+        out,
+        font,
+        palette.text,
+        &label,
+        prev.x1 + (room - width).max(0.0) / 2.0,
+        f64::from(SIZE).mul_add(0.35, band.center().y),
+        SIZE,
+    );
 }

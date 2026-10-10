@@ -33,6 +33,10 @@ pub enum Control {
     /// that changes the signal rather than a level, which is why the
     /// theme puts it on its own away from the button column.
     Phase,
+    /// The fixed lanes' step back: the lane before the playing one plays.
+    LanePrev,
+    /// And forward.
+    LaneNext,
 }
 
 impl Control {
@@ -65,6 +69,8 @@ pub struct Row {
     field_top: f64,
     field_h: f64,
     band: f64,
+    /// The track has fixed lanes, so the gutter shows which plays.
+    lanes: bool,
 }
 
 impl Row {
@@ -85,7 +91,43 @@ impl Row {
             field_top,
             field_h,
             band: field_h,
+            lanes: false,
         }
+    }
+
+    /// The row of a track with fixed lanes (more than one): its gutter
+    /// shows the playing lane's name between steps back and forward.
+    #[must_use]
+    pub const fn with_lanes(mut self, lanes: bool) -> Self {
+        self.lanes = lanes;
+        self
+    }
+
+    /// The lane line: in the gutter, under mute and solo and above
+    /// polarity, as wide as the two buttons — on a row tall enough to
+    /// hold it between them, on a track with fixed lanes.
+    #[must_use]
+    pub fn lane_line(&self) -> Option<Rect> {
+        /// Its height: a name small enough to sit between the steps.
+        const LINE_H: f64 = 16.0;
+        /// Clear of the buttons above and polarity below.
+        const GAP: f64 = 3.0;
+        if !self.lanes || self.tcp.compact || self.density == Density::Bar {
+            return None;
+        }
+        let above = self.rect(Control::Mute)?;
+        let floor = self
+            .rect(Control::Phase)
+            .map_or(self.y + self.height, |phase| phase.y0);
+        let top = above.y1 + GAP;
+        (top + LINE_H + GAP <= floor).then(|| {
+            Rect::new(
+                above.x0,
+                top,
+                BUTTON.0.mul_add(2.0, above.x0) + BUTTON_GAP,
+                top + LINE_H,
+            )
+        })
     }
 
     /// Whether the band is tall enough for the routing and FX buttons.
@@ -141,6 +183,18 @@ impl Row {
         Some(Rect::new(x, top, x + cell, top + h))
     }
 
+    /// A lane step: the lane line's left end (back) or right (`next`).
+    fn lane_step(&self, next: bool) -> Option<Rect> {
+        /// A step's width.
+        const STEP_W: f64 = 11.0;
+        let line = self.lane_line()?;
+        Some(if next {
+            Rect::new(line.x1 - STEP_W, line.y0, line.x1, line.y1)
+        } else {
+            Rect::new(line.x0, line.y0, line.x0 + STEP_W, line.y1)
+        })
+    }
+
     /// Where a control is, or `None` if this row does not show it.
     #[must_use]
     pub fn rect(&self, control: Control) -> Option<Rect> {
@@ -157,6 +211,7 @@ impl Row {
         let field_x = self.tcp.name_field().0 + self.indent;
         let volume_x = self.tcp.volume_x();
         match control {
+            Control::LanePrev | Control::LaneNext => self.lane_step(control == Control::LaneNext),
             Control::Folder => Some(Rect::new(
                 self.indent,
                 self.y,
@@ -276,6 +331,8 @@ impl Row {
         // Small before large, so the arm inside the name field wins
         // over the field and the knobs win over the row.
         [
+            Control::LanePrev,
+            Control::LaneNext,
             Control::Phase,
             Control::Mute,
             Control::Solo,

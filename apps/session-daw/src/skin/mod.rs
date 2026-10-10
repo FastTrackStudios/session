@@ -248,6 +248,8 @@ pub const fn row_name(control: crate::row::Control) -> &'static str {
         C::Name => "name",
         C::Folder => "folder",
         C::Phase => "phase",
+        C::LanePrev => "lane-prev",
+        C::LaneNext => "lane-next",
     }
 }
 

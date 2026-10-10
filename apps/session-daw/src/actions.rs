@@ -1267,6 +1267,22 @@ struct CheckSavedArg {
     dir: String,
 }
 
+static FOLD: ActionMeta = meta(
+    "SESSION_FOLD",
+    "session_fold",
+    "Open or shut a folder",
+    "Open (`open: true`) the folder `track` (its GUID, path or name) and every folder it is in, so its tracks show; or shut it (`open: false`). Returns the folders changed.",
+    "View",
+    "",
+);
+
+/// A folder to open or shut.
+#[derive(Facet)]
+struct FoldArg {
+    track: String,
+    open: bool,
+}
+
 #[cfg(feature = "native")]
 static CHECKPOINT: ActionMeta = meta(
     "SESSION_CHECKPOINT",
@@ -1403,6 +1419,31 @@ struct SelectTrackArg {
 
 #[cfg(feature = "native")]
 fn register_save(list: &ActionList) {
+    list.register(&FOLD, Effect::Mutating, |a: FoldArg| {
+        let (daw, project) = song()?;
+        let guid = resolve(daw, &project, &a.track)?;
+        let tracks = daw::service::Tracks::all(daw, project);
+        let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+            tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+        // Opening a folder opens the ones it is in: a folder open inside a
+        // shut one shows nothing.
+        let mut opened = Vec::new();
+        let mut at = by_guid.get(guid.as_str()).copied();
+        while let Some(track) = at {
+            if track.is_folder && (a.open || track.guid == guid) {
+                crate::folds::toggle(&track.guid, !a.open);
+                opened.push(track.name.clone());
+            }
+            if !a.open {
+                break;
+            }
+            at = track
+                .parent_guid
+                .as_deref()
+                .and_then(|p| by_guid.get(p).copied());
+        }
+        Ok(opened)
+    });
     list.register(&SELECT_TRACK, Effect::Mutating, |a: SelectTrackArg| {
         let (daw, project) = song()?;
         let guid = resolve(daw, &project, &a.track)?;

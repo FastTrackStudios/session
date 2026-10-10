@@ -714,6 +714,15 @@ impl Arrangement {
         let (top, height) = self.row_band(index, view)?;
         let (track, depth) = rows.get(index)?;
         let depth = i32::try_from(*depth).unwrap_or(0);
+        // The lane steps, drawn over a theme's row as over the built-in
+        // one, are hit the same way on both.
+        let row = crate::row::Row::new(top, height, depth, track.is_folder, self.tcp)
+            .with_lanes(track.lane_count > 1);
+        if let Some(step @ (crate::row::Control::LanePrev | crate::row::Control::LaneNext)) =
+            row.control_at(x, y)
+        {
+            return Some((index, step));
+        }
         if let Some(theme) = crate::skin::loaded()
             .as_deref()
             .filter(|t| t.has_role(crate::skin::ROW) && !self.tcp.compact)
@@ -726,7 +735,6 @@ impl Arrangement {
             )?;
             return Some((index, crate::skin::row_control(&hit)?));
         }
-        let row = crate::row::Row::new(top, height, depth, track.is_folder, self.tcp);
         // In the band's own frame, which is what `Row` measures from.
         Some((index, row.control_at(x, y)?))
     }

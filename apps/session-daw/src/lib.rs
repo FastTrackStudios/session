@@ -45,6 +45,7 @@ pub mod headless;
 pub mod hit;
 pub mod icons;
 pub mod keys;
+pub mod lanes;
 pub mod layout;
 pub mod live;
 pub mod loading;
