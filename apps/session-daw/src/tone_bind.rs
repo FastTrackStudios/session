@@ -36,14 +36,176 @@ const fn shape(shape: eq_ui::eq_graph_model::EqBandShape) -> &'static str {
     }
 }
 
-/// What `tone` asks of the track's three processors.
+/// What `tone` asks of the track's processors. A processor the track does
+/// not have takes nothing (`Edit::SetFxParam` finds no FX by its name).
 #[must_use]
 pub fn stages(tone: &Tone) -> Vec<Stage> {
     vec![
         ("FTS EQ", eq(tone)),
         ("FTS Comp", comp(tone)),
         ("FTS Saturate", sat(tone)),
+        ("FTS Gate", gate(tone)),
+        ("FTS Reverb", reverb(tone)),
+        ("FTS Delay", delay(tone)),
+        ("FTS Modulation", modulation(tone)),
     ]
+}
+
+/// `(index, value)` for each of `fx`'s `(param, text)` the plugin knows.
+fn all(fx: &str, settings: &[(&str, String)]) -> Vec<(u32, f64)> {
+    settings
+        .iter()
+        .filter_map(|(param, text)| at(fx, param, text))
+        .collect()
+}
+
+fn gate(tone: &Tone) -> Vec<(u32, f64)> {
+    let g = tone.gate;
+    all(
+        "FTS Gate",
+        &[
+            ("Threshold", format!("{:.1} dB", g.threshold)),
+            ("Range", format!("{:.1} dB", g.range)),
+            ("Attack", format!("{:.2} ms", g.attack)),
+            ("Hold", format!("{:.1} ms", g.hold)),
+            ("Release", format!("{:.1} ms", g.release)),
+        ],
+    )
+}
+
+/// A frequency as the plugins write one.
+fn hz_text(hz: f32) -> String {
+    if hz >= 1_000.0 {
+        format!("{:.1} kHz", hz / 1_000.0)
+    } else {
+        format!("{hz:.1} Hz")
+    }
+}
+
+/// The plugin's note value for a length in quarter notes, if it has one.
+fn note(quarters: f64) -> Option<&'static str> {
+    [
+        (4.0, "1/1"),
+        (3.0, "1/2D"),
+        (2.0, "1/2"),
+        (1.5, "1/4D"),
+        (1.0, "1/4"),
+        (2.0 / 3.0, "1/4T"),
+        (0.75, "1/8D"),
+        (0.5, "1/8"),
+        (1.0 / 3.0, "1/8T"),
+        (0.25, "1/16"),
+    ]
+    .iter()
+    .find(|(q, _)| (q - quarters).abs() < 1e-6)
+    .map(|(_, label)| *label)
+}
+
+fn reverb(tone: &Tone) -> Vec<(u32, f64)> {
+    let room = &tone.reverb;
+    let space = reverb_profiles::PROFILES
+        .iter()
+        .find(|p| p.algorithm == room.algorithm)
+        .map_or("Concert Hall", |p| p.name);
+    // Its time as the plugin takes it: a note value where it is locked to
+    // one the plugin has, else seconds.
+    let synced = room
+        .sync
+        .and_then(|i| crate::beats::REVERB.get(i))
+        .and_then(|(_, quarters)| note(*quarters));
+    let mut settings = vec![("Space", space.to_owned())];
+    if let Some(div) = synced {
+        settings.push(("Decay Mode", "Sync".to_owned()));
+        settings.push(("Decay Div", div.to_owned()));
+    } else {
+        settings.push(("Decay Mode", "Time".to_owned()));
+        settings.push(("Decay Time", format!("{:.2}", room.decay)));
+    }
+    settings.extend([
+        ("Pre-Delay", format!("{:.1} ms", room.predelay)),
+        ("Size", format!("{:.0}%", room.size * 100.0)),
+        ("Damping", format!("{:.0}%", room.damping * 100.0)),
+        ("Diffusion", format!("{:.0}%", room.diffusion * 100.0)),
+        ("Mix", format!("{:.0}%", room.mix * 100.0)),
+    ]);
+    let extra = tone.reverb_extra;
+    settings.extend([
+        ("Modulation", format!("{:.0}%", extra.modulation * 100.0)),
+        ("Tone", format!("{:.0}%", (extra.tone + 1.0) * 50.0)),
+    ]);
+    let mut out = all("FTS Reverb", &settings);
+    // The cuts as the post-EQ's first band and its last ([`crate::mix_chains`]
+    // puts them there): a cut at the edge of hearing is no cut, the band a bell.
+    let band = |n: u32, cut: &str, hz: f32, none: bool| -> Vec<(u32, f64)> {
+        const BAND: u32 = 4;
+        let shape = if none { "Bell" } else { cut };
+        [("Post Shape", shape.to_owned()), ("Post Freq", hz_text(hz))]
+            .iter()
+            .filter_map(|(param, text)| at("FTS Reverb", param, text))
+            .map(|(index, value)| {
+                (
+                    index.saturating_add(n.saturating_sub(1).saturating_mul(BAND)),
+                    value,
+                )
+            })
+            .collect()
+    };
+    out.extend(band(1, "Low Cut", extra.low_cut, extra.low_cut <= 20.0));
+    out.extend(band(
+        6,
+        "High Cut",
+        extra.high_cut,
+        extra.high_cut >= 20_000.0,
+    ));
+    out
+}
+
+fn delay(tone: &Tone) -> Vec<(u32, f64)> {
+    let echo = &tone.delay;
+    let space = delay_profiles::PROFILES
+        .iter()
+        .find(|p| p.style == echo.style)
+        .map(|p| p.name);
+    let synced = echo
+        .sync
+        .and_then(|i| crate::beats::DELAY.get(i))
+        .and_then(|(_, _, quarters)| note(*quarters));
+    let mut settings: Vec<(&str, String)> =
+        space.map(|s| ("Space", s.to_owned())).into_iter().collect();
+    if let Some(div) = synced {
+        settings.push(("Time Sync", "Sync".to_owned()));
+        settings.push(("Time L Div", div.to_owned()));
+    } else {
+        settings.push(("Time Sync", "Free".to_owned()));
+        settings.push(("Time L", format!("{:.1} ms", echo.time)));
+    }
+    settings.extend([
+        ("Feedback", format!("{:.0}%", echo.feedback * 100.0)),
+        ("Tone", format!("{:.0}%", echo.tone * 100.0)),
+        ("Mix", format!("{:.0}%", echo.mix * 100.0)),
+    ]);
+    all("FTS Delay", &settings)
+}
+
+fn modulation(tone: &Tone) -> Vec<(u32, f64)> {
+    use modulation_ui::viz::Engine;
+    let w = &tone.modulation;
+    let circuit = match w.engine {
+        Engine::Flanger => "Flanger",
+        Engine::Vibrato => "Vibrato",
+        Engine::Tremolo => "Opto",
+        Engine::Phaser => "Auto Wah",
+        Engine::Chorus | Engine::Rotary => "Juno",
+    };
+    all(
+        "FTS Modulation",
+        &[
+            ("Circuit", circuit.to_owned()),
+            ("Rate", format!("{:.2} Hz", w.rate)),
+            ("Depth", format!("{:.0}", w.depth * 100.0)),
+            ("Mix", format!("{:.0}", w.mix * 100.0)),
+        ],
+    )
 }
 
 /// `(index, value)` for `fx`'s `param` at `text`, if the plugin knows it.
@@ -85,9 +247,16 @@ fn eq(tone: &Tone) -> Vec<(u32, f64)> {
 }
 
 fn comp(tone: &Tone) -> Vec<(u32, f64)> {
+    use crate::plugin_faces::CompFace;
     const FX: &str = "FTS Comp";
     let c = tone.comp;
+    let style = match tone.comp_face {
+        CompFace::Fet => "FET",
+        CompFace::Opto => "Opto",
+        CompFace::Vca => "VCA",
+    };
     [
+        ("Style", style.to_owned()),
         ("Threshold", format!("{:.1} dB", c.threshold)),
         ("Ratio", format!("{:.1}:1", c.ratio)),
         ("Knee", format!("{:.1} dB", c.knee)),
@@ -148,7 +317,11 @@ mod tests {
         let first = store.flush();
         let comp: Vec<&Edit> = first.iter().filter(|e| matches!(e, Edit::SetFxParam(_, fx, ..) | Edit::SetFxEnabled(_, fx, _) if fx == "FTS Comp")).collect();
         assert!(first.contains(&Edit::SetFxEnabled("t".into(), "FTS Comp".into(), true)));
-        assert_eq!(comp.len(), 6, "five parameters and the switch: {comp:?}");
+        assert_eq!(
+            comp.len(),
+            7,
+            "its style, five parameters and the switch: {comp:?}"
+        );
         assert!(first.iter().all(|e| !matches!(e, Edit::SetFxParam(_, fx, ..) | Edit::SetFxEnabled(_, fx, _) if fx != "FTS Comp")), "EQ and Saturate untouched: {first:?}");
         let (index, value) =
             builtin_fx::setting("FTS Comp", "Threshold", "-30.0 dB").expect("a threshold");

@@ -1762,6 +1762,90 @@ impl Bus {
     }
 }
 
+/// Which tracks' FX chains changed in the engine, by track GUID.
+///
+/// A parameter moved, an FX added, removed, moved or switched: what the FX
+/// row reads again ([`crate::tone::Store::sync`]). Whoever made the change:
+/// the row itself, an action over MCP, the mix chains at prepare.
+#[cfg(feature = "native")]
+pub struct FxWatch {
+    changes: std::sync::mpsc::Receiver<String>,
+    alive: Alive,
+}
+
+#[cfg(feature = "native")]
+impl FxWatch {
+    /// Subscribe. `None` if the facade is not up.
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        let runtime = crate::open::runtime()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let alive = Alive::new();
+        let mine = alive.clone();
+        std::thread::Builder::new()
+            .name("session-daw-fx".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    let _end = scopeguard(move || mine.ended());
+                    let Some(daw) = daw::rpc::Daw::try_get() else {
+                        return;
+                    };
+                    let filter = daw_proto::event_bus::BusFilter {
+                        fx: true,
+                        ..daw_proto::event_bus::BusFilter::default()
+                    };
+                    let Ok(mut stream) = daw.events().subscribe(filter).await else {
+                        return;
+                    };
+                    while let Ok(Some(event)) = stream.recv().await {
+                        let daw_proto::event_bus::DawEvent::Fx(fx) = event.get() else {
+                            continue;
+                        };
+                        if let daw_proto::fx::FxChainContext::Track(track) = fx_context(&fx.event)
+                            && tx.send(track.clone()).is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            })
+            .ok()?;
+        Some(Self { changes: rx, alive })
+    }
+
+    /// The tracks whose chains changed since the last frame.
+    pub fn drain(&self) -> impl Iterator<Item = String> + '_ {
+        self.changes.try_iter()
+    }
+
+    /// Is this subscription still connected?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.alive.is_live()
+    }
+}
+
+/// The chain an FX event is about.
+#[cfg(feature = "native")]
+const fn fx_context(event: &daw_proto::fx::FxEvent) -> &daw_proto::fx::FxChainContext {
+    use daw_proto::fx::FxEvent as E;
+    match event {
+        E::Added { context, .. }
+        | E::Removed { context, .. }
+        | E::EnabledChanged { context, .. }
+        | E::Moved { context, .. }
+        | E::ParameterChanged { context, .. }
+        | E::PresetChanged { context, .. }
+        | E::WindowChanged { context, .. }
+        | E::ContainerCreated { context, .. }
+        | E::ContainerRemoved { context, .. }
+        | E::RoutingModeChanged { context, .. }
+        | E::MovedToContainer { context, .. }
+        | E::ContainerRenamed { context, .. }
+        | E::TreeStructureChanged { context } => context,
+    }
+}
+
 /// The engine's own account of the tracks, as it changes.
 ///
 /// The window predicts an edit so the control moves under the hand —

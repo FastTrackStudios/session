@@ -322,6 +322,10 @@ impl Lane {
 /// modulation at the end of a channel's or a bus's Tone — devices the FX
 /// view has room for and the mixer's strips do not (yet).
 fn fx_chain(tone: &crate::tone::Tone) -> Vec<Which> {
+    // The track's own processors, once its chain is read: what is on it.
+    if let Some(units) = &tone.engine_units {
+        return units.clone();
+    }
     let mut chain = tone
         .panels(crate::tone::panels_for(MixPhase::Tone))
         .to_vec();
@@ -399,6 +403,10 @@ struct DeviceRow {
     /// How deep each track sits, by guid: who is beside whom.
     depths: std::collections::HashMap<String, u32>,
     watch: Option<crate::engine::Watch>,
+    /// Which tracks' FX chains changed in the engine: read again before
+    /// they are drawn (`tone::Store::sync_tracks`).
+    #[cfg(feature = "native")]
+    fx_watch: Option<crate::engine::FxWatch>,
     /// Changes taken off the watch to ask for a frame, applied in it.
     pending: RefCell<Vec<daw_proto::track::TrackEvent>>,
     palette: crate::arrangement::Palette,
@@ -467,6 +475,8 @@ impl DeviceRow {
             tracks: rows.into_iter().map(|(t, _)| t).collect(),
             depths,
             watch: crate::engine::Watch::start(),
+            #[cfg(feature = "native")]
+            fx_watch: crate::engine::FxWatch::start(),
             pending: RefCell::new(Vec::new()),
             palette: crate::skin::palette(&crate::arrangement::Palette::from_theme(
                 &daw_ui::theming::Theme::dark(),
@@ -725,6 +735,18 @@ impl DeviceRow {
 
     /// Whether the engine has said anything since the last frame.
     fn heard(&self) -> bool {
+        // An FX changed in the engine: a frame, to read and draw it.
+        #[cfg(feature = "native")]
+        if let Some(fx) = &self.fx_watch {
+            let changed: Vec<String> = fx.drain().collect();
+            if !changed.is_empty() {
+                let mut store = self.tone.store.borrow_mut();
+                for guid in &changed {
+                    store.changed(guid);
+                }
+                return true;
+            }
+        }
         let Some(watch) = &self.watch else {
             return false;
         };
@@ -1995,6 +2017,26 @@ impl DeviceRow {
         self.down = self
             .down
             .min(family.len().saturating_sub(lanes.min(family.len())));
+        // What the lanes show is what their tracks have: each chain read
+        // from the engine before it is drawn — again where it changed.
+        #[cfg(feature = "native")]
+        {
+            // The tracks first: finding a lane's returns reads the store.
+            let shown: Vec<String> = family
+                .iter()
+                .skip(self.down)
+                .take(lanes)
+                .flat_map(|&at| std::iter::once(at).chain(self.returns(at)))
+                .filter_map(|at| self.tracks.get(at).map(|t| t.guid.clone()))
+                .collect();
+            let mut store = self.tone.store.borrow_mut();
+            if let Some(watch) = &self.fx_watch {
+                for guid in watch.drain() {
+                    store.changed(&guid);
+                }
+            }
+            store.sync_tracks(shown);
+        }
         let mut drawn = Scene::new();
         let mut hits = Hits::default();
         for (n, at) in family.into_iter().skip(self.down).take(lanes).enumerate() {

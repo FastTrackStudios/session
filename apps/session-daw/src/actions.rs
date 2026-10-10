@@ -1355,7 +1355,35 @@ fn song_base(daw: &daw::standalone::Standalone, guid: &str) -> Result<std::path:
 }
 
 #[cfg(feature = "native")]
+static SELECT_TRACK: ActionMeta = meta(
+    "SESSION_SELECT_TRACK",
+    "session_select_track",
+    "Select a track",
+    "Select `track` (its GUID, its path — `Snare/Verb/Plate`, any tail of it — or its name) and nothing else: what the FX row, the mixer and the Editor follow.",
+    "Session",
+    "",
+);
+
+/// Which track.
+#[cfg(feature = "native")]
+#[derive(Facet)]
+struct SelectTrackArg {
+    track: String,
+}
+
+#[cfg(feature = "native")]
 fn register_save(list: &ActionList) {
+    list.register(&SELECT_TRACK, Effect::Mutating, |a: SelectTrackArg| {
+        let (daw, project) = song()?;
+        let guid = resolve(daw, &project, &a.track)?;
+        daw::service::Tracks::select_exclusive(
+            daw,
+            project,
+            daw::service::TrackRef::Guid(guid.clone()),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(guid)
+    });
     list.register(&CHECKPOINT, Effect::Mutating, |a: CheckpointArg| {
         let (daw, project) = song()?;
         let ProjectContext::Project(guid) = &project else {

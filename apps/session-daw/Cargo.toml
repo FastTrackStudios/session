@@ -102,6 +102,8 @@ saturate-dsp = { workspace = true, features = ["analysis"] }
 # Depth panels draw the machine, not a picture of its knob.
 delay-dsp = { workspace = true }
 reverb-dsp = { workspace = true }
+reverb-profiles = { workspace = true }
+delay-profiles = { workspace = true }
 # Their painted pictures, for the FX view's devices.
 reverb-ui = { workspace = true }
 delay-ui = { workspace = true }

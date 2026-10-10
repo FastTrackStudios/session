@@ -298,6 +298,8 @@ saturate-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v
 # analysis probe rather than an exponential drawn from the decay knob.
 delay-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
 reverb-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+reverb-profiles = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+delay-profiles = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
 # The effects' own painted pictures — every reverb family, every delay
 # family, and the six modulation engines — which the FX view's devices
 # draw (`paint_reverb`, `paint_delay`, `paint_mod`, behind `viz`).

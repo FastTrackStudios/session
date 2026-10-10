@@ -175,8 +175,10 @@ fn time_face(which: Which, tone: &Tone, entry: &crate::rig::FaceEntry, back: boo
                             .unwrap_or(0),
                     ),
                 ),
-                (at("tone"), 0.0),
-                (at("modulation"), 0.2),
+                (at("tone"), f64::from(tone.reverb_extra.tone)),
+                (at("modulation"), f64::from(tone.reverb_extra.modulation)),
+                (at("low_cut"), f64::from(tone.reverb_extra.low_cut)),
+                (at("high_cut"), f64::from(tone.reverb_extra.high_cut)),
                 (at("predelay"), f64::from(room.predelay)),
                 (at("size"), f64::from(room.size)),
                 (at("damping"), f64::from(room.damping)),
@@ -345,6 +347,10 @@ pub fn edit(which: Which, tone: &mut Tone, addr: &str, value: f64) -> bool {
             tone.reverb.sync = None;
         }
         (Which::Reverb, "predelay") => tone.reverb.predelay = v.clamp(0.0, 200.0),
+        (Which::Reverb, "modulation") => tone.reverb_extra.modulation = v.clamp(0.0, 1.0),
+        (Which::Reverb, "tone") => tone.reverb_extra.tone = v.clamp(-1.0, 1.0),
+        (Which::Reverb, "low_cut") => tone.reverb_extra.low_cut = v.clamp(20.0, 2_000.0),
+        (Which::Reverb, "high_cut") => tone.reverb_extra.high_cut = v.clamp(1_000.0, 20_000.0),
         (Which::Reverb, "size") => tone.reverb.size = v.clamp(0.0, 1.0),
         (Which::Reverb, "damping") => tone.reverb.damping = v.clamp(0.0, 1.0),
         (Which::Reverb, "level") => tone.reverb.mix = gain(),

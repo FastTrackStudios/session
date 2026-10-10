@@ -202,6 +202,7 @@ pub mod text;
 pub mod tone;
 #[cfg(feature = "native")]
 pub mod tone_bind;
+pub mod tone_read;
 pub mod tool;
 pub mod toolbar;
 pub mod touch;

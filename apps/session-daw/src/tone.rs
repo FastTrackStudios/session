@@ -108,6 +108,9 @@ pub struct Tone {
     /// Depth.
     pub delay: Echo,
     pub reverb: Room,
+    /// The reverb's own controls past the room: its modulation, its tone,
+    /// and the cuts on what it returns.
+    pub reverb_extra: ReverbExtra,
     /// The machine the reverb runs in, when it is one: it wears that
     /// machine's face whatever the algorithm, the algorithm its program.
     pub reverb_machine: Option<ReverbMachine>,
@@ -131,6 +134,13 @@ pub struct Tone {
     /// Which compressor face the Tone compressor wears (an 1176, an
     /// LA-2A…) — see `plugin_faces`.
     pub comp_face: crate::plugin_faces::CompFace,
+    /// The track's processors as the engine has them, in its chain's
+    /// order — the devices the FX row shows ([`crate::tone_read`]); `None`
+    /// until the chain is read (the rack's placeholder chain meanwhile).
+    pub engine_units: Option<Vec<Which>>,
+    /// Processors on the track the row has no face for, by name and
+    /// whether each is on.
+    pub engine_others: Vec<(String, bool)>,
     /// A second compressor after the first, in its own face — a kick's
     /// 1176 into an LA-2A. Drawn under the first, the two sharing the
     /// height.
@@ -606,6 +616,32 @@ impl Tone {
     }
 }
 
+/// The reverb's controls a room does not have: FTS Reverb's Modulation and
+/// Tone, and the low and high cuts on its return (its post-EQ's first and
+/// last bands).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReverbExtra {
+    /// 0..1.
+    pub modulation: f32,
+    /// −1 (dark) … 1 (bright); 0 the plugin's middle.
+    pub tone: f32,
+    /// Hz: 20 is no cut.
+    pub low_cut: f32,
+    /// Hz: 20 000 is no cut.
+    pub high_cut: f32,
+}
+
+impl Default for ReverbExtra {
+    fn default() -> Self {
+        Self {
+            modulation: 0.2,
+            tone: 0.0,
+            low_cut: 20.0,
+            high_cut: 20_000.0,
+        }
+    }
+}
+
 /// Which processors are bypassed.
 ///
 /// Per PROCESSOR, not per rack: bypassing is how you check a decision,
@@ -639,6 +675,15 @@ impl Bypass {
 
     pub const fn toggle(&mut self, which: Which) {
         self.out ^= Self::bit(which);
+    }
+
+    /// Switch `which` out (`true`) or in.
+    pub const fn set(&mut self, which: Which, out: bool) {
+        if out {
+            self.out |= Self::bit(which);
+        } else {
+            self.out &= !Self::bit(which);
+        }
     }
 
     /// Whether anything at all is switched out — for a caller that
@@ -6079,6 +6124,9 @@ pub fn placeholder(index: usize) -> Tone {
         // the same range hides the fact that the range is a choice.
         // Every engine somewhere on the desk, so each picture is seen.
         comp_face: crate::plugin_faces::CompFace::Vca,
+        engine_units: None,
+        engine_others: Vec::new(),
+        reverb_extra: ReverbExtra::default(),
         comp_after: None,
         sidechain: Default::default(),
         sc_view: None,
@@ -9871,7 +9919,18 @@ pub struct Store {
     on: std::collections::HashSet<(String, &'static str)>,
     /// Tracks edited since the last flush.
     dirty: std::collections::HashSet<String>,
+    /// Tracks whose chain has been read from the engine
+    /// ([`Self::sync`]), so it is not read again until it changes.
+    read: std::collections::HashSet<String>,
+    /// Until when each track's engine changes are the window's own edits
+    /// coming back ([`Self::changed`] lets them pass): read again under a
+    /// knob being turned, the row would fight the hand turning it.
+    own: std::collections::HashMap<String, web_time::Instant>,
 }
+
+/// How long after the window's own edit to a track the engine's news of
+/// it is taken to be that edit.
+const OWN_ECHO: std::time::Duration = std::time::Duration::from_millis(300);
 
 impl Store {
     /// Make sure every track has settings, without disturbing the ones
@@ -9903,6 +9962,67 @@ impl Store {
             self.by_guid
                 .entry(track.guid.clone())
                 .or_insert_with(|| placeholder_for(role, index, &track.name, &ancestors));
+        }
+    }
+
+    /// Read each track's chain from the engine that has not been read, or
+    /// has changed since ([`Self::changed`]): what the track has is what
+    /// shows, not a placeholder.
+    #[cfg(feature = "native")]
+    pub fn sync_tracks(&mut self, guids: impl IntoIterator<Item = String>) {
+        let bpm = crate::open::local_engine()
+            .zip(crate::open::current_song())
+            .map_or(120.0, |(daw, song)| {
+                daw_proto::TempoMap::get_tempo_at(
+                    daw,
+                    daw::service::ProjectContext::Project(song),
+                    0.0,
+                )
+            });
+        for guid in guids {
+            if self.read.contains(&guid) || !self.by_guid.contains_key(&guid) {
+                continue;
+            }
+            let chain = crate::tone_read::chain(&guid);
+            self.sync(&guid, &chain, bpm);
+        }
+    }
+
+    /// `chain` (the engine's, on the track `guid`) into its settings: its
+    /// processors' values, which are on, which devices it shows. What it
+    /// now holds is what the chain was last given, so an edit after sends
+    /// only what the edit moves.
+    #[cfg(feature = "native")]
+    pub fn sync(&mut self, guid: &str, chain: &[crate::tone_read::EngineFx], bpm: f64) {
+        let Some(tone) = self.by_guid.get_mut(guid) else {
+            return;
+        };
+        crate::tone_read::apply(tone, chain, bpm);
+        tone.engine_units = Some(crate::tone_read::devices(chain));
+        tone.engine_others = crate::tone_read::others(chain);
+        let stages = crate::tone_bind::stages(tone);
+        for (fx, _) in &stages {
+            if chain
+                .iter()
+                .any(|f| f.enabled && f.name.eq_ignore_ascii_case(fx))
+            {
+                self.on.insert((guid.to_owned(), fx));
+            }
+        }
+        self.sent.insert(guid.to_owned(), stages);
+        self.read.insert(guid.to_owned());
+    }
+
+    /// The track `guid`'s chain changed in the engine: read it again when
+    /// next shown — unless the window is mid-edit on it, whose own edits
+    /// these are.
+    pub fn changed(&mut self, guid: &str) {
+        let echo = self
+            .own
+            .get(guid)
+            .is_some_and(|until| web_time::Instant::now() < *until);
+        if !self.dirty.contains(guid) && !echo {
+            self.read.remove(guid);
         }
     }
 
@@ -9957,6 +10077,12 @@ impl Store {
                     edits.push(Edit::SetFxEnabled(guid.clone(), (*fx).to_owned(), true));
                 }
             }
+            self.own.insert(
+                guid.clone(),
+                web_time::Instant::now()
+                    .checked_add(OWN_ECHO)
+                    .unwrap_or_else(web_time::Instant::now),
+            );
             self.sent.insert(guid, now);
         }
         edits
