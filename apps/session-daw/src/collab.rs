@@ -52,6 +52,22 @@ fn blobs() -> std::sync::Arc<dyn session::sync::engine::Blobs> {
     BLOBS.clone()
 }
 
+/// The engine in this process, for the bridge to read and rebuild a
+/// song's items through directly; `None` when the song is another
+/// process's.
+fn local() -> Option<std::sync::Arc<dyn session::sync::engine::Direct>> {
+    #[cfg(feature = "native")]
+    {
+        crate::open::local_engine().map(|daw| {
+            std::sync::Arc::new(daw.clone()) as std::sync::Arc<dyn session::sync::engine::Direct>
+        })
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        None
+    }
+}
+
 /// What the collaboration is doing, for the toolbar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {
@@ -305,7 +321,7 @@ fn open_local_with(mut docs: HashMap<String, SessionDoc>) -> eyre::Result<()> {
             });
             let chart = chart_for(&path, &doc);
             let guid = project.guid().to_owned();
-            let bridge = Bridge::host(project, media, doc, chart, blobs()).await?;
+            let bridge = Bridge::host(project, media, doc, chart, blobs(), local()).await?;
             bridges.push((
                 Song {
                     project: guid,
@@ -523,7 +539,7 @@ fn host_inner(name: String) -> eyre::Result<String> {
             let doc = docs.remove(&key).unwrap_or_default();
             let chart = chart_for(&path, &doc);
             let guid = project.guid().to_owned();
-            let bridge = Bridge::host(project, media, doc, chart, blobs()).await?;
+            let bridge = Bridge::host(project, media, doc, chart, blobs(), local()).await?;
             host.add(song_id(&set, &key), bridge.doc());
             bridges.push((
                 Song {
@@ -637,11 +653,11 @@ fn join_inner(ticket: &str, name: String) -> eyre::Result<()> {
         for (doc, (project, media, key, path)) in replicas {
             let guid = project.guid().to_owned();
             let bridge = if doc.has_session() {
-                Bridge::join(project, media, doc, blobs()).await?
+                Bridge::join(project, media, doc, blobs(), local()).await?
             } else {
                 let own = docs.remove(&key).unwrap_or_default();
                 let chart = chart_for(&path, &own);
-                Bridge::host(project, media, own, chart, blobs()).await?
+                Bridge::host(project, media, own, chart, blobs(), local()).await?
             };
             bridges.push((
                 Song {
@@ -1055,15 +1071,15 @@ async fn bridge_song(
 ) -> eyre::Result<(Song, Bridge, bool)> {
     let guid = project.guid().to_owned();
     let (bridge, seeded) = match doc {
-        Some(doc) if doc.has_session() => (Bridge::join(project, media, doc, blobs()).await?, false),
+        Some(doc) if doc.has_session() => (Bridge::join(project, media, doc, blobs(), local()).await?, false),
         Some(doc) => {
             let chart = chart_for(&path, &doc);
-            (Bridge::host(project, media, doc, chart, blobs()).await?, true)
+            (Bridge::host(project, media, doc, chart, blobs(), local()).await?, true)
         }
         None => {
             let own = docs.remove(&key).unwrap_or_default();
             let chart = chart_for(&path, &own);
-            (Bridge::host(project, media, own, chart, blobs()).await?, false)
+            (Bridge::host(project, media, own, chart, blobs(), local()).await?, false)
         }
     };
     let song = Song {

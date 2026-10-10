@@ -269,7 +269,9 @@ fn track_fields(a: &TrackState, b: &TrackState) -> Vec<TrackField> {
 }
 
 #[allow(clippy::float_cmp)] // exact: a value the engine reported, read back
-fn item_fields(a: &ItemState, b: &ItemState) -> Vec<ItemField> {
+/// What differs between two states of one item.
+#[must_use]
+pub fn item_fields(a: &ItemState, b: &ItemState) -> Vec<ItemField> {
     let checks = [
         (a.track != b.track, ItemField::Track),
         (a.position != b.position, ItemField::Position),

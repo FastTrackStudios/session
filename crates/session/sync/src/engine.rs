@@ -142,6 +142,7 @@ pub async fn read(
     media: &MediaRoot,
     blobs: &dyn Blobs,
     ids: &EngineIds,
+    direct: Option<&dyn Direct>,
 ) -> daw_control::Result<SessionModel> {
     let all = project.tracks().all().await?;
     let parents: HashMap<String, Option<String>> = all
@@ -177,7 +178,7 @@ pub async fn read(
         tracks.push(state);
     }
 
-    let items = read_items(project, media, ids).await?;
+    let items = read_items(project, media, ids, direct).await?;
 
     let markers = project
         .markers()
@@ -240,85 +241,133 @@ pub async fn read(
     })
 }
 
-/// Every item, keyed by its doc id, with its active take.
+/// Every item, keyed by its doc id, with its active take — through the
+/// engine in this process when there is one ([`Direct`]), else over the
+/// facade, a few calls an item.
 async fn read_items(
     project: &Project,
     media: &MediaRoot,
     ids: &EngineIds,
+    direct: Option<&dyn Direct>,
 ) -> daw_control::Result<BTreeMap<String, ItemState>> {
+    if let Some(direct) = direct {
+        return Ok(crate::direct::read_items(
+            direct,
+            &context_of(project),
+            media,
+            ids,
+        ));
+    }
     let mut items = BTreeMap::new();
     for item in project.items().all().await? {
         let Some(handle) = project.items().by_guid(&item.guid).await? else {
             continue;
         };
-        let key = ids.items.doc(&item.guid);
         let active = handle.active_take();
         let take = match active.info().await {
-            Ok(take) => TakeState {
-                stretch: active
-                    .stretch_markers()
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|m| StretchPoint {
-                        at: m.position,
-                        source: m.source_position,
-                        slope: m.slope,
-                    })
-                    .collect(),
-                notes: if take.is_midi {
-                    active
-                        .midi()
-                        .notes()
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|n| NoteState {
-                            start: n.start_ppq,
-                            length: n.length_ppq,
-                            pitch: n.pitch,
-                            velocity: n.velocity,
-                            channel: n.channel,
-                        })
-                        .collect()
+            Ok(take) => {
+                let stretch = active.stretch_markers().await.unwrap_or_default();
+                let notes = if take.is_midi {
+                    active.midi().notes().await.unwrap_or_default()
                 } else {
                     Vec::new()
-                },
-                midi: take.is_midi,
-                name: take.name,
-                source: take.source_file_path.map(|p| media.to_doc(&p)),
-                start_offset: take.start_offset.as_seconds(),
-                playrate: take.play_rate,
-            },
+                };
+                Some((take, stretch, notes))
+            }
             // An item with no take (a label-only KEY item, say).
-            Err(_) => TakeState {
-                playrate: 1.0,
-                ..TakeState::default()
-            },
+            Err(_) => None,
         };
-        items.insert(
-            key,
-            ItemState {
-                track: item.track_guid,
-                position: item.position.as_seconds(),
-                length: item.length.as_seconds(),
-                snap_offset: item.snap_offset.as_seconds(),
-                muted: item.muted,
-                locked: item.locked,
-                volume: item.volume,
-                fade_in: item.fade_in_length.as_seconds(),
-                fade_out: item.fade_out_length.as_seconds(),
-                fade_in_shape: fade_name(item.fade_in_shape).to_string(),
-                fade_out_shape: fade_name(item.fade_out_shape).to_string(),
-                label: item.label.unwrap_or_default(),
-                color: item.color,
-                take,
-                fixed_lane: item.fixed_lane,
-                loop_source: item.loop_source,
-            },
-        );
+        items.insert(ids.items.doc(&item.guid), item_state(item, take, media));
     }
     Ok(items)
+}
+
+/// A take as the engine reports it: itself, its stretch markers, its
+/// notes (a MIDI take's).
+pub type TakeRead = (
+    daw_proto::item::Take,
+    Vec<daw_proto::StretchMarker>,
+    Vec<daw_proto::MidiNote>,
+);
+
+/// An item, with its active take, as the doc keeps it.
+#[must_use]
+pub fn item_state(item: daw_proto::Item, take: Option<TakeRead>, media: &MediaRoot) -> ItemState {
+    let take = take.map_or_else(
+        || TakeState {
+            playrate: 1.0,
+            ..TakeState::default()
+        },
+        |(take, stretch, notes)| TakeState {
+            stretch: stretch
+                .into_iter()
+                .map(|m| StretchPoint {
+                    at: m.position,
+                    source: m.source_position,
+                    slope: m.slope,
+                })
+                .collect(),
+            notes: notes
+                .into_iter()
+                .map(|n| NoteState {
+                    start: n.start_ppq,
+                    length: n.length_ppq,
+                    pitch: n.pitch,
+                    velocity: n.velocity,
+                    channel: n.channel,
+                })
+                .collect(),
+            midi: take.is_midi,
+            name: take.name,
+            source: take.source_file_path.map(|p| media.to_doc(&p)),
+            start_offset: take.start_offset.as_seconds(),
+            playrate: take.play_rate,
+        },
+    );
+    ItemState {
+        track: item.track_guid,
+        position: item.position.as_seconds(),
+        length: item.length.as_seconds(),
+        snap_offset: item.snap_offset.as_seconds(),
+        muted: item.muted,
+        locked: item.locked,
+        volume: item.volume,
+        fade_in: item.fade_in_length.as_seconds(),
+        fade_out: item.fade_out_length.as_seconds(),
+        fade_in_shape: fade_name(item.fade_in_shape).to_string(),
+        fade_out_shape: fade_name(item.fade_out_shape).to_string(),
+        label: item.label.unwrap_or_default(),
+        color: item.color,
+        take,
+        fixed_lane: item.fixed_lane,
+        loop_source: item.loop_source,
+    }
+}
+
+/// The project a facade handle is on, as the engine's services name it.
+fn context_of(project: &Project) -> daw_proto::ProjectContext {
+    daw_proto::ProjectContext::Project(project.guid().to_owned())
+}
+
+/// The engine's item services, called in this process.
+///
+/// What the doc's bridge reads and rebuilds a song's items through when
+/// the engine is its own (daw-standalone in the Session app), with none of
+/// the facade's per-call encoding — a kit of thirty thousand slices is
+/// that many items.
+pub trait Direct:
+    daw_proto::Items + daw_proto::Takes + daw_proto::Midi + daw_proto::StretchMarkers + Send + Sync
+{
+}
+
+impl<T> Direct for T where
+    T: daw_proto::Items
+        + daw_proto::Takes
+        + daw_proto::Midi
+        + daw_proto::StretchMarkers
+        + Send
+        + Sync
+{
 }
 
 /// Apply `changes` (from [`crate::diff`]) to the engine. `target` is the
@@ -338,7 +387,9 @@ pub async fn apply(
     target: &SessionModel,
     blobs: &dyn Blobs,
     ids: &mut EngineIds,
+    direct: Option<&dyn Direct>,
 ) -> daw_control::Result<()> {
+    let ctx = context_of(project);
     let mut structure = false;
     // A track's FX, sends and envelopes wait until every track is there
     // and in place: a send names its destination, an FX's automation its
@@ -368,14 +419,42 @@ pub async fn apply(
                     .remove(TrackRef::Guid(guid.clone()))
                     .await?;
             }
-            Change::ItemAdded { guid, item } => add_item(project, media, guid, item, ids).await?,
+            Change::ItemAdded { guid, item } => match direct {
+                Some(d) => {
+                    crate::direct::add_item(d, &ctx, media, guid, item, ids)
+                        .map_err(|e| engine_error(&e))?;
+                    let at = ids.items.engine(guid);
+                    crate::direct::set_item_fields(
+                        d,
+                        &ctx,
+                        media,
+                        &at,
+                        item,
+                        &new_item_fields(item),
+                    )
+                    .map_err(|e| engine_error(&e))?;
+                }
+                None => add_item(project, media, guid, item, ids).await?,
+            },
             Change::ItemChanged { guid, item, fields } => {
                 let at = ids.items.engine(guid);
-                set_item_fields(project, media, &at, item, fields).await?;
+                match direct {
+                    Some(d) => crate::direct::set_item_fields(d, &ctx, media, &at, item, fields)
+                        .map_err(|e| engine_error(&e))?,
+                    None => set_item_fields(project, media, &at, item, fields).await?,
+                }
             }
             Change::ItemRemoved { guid } => {
-                if let Some(handle) = project.items().by_guid(&ids.items.engine(guid)).await? {
-                    handle.delete().await?;
+                let at = ids.items.engine(guid);
+                match direct {
+                    Some(d) => {
+                        crate::direct::delete_item(d, &ctx, &at).map_err(|e| engine_error(&e))?;
+                    }
+                    None => {
+                        if let Some(handle) = project.items().by_guid(&at).await? {
+                            handle.delete().await?;
+                        }
+                    }
                 }
             }
             Change::MarkerSet { guid, marker } => set_marker(project, guid, marker).await?,
@@ -455,8 +534,37 @@ async fn add_item(
         }
     }
     let at = ids.items.engine(guid);
-    set_item_fields(project, media, &at, item, ALL_ITEM_FIELDS).await?;
+    set_item_fields(project, media, &at, item, &new_item_fields(item)).await?;
     Ok(())
+}
+
+/// The fields a new item needs set: what it does not already have.
+fn new_item_fields(item: &ItemState) -> Vec<ItemField> {
+    // Only what a new item does not already have: a field call each is
+    // most of what rebuilding a song costs.
+    let fresh = ItemState {
+        track: item.track.clone(),
+        position: item.position,
+        length: item.length,
+        volume: 1.0,
+        // What a new item and its take start as: linear fades, no name,
+        // its source already set (an audio take's, above).
+        fade_in_shape: "linear".to_owned(),
+        fade_out_shape: "linear".to_owned(),
+        take: TakeState {
+            source: item.take.source.clone(),
+            playrate: 1.0,
+            midi: item.take.midi,
+            ..TakeState::default()
+        },
+        ..ItemState::default()
+    };
+    let mut fields = crate::diff::item_fields(&fresh, item);
+    if item.take.midi {
+        // Made from its start and end: its length set exactly.
+        fields.push(ItemField::Length);
+    }
+    fields
 }
 
 /// Put every track at its place in project order, and set the folder
@@ -564,21 +672,6 @@ async fn set_track_fields(
     }
     Ok(())
 }
-
-const ALL_ITEM_FIELDS: &[ItemField] = &[
-    ItemField::Muted,
-    ItemField::Locked,
-    ItemField::Volume,
-    ItemField::FadeIn,
-    ItemField::FadeOut,
-    ItemField::Label,
-    ItemField::Color,
-    ItemField::Take,
-    ItemField::FixedLane,
-    ItemField::Loop,
-    ItemField::Stretch,
-    ItemField::Notes,
-];
 
 async fn set_item_fields(
     project: &Project,
@@ -744,7 +837,7 @@ const fn fade_name(shape: FadeShape) -> &'static str {
     }
 }
 
-fn fade_shape(name: &str) -> FadeShape {
+pub(crate) fn fade_shape(name: &str) -> FadeShape {
     match name {
         "fast_start" => FadeShape::FastStart,
         "fast_end" => FadeShape::FastEnd,
@@ -1160,4 +1253,9 @@ async fn apply_grouping(
         }
     }
     Ok(())
+}
+
+/// An engine refusal, as the facade reports one.
+fn engine_error(e: &daw_proto::DawError) -> daw_control::Error {
+    daw_control::Error::Other(e.to_string())
 }

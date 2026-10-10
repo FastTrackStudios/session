@@ -92,6 +92,8 @@ impl FxFactory for Factory {
     }
 }
 
+/// Through the facade (a remote engine, REAPER) and through the engine in
+/// this process: the same project either way.
 #[test]
 fn a_project_rebuilt_from_the_doc_reads_back_the_same() -> eyre::Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -105,7 +107,7 @@ fn a_project_rebuilt_from_the_doc_reads_back_the_same() -> eyre::Result<()> {
 async fn inner() -> eyre::Result<()> {
     let standalone = Standalone::new();
     standalone.set_fx_factory(Arc::new(Factory));
-    for guid in ["a", "b"] {
+    for guid in ["a", "b", "c", "d"] {
         standalone.seed_project(ProjectInfo {
             guid: guid.into(),
             name: guid.into(),
@@ -119,8 +121,17 @@ async fn inner() -> eyre::Result<()> {
             .build()?,
     );
     daw::init_from_parts(bundle.daw.clone(), runtime);
+    round_trip(&bundle.daw, &standalone, ("a", "b"), false).await?;
+    round_trip(&bundle.daw, &standalone, ("c", "d"), true).await
+}
 
-    let a = bundle.daw.project("a").await?;
+async fn round_trip(
+    daw: &daw_control::Daw,
+    standalone: &Standalone,
+    (from, to): (&str, &str),
+    direct: bool,
+) -> eyre::Result<()> {
+    let a = daw.project(from).await?;
     let kick = a.tracks().add_with_guid("{KICK}", "Kick", None).await?;
     let oh = a.tracks().add_with_guid("{OH}", "OHs", None).await?;
     let fx = kick.fx_chain().add("Keeper").await?;
@@ -206,12 +217,22 @@ async fn inner() -> eyre::Result<()> {
     let blobs = Arc::new(MemoryBlobs::default());
     let media = MediaRoot(std::env::temp_dir());
     let doc = SessionDoc::new();
-    let host = Bridge::host(a, media.clone(), doc.clone(), String::new(), blobs.clone()).await?;
+    let local: Option<Arc<dyn session_sync::engine::Direct>> =
+        direct.then(|| Arc::new(standalone.clone()) as Arc<dyn session_sync::engine::Direct>);
+    let host = Bridge::host(
+        a,
+        media.clone(),
+        doc.clone(),
+        String::new(),
+        blobs.clone(),
+        local.clone(),
+    )
+    .await?;
 
     let replica = SessionDoc::new();
     replica.import(&doc.snapshot()?, "remote")?;
-    let b = bundle.daw.project("b").await?;
-    let joined = Bridge::join(b, media, replica, blobs).await?;
+    let b = daw.project(to).await?;
+    let joined = Bridge::join(b, media, replica, blobs, local).await?;
 
     let (built, rebuilt) = (host.shown(), joined.shown());
     let kick = &built.tracks[0];
@@ -225,7 +246,13 @@ async fn inner() -> eyre::Result<()> {
         2,
         "the MIDI was read"
     );
-    assert_eq!(built.tracks, rebuilt.tracks, "tracks rebuilt the same");
-    assert_eq!(built.items, rebuilt.items, "items rebuilt the same");
+    assert_eq!(
+        built.tracks, rebuilt.tracks,
+        "tracks rebuilt the same (direct: {direct})"
+    );
+    assert_eq!(
+        built.items, rebuilt.items,
+        "items rebuilt the same (direct: {direct})"
+    );
     Ok(())
 }

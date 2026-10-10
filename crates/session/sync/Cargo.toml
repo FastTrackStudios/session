@@ -35,7 +35,8 @@ tokio = { workspace = true }
 # The engine round trip: a project built in daw-standalone, hosted into the
 # doc, and rebuilt from it in a second project.
 daw = { workspace = true }
-daw-standalone = { workspace = true, features = ["bootstrap", "decode"] }
+daw-standalone = { workspace = true, features = ["bootstrap", "decode", "rpp-project", "session-file"] }
+zstd = "0.13"
 daw-control = { workspace = true }
 daw-proto = { workspace = true }
 eyre = { workspace = true }
