@@ -1265,7 +1265,7 @@ static SAVE: ActionMeta = meta(
     "SESSION_SAVE",
     "session_save",
     "Save the song",
-    "Save the song as it is now — its edits, its tracks, every FX with what it holds (a sampler's kit, a rig's capture, a reverb's time) — as its `.session` folder: the one it was opened from, or beside the `.RPP` it was opened from (`X.RPP` → `X.session`, what opens next time). `to` saves to another folder instead and leaves the song's own alone. Says where.",
+    "Save the song as it is now — its edits, its tracks, every FX with what it holds (a sampler's kit, a rig's capture, a reverb's time) — into its project file: `Song.session` beside the `.RPP` it was opened from (what opens next time), or the alternative it is. What changed since the last save goes in as one step of the file's history. `to` saves to another file instead and leaves the song's own alone. Says where.",
     "Session",
     "",
 );
@@ -1284,7 +1284,7 @@ static CHECK_SAVED: ActionMeta = meta(
     "SESSION_CHECK_SAVED",
     "session_check_saved",
     "Check a saved song",
-    "Open a saved `.session` folder (`dir`) in a fresh engine, as a reopen would, and set it beside the song open now: every track, send, item and take (offsets, fixed lanes), stretch marker, MIDI note, FX and what it holds, envelope, marker, region and tempo. Says `the same` or, per section that differs, what went and what came. Read-only.",
+    "Reopen a saved project file (`dir`: a `Song.session`, or an alternative `Song.session/Organized`) as a second song, as a reopen would, and set it beside the song open now as the project doc reads both: every track with its FX and what they hold, sends, automation, lanes and groups; every item with its take, stretch markers and notes; markers, regions and tempo. Says `the same` or what differs. The second song is closed again.",
     "Session",
     "",
 );
@@ -1337,7 +1337,7 @@ static CHECKPOINT: ActionMeta = meta(
     "SESSION_CHECKPOINT",
     "session_checkpoint",
     "Save a checkpoint",
-    "Save the song as it is now as a named alternative (`name`: \"Organized\", \"Mix A\") beside it — `Song.alternatives/<name>.session`, a complete session — the way Logic keeps alternatives. The song stays open, under its own name; a plain save (SESSION_SAVE) still writes the song. A checkpoint of that name already there is replaced. Open one later from the start screen's Recent.",
+    "Save the song and fork a named alternative from it as it is now (`name`: \"Organized\", \"Mix A\") — a branch of the song's own project file (`Song.session`), sharing everything it had and keeping only what is done to it after, the way Logic keeps alternatives. The song stays open, under its own name. Open one later from the start screen's Recent or SESSION_OPEN.",
     "Session",
     "",
 );
@@ -1466,6 +1466,23 @@ struct SelectTrackArg {
     track: String,
 }
 
+static JOBS: ActionMeta = meta(
+    "SESSION_JOBS",
+    "session_jobs",
+    "Work in the background",
+    "What is being done off the window's thread right now — reading waveforms, slicing them, opening or saving a project file — each with how far along (`done` of `total`; a total of 0 is work that does not know its length). What the bottom bar shows. Empty when nothing is running. Read-only.",
+    "View",
+    "",
+);
+
+/// One job, as listed.
+#[derive(Facet)]
+struct JobRow {
+    label: String,
+    done: u64,
+    total: u64,
+}
+
 static ITEM_STYLE: ActionMeta = meta(
     "SESSION_ITEM_STYLE",
     "session_item_style",
@@ -1482,6 +1499,16 @@ struct ItemStyleArg {
 }
 
 fn register_style(list: &ActionList) {
+    list.register(&JOBS, Effect::ReadOnly, |(): ()| {
+        Ok(crate::jobs::running()
+            .into_iter()
+            .map(|(label, done, total)| JobRow {
+                label,
+                done: u64::try_from(done).unwrap_or(u64::MAX),
+                total: u64::try_from(total).unwrap_or(u64::MAX),
+            })
+            .collect::<Vec<_>>())
+    });
     list.register(&ITEM_STYLE, Effect::Mutating, |a: ItemStyleArg| {
         crate::options::OUTLINED.set(a.outlined);
         // The lanes are recorded with their bodies: read back, drawn anew.
@@ -1563,13 +1590,17 @@ fn register_save(list: &ActionList) {
         let ProjectContext::Project(guid) = &project else {
             return Err("no song open".to_owned());
         };
-        let base = song_base(daw, guid)?;
-        let dir = crate::projects::alternative_path(&base, &a.name)?;
-        crate::session_file::save_session(daw, guid, &dir)?;
+        let from = std::path::PathBuf::from(
+            daw.read_project(guid, |p| p.info.path.clone())
+                .ok_or("no song open")?,
+        );
+        let file = crate::project_file::fork(daw, guid, &from, &a.name)?;
+        // The song was saved on the way: nothing unsaved now.
+        crate::projects::mark_saved(daw, guid);
         Ok(format!(
-            "saved {} as {}; the song stays open as it was",
+            "saved the song and forked {} from it in {}; the song stays open",
             a.name.trim(),
-            dir.display()
+            file.display()
         ))
     });
     list.register(&OPEN, Effect::Mutating, |a: OpenArg| {
@@ -1673,20 +1704,7 @@ fn register_save(list: &ActionList) {
         let ProjectContext::Project(guid) = &project else {
             return Err("no song open".to_owned());
         };
-        let live = daw::standalone::digest::digest(daw, guid).ok_or("no song open")?;
-        let fresh = daw::standalone::Standalone::new();
-        if let Some(factory) = daw.fx_factory() {
-            fresh.set_fx_factory(factory);
-        }
-        let dir = std::path::Path::new(&a.dir);
-        let loaded = crate::session_file::load_session(&fresh, "check", dir)?;
-        // As an open does: relative media from the session folder's own.
-        if let Some(beside) = dir.parent() {
-            daw::standalone::project_loader::anchor_media(&fresh, &loaded.project_guid, beside);
-        }
-        let saved = daw::standalone::digest::digest(&fresh, &loaded.project_guid)
-            .ok_or("the saved song did not open")?;
-        let apart = daw::standalone::digest::differences(&live, &saved);
+        let apart = crate::project_file::check(daw, guid, std::path::Path::new(&a.dir))?;
         Ok(if apart.is_empty() {
             vec!["the same".to_owned()]
         } else {

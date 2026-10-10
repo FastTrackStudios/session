@@ -704,6 +704,7 @@ impl Arrangement {
         &self,
         view: Viewport,
         rows: &[(daw_proto::Track, u32)],
+        tracks: &[daw_proto::Track],
         x: f64,
         y: f64,
     ) -> Option<(usize, crate::row::Control)> {
@@ -717,9 +718,12 @@ impl Arrangement {
         // The lane steps, drawn over a theme's row as over the built-in
         // one, are hit the same way on both.
         let row = crate::row::Row::new(top, height, depth, track.is_folder, self.tcp)
-            .with_lanes(track.lane_count > 1);
-        if let Some(step @ (crate::row::Control::LanePrev | crate::row::Control::LaneNext)) =
-            row.control_at(x, y)
+            .with_lanes(!crate::lanes::shown_on(tracks, track).is_empty());
+        if let Some(
+            step @ (crate::row::Control::LanePrev
+            | crate::row::Control::LaneNext
+            | crate::row::Control::LaneName),
+        ) = row.control_at(x, y)
         {
             return Some((index, step));
         }
@@ -1206,6 +1210,7 @@ impl Arrangement {
                     // item volume to show or turn.
                     volume: (!is_folder).then_some(item.volume),
                     band,
+                    outline: project.title(item).map_or(color, take_color),
                 });
                 if let Some(name) = project.title(item) {
                     titles.push(Title {
@@ -1530,6 +1535,45 @@ pub struct ItemBox {
     /// of it, or — on a track showing its fixed lanes — its lane's
     /// strip ([`lane_band`]).
     pub band: (f64, f64),
+    /// Its outline's colour: the take it was cut from ([`take_color`]),
+    /// so every mic of one take — and every slice of it — is ringed alike
+    /// while the waveform keeps its track's colour.
+    pub outline: Color,
+}
+
+/// The colour a take is ringed in, from its name.
+///
+/// What a recording's takes share across mics (`65-In-260907_1321-01.wav`
+/// and `66-Out-260907_1321-01.wav` are one take — the mic's number and
+/// name before it set aside), as a hue of its own.
+#[must_use]
+pub fn take_color(name: &str) -> Color {
+    let take = name
+        .split_once('-')
+        .filter(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        .and_then(|(_, rest)| rest.split_once('-'))
+        .map_or(name, |(_, take)| take);
+    let hash = take.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    // A hue from the hash, at one saturation and lightness: takes told
+    // apart by hue alone, none darker or louder than another.
+    let hue = f64::from(u16::try_from(hash % 360).unwrap_or(0));
+    let (saturation, lightness) = (0.65, 0.62);
+    let chroma = (1.0 - 2.0f64.mul_add(lightness, -1.0).abs()) * saturation;
+    let second = chroma * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let (red, green, blue) = match hue {
+        at if at < 60.0 => (chroma, second, 0.0),
+        at if at < 120.0 => (second, chroma, 0.0),
+        at if at < 180.0 => (0.0, chroma, second),
+        at if at < 240.0 => (0.0, second, chroma),
+        at if at < 300.0 => (second, 0.0, chroma),
+        _ => (chroma, 0.0, second),
+    };
+    let floor = lightness - chroma / 2.0;
+    let byte =
+        |part: f64| num_traits::ToPrimitive::to_u8(&((part + floor) * 255.0).round()).unwrap_or(0);
+    Color::from_rgb8(byte(red), byte(green), byte(blue))
 }
 
 /// An item's two fades: how long, and what shape.
@@ -2084,22 +2128,31 @@ fn body_alpha() -> f32 {
 /// slices of an edited take — the line between them is the cut.
 pub fn outlines_overlay(
     painter: &mut impl PaintScene,
+    palette: &Palette,
     scene: &Arrangement,
     view: Viewport,
     origin: (f64, f64),
 ) {
+    /// Item edges this close are one edge: a cut.
+    const TOUCH: f64 = 1e-3;
+    /// Cuts this many pixels apart or more draw at their strongest; closer
+    /// (zoomed out over an edited kit) fainter, down to a tint.
+    const CLEAR: f64 = 24.0;
     let (ox, oy) = origin;
     let pps = view.pps.max(f64::EPSILON);
     let (from, to) = ((view.panel_w - ox) / pps, (view.width - ox) / pps);
     let rows = scene.visible_rows(view);
     let thin = vello::kurbo::Stroke::new(1.0);
     let top_of_lanes = crate::ruler::ruler_h();
-    // Per row, the last edge drawn: zoomed out, one line a pixel.
-    let mut last: Option<(usize, f64)> = None;
-    for item in &scene.items {
-        if !rows.contains(&item.row) || item.x1 < from || item.x0 > to {
-            continue;
-        }
+    // The items on screen, each row's in order along it.
+    let mut shown: Vec<&ItemBox> = scene
+        .items
+        .iter()
+        .filter(|i| rows.contains(&i.row) && i.x1 >= from && i.x0 <= to)
+        .collect();
+    shown.sort_by(|a, b| a.row.cmp(&b.row).then(a.x0.total_cmp(&b.x0)));
+    let mut last_cut: Option<(usize, f64)> = None;
+    for (k, item) in shown.iter().enumerate() {
         let Some((top, height)) = scene.item_box(item) else {
             continue;
         };
@@ -2113,17 +2166,46 @@ pub fn outlines_overlay(
         if x1 - x0 < 1.0 {
             continue;
         }
-        if last.is_some_and(|(row, x)| row == item.row && x0 - x < 1.0) {
-            continue;
+        let line = |painter: &mut _, ink: Color, a: (f64, f64), b: (f64, f64)| {
+            PaintScene::stroke(
+                painter,
+                &thin,
+                Affine::IDENTITY,
+                ink,
+                None,
+                &vello::kurbo::Line::new(a, b),
+            );
+        };
+        let ink = item.outline.multiply_alpha(0.9);
+        // Its top and bottom in its take's colour.
+        line(painter, ink, (x0, y0 + 0.5), (x1, y0 + 0.5));
+        line(painter, ink, (x0, y1 - 0.5), (x1, y1 - 0.5));
+        // Its start: a cut when the one before on its row ends there —
+        // red, fainter the closer the cuts sit — else its take's edge.
+        let before = k.checked_sub(1).and_then(|b| shown.get(b));
+        let cut = before.is_some_and(|b| b.row == item.row && b.x1 + TOUCH >= item.x0);
+        if cut {
+            let gap = last_cut
+                .filter(|(row, _)| *row == item.row)
+                .map_or(CLEAR, |(_, x)| x0 - x);
+            let strength = (gap / CLEAR).clamp(0.12, 1.0);
+            line(
+                painter,
+                palette.meter_danger.multiply_alpha(
+                    num_traits::ToPrimitive::to_f32(&(0.7 * strength)).unwrap_or(0.7),
+                ),
+                (x0 + 0.5, y0),
+                (x0 + 0.5, y1),
+            );
+            last_cut = Some((item.row, x0));
+        } else {
+            line(painter, ink, (x0 + 0.5, y0), (x0 + 0.5, y1));
         }
-        last = Some((item.row, x0));
-        painter.stroke(
-            &thin,
-            Affine::IDENTITY,
-            item.color.multiply_alpha(0.9),
-            None,
-            &Rect::new(x0 + 0.5, y0 + 0.5, x1 - 0.5, y1 - 0.5),
-        );
+        // Its end, unless the next one starts there (whose cut it is).
+        let after = shown.get(k.saturating_add(1));
+        if !after.is_some_and(|a| a.row == item.row && item.x1 + TOUCH >= a.x0) {
+            line(painter, ink, (x1 - 0.5, y0), (x1 - 0.5, y1));
+        }
     }
 }
 
@@ -3903,7 +3985,9 @@ mod dial_tests {
 /// and is not set to show only the one that plays.
 #[must_use]
 pub fn shows_lanes(track: &daw_proto::Track) -> bool {
-    track.lane_count > 1 && track.lane_display != daw_proto::LaneDisplay::One
+    track.lane_count > 1
+        && track.lane_display != daw_proto::LaneDisplay::One
+        && crate::lanes::expanded(&track.guid)
 }
 
 /// Lane `lane` of `count`'s strip of its row, top to bottom, as
@@ -3913,4 +3997,19 @@ pub fn lane_band(lane: u32, count: u32) -> (f64, f64) {
     let count = f64::from(count.max(1));
     let lane = f64::from(lane);
     (lane / count, (lane + 1.0) / count)
+}
+
+#[cfg(test)]
+mod take_color_tests {
+    use super::take_color;
+
+    /// Every mic of one take is ringed alike; another take otherwise.
+    #[test]
+    fn a_takes_mics_share_its_colour() {
+        let one = take_color("65-In-260907_1321-01.wav");
+        assert_eq!(one, take_color("66-Out-260907_1321-01.wav"));
+        assert_ne!(one, take_color("65-In-260907_1321-02.wav"));
+        // A name not numbered by mic is a take of its own.
+        assert_eq!(take_color("Guide 2"), take_color("Guide 2"));
+    }
 }

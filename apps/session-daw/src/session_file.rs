@@ -1,32 +1,26 @@
-//! Saving and loading a session in the native `.session` format — the
-//! engine's own (`daw_standalone::session_file`), re-exported for the app.
-//!
-//! A `Song.session` is saved beside the `Song.RPP` it was prepared from,
-//! and its media paths resolve against that same folder.
+//! Saving a song: `Song.session`, its project file (`crate::project_file`)
+//! — beside the `Song.RPP` it was prepared from, its media paths resolving
+//! against that same folder.
 
-pub use daw::standalone::session_file::{load_session, load_session_history, session_rpp_text};
-
-/// Save `project_guid` as a `.session` at `dir`, with its edit history:
-/// the song's live session doc when one is keeping it (every edit, by
-/// anyone it was shared with), or else the history already saved there,
-/// carried forward rather than started over.
+/// Save `project_guid` to the project file `path` names (`Song.session`,
+/// or an alternative `Song.session/Organized`): what changed since its
+/// last save, as one step of its history. Says where.
 ///
 /// # Errors
-/// As `daw::standalone::session_file::save_session`.
+/// The file would not take the save, or the engine would not be read.
 pub fn save_session(
     daw: &daw::standalone::Standalone,
     project_guid: &str,
-    dir: &std::path::Path,
+    path: &std::path::Path,
 ) -> Result<std::path::PathBuf, String> {
     #[cfg(feature = "native")]
-    let live = crate::collab::history(project_guid);
+    {
+        let (file, branch) = crate::project_file::save_target(path);
+        crate::project_file::save(daw, project_guid, &file, &branch, "Save")
+    }
     #[cfg(not(feature = "native"))]
-    let live = None;
-    let history = live.or_else(|| load_session_history(dir));
-    daw::standalone::session_file::save_session_with_history(
-        daw,
-        project_guid,
-        dir,
-        history.as_ref(),
-    )
+    {
+        let _ = (daw, project_guid, path);
+        Err("a page saves nothing".to_owned())
+    }
 }

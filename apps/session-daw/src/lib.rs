@@ -46,6 +46,7 @@ pub mod guide_instrument;
 pub mod headless;
 pub mod hit;
 pub mod icons;
+pub mod jobs;
 pub mod keys;
 pub mod lanes;
 pub mod layout;
@@ -69,6 +70,8 @@ pub mod options;
 #[cfg(feature = "native")]
 pub mod organize;
 pub mod plugin_faces;
+#[cfg(feature = "native")]
+pub mod project_file;
 #[cfg(feature = "native")]
 pub mod projects;
 pub mod rig;

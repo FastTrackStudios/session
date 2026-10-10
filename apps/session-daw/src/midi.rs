@@ -350,7 +350,9 @@ impl Previews {
             return false;
         };
         let project = ProjectContext::Project(song);
+        let job = crate::jobs::start("Waveforms", guids.len());
         let read = crate::wave_pool::map(guids, |guid| {
+            job.advance(1);
             let peaks = daw.take_peaks(
                 project.clone(),
                 ItemRef::Guid(guid.clone()),

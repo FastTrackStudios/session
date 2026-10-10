@@ -1755,7 +1755,7 @@ fn control_row(
         track.is_folder,
         scene.tcp,
     )
-    .with_lanes(live.lane_count > 1);
+    .with_lanes(!crate::lanes::shown_on(tracks, live).is_empty());
     if row.density == crate::tcp::Density::Bar {
         return;
     }
@@ -1774,7 +1774,8 @@ fn control_row(
     // between the steps to the one before and after. Over a theme's row
     // as over the built-in one.
     if let Some(band) = row.lane_line() {
-        lane_line(out, palette, font, live, &row, band, &look);
+        let label = crate::lanes::label_of(&crate::lanes::shown_on(tracks, live));
+        lane_line(out, palette, font, &label, &row, band, &look);
     }
 
     // A theme's row draws its own live part — every value and the
@@ -2209,7 +2210,7 @@ fn lane_line(
     out: &mut anyrender::Scene,
     palette: &Palette,
     font: &Font,
-    live: &Track,
+    label: &str,
     row: &crate::row::Row,
     band: vello::kurbo::Rect,
     look: &dyn Fn(crate::row::Control) -> Interaction,
@@ -2251,7 +2252,7 @@ fn lane_line(
         return;
     };
     let room = (next.x0 - prev.x1).max(0.0);
-    let label = font.elide(&crate::lanes::label(live), SIZE, room);
+    let label = font.elide(label, SIZE, room);
     let width = font.width(&label, SIZE);
     crate::tcp::glyphs(
         out,

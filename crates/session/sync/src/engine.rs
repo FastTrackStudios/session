@@ -1120,9 +1120,12 @@ async fn apply_fx(
             }
             h
         } else {
-            let h = match chain.add_at(&fx.plugin, at).await {
+            // By its name first: a built-in's is what its engine adds it by
+            // (`fts.guide:click`), where its plugin's is the family's
+            // (`FTS Guide`); a hosted plugin's by its plugin, failing that.
+            let h = match chain.add_at(&fx.name, at).await {
                 Ok(h) => h,
-                Err(_) => chain.add_at(&fx.name, at).await?,
+                Err(_) => chain.add_at(&fx.plugin, at).await?,
             };
             let info = h.info().await?;
             ids.fx.bind(&fx.guid, &info.guid);

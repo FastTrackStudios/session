@@ -3,9 +3,10 @@
 //! Every drum track alike, because the kit is one recording: its comping
 //! lane — the comp that plays — named `COMP`, and a lane `EDIT` holding a
 //! copy of it, where the edits land. Either can be played, the whole kit
-//! at once, to weigh the edit against the comp it was made from; the
-//! Edit mode's phases do that by themselves (Comp plays `COMP`, Edit
-//! plays `EDIT` — [`follow_phase`]).
+//! at once, to weigh the edit against the comp it was made from. Which
+//! lane plays is the kit's own and only changes when asked (the panel's
+//! lane steps, `DRUMS_PLAY_LANE`): a phase never switches it, so what has
+//! been edited plays edited in every mode.
 
 use daw::service::{ItemRef, Items as _, ProjectContext, TrackRef, Tracks};
 
@@ -162,53 +163,9 @@ pub fn play(
     Ok(played)
 }
 
-/// The lane an Edit-mode phase plays, by its slug.
-#[must_use]
-pub fn lane_of_phase(slug: &str) -> Option<&'static str> {
-    match slug {
-        "comp" => Some(COMP),
-        "edit" => Some(EDIT),
-        _ => None,
-    }
-}
-
-/// The phase choice last followed, by its version.
-static FOLLOWED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
-
-/// In Edit mode, the kit plays its phase's lane.
-///
-/// Called each tick of the window's loop with the mode it is in, it acts
-/// only when the phase was chosen again (from the bottom bar, the rails,
-/// a model). A kit with no such lane is left as it is.
-pub fn follow_phase(mode: session::modes::Mode) {
-    if mode != session::modes::Mode::Edit {
-        return;
-    }
-    let version = session::mode_phases::version();
-    if FOLLOWED.swap(version, std::sync::atomic::Ordering::Relaxed) == version {
-        return;
-    }
-    let Some(lane) = session::mode_phases::current(mode).and_then(|p| lane_of_phase(p.slug)) else {
-        return;
-    };
-    let (Some(daw), Some(song)) = (crate::open::local_engine(), crate::open::current_song()) else {
-        return;
-    };
-    if let Err(why) = play(daw, &ProjectContext::Project(song), lane) {
-        tracing::debug!(drums.lane = lane, why, "the phase's lane was not played");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn each_edit_phase_plays_its_lane() {
-        assert_eq!(lane_of_phase("comp"), Some(COMP));
-        assert_eq!(lane_of_phase("edit"), Some(EDIT));
-        assert_eq!(lane_of_phase("balance"), None);
-    }
 
     #[test]
     fn a_lane_is_found_by_name_and_only_while_it_exists() {

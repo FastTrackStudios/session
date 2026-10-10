@@ -999,38 +999,21 @@ impl ArrangementWidget {
             return false;
         }
         let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1_000_000.0;
-        // A take whose waveform was never read (the EDIT lane's copy, made
-        // after the song opened): read now, one per drum track, so every
-        // slice cut from it shows its own part.
-        let unread: Vec<String> = items
-            .iter()
-            .filter(|guid| self.previews.wave(guid).is_none())
-            .cloned()
-            .collect();
-        #[cfg(feature = "native")]
-        if !unread.is_empty() {
-            self.previews.fill_waves_blocking(unread);
-        }
-        #[cfg(not(feature = "native"))]
-        let _ = unread;
         let moves: Vec<(f64, f64)> = moves
             .iter()
             .map(|&(hit, shift)| (seconds(hit), seconds(shift)))
             .collect();
         let started = std::time::Instant::now();
-        // Each take's waveform and where in its source it started, before
-        // it is cut: every slice of it shows its own part of that.
-        let takes: std::collections::HashMap<String, (f64, std::sync::Arc<crate::midi::Wave>)> =
-            self.project
-                .items
-                .values()
-                .flatten()
-                .filter(|i| items.contains(&i.guid))
-                .filter_map(|i| {
-                    let wave = self.previews.wave(&i.guid)?;
-                    Some((i.guid.clone(), (i.start_offset.as_seconds(), wave)))
-                })
-                .collect();
+        // Where in its source each take started, before it is cut: every
+        // slice of it shows its own part of the take's waveform.
+        let offsets: std::collections::HashMap<String, f64> = self
+            .project
+            .items
+            .values()
+            .flatten()
+            .filter(|i| items.contains(&i.guid))
+            .map(|i| (i.guid.clone(), i.start_offset.as_seconds()))
+            .collect();
         let mut effects = Vec::new();
         crate::arrange_edit::Editor::slip_items(
             &mut self.project,
@@ -1050,23 +1033,25 @@ impl ArrangementWidget {
                 _ => None,
             })
             .collect();
-        let sliced: Vec<(String, crate::midi::Wave)> = self
+        let slices: Vec<SliceDrawn> = self
             .project
             .items
             .values()
             .flatten()
             .filter_map(|i| {
                 let take = i.guid.split("-split@").next()?;
-                let (offset, wave) = takes.get(take)?;
-                let length = i.length.as_seconds();
-                let drawn = warps.get(i.guid.as_str()).map_or_else(
-                    || wave.slice(i.start_offset.as_seconds() - offset, length),
-                    |markers| wave.warped(*offset, length, markers),
-                );
-                Some((i.guid.clone(), drawn))
+                let offset = *offsets.get(take)?;
+                Some(SliceDrawn {
+                    guid: i.guid.clone(),
+                    take: take.to_owned(),
+                    from: i.start_offset.as_seconds() - offset,
+                    offset,
+                    length: i.length.as_seconds(),
+                    warp: warps.get(i.guid.as_str()).map(|m| m.to_vec()),
+                })
             })
             .collect();
-        self.previews.put_waves(sliced);
+        draw_slices(&self.previews, items.clone(), slices);
         tracing::info!(
             slip.takes = items.len(),
             slip.moves = moves.len(),
@@ -1585,7 +1570,7 @@ impl ArrangementWidget {
             return None;
         }
         self.scene
-            .row_spot_at(view, &self.rows, x, below + view.scroll_y)
+            .row_spot_at(view, &self.rows, &self.tracks, x, below + view.scroll_y)
             .map(|(row, control)| crate::pointer::RowSpot { row, control })
     }
 
@@ -1626,22 +1611,64 @@ impl ArrangementWidget {
             C::Solo => Edit::ToggleSolo(guid),
             C::RecArm => Edit::ToggleArm(guid),
             C::Phase => Edit::SetPhase(guid, !track.phase_inverted),
+            C::LaneName => {
+                let shown: Vec<String> = crate::lanes::shown_on(&self.tracks, track)
+                    .into_iter()
+                    .map(|t| t.guid.clone())
+                    .collect();
+                crate::lanes::toggle_expanded(&shown);
+                return;
+            }
             C::LanePrev | C::LaneNext => {
+                // What the line speaks for: the track, or a folder's tracks.
+                let shown: Vec<daw_proto::Track> = crate::lanes::shown_on(&self.tracks, track)
+                    .into_iter()
+                    .cloned()
+                    .collect();
+                let Some(first) = shown.first() else { return };
                 let Some(mask) = crate::lanes::stepped(
-                    track,
-                    self.project.items.get(&guid).map_or(&[][..], Vec::as_slice),
+                    first,
+                    self.project
+                        .items
+                        .get(&first.guid)
+                        .map_or(&[][..], Vec::as_slice),
                     spot.control == C::LaneNext,
                 ) else {
                     return;
                 };
-                // A comp is the group's: its media-edit group plays the
-                // same lane, while grouping is on.
-                for peer in crate::lanes::grouped_tracks(&self.tracks, &guid) {
-                    let edit = Edit::SetLanePlays(peer, mask);
+                // The lane by name, on each: the same comp on every mic of
+                // a kit, and on their media-edit group while grouping is on.
+                let lane = (0..64)
+                    .find(|l| mask == 1_u64 << l)
+                    .map(|l| {
+                        crate::lanes::label(&daw_proto::Track {
+                            lane_play_mask: 1_u64 << l,
+                            ..first.clone()
+                        })
+                    })
+                    .unwrap_or_default();
+                let mut targets: Vec<String> = Vec::new();
+                for t in &shown {
+                    for g in std::iter::once(t.guid.clone())
+                        .chain(crate::lanes::grouped_tracks(&self.tracks, &t.guid))
+                    {
+                        if !targets.contains(&g) {
+                            targets.push(g);
+                        }
+                    }
+                }
+                for g in targets {
+                    let Some(t) = self.tracks.iter().find(|t| t.guid == g) else {
+                        continue;
+                    };
+                    let Some(own) = crate::lanes::mask_named(t, &lane) else {
+                        continue;
+                    };
+                    let edit = Edit::SetLanePlays(g, own);
                     self.assume(&edit);
                     self.edits.borrow_mut().push(edit);
                 }
-                Edit::SetLanePlays(guid, mask)
+                return;
             }
             C::Name => Edit::Select(guid),
             // A fold is an edit to the VIEW and not to a track: the
@@ -2231,6 +2258,62 @@ fn unread_midi(
         .filter(|item| fresh.is_midi(&item.guid) && previews.get(&item.guid).is_none())
         .map(|item| (item.guid.clone(), item.length.as_seconds()))
         .collect()
+}
+
+/// A slice cut from a take, as its waveform is drawn: which take, where
+/// in it (seconds from the take's own start), how long, and the stretch
+/// markers it plays through over a gap.
+struct SliceDrawn {
+    guid: String,
+    take: String,
+    from: f64,
+    offset: f64,
+    length: f64,
+    warp: Option<Vec<(f64, f64)>>,
+}
+
+/// Each slice's waveform, cut from its take's: off the window's thread on
+/// the waveform pool (`crate::wave_pool`), the takes it has not read read
+/// first, shown in the bottom bar as it goes. The window draws each slice
+/// once its waveform is there.
+fn draw_slices(previews: &crate::midi::Previews, takes: Vec<String>, slices: Vec<SliceDrawn>) {
+    let cut = |previews: &crate::midi::Previews, slices: &[SliceDrawn]| {
+        let drawn: Vec<(String, crate::midi::Wave)> = slices
+            .iter()
+            .filter_map(|s| {
+                let wave = previews.wave(&s.take)?;
+                Some((
+                    s.guid.clone(),
+                    s.warp.as_deref().map_or_else(
+                        || wave.slice(s.from, s.length),
+                        |markers| wave.warped(s.offset, s.length, markers),
+                    ),
+                ))
+            })
+            .collect();
+        previews.put_waves(drawn);
+    };
+    #[cfg(feature = "native")]
+    {
+        let previews = previews.clone();
+        crate::wave_pool::spawn(move || {
+            let job = crate::jobs::start("Slicing waveforms", slices.len());
+            let unread: Vec<String> = takes
+                .into_iter()
+                .filter(|guid| previews.wave(guid).is_none())
+                .collect();
+            if !unread.is_empty() {
+                previews.fill_waves_blocking(unread);
+            }
+            cut(&previews, &slices);
+            job.advance(slices.len());
+        });
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = takes;
+        cut(previews, &slices);
+    }
 }
 
 /// The audio items whose peaks have not been read.
@@ -3161,7 +3244,13 @@ impl ArrangementWidget {
         // Every item's outline, its cuts with it; without outlines, in
         // Edit mode, the cuts on a shut folder's row.
         if crate::options::OUTLINED.get() {
-            crate::arrangement::outlines_overlay(&mut out, &self.scene, view, lanes_at);
+            crate::arrangement::outlines_overlay(
+                &mut out,
+                &self.palette,
+                &self.scene,
+                view,
+                lanes_at,
+            );
         } else if self.editing.get() && crate::folds::cuts_shown() {
             crate::arrangement::cuts_overlay(
                 &mut out,

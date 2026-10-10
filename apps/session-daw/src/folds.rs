@@ -65,6 +65,12 @@ fn state() -> std::sync::MutexGuard<'static, State> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Plan the rows again, as a fold does: something else they are drawn
+/// from changed (which tracks show all their lanes).
+pub fn touch() {
+    changed();
+}
+
 fn changed() {
     GENERATION.fetch_add(1, Ordering::Relaxed);
 }

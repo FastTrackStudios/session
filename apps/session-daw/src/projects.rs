@@ -7,11 +7,10 @@
 //!
 //! **Alternatives** are a song's named checkpoints, as Logic keeps them: the
 //! song as it stood when the checkpoint was made ("Organized", before the
-//! mix), saved beside it as complete sessions —
-//! `Unbreakable.alternatives/Organized.session` next to
-//! `Unbreakable.session`. Making one does not open it: the song stays what
-//! is open, under its own name, and a plain save writes the song. Any
-//! alternative opens as itself later, and saving it then writes it.
+//! mix), a branch of its project file (`Unbreakable.session/Organized`).
+//! Making one does not open it: the song stays what is open, under its own
+//! name. Any alternative opens as itself later, and saving it then writes
+//! it.
 //!
 //! A song is known by its **base** — its folder and name without an
 //! extension (`…/unbreakable/Unbreakable`) — so its `.RPP`, its `.session`
@@ -21,9 +20,6 @@ use std::path::{Path, PathBuf};
 
 /// How many songs the list keeps.
 const KEPT: usize = 30;
-
-/// What an alternatives folder's name ends with.
-const ALTERNATIVES: &str = ".alternatives";
 
 /// A song or setlist opened lately.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,21 +65,18 @@ pub struct Alternative {
 }
 
 /// A song's base from any of its versions: `X.RPP`, `X.session` or
-/// `X.alternatives/Name.session` all give `…/X`. `None` for what is not a
+/// `X.session/Name` all give `…/X`. `None` for what is not a
 /// song file (a setlist, a folder).
 #[must_use]
 pub fn base_of(path: &Path) -> Option<PathBuf> {
+    // An alternative in a project file: `X.session/Organized`.
+    #[cfg(feature = "native")]
+    if let Some((file, _)) = crate::project_file::file_and_branch(path) {
+        return Some(file.with_extension(""));
+    }
     let ext = path.extension()?.to_string_lossy().to_lowercase();
     if ext != "rpp" && ext != "session" {
         return None;
-    }
-    if let Some(folder) = path.parent()
-        && let Some(song) = folder
-            .file_name()
-            .and_then(|n| n.to_str())
-            .and_then(|n| n.strip_suffix(ALTERNATIVES))
-    {
-        return Some(folder.parent()?.join(song));
     }
     Some(path.with_extension(""))
 }
@@ -93,7 +86,7 @@ pub fn base_of(path: &Path) -> Option<PathBuf> {
 #[must_use]
 pub fn main_of(base: &Path) -> Option<PathBuf> {
     let session = base.with_extension("session");
-    if session.is_dir() {
+    if session.is_file() {
         return Some(session);
     }
     ["RPP", "rpp"]
@@ -102,62 +95,41 @@ pub fn main_of(base: &Path) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Where a song's alternatives are kept.
-#[must_use]
-pub fn alternatives_dir(base: &Path) -> PathBuf {
-    let name = base
-        .file_name()
-        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    base.with_file_name(format!("{name}{ALTERNATIVES}"))
-}
-
 /// The alternative `path` is, by name, if it is one.
 #[must_use]
 pub fn alternative_name(path: &Path) -> Option<String> {
-    let folder = path.parent()?.file_name()?.to_str()?;
-    folder.ends_with(ALTERNATIVES).then(|| {
-        path.file_stem()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
-    })
+    #[cfg(feature = "native")]
+    if let Some((_, branch)) = crate::project_file::file_and_branch(path) {
+        return (branch != dawfile_store::MAIN).then_some(branch);
+    }
+    let _ = path;
+    None
 }
 
 /// A song's alternatives, the newest first.
 #[must_use]
 pub fn alternatives(base: &Path) -> Vec<Alternative> {
-    let Ok(entries) = std::fs::read_dir(alternatives_dir(base)) else {
-        return Vec::new();
-    };
-    let mut found: Vec<Alternative> = entries
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "session") && p.is_dir())
-        .map(|path| Alternative {
-            name: path
-                .file_stem()
-                .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
-            saved: modified(&path),
-            path,
-        })
-        .collect();
+    let mut found: Vec<Alternative> = Vec::new();
+    // The project file's branches, but the song's own.
+    #[cfg(feature = "native")]
+    {
+        let file = base.with_extension("session");
+        if crate::project_file::is_project_file(&file) {
+            found.extend(
+                crate::project_file::branches(&file)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|b| b.name != dawfile_store::MAIN)
+                    .map(|b| Alternative {
+                        path: file.join(&b.name),
+                        name: b.name,
+                        saved: u64::try_from(b.at).unwrap_or(0),
+                    }),
+            );
+        }
+    }
     found.sort_by(|a, b| b.saved.cmp(&a.saved).then_with(|| a.name.cmp(&b.name)));
     found
-}
-
-/// Where the alternative `name` of the song `base` is saved. A name is a
-/// file name: path separators and surrounding space are refused.
-///
-/// # Errors
-///
-/// An empty name, or one that is not a plain file name.
-pub fn alternative_path(base: &Path, name: &str) -> Result<PathBuf, String> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("an alternative needs a name".to_owned());
-    }
-    if name.contains(['/', '\\']) || name == "." || name == ".." {
-        return Err(format!("{name:?} is not a name a folder can have"));
-    }
-    Ok(alternatives_dir(base).join(format!("{name}.session")))
 }
 
 /// The songs and setlists opened lately, newest first — those still there.
@@ -229,14 +201,6 @@ fn read() -> Vec<Recent> {
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
-fn modified(path: &Path) -> u64 {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_secs())
 }
 
@@ -319,54 +283,51 @@ pub fn ago(at: u64) -> String {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests {
     use super::*;
 
+    /// A song's `.RPP`, its project file and an alternative in it are one
+    /// song; the alternative is known by its branch's name.
     #[test]
     fn every_version_of_a_song_is_the_song() {
-        let base = PathBuf::from("/songs/unbreakable/Unbreakable");
+        let tmp = tempfile::tempdir().expect("a folder");
+        let base = tmp.path().join("Unbreakable");
         assert_eq!(base_of(&base.with_extension("RPP")), Some(base.clone()));
-        assert_eq!(base_of(&base.with_extension("session")), Some(base.clone()));
-        let organized = alternatives_dir(&base).join("Organized.session");
-        assert_eq!(
-            organized,
-            PathBuf::from("/songs/unbreakable/Unbreakable.alternatives/Organized.session")
-        );
+        let file = base.with_extension("session");
+        dawfile_store::Store::open(&file).expect("a project file");
+        assert_eq!(base_of(&file), Some(base.clone()));
+        let organized = file.join("Organized");
         assert_eq!(base_of(&organized), Some(base));
         assert_eq!(alternative_name(&organized).as_deref(), Some("Organized"));
+        assert_eq!(
+            alternative_name(&file),
+            None,
+            "the song is not an alternative"
+        );
         assert_eq!(base_of(Path::new("/sets/Friday.setlist")), None);
     }
 
-    #[test]
-    fn an_alternative_is_named_as_a_file_is() {
-        let base = PathBuf::from("/s/Song");
-        assert!(
-            alternative_path(&base, "  Organized ").is_ok_and(|p| p.ends_with("Organized.session"))
-        );
-        assert!(alternative_path(&base, "").is_err());
-        assert!(alternative_path(&base, "a/b").is_err());
-        assert!(alternative_path(&base, "..").is_err());
-    }
-
-    /// Alternatives are listed from their folder, newest first; a song's
-    /// own version is its `.session` once it has one.
+    /// A song's own version is its project file once it has one, else its
+    /// `.RPP`; its alternatives are the file's branches, newest first.
     #[test]
     fn a_songs_alternatives_and_its_own_version() {
-        let tmp = std::env::temp_dir().join(format!("fts-projects-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        let base = tmp.join("Song");
-        std::fs::create_dir_all(&tmp).expect("a folder");
+        let tmp = tempfile::tempdir().expect("a folder");
+        let base = tmp.path().join("Song");
         std::fs::write(base.with_extension("RPP"), "<REAPER_PROJECT\n>\n").expect("an rpp");
         assert_eq!(main_of(&base), Some(base.with_extension("RPP")));
-        std::fs::create_dir_all(base.with_extension("session")).expect("a session");
-        assert_eq!(main_of(&base), Some(base.with_extension("session")));
+        let file = base.with_extension("session");
+        let store = dawfile_store::Store::open(&file).expect("a project file");
+        assert_eq!(main_of(&base), Some(file.clone()));
+        let doc = session::sync::loro::LoroDoc::new();
         for name in ["Organized", "Mix A"] {
-            std::fs::create_dir_all(alternative_path(&base, name).expect("a name")).expect("made");
+            store.fork(name, dawfile_store::MAIN, &doc).expect("forked");
             std::thread::sleep(std::time::Duration::from_millis(1_100));
         }
-        let names: Vec<String> = alternatives(&base).into_iter().map(|a| a.name).collect();
+        let found = alternatives(&base);
+        let names: Vec<&str> = found.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(names, ["Mix A", "Organized"]);
-        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(found[0].path, file.join("Mix A"));
+        drop(store);
     }
 }

@@ -49,6 +49,8 @@ keyflow-editor-lang = { workspace = true, optional = true }
 futures-channel = { workspace = true, optional = true }
 # The waveform readers' pool (`wave_pool`).
 rayon = { workspace = true, optional = true }
+# The project file: one Turso file per song, its Loro doc and blobs.
+dawfile-store = { workspace = true, optional = true }
 daw-theme-art = { workspace = true }
 # The mix phases the mixer's left rail lists.
 session = { workspace = true }
@@ -291,6 +293,7 @@ native = [
     "dep:keyflow-editor-lang",
     "dep:futures-channel",
     "dep:rayon",
+    "dep:dawfile-store",
     "dep:futures-util",
     "session/collab",
     "dep:architect",

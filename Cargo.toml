@@ -173,6 +173,7 @@ dawfile-logic = { path = "../daw/features/dawfile/dawfile-logic" }
 dawfile-protools = { path = "../daw/features/dawfile/dawfile-protools" }
 dawfile-reaper = { path = "../daw/features/dawfile/dawfile-reaper" }
 dawfile-standalone = { path = "../daw/features/dawfile/dawfile-standalone" }
+dawfile-store = { path = "../daw/features/dawfile/dawfile-store" }
 # default = all-formats; the daw facade opts into formats individually,
 # so the root entry keeps defaults OFF and consumers that want every
 # importer set `default-features = true`.

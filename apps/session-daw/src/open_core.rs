@@ -65,15 +65,22 @@ pub(crate) fn song_plan_with(
     prepare: &crate::prepare::Prepare,
     reprepare: bool,
 ) -> SongPlan {
-    if is_session(path) {
+    // A project file, or an alternative in one: opened as it is.
+    #[cfg(feature = "native")]
+    let in_a_file = crate::project_file::file_and_branch(path).is_some();
+    #[cfg(not(feature = "native"))]
+    let in_a_file = false;
+    if is_session(path) || in_a_file {
         return SongPlan {
             open: path.to_path_buf(),
             prepare: false,
             save_to: None,
         };
     }
+    // The song's project file, once it has been saved (a file: there is
+    // no folder format any more).
     let saved = path.with_extension("session");
-    if folder.is_dir(&saved) && !reprepare {
+    if !folder.is_dir(&saved) && saved.is_file() && !reprepare {
         return SongPlan {
             open: saved,
             prepare: false,
@@ -226,6 +233,10 @@ pub fn load_in(
     path: &Path,
     media: Media,
 ) -> eyre::Result<Opened> {
+    #[cfg(feature = "native")]
+    if let Some((file, branch)) = crate::project_file::file_and_branch(path) {
+        return load_project_file(daw, path, &file, &branch, media);
+    }
     let ProjectText { text, media_dir } = project_text_in(folder, path)?;
     let daw = daw.clone();
     daw.media_bay().set_file_resolver(Box::new(
@@ -281,6 +292,68 @@ pub fn load_in(
     })
 }
 
+/// [`load_in`] for a project file: `branch` of `file` rebuilt in the
+/// engine from its doc, its media anchored and (with [`Media::All`])
+/// materialized as an `.RPP`'s are.
+///
+/// # Errors
+///
+/// The file would not open, or its media did not materialize.
+#[cfg(feature = "native")]
+fn load_project_file(
+    daw: &Standalone,
+    path: &Path,
+    file: &Path,
+    branch: &str,
+    media: Media,
+) -> eyre::Result<Opened> {
+    let media_dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+    daw.media_bay().set_file_resolver(Box::new(
+        daw::standalone::media_bay::ProjectRelativeResolver::new(media_dir.clone()),
+    ));
+    let name = if branch == dawfile_store::MAIN {
+        file.file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned())
+    } else {
+        branch.to_owned()
+    };
+    let began = std::time::Instant::now();
+    let project_guid = crate::project_file::load(daw, &name, file, branch)
+        .map_err(|e| eyre::eyre!("{} did not open: {e}", path.display()))?;
+    let built = began.elapsed();
+    daw::standalone::project_loader::anchor_media(daw, &project_guid, &media_dir);
+    if media == Media::All {
+        let audio =
+            daw::standalone::audio_engine::materialize::materialize_via_bay(daw, &project_guid)
+                .map_err(|e| eyre::eyre!("{name}'s media did not materialize: {e}"))?;
+        if !audio.failed.is_empty() {
+            tracing::warn!(
+                failed = audio.failed.len(),
+                loaded = audio.loaded,
+                "some sources did not materialize"
+            );
+        }
+    }
+    let track_count = daw::service::Tracks::all(
+        daw,
+        daw::service::ProjectContext::Project(project_guid.clone()),
+    )
+    .len();
+    tracing::info!(
+        load.name = %name,
+        load.tracks = track_count,
+        load.build_ms = built.as_millis(),
+        load.media_ms = began.elapsed().saturating_sub(built).as_millis(),
+        "project file opened"
+    );
+    Ok(Opened {
+        daw: daw.clone(),
+        name,
+        project_guid,
+        track_count,
+    })
+}
+
 /// A project's text as the loader reads it, and the folder its media
 /// paths are relative to.
 pub struct ProjectText {
@@ -316,14 +389,15 @@ pub fn project_text(path: &Path) -> eyre::Result<ProjectText> {
 ///
 /// As [`project_text`].
 pub fn project_text_in(folder: &dyn Folder, path: &Path) -> eyre::Result<ProjectText> {
-    let text = if is_session(path) {
-        crate::folder::session_text(folder, path)
-            .map_err(|e| eyre::eyre!("could not read the session {}: {e}", path.display()))?
-    } else {
-        folder
-            .read_to_string(path)
-            .map_err(|e| eyre::eyre!("could not read {}: {e}", path.display()))?
-    };
+    if is_session(path) {
+        return Err(eyre::eyre!(
+            "{} is a project file: it opens through its doc, not as text",
+            path.display()
+        ));
+    }
+    let text = folder
+        .read_to_string(path)
+        .map_err(|e| eyre::eyre!("could not read {}: {e}", path.display()))?;
     let media_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
     Ok(ProjectText { text, media_dir })
 }

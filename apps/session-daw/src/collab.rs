@@ -314,9 +314,7 @@ fn open_local_with(mut docs: HashMap<String, SessionDoc>) -> eyre::Result<()> {
         let mut bridges = Vec::new();
         for (project, media, key, path) in open {
             let doc = docs.remove(&key).unwrap_or_else(|| {
-                crate::open::is_session(&path)
-                    .then(|| crate::session_file::load_session_history(&path))
-                    .flatten()
+                crate::project_file::doc_of(&path)
                     .map_or_else(SessionDoc::new, SessionDoc::from_loro)
             });
             let chart = chart_for(&path, &doc);
@@ -1071,15 +1069,24 @@ async fn bridge_song(
 ) -> eyre::Result<(Song, Bridge, bool)> {
     let guid = project.guid().to_owned();
     let (bridge, seeded) = match doc {
-        Some(doc) if doc.has_session() => (Bridge::join(project, media, doc, blobs(), local()).await?, false),
+        Some(doc) if doc.has_session() => (
+            Bridge::join(project, media, doc, blobs(), local()).await?,
+            false,
+        ),
         Some(doc) => {
             let chart = chart_for(&path, &doc);
-            (Bridge::host(project, media, doc, chart, blobs(), local()).await?, true)
+            (
+                Bridge::host(project, media, doc, chart, blobs(), local()).await?,
+                true,
+            )
         }
         None => {
             let own = docs.remove(&key).unwrap_or_default();
             let chart = chart_for(&path, &own);
-            (Bridge::host(project, media, own, chart, blobs(), local()).await?, false)
+            (
+                Bridge::host(project, media, own, chart, blobs(), local()).await?,
+                false,
+            )
         }
     };
     let song = Song {

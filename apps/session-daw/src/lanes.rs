@@ -83,6 +83,103 @@ pub fn grouped_tracks(tracks: &[daw_proto::Track], guid: &str) -> Vec<String> {
         .collect()
 }
 
+/// The tracks a row's lane line speaks for: a track with lanes itself; a
+/// folder the tracks under it that have lanes (all of a kit's mics, say);
+/// none for a track with one lane.
+#[must_use]
+pub fn shown_on<'a>(
+    tracks: &'a [daw_proto::Track],
+    track: &'a daw_proto::Track,
+) -> Vec<&'a daw_proto::Track> {
+    if !track.is_folder {
+        return if track.lane_count > 1 {
+            vec![track]
+        } else {
+            Vec::new()
+        };
+    }
+    tracks
+        .iter()
+        .filter(|t| t.lane_count > 1 && !t.is_folder && is_under(tracks, t, &track.guid))
+        .collect()
+}
+
+/// Whether `track` is somewhere inside the folder `folder`.
+fn is_under(tracks: &[daw_proto::Track], track: &daw_proto::Track, folder: &str) -> bool {
+    let mut at = track.parent_guid.as_deref();
+    for _ in 0..tracks.len() {
+        match at {
+            Some(guid) if guid == folder => return true,
+            Some(guid) => {
+                at = tracks
+                    .iter()
+                    .find(|t| t.guid == guid)
+                    .and_then(|t| t.parent_guid.as_deref());
+            }
+            None => return false,
+        }
+    }
+    false
+}
+
+/// What a lane line over `tracks` names: the lane they all play, or
+/// `mixed` when they differ.
+#[must_use]
+pub fn label_of(tracks: &[&daw_proto::Track]) -> String {
+    let mut names = tracks.iter().map(|t| label(t));
+    let Some(first) = names.next() else {
+        return String::new();
+    };
+    if names.all(|n| n == first) {
+        first
+    } else {
+        "mixed".to_owned()
+    }
+}
+
+/// The play mask for `track` that plays its lane called `name`.
+#[must_use]
+pub fn mask_named(track: &daw_proto::Track, name: &str) -> Option<u64> {
+    (0..track.lane_count.min(64))
+        .find(|&lane| name_or_number(track, lane) == name)
+        .map(|lane| 1_u64 << lane)
+}
+
+fn name_or_number(track: &daw_proto::Track, lane: u32) -> String {
+    name(track, lane).map_or_else(|| lane.saturating_add(1).to_string(), str::to_owned)
+}
+
+/// The tracks that show all their lanes; the rest show only the one that
+/// plays.
+fn expanded_set() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static EXPANDED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::LazyLock::new(Default::default);
+    &EXPANDED
+}
+
+/// Whether `guid` shows all its lanes (it shows the one that plays until
+/// expanded).
+#[must_use]
+pub fn expanded(guid: &str) -> bool {
+    expanded_set().lock().is_ok_and(|set| set.contains(guid))
+}
+
+/// Show all of each of `guids`' lanes, or only the playing one again: all
+/// expanded if any was not, else all collapsed. The rows are planned again.
+pub fn toggle_expanded(guids: &[String]) {
+    if let Ok(mut set) = expanded_set().lock() {
+        let open = guids.iter().any(|g| !set.contains(g));
+        for g in guids {
+            if open {
+                set.insert(g.clone());
+            } else {
+                set.remove(g);
+            }
+        }
+    }
+    crate::folds::touch();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +200,30 @@ mod tests {
 
     /// The empty numbered lanes between the comp and the edit are not
     /// stepped through: from EDIT forward is round to COMP, back is C1.
+    /// A folder's lane line speaks for the tracks under it that have lanes,
+    /// and names the lane they all play.
+    #[test]
+    fn a_folder_names_the_lane_its_tracks_play() {
+        let folder = daw_proto::Track {
+            guid: "kick".to_owned(),
+            is_folder: true,
+            lane_count: 2,
+            lane_names: vec!["COMP".to_owned(), "C1".to_owned()],
+            lane_play_mask: 1 << 1,
+            ..daw_proto::Track::default()
+        };
+        let mic = |guid: &str| daw_proto::Track {
+            guid: guid.to_owned(),
+            parent_guid: Some("kick".to_owned()),
+            ..track()
+        };
+        let tracks = vec![folder, mic("in"), mic("out")];
+        let under = shown_on(&tracks, &tracks[0]);
+        assert_eq!(under.len(), 2, "the mics, not the folder's own lanes");
+        assert_eq!(label_of(&under), "EDIT");
+        assert_eq!(mask_named(&tracks[1], "COMP"), Some(1));
+    }
+
     #[test]
     fn steps_skip_the_empty_numbered_lanes() {
         let t = track();

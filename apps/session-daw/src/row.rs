@@ -37,6 +37,9 @@ pub enum Control {
     LanePrev,
     /// And forward.
     LaneNext,
+    /// The playing lane's name, between them: shows all the lanes, or only
+    /// the one that plays again.
+    LaneName,
 }
 
 impl Control {
@@ -212,6 +215,10 @@ impl Row {
         let volume_x = self.tcp.volume_x();
         match control {
             Control::LanePrev | Control::LaneNext => self.lane_step(control == Control::LaneNext),
+            Control::LaneName => {
+                let (prev, next) = (self.lane_step(false)?, self.lane_step(true)?);
+                Some(Rect::new(prev.x1, prev.y0, next.x0, next.y1))
+            }
             Control::Folder => Some(Rect::new(
                 self.indent,
                 self.y,
@@ -333,6 +340,7 @@ impl Row {
         [
             Control::LanePrev,
             Control::LaneNext,
+            Control::LaneName,
             Control::Phase,
             Control::Mute,
             Control::Solo,

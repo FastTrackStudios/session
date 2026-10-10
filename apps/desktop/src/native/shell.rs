@@ -76,9 +76,6 @@ pub fn Shell() -> Element {
             if let Some(next) = session_daw::actions::take_mode_request() {
                 asked.set(next);
             }
-            // In Edit mode the kit plays its phase's lane: Comp the comp,
-            // Edit the edit.
-            session_daw::drum_lanes::follow_phase(*asked.peek());
             // What the arrangement queued, to the engine — with no frame
             // coming (the window hidden), an action's edits would wait.
             session_daw::panel::send_pending();

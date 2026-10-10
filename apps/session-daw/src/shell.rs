@@ -593,10 +593,73 @@ pub fn BottomBar(
                                 style: "flex:1; min-width:0; display:flex; align-items:stretch; overflow:hidden;",
                 Context { view: showing, transport }
             }
+            Jobs {}
             PhaseSwitch { mode }
             Modes { mode }
         }
     }
+}
+
+/// What is being done off the window's thread (`crate::jobs`): each
+/// job's name and how far along, a bar filling under it — nothing at all
+/// when nothing is running.
+#[component]
+fn Jobs() -> Element {
+    let mut shown = use_signal(Vec::<(String, usize, usize)>::new);
+    use_future(move || async move {
+        loop {
+            architect::platform::sleep(std::time::Duration::from_millis(200)).await;
+            let now = crate::jobs::running();
+            if now != *shown.peek() {
+                shown.set(now);
+            }
+        }
+    });
+    let jobs = shown();
+    if jobs.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        div {
+            style: "flex:none; display:flex; align-items:center; gap:10px; padding:0 10px;",
+            Divider {}
+            for (label, done, total) in jobs {
+                div {
+                    key: "{label}",
+                    title: "{label}: {done} of {total}",
+                    style: "display:flex; flex-direction:column; justify-content:center; gap:4px; min-width:110px;",
+                    span {
+                        style: "font-size:11px; line-height:13px; font-weight:600; color:{TEXT}; white-space:nowrap;",
+                        if total > 0 {
+                            "{label} {done}/{total}"
+                        } else {
+                            "{label}…"
+                        }
+                    }
+                    div {
+                        style: "height:3px; border-radius:2px; background:{RULE}; overflow:hidden;",
+                        div {
+                            style: "height:100%; width:{fraction(done, total)}%; background:{TEXT};",
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// How far along, percent: a job that does not know its length shows a
+/// third, so the bar says something is moving.
+fn fraction(done: usize, total: usize) -> f64 {
+    use num_traits::ToPrimitive as _;
+    if total == 0 {
+        return 33.0;
+    }
+    let (done, total) = (
+        done.min(total).to_f64().unwrap_or(0.0),
+        total.to_f64().unwrap_or(1.0),
+    );
+    done / total * 100.0
 }
 
 /// A word under a bottom-bar icon.

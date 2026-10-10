@@ -530,16 +530,24 @@ pub fn previews_of(project: &ProjectRef) -> crate::midi::Previews {
             .map(|item| (item.guid.clone(), item.length.as_seconds()))
             .collect(),
     );
-    previews.fill_waves_blocking(
-        project
-            .0
-            .items
-            .values()
-            .flatten()
-            .filter(|item| !project.0.is_midi(&item.guid))
-            .map(|item| item.guid.clone())
-            .collect(),
-    );
+    let waves: Vec<String> = project
+        .0
+        .items
+        .values()
+        .flatten()
+        .filter(|item| !project.0.is_midi(&item.guid))
+        .map(|item| item.guid.clone())
+        .collect();
+    // The waveforms behind the window, each item drawn as it arrives (and
+    // the bottom bar showing how far): reading them first held the window
+    // still while a song of thousands of items opened.
+    #[cfg(feature = "native")]
+    {
+        let reading = previews.clone();
+        crate::wave_pool::spawn(move || reading.fill_waves_blocking(waves));
+    }
+    #[cfg(not(feature = "native"))]
+    previews.fill_waves_blocking(waves);
     previews
 }
 
@@ -835,8 +843,9 @@ mod source_tests {
     #[test]
     fn a_saved_session_opens_instead_of_its_multitrack() {
         let (dir, rpp) = song();
+        // A project file: one file, as a save writes it.
         let saved = dir.join("Song.session");
-        std::fs::create_dir_all(&saved).expect("a session");
+        std::fs::write(&saved, b"").expect("a project file");
         let as_saved = crate::open::SongPlan {
             open: saved.clone(),
             prepare: false,
