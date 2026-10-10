@@ -204,12 +204,14 @@ impl StudioSession {
                 )
                 .await;
         }
-        let chart = chart_text.and_then(|text| {
-            keyflow::parse(text)
-                .inspect_err(|e| tracing::error!(error = %e, "chart: could not parse"))
-                .ok()
-                .map(Arc::new)
-        });
+        let chart = chart_text
+            .and_then(|text| {
+                keyflow::parse(text)
+                    .inspect_err(|e| tracing::error!(error = %e, "chart: could not parse"))
+                    .ok()
+                    .map(Arc::new)
+            })
+            .or_else(|| chart_of_song(Some(project)));
         Ok(Self {
             project: studio,
             rows,
@@ -361,7 +363,8 @@ impl StudioSession {
                 .inspect_err(|e| tracing::error!(error = %e, path = %chart_path.display(), "chart: could not parse"))
                 .ok()
                 .map(Arc::new)
-        });
+        })
+        .or_else(|| chart_of_song(None));
         Ok(Self {
             project,
             rows,
@@ -416,6 +419,29 @@ pub fn fetch() -> Option<daw_ui::studio::project::Project> {
         .build()
         .ok()?;
     rt.block_on(daw_ui::studio::project::fetch())
+}
+
+/// A chart for the song `project` (the current one when `None`) written
+/// from its sections ([`crate::song_chart`]), when it is in this
+/// process's engine and has sections: what the chart view shows for a
+/// song with no chart of its own.
+fn chart_of_song(project: Option<&str>) -> Option<Arc<keyflow::Chart>> {
+    use daw::service::Projects as _;
+    let daw = crate::open::local_engine()?;
+    let guid = match project {
+        Some(guid) => guid.to_owned(),
+        None => crate::open::current_song().or_else(|| daw.current().map(|p| p.guid))?,
+    };
+    let text = crate::song_chart::of_song(daw, &daw::service::ProjectContext::Project(guid))?;
+    let chart = keyflow::parse(text.as_str())
+        .inspect_err(|e| tracing::warn!(error = %e, "chart: the song's sections did not make one"))
+        .ok()?;
+    tracing::info!(
+        chart.sections = chart.sections.len(),
+        chart.lines = text.lines().count(),
+        "chart: written from the song's sections"
+    );
+    Some(Arc::new(chart))
 }
 
 /// The rows of `raw`, laid out by `scene`: the visible tracks (a hidden

@@ -203,6 +203,7 @@ pub mod setup;
 pub mod shell;
 pub mod simulate;
 pub mod skin;
+pub mod song_chart;
 pub mod strip;
 pub mod studio;
 pub mod take_rating;
