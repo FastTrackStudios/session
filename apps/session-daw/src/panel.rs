@@ -27,8 +27,11 @@ use crate::studio::{PPS, StudioSession};
 pub const BAR: f64 = 5.0;
 /// One wheel notch, for a wheel that counts in lines.
 pub const WHEEL_LINE: f64 = 40.0;
-/// How far in each zoom may go.
-const ZOOM_IN: (f64, f64) = (32.0, 6.0);
+/// How far in each zoom may go: across, to twenty pixels a sample at
+/// 48 kHz ([`crate::studio::PPS`] a second unzoomed) — an edit is placed
+/// on the sample, and the waveform is drawn down to them
+/// ([`crate::wave_detail`]).
+const ZOOM_IN: (f64, f64) = (48_000.0 * 20.0 / crate::studio::PPS, 6.0);
 
 /// A mouse button, as the panel cares about it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -307,6 +310,11 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     // And Mix mode: every item in its track's colour.
     let mixing = use_hook(|| Rc::new(Cell::new(false)));
     mixing.set(mode == Some(session::modes::Mode::Mix));
+    // And Edit mode: every cut on a folder's row, and what the drum
+    // detection found drawn over the kit.
+    let editing = use_hook(|| Rc::new(Cell::new(false)));
+    editing.set(mode == Some(session::modes::Mode::Edit));
+    crate::folds::show_cuts(editing.get());
     let ui = use_hook(|| Rc::new(Cell::new(crate::touch::arrange_zoom(touch, 0.0))));
     crate::ruler::set_slim(touch);
     let shape = use_signal(|| compact.get());
@@ -364,6 +372,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         .with_compact(Rc::clone(&compact))
         .with_recording(Rc::clone(&recording))
         .with_mixing(Rc::clone(&mixing))
+        .with_editing(Rc::clone(&editing))
         .with_touch(touch)
         .with_ui(Rc::clone(&ui))
         .with_redraw(crate::touch::redraw_hook())
@@ -804,6 +813,16 @@ impl ArrangementPanel {
             zoom.set((to.zoom_x, to.zoom_y));
             scroll.set(to.scroll_x.clamp(0.0, ex));
             down.set(to.scroll_y.clamp(0.0, ey));
+            // And to the widget now, for the paint this frame is about to
+            // make: written only at the top, a zoom asked for without an
+            // event (a model's) waited for a frame nothing asked for.
+            *self.view.borrow_mut() = crate::widget::View {
+                scroll_x: *scroll.peek(),
+                scroll_y: *down.peek(),
+                zoom_x: zoom.peek().0,
+                zoom_y: zoom.peek().1,
+                play_at,
+            };
             // The view cell was written before this; the frame showing
             // the new one is the next.
             if let Some(redraw) = &self.redraw {

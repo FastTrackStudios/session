@@ -76,6 +76,25 @@ pub fn generation() -> u64 {
     GENERATION.load(Ordering::Relaxed)
 }
 
+/// Whether a shut folder's row shows every cut in what it holds — in
+/// Edit mode, where the cuts are the work — or the takes whole, the seams
+/// joined (`daw_ui::studio::folded::join`), everywhere else: mixing or
+/// playing a song, a slip-edited kit is still one take a song long.
+static CUTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether shut folders show their cuts.
+#[must_use]
+pub fn cuts_shown() -> bool {
+    CUTS.load(Ordering::Relaxed)
+}
+
+/// Show shut folders' cuts or not; a change plans the rows again.
+pub fn show_cuts(on: bool) {
+    if CUTS.swap(on, Ordering::Relaxed) != on {
+        changed();
+    }
+}
+
 /// Whether the folder at `index` in `rows` (track, depth) shows shut:
 /// a folder whose next row is not one of its own. What its fold button
 /// draws, and what a click on it undoes.

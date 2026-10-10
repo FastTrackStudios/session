@@ -61,6 +61,33 @@ pub struct Wave {
 }
 
 impl Wave {
+    /// The part of this one from `from` seconds into it, `length` long —
+    /// silence where that reaches outside it. A slice of a take plays the
+    /// take's own audio, so its waveform is this, cut where it was.
+    #[must_use]
+    pub fn slice(&self, from: f64, length: f64) -> Self {
+        let step = self.step.max(f64::EPSILON);
+        let count = crate::num::index((length / step).ceil());
+        let skip = (from / step).round();
+        let points = (0..count)
+            .map(|k| {
+                let at = crate::num::coord(k) + skip;
+                if at < 0.0 {
+                    (0.0, 0.0)
+                } else {
+                    self.points
+                        .get(crate::num::index(at))
+                        .copied()
+                        .unwrap_or((0.0, 0.0))
+                }
+            })
+            .collect();
+        Self {
+            step: self.step,
+            points,
+        }
+    }
+
     /// Fold the engine's per-channel `[min, max, …]` blocks into one
     /// envelope. `None` for a take with no audio to show.
     #[must_use]
@@ -233,6 +260,17 @@ impl Previews {
         if let Ok(mut waves) = self.waves.lock() {
             waves.insert(guid.to_owned(), Arc::new(wave));
         }
+    }
+
+    /// Put `wave` in as `guid`'s without reading it: a slice of a take
+    /// whose waveform is already here (see [`Wave::slice`]).
+    pub fn put_waves(&self, waves: impl IntoIterator<Item = (String, Wave)>) {
+        if let Ok(mut held) = self.waves.lock() {
+            for (guid, wave) in waves {
+                held.insert(guid, Arc::new(wave));
+            }
+        }
+        self.arrived();
     }
 
     /// The waveform for an audio item, if its peaks have been read.
@@ -429,6 +467,22 @@ mod wave_tests {
 #[cfg(test)]
 mod fold_tests {
     use super::{Child, Note, Wave, fold_notes, fold_waves};
+
+    /// A slice is its take's waveform from where it was cut, and silence
+    /// where it reaches back before the take began.
+    #[test]
+    fn a_slice_is_cut_from_its_take() {
+        let take = Wave {
+            step: 0.1,
+            points: (0_u8..10).map(|k| (f32::from(k), -f32::from(k))).collect(),
+        };
+        let mid = take.slice(0.3, 0.3);
+        assert_eq!(mid.points, [(3.0, -3.0), (4.0, -4.0), (5.0, -5.0)]);
+        let early = take.slice(-0.2, 0.3);
+        assert_eq!(early.points, [(0.0, 0.0), (0.0, 0.0), (0.0, -0.0)]);
+        let late = take.slice(0.9, 0.3);
+        assert_eq!(late.points, [(9.0, -9.0), (0.0, 0.0), (0.0, 0.0)]);
+    }
 
     fn flat(level: f32, points: usize) -> Wave {
         Wave {

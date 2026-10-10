@@ -45,6 +45,13 @@ pub enum Action {
     /// by these moves: `(hit, shift)`, microseconds (whole numbers, so
     /// an action compares). What `DRUMS_SLIP` on the Action List works
     /// out and hands the window, which carries it out where it is seen.
+    /// Fill the lanes with a span of time (µs from the start) and/or
+    /// these tracks (by GUID): a model looking at a fill, a section, the
+    /// kit.
+    Frame {
+        time: Option<(i64, i64)>,
+        tracks: Vec<String>,
+    },
     SlipDrums {
         moves: Vec<(i64, i64)>,
         /// The cut before each hit and the seams' crossfade, µs.

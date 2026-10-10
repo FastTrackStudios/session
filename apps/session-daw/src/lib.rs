@@ -142,6 +142,7 @@ pub mod open {
 }
 #[cfg(feature = "native")]
 pub mod actions;
+pub mod detect_overlay;
 pub mod device_audio;
 pub mod drum_edit;
 pub mod drum_reference;
@@ -194,6 +195,7 @@ pub mod toolbar;
 pub mod touch;
 pub mod track_icon;
 pub mod transport_bar;
+pub mod wave_detail;
 #[cfg(feature = "web")]
 pub mod web_audio;
 #[cfg(feature = "web")]

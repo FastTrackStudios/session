@@ -457,11 +457,11 @@ pub fn plan_rows_with(
     let mut project = project;
     {
         let shown: Vec<daw_proto::Track> = planned.iter().map(|(t, _)| t.clone()).collect();
-        daw_ui::studio::folded::refold(
-            Arc::make_mut(&mut project.0),
-            &shown,
-            settings.folded_takes,
-        );
+        let folded = Arc::make_mut(&mut project.0);
+        daw_ui::studio::folded::refold(folded, &shown, settings.folded_takes);
+        if !crate::folds::cuts_shown() {
+            daw_ui::studio::folded::join_seams(folded);
+        }
     }
     (project, RowsRef(Arc::new(planned)))
 }

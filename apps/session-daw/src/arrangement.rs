@@ -286,6 +286,10 @@ struct LaneWave {
     gain: f64,
     /// The envelope folded for the last zoom drawn — see [`Runs`].
     runs: std::cell::RefCell<Option<std::rc::Rc<Runs>>>,
+    /// The real items this waveform is of — the item, or a shut folder's
+    /// children under it — read again finer when zoomed in past it
+    /// ([`crate::wave_detail`]).
+    sources: Vec<crate::wave_detail::Source>,
 }
 
 /// A waveform folded to one zoom's resolution: every run of `fold` points
@@ -471,6 +475,118 @@ fn lane_wave_paths(lane: &LaneWave, left: f64, right: f64, pps: f64) -> Vec<std:
     (first / CHUNK..=end / CHUNK)
         .filter_map(|k| lane.chunk(&folded, k))
         .collect()
+}
+
+/// Zoomed in until a lane's own points are wider than this many pixels,
+/// its waveform is drawn from detail ([`crate::wave_detail`]) instead.
+const DETAIL_PAST: f64 = 2.0;
+
+/// Past this many pixels a sample, each sample is marked with a dot.
+const SAMPLE_DOTS: f64 = 6.0;
+
+/// `(x, y)` through `transform`, as a point on the surface.
+fn place(transform: Affine, x: f64, y: f64) -> vello::kurbo::Point {
+    let [a, b, c, d, e, f] = transform.as_coeffs();
+    vello::kurbo::Point::new(a.mul_add(x, c.mul_add(y, e)), b.mul_add(x, d.mul_add(y, f)))
+}
+
+/// A waveform drawn from detail.
+enum Fine {
+    /// A column a pixel, in the lanes' own coordinates.
+    Envelope(BezPath),
+    /// Zoomed in past a pixel a sample: a line through the samples of
+    /// each item, and a dot at each when they are far enough apart — in
+    /// pixels, since the lanes' transform would stretch a stroke.
+    Samples(Vec<BezPath>, Vec<Rect>),
+}
+
+/// `lane`'s waveform from `left` to `right` seconds from detail, when
+/// zoomed in past its own points and the detail for every item under it
+/// is here — asked for if not, and `None` meanwhile, the coarse one
+/// drawn instead.
+fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> Option<Fine> {
+    if lane.sources.is_empty() || lane.wave.step * pps <= DETAIL_PAST {
+        return None;
+    }
+    let (a, b) = (lane.x0.max(left), lane.x1.min(right));
+    if a >= b || pps <= 0.0 {
+        return None;
+    }
+    let mut details = Vec::new();
+    let mut missing = false;
+    for source in &lane.sources {
+        let (sa, sb) = (a.max(source.at), b.min(source.at + source.length));
+        if sa >= sb {
+            continue;
+        }
+        match crate::wave_detail::get(source, sa, sb, 1.0 / pps) {
+            Some(detail) => details.push((detail, sa, sb)),
+            None => missing = true,
+        }
+    }
+    if missing || details.is_empty() {
+        return None;
+    }
+    let coarsest = details.iter().map(|(d, ..)| d.step).fold(0.0, f64::max);
+    if details.iter().all(|(d, ..)| d.samples) && coarsest * pps >= 1.0 {
+        let half = (lane.bottom - lane.top) / 2.0;
+        let mid = f64::midpoint(lane.top, lane.bottom);
+        let edge = (half - 1.0).max(HAIR);
+        let reach = edge * lane.gain;
+        let mut lines = Vec::new();
+        let mut dots = Vec::new();
+        for (detail, sa, sb) in &details {
+            let mut trace = BezPath::new();
+            for (i, (t, (v, _))) in detail.between(*sa, *sb).enumerate() {
+                let y = mid - (f64::from(v) * reach).clamp(-edge, edge);
+                let at = place(transform, t, y);
+                if i == 0 {
+                    trace.move_to(at);
+                } else {
+                    trace.line_to(at);
+                }
+                if detail.step * pps >= SAMPLE_DOTS {
+                    dots.push(Rect::from_center_size(at, (3.0, 3.0)));
+                }
+            }
+            lines.push(trace);
+        }
+        return Some(Fine::Samples(lines, dots));
+    }
+    let columns = crate::num::index(((b - a) * pps).ceil()).max(1);
+    let mut cols: Vec<Option<(f32, f32)>> = vec![None; columns];
+    for (detail, sa, sb) in &details {
+        for (t, (max, min)) in detail.between(*sa, *sb) {
+            if t < a || t >= b {
+                continue;
+            }
+            if let Some(col) = cols.get_mut(crate::num::index(((t - a) * pps).floor())) {
+                let (mx, mn) = col.unwrap_or((0.0, 0.0));
+                *col = Some((mx.max(max), mn.min(min)));
+            }
+        }
+    }
+    let filled: Vec<(f64, f32, f32)> = cols
+        .iter()
+        .enumerate()
+        .filter_map(|(c, v)| {
+            v.map(|(max, min)| ((crate::num::coord(c) + 0.5).mul_add(1.0 / pps, a), max, min))
+        })
+        .collect();
+    let mut path = BezPath::new();
+    for (i, &(x, max, min)) in filled.iter().enumerate() {
+        let (top, _) = lane.ys(max, min);
+        if i == 0 {
+            path.move_to((x, top));
+        } else {
+            path.line_to((x, top));
+        }
+    }
+    for &(x, max, min) in filled.iter().rev() {
+        path.line_to((x, lane.ys(max, min).1));
+    }
+    path.close_path();
+    Some(Fine::Envelope(path))
 }
 
 impl Arrangement {
@@ -676,6 +792,19 @@ impl Viewport {
         let left = (self.scroll_x - self.panel_w) / pps;
         let right = (self.scroll_x + self.width) / pps;
         (left - 1.0, right + 1.0)
+    }
+
+    /// The seconds on screen, with only a few pixels to spare — for what
+    /// is drawn per pixel ([`fine`]), where [`Self::secs`]'s second either
+    /// side would be half a million pixels zoomed in to the samples.
+    #[must_use]
+    pub fn on_screen(self) -> (f64, f64) {
+        let pps = self.pps.max(1e-9);
+        let spare = 8.0 / pps;
+        (
+            (self.scroll_x - self.panel_w) / pps - spare,
+            (self.scroll_x + self.width) / pps + spare,
+        )
     }
 }
 
@@ -980,6 +1109,7 @@ impl Arrangement {
                     notes: previews.get(&item.guid),
                     wave: previews.wave(&item.guid),
                     layers: Vec::new(),
+                    sources: vec![source_of(item)],
                 });
                 let (notes, wave) = (held.notes, held.wave);
                 // Audio: the take's own peaks, once they have been read —
@@ -1001,8 +1131,9 @@ impl Arrangement {
                     } else {
                         wave_gain(&whole)
                     };
-                    let lane = |wave, color| LaneWave {
+                    let lane = |wave, color, sources| LaneWave {
                         runs: std::cell::RefCell::default(),
+                        sources,
                         gain,
                         wave,
                         x0,
@@ -1012,11 +1143,13 @@ impl Arrangement {
                         color,
                     };
                     let drawn: Vec<LaneWave> = if held.layers.is_empty() {
-                        vec![lane(whole, color)]
+                        vec![lane(whole, color, held.sources)]
                     } else {
                         held.layers
                             .into_iter()
-                            .map(|(role, wave)| lane(wave, kit_color(role).unwrap_or(color)))
+                            .map(|(role, wave, sources)| {
+                                lane(wave, kit_color(role).unwrap_or(color), sources)
+                            })
                             .collect()
                     };
                     // Over the body just recorded, drawn at replay.
@@ -1829,6 +1962,90 @@ pub fn marquee_overlay(
     );
 }
 
+/// What the drum detection found ([`crate::detect_overlay`]), over the
+/// rows `rows` (the kit).
+///
+/// A line at each moment in the colour of what a slip would do with it — the meters' danger to move, safe to stay,
+/// warn to listen to — and, from a hit to be moved, a bar along the top
+/// to where it goes. The fills shaded under them.
+pub fn detection_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    rows: std::ops::Range<usize>,
+    overlay: &crate::detect_overlay::Overlay,
+) {
+    use crate::detect_overlay::Mark;
+    let (ox, oy) = origin;
+    let (Some((top, _)), Some((last_top, last_h))) = (
+        scene.row_box(rows.start),
+        scene.row_box(rows.end.saturating_sub(1)),
+    ) else {
+        return;
+    };
+    let y0 = top.mul_add(view.zoom_y, oy).max(crate::ruler::ruler_h());
+    let y1 = (last_top + last_h)
+        .mul_add(view.zoom_y, oy)
+        .min(view.height);
+    if y1 <= y0 {
+        return;
+    }
+    let x_of = |t: f64| t.mul_add(view.pps, ox);
+    let pps = view.pps.max(f64::EPSILON);
+    let (from, to) = ((view.panel_w - ox) / pps, (view.width - ox) / pps);
+    for &(a, b) in &overlay.fills {
+        if b < from || a > to {
+            continue;
+        }
+        let r = Rect::new(x_of(a).max(view.panel_w), y0, x_of(b).min(view.width), y1);
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            palette.accent.multiply_alpha(0.12),
+            None,
+            &r,
+        );
+    }
+    let thin = vello::kurbo::Stroke::new(1.0);
+    for line in overlay.between(from, to) {
+        let colour = match line.mark {
+            Mark::Move => palette.meter_danger,
+            Mark::Stay => palette.meter_safe,
+            Mark::Check => palette.meter_warn,
+            Mark::Fill => palette.text_faint,
+        };
+        let x = x_of(line.time);
+        painter.stroke(
+            &thin,
+            Affine::IDENTITY,
+            colour.multiply_alpha(0.8),
+            None,
+            &vello::kurbo::Line::new((x, y0), (x, y1)),
+        );
+        if line.mark == Mark::Move
+            && let Some(target) = line.target
+        {
+            let tx = x_of(target);
+            painter.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                colour,
+                None,
+                &Rect::new(x.min(tx), y0, x.max(tx), y0 + 3.0),
+            );
+            painter.stroke(
+                &thin,
+                Affine::IDENTITY,
+                colour,
+                None,
+                &vello::kurbo::Line::new((tx, y0), (tx, y0 + 8.0)),
+            );
+        }
+    }
+}
+
 pub fn selection_overlay(
     painter: &mut impl PaintScene,
     palette: &Palette,
@@ -2124,7 +2341,23 @@ const MIN_NOTE_SECS: f64 = 0.02;
 struct Held {
     notes: Option<Vec<crate::midi::Note>>,
     wave: Option<std::sync::Arc<crate::midi::Wave>>,
-    layers: Vec<(LaneRole, std::sync::Arc<crate::midi::Wave>)>,
+    layers: Vec<(
+        LaneRole,
+        std::sync::Arc<crate::midi::Wave>,
+        Vec<crate::wave_detail::Source>,
+    )>,
+    /// The real items the waveform is of.
+    sources: Vec<crate::wave_detail::Source>,
+}
+
+/// An item as a source of detail for the waveform drawn of it.
+fn source_of(item: &daw_proto::Item) -> crate::wave_detail::Source {
+    crate::wave_detail::Source {
+        guid: item.guid.clone(),
+        at: item.position.as_seconds(),
+        length: item.length.as_seconds(),
+        offset: item.start_offset.as_seconds(),
+    }
 }
 
 use expression_editor_core::kit::LaneRole;
@@ -2233,8 +2466,13 @@ fn folded_contents(
                     .filter(|((item, ..), _)| role_of(item) == *role)
                     .map(|(_, child)| crate::midi::Child { ..*child })
                     .collect();
+                let sources = held
+                    .iter()
+                    .filter(|(item, ..)| role_of(item) == *role)
+                    .map(|(item, ..)| source_of(item))
+                    .collect();
                 crate::midi::fold_waves(span.start, span.end, &these)
-                    .map(|wave| (*role, std::sync::Arc::new(wave)))
+                    .map(|wave| (*role, std::sync::Arc::new(wave), sources))
             })
             .collect()
     } else {
@@ -2244,6 +2482,7 @@ fn folded_contents(
         notes: crate::midi::fold_notes(span.start, span.end, &children),
         wave: crate::midi::fold_waves(span.start, span.end, &children).map(std::sync::Arc::new),
         layers,
+        sources: held.iter().map(|(item, ..)| source_of(item)).collect(),
     })
 }
 
@@ -2502,6 +2741,7 @@ impl Arrangement {
         transform: Affine,
     ) -> Counts {
         let (left, right) = view.secs();
+        let shown = view.on_screen();
         let mut counts = Counts::default();
         for row in self.visible_rows(view) {
             let Some(span) = self.index.lanes.get(row) else {
@@ -2515,7 +2755,23 @@ impl Arrangement {
                     Some(&(x0, x1)) if x1 < left || x0 > right => continue,
                     _ => {}
                 }
-                if submit_command(painter, cmd, transform) {
+                // A rectangle far wider than the view (a song-long take, a
+                // lane's stripe) cut to it first: the renderer sizes its
+                // buffers by how long every path is on screen, and zoomed
+                // in to the samples a 4-minute take is a hundred million
+                // pixels of it.
+                let cut = match cmd {
+                    RenderCommand::Fill(fill) => {
+                        cut_to_view(&fill.shape, fill.transform, left, right).map(|shape| {
+                            RenderCommand::Fill(anyrender::recording::FillCommand {
+                                shape,
+                                ..fill.clone()
+                            })
+                        })
+                    }
+                    _ => None,
+                };
+                if submit_command(painter, cut.as_ref().unwrap_or(cmd), transform) {
                     counts.submitted = counts.submitted.saturating_add(1);
                 }
                 // An item body with a waveform over it: the part on
@@ -2527,9 +2783,36 @@ impl Arrangement {
                     .into_iter()
                     .flatten()
                 {
-                    for path in lane_wave_paths(lane, left, right, view.pps) {
-                        painter.fill(Fill::NonZero, transform, lane.color, None, &*path);
-                        counts.submitted = counts.submitted.saturating_add(1);
+                    match fine(lane, shown.0, shown.1, view.pps, transform) {
+                        Some(Fine::Envelope(path)) => {
+                            painter.fill(Fill::NonZero, transform, lane.color, None, &path);
+                            counts.submitted = counts.submitted.saturating_add(1);
+                        }
+                        Some(Fine::Samples(lines, dots)) => {
+                            let stroke = vello::kurbo::Stroke::new(1.25);
+                            for line in &lines {
+                                painter.stroke(&stroke, Affine::IDENTITY, lane.color, None, line);
+                            }
+                            for dot in &dots {
+                                painter.fill(
+                                    Fill::NonZero,
+                                    Affine::IDENTITY,
+                                    lane.color,
+                                    None,
+                                    dot,
+                                );
+                            }
+                            counts.submitted = counts.submitted.saturating_add(
+                                u64::try_from(lines.len().saturating_add(dots.len()))
+                                    .unwrap_or(u64::MAX),
+                            );
+                        }
+                        None => {
+                            for path in lane_wave_paths(lane, left, right, view.pps) {
+                                painter.fill(Fill::NonZero, transform, lane.color, None, &*path);
+                                counts.submitted = counts.submitted.saturating_add(1);
+                            }
+                        }
                     }
                 }
             }
@@ -2725,6 +3008,171 @@ fn compose(outer: Affine, inner: Affine) -> Affine {
     )]
     let composed = outer * inner;
     composed
+}
+
+/// `shape` as the rectangle it is, if it is an upright one: a move,
+/// lines along its edges, a close — every point on a corner.
+fn upright(shape: &BezPath) -> Option<Rect> {
+    use vello::kurbo::{PathEl, Shape as _};
+    let bounds = shape.bounding_box();
+    let corner = |p: vello::kurbo::Point| {
+        ((p.x - bounds.x0).abs() < 1e-9 || (p.x - bounds.x1).abs() < 1e-9)
+            && ((p.y - bounds.y0).abs() < 1e-9 || (p.y - bounds.y1).abs() < 1e-9)
+    };
+    let elements = shape.elements();
+    (elements.len() <= 6
+        && elements.iter().all(|el| match el {
+            PathEl::MoveTo(p) | PathEl::LineTo(p) => corner(*p),
+            PathEl::ClosePath => true,
+            _ => false,
+        }))
+    .then_some(bounds)
+}
+
+/// `shape` cut to `left..right` (and as much again either side), when it
+/// is an upright rectangle reaching further than that — in its own
+/// coordinates, so only for an untransformed shape. `None` to leave it as
+/// it is.
+fn cut_to_view(shape: &BezPath, transform: Affine, left: f64, right: f64) -> Option<BezPath> {
+    use vello::kurbo::Shape as _;
+    if transform != Affine::IDENTITY {
+        return None;
+    }
+    let margin = (right - left).max(0.0);
+    let (from, to) = (left - margin, right + margin);
+    let bounds = shape.bounding_box();
+    if bounds.x0 >= from && bounds.x1 <= to {
+        return None;
+    }
+    let bounds = upright(shape)?;
+    let (x0, x1) = (bounds.x0.max(from), bounds.x1.min(to));
+    (x1 > x0).then(|| Rect::new(x0, bounds.y0, x1, bounds.y1).to_path(0.1))
+}
+
+/// Every solid fill in a finished frame `width` by `height` that reaches
+/// far past it, cut to it (and as much again around).
+///
+/// Zoomed in to the
+/// samples, a section's band on the ruler, a take's body, a stretch of
+/// its coarse waveform are millions of pixels long, and the renderer
+/// sizes its buffers by the length of what it is given, on screen or
+/// not — past its limit it stops the window, or quietly draws nothing.
+pub fn cut_to_screen(scene: &mut anyrender::recording::Scene, width: f64, height: f64) {
+    use vello::kurbo::Shape as _;
+    let screen = Rect::new(-width, -height, 2.0 * width, 2.0 * height);
+    for cmd in &mut scene.commands {
+        let RenderCommand::Fill(fill) = cmd else {
+            continue;
+        };
+        if !matches!(fill.brush, anyrender::Paint::Solid(_)) {
+            continue;
+        }
+        let mut placed = fill.shape.clone();
+        placed.apply_affine(fill.transform);
+        let bounds = placed.bounding_box();
+        if screen.contains(bounds.origin())
+            && screen.contains(vello::kurbo::Point::new(bounds.x1, bounds.y1))
+        {
+            continue;
+        }
+        fill.shape = clip_to(&placed, screen);
+        fill.transform = Affine::IDENTITY;
+    }
+}
+
+/// `path`'s area inside `rect`: each of its outlines, flattened to lines,
+/// cut against the rectangle's four sides (Sutherland–Hodgman), as a
+/// fill sees them — an outline left open is closed.
+fn clip_to(path: &BezPath, rect: Rect) -> BezPath {
+    let mut outlines: Vec<Vec<vello::kurbo::Point>> = Vec::new();
+    vello::kurbo::flatten(path.iter(), 0.25, |el| match el {
+        vello::kurbo::PathEl::MoveTo(p) => outlines.push(vec![p]),
+        vello::kurbo::PathEl::LineTo(p) => {
+            if let Some(outline) = outlines.last_mut() {
+                outline.push(p);
+            }
+        }
+        _ => {}
+    });
+    let mut out = BezPath::new();
+    for outline in outlines {
+        let cut = [
+            Side::Left(rect.x0),
+            Side::Right(rect.x1),
+            Side::Top(rect.y0),
+            Side::Bottom(rect.y1),
+        ]
+        .iter()
+        .fold(outline, |points, side| side.clip(&points));
+        let mut points = cut.into_iter();
+        if let Some(first) = points.next() {
+            out.move_to(first);
+            for p in points {
+                out.line_to(p);
+            }
+            out.close_path();
+        }
+    }
+    out
+}
+
+/// One side of a rectangle, to cut an outline against.
+#[derive(Clone, Copy)]
+enum Side {
+    Left(f64),
+    Right(f64),
+    Top(f64),
+    Bottom(f64),
+}
+
+impl Side {
+    fn inside(self, p: vello::kurbo::Point) -> bool {
+        match self {
+            Self::Left(x) => p.x >= x,
+            Self::Right(x) => p.x <= x,
+            Self::Top(y) => p.y >= y,
+            Self::Bottom(y) => p.y <= y,
+        }
+    }
+
+    /// Where the edge from `a` to `b` crosses this side.
+    fn cross(self, a: vello::kurbo::Point, b: vello::kurbo::Point) -> vello::kurbo::Point {
+        let along = |from: f64, to: f64, at: f64| {
+            let span = to - from;
+            if span.abs() < f64::EPSILON {
+                0.0
+            } else {
+                (at - from) / span
+            }
+        };
+        let t = match self {
+            Self::Left(x) | Self::Right(x) => along(a.x, b.x, x),
+            Self::Top(y) | Self::Bottom(y) => along(a.y, b.y, y),
+        };
+        a.lerp(b, t)
+    }
+
+    /// The part of the closed outline `points` on the inside of this side.
+    fn clip(self, points: &[vello::kurbo::Point]) -> Vec<vello::kurbo::Point> {
+        let mut out = Vec::with_capacity(points.len());
+        let Some(&last) = points.last() else {
+            return out;
+        };
+        let mut previous = last;
+        for &p in points {
+            match (self.inside(previous), self.inside(p)) {
+                (true, true) => out.push(p),
+                (true, false) => out.push(self.cross(previous, p)),
+                (false, true) => {
+                    out.push(self.cross(previous, p));
+                    out.push(p);
+                }
+                (false, false) => {}
+            }
+            previous = p;
+        }
+        out
+    }
 }
 
 /// Push one recorded command through `transform`.
@@ -2940,8 +3388,63 @@ mod waveform_tests {
 }
 
 #[cfg(test)]
+mod clip_tests {
+    use super::{BezPath, Rect, clip_to};
+    use vello::kurbo::Shape as _;
+
+    /// A take a hundred million pixels long is cut to the screen; what is
+    /// on screen is untouched.
+    #[test]
+    fn a_long_shape_is_cut_to_the_screen() {
+        let screen = Rect::new(0.0, 0.0, 100.0, 50.0);
+        let long = Rect::new(-1e8, 10.0, 1e8, 20.0).to_path(0.1);
+        let cut = clip_to(&long, screen).bounding_box();
+        assert!(
+            (cut.x0 - 0.0).abs() < 1e-9 && (cut.x1 - 100.0).abs() < 1e-9,
+            "{cut:?}"
+        );
+        assert!(
+            (cut.y0 - 10.0).abs() < 1e-9 && (cut.y1 - 20.0).abs() < 1e-9,
+            "{cut:?}"
+        );
+    }
+
+    /// A waveform's outline crossing the edge keeps its shape inside: the
+    /// cut points lie on the edge, at the height the line crossed it.
+    #[test]
+    fn an_outline_is_cut_where_it_crosses() {
+        let mut wave = BezPath::new();
+        wave.move_to((-100.0, 0.0));
+        wave.line_to((100.0, 20.0));
+        wave.line_to((-100.0, 20.0));
+        wave.close_path();
+        let cut = clip_to(&wave, Rect::new(0.0, -10.0, 1000.0, 100.0));
+        let b = cut.bounding_box();
+        assert!(
+            (b.x0 - 0.0).abs() < 1e-9 && (b.x1 - 100.0).abs() < 1e-9,
+            "{b:?}"
+        );
+        assert!(
+            (b.y0 - 10.0).abs() < 1e-9,
+            "crossed the left edge halfway up: {b:?}"
+        );
+    }
+
+    /// Wholly outside is nothing.
+    #[test]
+    fn outside_is_nothing() {
+        let off = Rect::new(500.0, 0.0, 600.0, 10.0).to_path(0.1);
+        assert!(
+            clip_to(&off, Rect::new(0.0, 0.0, 100.0, 100.0))
+                .elements()
+                .is_empty()
+        );
+    }
+}
+
+#[cfg(test)]
 mod lane_wave_tests {
-    use super::{CHUNK, LaneWave, lane_wave_paths};
+    use super::{Affine, CHUNK, Fine, LaneWave, fine, lane_wave_paths};
     use crate::midi::Wave;
     use vello::peniko::Color;
 
@@ -2970,7 +3473,48 @@ mod lane_wave_tests {
             color: Color::WHITE,
             gain: 1.0,
             runs: std::cell::RefCell::default(),
+            sources: Vec::new(),
         }
+    }
+
+    /// Zoomed in past a lane's own points, it is drawn from the detail
+    /// read for it — a column a pixel, and past a pixel a sample a line
+    /// through the samples; until the detail is here, not at all (the
+    /// coarse one is).
+    #[test]
+    fn zoomed_in_the_waveform_is_drawn_from_detail() {
+        let source = crate::wave_detail::Source {
+            guid: "fine-test-item".to_owned(),
+            at: 0.0,
+            length: 100.0,
+            offset: 0.0,
+        };
+        let mut lane = lane(100, false);
+        lane.sources = vec![source.clone()];
+        let at = Affine::IDENTITY;
+        // At a pixel a second its points (a second each) are a pixel wide:
+        // coarse is fine.
+        assert!(fine(&lane, 10.0, 20.0, 1.0, at).is_none());
+        // Zoomed in, and nothing read yet: asked for, coarse meanwhile.
+        assert!(fine(&lane, 10.0, 11.0, 1_000.0, at).is_none());
+        let samples: Vec<f64> = (0..4_800).map(|k| f64::from(k % 7) / 7.0 - 0.5).collect();
+        crate::wave_detail::hold(
+            &source,
+            crate::wave_detail::reduce(&samples, 1, 4_800.0, 10.0, 2),
+        );
+        assert!(matches!(
+            fine(&lane, 10.0, 11.0, 1_000.0, at),
+            Some(Fine::Envelope(_))
+        ));
+        crate::wave_detail::hold(
+            &source,
+            crate::wave_detail::reduce(&samples, 1, 4_800.0, 10.0, 1),
+        );
+        let Some(Fine::Samples(lines, dots)) = fine(&lane, 10.0, 10.01, 48_000.0, at) else {
+            panic!("a line through the samples");
+        };
+        assert_eq!(lines.len(), 1);
+        assert!(!dots.is_empty(), "ten pixels a sample: each marked");
     }
 
     fn elements(lane: &LaneWave, left: f64, right: f64, pps: f64) -> usize {
@@ -3125,7 +3669,7 @@ mod kit_layer_tests {
             &folded::guid_of("drums", 0),
         )
         .expect("the kit's item");
-        let order: Vec<LaneRole> = kit.layers.iter().map(|(role, _)| *role).collect();
+        let order: Vec<LaneRole> = kit.layers.iter().map(|(role, ..)| *role).collect();
         assert_eq!(order, [LaneRole::Other, LaneRole::Snare, LaneRole::Kick]);
 
         let guitars = folded_contents(

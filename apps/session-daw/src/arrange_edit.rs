@@ -54,7 +54,7 @@ pub type LanesOrigin = (f64, f64);
 
 /// The least and most the arrangement zooms to, in pixels a second
 /// and in row scale.
-pub const PPS_RANGE: (f64, f64) = (2.0, 2000.0);
+pub const PPS_RANGE: (f64, f64) = (2.0, 48_000.0 * 20.0);
 pub const ZOOM_Y_RANGE: (f64, f64) = (0.1, 8.0);
 
 /// What an interaction asks the window to do beyond the picture.
@@ -1451,6 +1451,7 @@ impl Editor {
             | Action::ToggleScene(_)
             | Action::QuantizeDrums
             | Action::SlipDrums { .. }
+            | Action::Frame { .. }
             | Action::GainStage { .. }
             | Action::ToggleMixer
             | Action::ToggleEditor

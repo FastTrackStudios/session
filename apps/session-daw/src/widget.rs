@@ -422,6 +422,15 @@ pub struct ArrangementWidget {
     recording: Rc<Cell<bool>>,
     /// The panel's Mix-mode flag: every item in its track's colour.
     mixing: Rc<Cell<bool>>,
+    /// The panel's Edit-mode flag: the drum detection drawn over the kit.
+    editing: Rc<Cell<bool>>,
+    /// The drum detection's version last drawn.
+    detection_seen: Cell<u64>,
+    /// The fine waveforms' generation last drawn ([`crate::wave_detail`]).
+    detail_seen: Cell<u64>,
+    /// The scroll and zoom last drawn: moved by the panel without an
+    /// event here (a zoom a model asked for), the picture is due again.
+    view_drawn: Cell<(f64, f64, f64, f64)>,
     /// Whether the editor took the last press and has not been let go
     /// of yet.
     ///
@@ -609,6 +618,10 @@ impl ArrangementWidget {
             compact: Rc::new(Cell::new(false)),
             recording: Rc::new(Cell::new(true)),
             mixing: Rc::new(Cell::new(false)),
+            editing: Rc::new(Cell::new(false)),
+            detection_seen: Cell::new(0),
+            detail_seen: Cell::new(0),
+            view_drawn: Cell::new((0.0, 0.0, 0.0, 0.0)),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
             project,
@@ -742,6 +755,62 @@ impl ArrangementWidget {
     pub fn with_mixing(mut self, mixing: Rc<Cell<bool>>) -> Self {
         self.mixing = mixing;
         self
+    }
+
+    /// What of a view changes the picture's framing: its scroll and zoom.
+    const fn framing(view: &View) -> (f64, f64, f64, f64) {
+        (view.scroll_x, view.scroll_y, view.zoom_x, view.zoom_y)
+    }
+
+    /// Share the panel's Edit-mode flag: the drum detection over the kit.
+    #[must_use]
+    pub fn with_editing(mut self, editing: Rc<Cell<bool>>) -> Self {
+        self.editing = editing;
+        self
+    }
+
+    /// The band of rows (unzoomed, top to bottom) showing `tracks` — a
+    /// track in a shut folder by the folder's row. `None` for none.
+    fn rows_of(&self, tracks: &[String]) -> Option<(f64, f64)> {
+        let row_of = |guid: &str| {
+            let mut at = Some(guid.to_owned());
+            while let Some(guid) = at {
+                if let Some(row) = self.rows.iter().position(|(t, _)| t.guid == guid) {
+                    return Some(row);
+                }
+                at = self
+                    .project
+                    .tracks
+                    .iter()
+                    .find(|t| t.guid == guid)
+                    .and_then(|t| t.parent_guid.clone());
+            }
+            None
+        };
+        let boxes: Vec<(f64, f64)> = tracks
+            .iter()
+            .filter_map(|t| row_of(t))
+            .filter_map(|row| self.scene.row_box(row))
+            .collect();
+        let top = boxes.iter().map(|b| b.0).reduce(f64::min)?;
+        let bottom = boxes.iter().map(|b| b.0 + b.1).fold(top, f64::max);
+        Some((top, bottom))
+    }
+
+    /// The rows of the kit: the top-level `Drums` folder's and every row
+    /// under it, `None` when it is not on screen.
+    fn kit_rows(&self) -> Option<std::ops::Range<usize>> {
+        let first = self
+            .rows
+            .iter()
+            .position(|(t, depth)| *depth == 0 && t.name.trim().eq_ignore_ascii_case("drums"))?;
+        let len = self
+            .rows
+            .iter()
+            .skip(first.saturating_add(1))
+            .take_while(|(_, depth)| *depth > 0)
+            .count();
+        Some(first..first.saturating_add(len).saturating_add(1))
     }
 
     /// Share the panel's Record-mode flag: the arm only while recording.
@@ -901,6 +970,19 @@ impl ArrangementWidget {
             .map(|&(hit, shift)| (seconds(hit), seconds(shift)))
             .collect();
         let started = std::time::Instant::now();
+        // Each take's waveform and where in its source it started, before
+        // it is cut: every slice of it shows its own part of that.
+        let takes: std::collections::HashMap<String, (f64, std::sync::Arc<crate::midi::Wave>)> =
+            self.project
+                .items
+                .values()
+                .flatten()
+                .filter(|i| items.contains(&i.guid))
+                .filter_map(|i| {
+                    let wave = self.previews.wave(&i.guid)?;
+                    Some((i.guid.clone(), (i.start_offset.as_seconds(), wave)))
+                })
+                .collect();
         let mut effects = Vec::new();
         crate::arrange_edit::Editor::slip_items(
             &mut self.project,
@@ -909,6 +991,19 @@ impl ArrangementWidget {
             ("Slip edit drums", cut),
             &mut effects,
         );
+        let sliced: Vec<(String, crate::midi::Wave)> = self
+            .project
+            .items
+            .values()
+            .flatten()
+            .filter_map(|i| {
+                let take = i.guid.split("-split@").next()?;
+                let (offset, wave) = takes.get(take)?;
+                let from = i.start_offset.as_seconds() - offset;
+                Some((i.guid.clone(), wave.slice(from, i.length.as_seconds())))
+            })
+            .collect();
+        self.previews.put_waves(sliced);
         tracing::info!(
             slip.takes = items.len(),
             slip.moves = moves.len(),
@@ -917,6 +1012,11 @@ impl ArrangementWidget {
             "drums slip-edited"
         );
         self.settle(effects);
+        // The kit's row folded again from the slices, so every cut is on
+        // it (in Edit mode; elsewhere the seams are joined).
+        self.replan_rows();
+        // The hits have moved: what was detected is not where they are.
+        crate::detect_overlay::clear();
         self.dirty.set(true);
         true
     }
@@ -1619,6 +1719,16 @@ impl ArrangementWidget {
                 handled |= self.quantize_drums();
                 continue;
             }
+            if let crate::keys::Action::Frame { time, tracks } = &action {
+                let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1e6;
+                self.zooms.borrow_mut().push(crate::zoom::Request::Frame {
+                    time: time.map(|(from, to)| (seconds(from), seconds(to))),
+                    rows: self.rows_of(tracks),
+                    toggle: false,
+                });
+                handled = true;
+                continue;
+            }
             if let crate::keys::Action::SlipDrums {
                 moves,
                 pre_roll_us,
@@ -1668,6 +1778,16 @@ impl ArrangementWidget {
     /// frame instead of whenever the engine gets round to it.
     fn settle(&mut self, effects: Vec<crate::arrange_edit::Effect>) {
         use crate::arrange_edit::Effect;
+        // What rows are planned from takes the edit too: planned again —
+        // a mode changed, a folder opened — they show the edit, not the
+        // takes before it.
+        if effects.iter().any(|e| matches!(e, Effect::Send(_)))
+            && let Some((_, raw)) = self.replan.as_ref()
+        {
+            let mut raw = raw.borrow_mut();
+            raw.items.clone_from(&self.project.items);
+            raw.item_count = self.project.item_count;
+        }
         let mut recut = false;
         for effect in effects {
             match effect {
@@ -2036,6 +2156,9 @@ impl Widget for ArrangementWidget {
         // engine asked for.
         self.dirty.get()
             || window_queued()
+            || crate::detect_overlay::version() != self.detection_seen.get()
+            || crate::wave_detail::generation() != self.detail_seen.get()
+            || self.view_drawn.get() != Self::framing(&self.view.borrow())
             || self.quantize_ready()
             || self.stage_ready()
             || crate::studio::resync_pending()
@@ -2808,6 +2931,7 @@ impl ArrangementWidget {
         }
         let began = web_time::Instant::now();
         let at_now = *self.view.borrow();
+        self.view_drawn.set(Self::framing(&at_now));
         let view = self.viewport(f64::from(width), f64::from(height));
         self.size = (view.width, view.height);
 
@@ -2848,6 +2972,7 @@ impl ArrangementWidget {
             spent
         };
 
+        self.detail_seen.set(crate::wave_detail::generation());
         let lanes = self.scene.replay_lanes(
             &mut out,
             view,
@@ -2908,6 +3033,22 @@ impl ArrangementWidget {
             &self.editor.selected,
             self.editor.ghost(),
         );
+        // In Edit mode, what the drum detection found, over the kit.
+        self.detection_seen.set(crate::detect_overlay::version());
+        if self.editing.get()
+            && let Some(found) = crate::detect_overlay::current()
+            && let Some(kit) = self.kit_rows()
+        {
+            crate::arrangement::detection_overlay(
+                &mut out,
+                &self.palette,
+                &self.scene,
+                view,
+                lanes_at,
+                kit,
+                &found,
+            );
+        }
         // The razor's rectangles over the items they cut, and under
         // nothing: they are the thing being aimed, so they go last of
         // the lane passes.
@@ -3255,6 +3396,7 @@ impl ArrangementWidget {
                 ],
             );
         }
+        crate::arrangement::cut_to_screen(&mut out, f64::from(width), f64::from(height));
         out
     }
 }

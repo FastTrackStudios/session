@@ -166,7 +166,7 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         }
         // Already the list's own answer (`DRUMS_SLIP`), or a binding the
         // window does not do: straight to the window.
-        Action::Unbound(_) | Action::SlipDrums { .. } => return None,
+        Action::Unbound(_) | Action::SlipDrums { .. } | Action::Frame { .. } => return None,
     })
 }
 
@@ -701,6 +701,133 @@ pub fn take_mode_request() -> Option<session::modes::Mode> {
     MODE_REQUEST.lock().ok()?.take()
 }
 
+static VIEW: ActionMeta = meta(
+    "SESSION_VIEW",
+    "view",
+    "View",
+    "Fill the arrangement with part of the song and/or some tracks: `from`/`to` (seconds), or `bars` ([first, last], inclusive), or `section` (a section's name, `nth` for the 2nd of its name — SESSION_SECTIONS lists them); and `tracks` (GUIDs, paths or path tails — a track in a shut folder frames the folder's row). Either axis left out stays as it is. For the window's own zooms (fit every track, the whole song, back) see SESSION_ZOOM.",
+    "View",
+    "",
+);
+static SECTIONS: ActionMeta = meta(
+    "SESSION_SECTIONS",
+    "sections",
+    "Sections",
+    "The song's sections (its regions), in order: name, start and end seconds, and the bars they span — what SESSION_VIEW's `section` names.",
+    "View",
+    "",
+);
+
+/// What to look at.
+#[derive(Facet)]
+struct ViewArg {
+    from: Option<f64>,
+    to: Option<f64>,
+    bars: Option<Vec<i32>>,
+    section: Option<String>,
+    /// Which of the sections of that name, from 1 (1).
+    nth: Option<u32>,
+    tracks: Option<Vec<String>>,
+}
+
+/// One section.
+#[derive(Facet)]
+struct SectionOut {
+    name: String,
+    start: f64,
+    end: f64,
+    first_bar: i32,
+    last_bar: i32,
+}
+
+/// The song's sections, in order.
+fn sections(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec<SectionOut> {
+    let mut all: Vec<SectionOut> =
+        <daw::standalone::Standalone as daw::service::region::Regions>::all(daw, project.clone())
+            .into_iter()
+            .map(|r| {
+                let (start, end) = (r.time_range.start_seconds(), r.time_range.end_seconds());
+                SectionOut {
+                    name: r.name,
+                    start,
+                    end,
+                    first_bar: daw.time_to_musical(project.clone(), start + 1e-6).0,
+                    last_bar: daw
+                        .time_to_musical(project.clone(), (end - 1e-6).max(start))
+                        .0,
+                }
+            })
+            .collect();
+    all.sort_by(|a, b| a.start.total_cmp(&b.start));
+    all
+}
+
+/// The span `a` asks for, if it asks for one.
+fn view_span(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    a: &ViewArg,
+) -> Result<Option<(f64, f64)>, String> {
+    if let Some(name) = &a.section {
+        let all = sections(daw, project);
+        let named: Vec<&SectionOut> = all
+            .iter()
+            .filter(|s| s.name.trim().eq_ignore_ascii_case(name.trim()))
+            .collect();
+        let nth = usize::try_from(a.nth.unwrap_or(1).max(1)).unwrap_or(1);
+        return named
+            .get(nth.saturating_sub(1))
+            .map(|s| Some((s.start, s.end)))
+            .ok_or_else(|| {
+                let mut known: Vec<&str> = all.iter().map(|s| s.name.as_str()).collect();
+                known.dedup();
+                format!("no section {name} (#{nth}): the song has {known:?}")
+            });
+    }
+    if let Some(bars) = &a.bars {
+        let (Some(&first), Some(&last)) = (bars.first(), bars.last()) else {
+            return Err("`bars` is [first, last]".to_owned());
+        };
+        let from = daw.musical_to_time(project.clone(), first.min(last), 1, 0.0);
+        let to = daw.musical_to_time(project.clone(), first.max(last).saturating_add(1), 1, 0.0);
+        return Ok(Some((from, to)));
+    }
+    match (a.from, a.to) {
+        (Some(from), Some(to)) if to > from => Ok(Some((from.max(0.0), to))),
+        (Some(_), Some(_)) => Err("`to` must be after `from`".to_owned()),
+        (None, None) => Ok(None),
+        _ => Err("a span is `from` and `to` together".to_owned()),
+    }
+}
+
+fn register_view(list: &ActionList) {
+    list.register(&VIEW, Effect::Mutating, |a: ViewArg| {
+        let (daw, project) = song()?;
+        let span = view_span(daw, &project, &a)?;
+        let tracks = a
+            .tracks
+            .iter()
+            .flatten()
+            .map(|t| resolve(daw, &project, t))
+            .collect::<Result<Vec<String>, String>>()?;
+        if span.is_none() && tracks.is_empty() {
+            return Err(
+                "nothing to view: give a span (from/to, bars, section) or tracks".to_owned(),
+            );
+        }
+        let us = |s: f64| num_traits::ToPrimitive::to_i64(&(s * 1_000_000.0).round()).unwrap_or(0);
+        queue(Action::Frame {
+            time: span.map(|(from, to)| (us(from), us(to))),
+            tracks,
+        });
+        Ok(())
+    });
+    list.register(&SECTIONS, Effect::ReadOnly, |(): ()| {
+        let (daw, project) = song()?;
+        Ok(sections(daw, &project))
+    });
+}
+
 static PHASE: ActionMeta = meta(
     "SESSION_PHASE",
     "phase",
@@ -766,6 +893,7 @@ fn register_mode(list: &ActionList) {
 fn register_data(list: &ActionList) {
     register_mode(list);
     register_phase(list);
+    register_view(list);
     register_tracks(list);
     register_hits(list);
     register_fundamental(list);
@@ -1260,6 +1388,15 @@ fn resolve(
             path == want || path.ends_with(&format!("/{want}"))
         })
         .collect();
+    // A whole path is that track, however many others end the same way:
+    // `Drums` is the top-level folder, not `REFERENCES/…/Drums` too.
+    let exact: Vec<&(&daw_proto::Track, String)> = fits
+        .iter()
+        .filter(|(_, p)| p.to_lowercase() == want)
+        .collect();
+    if let [(only, _)] = exact.as_slice() {
+        return Ok(only.guid.clone());
+    }
     match fits.as_slice() {
         [(only, _)] => Ok(only.guid.clone()),
         [] => Err(format!("no track {what} — list them with SESSION_TRACKS")),
@@ -1919,22 +2056,40 @@ fn detected_out(
         look.from.unwrap_or(f64::NEG_INFINITY),
         look.to.unwrap_or(f64::INFINITY),
     );
-    let found = detect(daw, project, settings, span)?;
+    // The whole song, so the arrangement can draw all of it; the answer
+    // is the span's.
+    let found = detect(daw, project, settings, (f64::NEG_INFINITY, f64::INFINITY))?;
     let inside = |t: f64| t >= span.0 && t <= span.1;
     let tolerance = settings.tolerance_ms / 1_000.0;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let mut all: Vec<MomentOut> = Vec::new();
+    let mut drawn = crate::detect_overlay::Overlay {
+        lines: Vec::with_capacity(found.moments.len()),
+        fills: found.fills.iter().map(|f| (f.from, f.to)).collect(),
+    };
     for (moment, (_, target)) in found.moments.iter().zip(&found.targets) {
+        use crate::detect_overlay::Mark;
+        let held = in_a_fill(daw, project, &found.fills, moment.time);
+        let mark = match (target, settings.fills) {
+            (_, crate::drum_settings::Fills::Skip) if held => Mark::Fill,
+            (_, crate::drum_settings::Fills::Only) if !held => Mark::Fill,
+            (None, _) => Mark::Check,
+            (Some(t), _) if (t - moment.time).abs() <= tolerance => Mark::Stay,
+            (Some(_), _) => Mark::Move,
+        };
+        drawn.lines.push(crate::detect_overlay::Line {
+            time: moment.time,
+            target: *target,
+            mark,
+        });
         if !inside(moment.time) {
             continue;
         }
-        let held = in_a_fill(daw, project, &found.fills, moment.time);
-        let slip = match (target, settings.fills) {
-            (_, crate::drum_settings::Fills::Skip) if held => "fill",
-            (_, crate::drum_settings::Fills::Only) if !held => "fill",
-            (None, _) => "check",
-            (Some(t), _) if (t - moment.time).abs() <= tolerance => "stay",
-            (Some(_), _) => "move",
+        let slip = match mark {
+            Mark::Fill => "fill",
+            Mark::Check => "check",
+            Mark::Stay => "stay",
+            Mark::Move => "move",
         };
         let (bar, beat, frac) = daw.time_to_musical(project.clone(), moment.time);
         all.push(MomentOut {
@@ -1948,6 +2103,7 @@ fn detected_out(
             slip: slip.to_owned(),
         });
     }
+    crate::detect_overlay::publish(drawn);
     let tally = |what: &str| count(all.iter().filter(|m| m.slip == what).count());
     let offset = usize::try_from(look.offset.unwrap_or(0)).unwrap_or(0);
     // A page fits in one reply (the MCP's text cap): 300 at most.
@@ -1969,6 +2125,7 @@ fn detected_out(
         fills: found
             .fills
             .iter()
+            .filter(|f| f.to >= span.0 && f.from <= span.1)
             .map(|f| fill_out(daw, project, f))
             .collect(),
         shown: all.into_iter().skip(offset).take(limit).collect(),
