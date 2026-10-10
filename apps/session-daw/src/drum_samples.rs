@@ -79,8 +79,21 @@ pub fn set_up(
     dry: bool,
 ) -> Result<Report, String> {
     let settings = crate::drum_settings::current();
-    let kit = crate::actions::kit(daw, project, &settings);
+    let mut kit = crate::actions::kit(daw, project, &settings);
     let triggers = crate::drum_reference::pieces(daw, project);
+    // A piece whose trigger is dead has no hits from it: its close mic's,
+    // what is its own there (`crate::close_mic`).
+    let mut from_mics: Vec<String> = Vec::new();
+    for (name, trigger) in &triggers {
+        if kit.iter().any(|(n, _, _)| n == name) {
+            continue;
+        }
+        let hits = crate::close_mic::hits(daw, project, trigger, &settings);
+        if !hits.is_empty() {
+            from_mics.push(name.clone());
+            kit.push((name.clone(), crate::drum_edit::Piece::of(name), hits));
+        }
+    }
     let tracks = Tracks::all(daw, project.clone());
     let mut report = Report::default();
     let mut every: Notes = Vec::new();
@@ -117,9 +130,14 @@ pub fn set_up(
             .collect();
         report.notes = report.notes.saturating_add(notes.len());
         report.tracks.push(format!(
-            "{}: {} notes on {note} ({piece}), its close mics",
+            "{}: {} notes on {note} ({piece}), its close mics{}",
             sample.name,
-            notes.len()
+            notes.len(),
+            if from_mics.contains(name) {
+                " — the hits its close mic heard, its trigger dead"
+            } else {
+                ""
+            }
         ));
         every.extend(notes.iter().copied());
         if !played.contains(&piece) {

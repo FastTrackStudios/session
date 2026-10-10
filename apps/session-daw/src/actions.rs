@@ -1592,7 +1592,99 @@ fn register_bass_rig(list: &ActionList) {
 }
 
 #[cfg(feature = "signal")]
+static CLOSE_MIC_CHECK: ActionMeta = meta(
+    "DRUMS_CLOSE_MIC_CHECK",
+    "drums_close_mic_check",
+    "How a close mic stands in for its trigger",
+    "For a piece with a working trigger (`piece`: `Tom 1`), find its hits from its close mic alone — as DRUMS_SAMPLES does for a piece whose trigger is dead — and hold them up to the trigger's: how many each has, how many the mic found that the trigger has (within 15 ms), missed, and found that are not there. What the close-mic hits of a dead trigger's piece can be trusted to. Read-only.",
+    "Drums",
+    "",
+);
+
+/// The piece to check.
+#[cfg(feature = "signal")]
+#[derive(Facet)]
+struct CloseMicArg {
+    piece: String,
+}
+
+#[cfg(feature = "signal")]
 fn register_samples(list: &ActionList) {
+    list.register(&CLOSE_MIC_CHECK, Effect::ReadOnly, |a: CloseMicArg| {
+        const WITHIN: f64 = 0.015;
+        let (daw, project) = song()?;
+        let settings = crate::drum_settings::current();
+        let trigger = crate::drum_reference::pieces(daw, &project)
+            .into_iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(a.piece.trim()))
+            .map(|(_, t)| t)
+            .ok_or_else(|| format!("no piece {:?}", a.piece))?;
+        let pieces = kit(daw, &project, &settings);
+        let found: Vec<f64> = crate::close_mic::hits(daw, &project, &trigger, &settings)
+            .into_iter()
+            .map(|h| h.time)
+            .collect();
+        let near = |t: f64, among: &[f64]| among.iter().any(|x| (x - t).abs() <= WITHIN);
+        let Some(truth) = pieces
+            .iter()
+            .find(|(n, _, _)| n.eq_ignore_ascii_case(a.piece.trim()))
+            .map(|(_, _, hits)| hits.iter().map(|h| h.time).collect::<Vec<f64>>())
+        else {
+            // Its trigger is dead: nothing to hold the mic up to. What it
+            // found, and how much of it falls with another piece's hits —
+            // a bleed would fall with the piece it is the bleed of.
+            let with: Vec<String> = pieces
+                .iter()
+                .map(|(name, _, hits)| {
+                    let times: Vec<f64> = hits.iter().map(|h| h.time).collect();
+                    let same = found.iter().filter(|t| near(**t, &times)).count();
+                    format!("{same} with {name}")
+                })
+                .collect();
+            let alone = found
+                .iter()
+                .filter(|t| pieces.iter().all(|(_, _, hits)| !hits.iter().any(|h| (h.time - **t).abs() <= WITHIN)))
+                .count();
+            // Where it fell with each piece, by bar and beat: a part
+            // (beats 2 and 4 through a section) or a scatter.
+            let at: Vec<String> = pieces
+                .iter()
+                .filter_map(|(name, _, hits)| {
+                    let times: Vec<f64> = hits.iter().map(|h| h.time).collect();
+                    let beats: Vec<String> = found
+                        .iter()
+                        .filter(|t| near(**t, &times))
+                        .take(24)
+                        .map(|t| {
+                            let (bar, beat, _) = daw.time_to_musical(project.clone(), *t + 1e-6);
+                            format!("{bar}.{beat:.1}")
+                        })
+                        .collect();
+                    (!beats.is_empty()).then(|| format!("with {name} at {}", beats.join(" ")))
+                })
+                .collect();
+            return Ok(format!(
+                "{}: its trigger is dead; its close mic found {} hits — {alone} alone, {}. {}",
+                a.piece.trim(),
+                found.len(),
+                with.join(", "),
+                at.join("; ")
+            ));
+        };
+        let matched = found.iter().filter(|t| near(**t, &truth)).count();
+        let missed: Vec<f64> = truth.iter().copied().filter(|t| !near(*t, &found)).collect();
+        let extra: Vec<f64> = found.iter().copied().filter(|t| !near(*t, &truth)).collect();
+        Ok(format!(
+            "{}: trigger {} hits, close mic {} — {matched} the same, {} missed (first at {:?}), {} not the trigger's (first at {:?})",
+            a.piece.trim(),
+            truth.len(),
+            found.len(),
+            missed.len(),
+            missed.iter().take(5).map(|t| (t * 100.0).round() / 100.0).collect::<Vec<_>>(),
+            extra.len(),
+            extra.iter().take(5).map(|t| (t * 100.0).round() / 100.0).collect::<Vec<_>>(),
+        ))
+    });
     list.register(&SAMPLES, Effect::Mutating, |a: SamplesArg| {
         let (daw, project) = song()?;
         let preset = std::path::PathBuf::from(a.preset.as_deref().unwrap_or(DEFAULT_KIT));
