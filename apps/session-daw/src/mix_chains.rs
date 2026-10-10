@@ -36,71 +36,103 @@ const TONE: &[&str] = &["FTS EQ", "FTS Comp", "FTS Saturate"];
 const BUS: &[&str] = &["FTS EQ", "FTS Comp"];
 
 /// The FX and settings for one of the golden template's returns, by
-/// the folder it sits in and its name: the kit's Verb banks (`Room`,
-/// `Plate`, `Hall`, `Nonlin`) and the vocals' `Vox FX`. All wet — they
-/// are fed by sends. The vocal delays are in time with the song: `beat`
-/// is a quarter note, in milliseconds.
-fn return_fx(
-    parent: &str,
-    name: &str,
-    beat: f64,
-) -> Option<(&'static str, Vec<(&'static str, String)>)> {
+/// the folder it sits in and its name: a Verb bank's (`Room`, `Plate`,
+/// `Hall`, `Nonlin`, …) and the vocals' `Vox FX`. All wet — they are fed
+/// by sends. Every time is one the plugin takes itself: a tail in seconds
+/// or a note value, a delay's note value, read against the song's tempo
+/// by the plugin (the drum pieces' own returns are [`drum_return`]).
+fn return_fx(parent: &str, name: &str) -> Option<(&'static str, Vec<(&'static str, String)>)> {
     let set = |pairs: &[(&'static str, &str)]| {
         pairs
             .iter()
             .map(|(p, v)| (*p, (*v).to_owned()))
             .collect::<Vec<_>>()
     };
-    let delay = |beats: f64, feedback: &str| {
-        vec![
-            ("Time L", format!("{:.1} ms", beat * beats)),
-            ("Link", "On".to_owned()),
-            ("Feedback", feedback.to_owned()),
-            ("Mix", "100%".to_owned()),
-        ]
+    let delay = |note: &str, feedback: &str| {
+        set(&[
+            ("Time Sync", "Sync"),
+            ("Time L Div", note),
+            ("Link", "On"),
+            ("Feedback", feedback),
+            ("Mix", "100%"),
+        ])
     };
     Some(match (parent, name) {
+        // A room is a size: its time whatever the tempo.
         ("verb", "room") => (
             "FTS Reverb",
             set(&[
                 ("Space", "Room"),
                 ("Size", "25%"),
-                ("Decay", "25%"),
+                ("Decay Mode", "Time"),
+                ("Decay Time", "0.40"),
                 ("Mix", "100%"),
             ]),
         ),
+        // A plate a bar long, gone by the next.
         ("verb", "plate") => (
             "FTS Reverb",
-            set(&[("Space", "Plate"), ("Decay", "35%"), ("Mix", "100%")]),
+            set(&[
+                ("Space", "Plate"),
+                ("Decay Mode", "Sync"),
+                ("Decay Div", "1/1"),
+                ("Mix", "100%"),
+            ]),
         ),
         ("verb", "hall") => (
             "FTS Reverb",
-            set(&[("Space", "Concert Hall"), ("Decay", "50%"), ("Mix", "100%")]),
+            set(&[
+                ("Space", "Concert Hall"),
+                ("Decay Mode", "Time"),
+                ("Decay Time", "2.50"),
+                ("Mix", "100%"),
+            ]),
         ),
+        // No time to set yet: its window does not bound its tail.
         ("verb", "nonlin") => (
             "FTS Reverb",
             set(&[("Space", "Non-Linear"), ("Decay", "40%"), ("Mix", "100%")]),
         ),
+        // The vocal's short verb: a half note, under the next line.
         ("verb", "short") => (
             "FTS Reverb",
-            set(&[("Space", "Plate"), ("Decay", "30%"), ("Mix", "100%")]),
+            set(&[
+                ("Space", "Plate"),
+                ("Decay Mode", "Sync"),
+                ("Decay Div", "1/2"),
+                ("Mix", "100%"),
+            ]),
         ),
+        // The long one: behind the voice, a sixteenth of pre-delay so the
+        // words land first.
         ("verb", "long") => (
             "FTS Reverb",
             set(&[
                 ("Space", "Concert Hall"),
-                ("Decay", "70%"),
-                ("Pre-Delay", "40.0 ms"),
+                ("Decay Mode", "Time"),
+                ("Decay Time", "3.50"),
+                ("Pre-Delay Sync", "Sync"),
+                ("Pre-Delay Div", "1/16"),
                 ("Mix", "100%"),
             ]),
         ),
         ("verb", "moment") => (
             "FTS Reverb",
-            set(&[("Space", "Bloom"), ("Decay", "60%"), ("Mix", "100%")]),
+            set(&[
+                ("Space", "Bloom"),
+                ("Decay Mode", "Time"),
+                ("Decay Time", "5.00"),
+                ("Mix", "100%"),
+            ]),
         ),
         ("verb", "throw") => (
             "FTS Reverb",
-            set(&[("Space", "Cathedral"), ("Decay", "90%"), ("Mix", "100%")]),
+            set(&[
+                ("Space", "Cathedral"),
+                ("Decay Mode", "Time"),
+                ("Decay Time", "8.00"),
+                ("Mix", "100%"),
+            ]),
         ),
         // A slap is a room's first reflection, not a note value.
         ("delay", "slap") => (
@@ -112,9 +144,9 @@ fn return_fx(
                 ("Mix", "100%"),
             ]),
         ),
-        ("delay", "short") => ("FTS Delay", delay(0.5, "20%")),
-        ("delay", "long") => ("FTS Delay", delay(1.5, "35%")),
-        ("delay", "throw") => ("FTS Delay", delay(2.0, "50%")),
+        ("delay", "short") => ("FTS Delay", delay("1/8", "20%")),
+        ("delay", "long") => ("FTS Delay", delay("1/4D", "35%")),
+        ("delay", "throw") => ("FTS Delay", delay("1/2", "50%")),
         ("vox fx", "wide") => (
             "FTS Unison",
             set(&[
@@ -134,6 +166,211 @@ fn return_fx(
 /// Worrall's order: the band-pass rings, the gate after it tightens the
 /// ring into a note on every hit, the compressor evens the notes.
 const ONE_NOTE: &[&str] = &["FTS EQ", "FTS Gate", "FTS Comp", "FTS Saturate"];
+
+/// A drum piece's reverb return — `Kick/Verb/Room`, `Snare/Verb/Plate`,
+/// `Toms/Verb/Nonlin` — by its piece and name: its FTS Reverb settings, in
+/// the plugin's own words, and where its fader starts (dB).
+///
+/// Every tail is a time the reverb itself takes — seconds (`Decay Mode`
+/// Time) or a note value it reads against the song's tempo (Sync) — and
+/// every pre-delay too; nothing is worked out here. The returns are fed
+/// post-fader at unity from the piece's `Sum` and the reverb is all wet:
+/// the fader is the blend, and it starts far down — felt more than heard,
+/// as the golden mix has them (its kick room at −22.8 dB, its snare verb
+/// at −19.9).
+///
+/// - **Kick**: a small room, a quarter of a second whatever the tempo (a
+///   room is a size), no pre-delay (the room is the kick's own) and no low
+///   cut — a kick verb lengthens the low end, which is the point (the
+///   golden mix's Valhalla Room has none).
+/// - **Snare**: the plate a half note, gone before the next backbeat, a
+///   thirty-second of pre-delay so the crack lands before the bloom; a
+///   250 Hz low cut (no mud from the drum's body) and a 7 kHz high cut (no
+///   hi-hat bleed splashing). The hall a bar.
+/// - **Toms**: a room a quarter note long, lower than the snare's, a
+///   sixty-fourth of pre-delay, cut at 150 Hz and 6 kHz (a tom's ring is
+///   low; its mic hears the cymbals).
+/// - **Non-Linear** has no time to set yet (its window does not bound its
+///   tail — processor's `ReverbChain::decay_for_seconds`), so its Decay is
+///   the plugin's position.
+///
+/// Post-EQ bands are numbered (`Post Shape 6`): the first the low cut,
+/// the last the high cut.
+fn drum_return(piece: &str, name: &str) -> Option<(&'static [(&'static str, &'static str)], f64)> {
+    Some(match (piece, name) {
+        ("kick", "room") => (
+            &[
+                ("Space", "Room"),
+                ("Mix", "100%"),
+                ("Size", "15%"),
+                ("Decay Mode", "Time"),
+                ("Decay Time", "0.25"),
+                ("Pre-Delay Sync", "Free"),
+                ("Pre-Delay", "0.0 ms"),
+                ("Bass", "0.80"),
+            ],
+            -23.0,
+        ),
+        ("snare", "plate") => (
+            &[
+                ("Space", "Plate"),
+                ("Mix", "100%"),
+                ("Decay Mode", "Sync"),
+                ("Decay Div", "1/2"),
+                ("Pre-Delay Sync", "Sync"),
+                ("Pre-Delay Div", "1/32"),
+                ("Post Shape 1", "Low Cut"),
+                ("Post Freq 1", "250.0 Hz"),
+                ("Post Shape 6", "High Cut"),
+                ("Post Freq 6", "7.0 kHz"),
+            ],
+            -20.0,
+        ),
+        ("snare", "hall") => (
+            &[
+                ("Space", "Concert Hall"),
+                ("Mix", "100%"),
+                ("Decay Mode", "Sync"),
+                ("Decay Div", "1/1"),
+                ("Pre-Delay Sync", "Sync"),
+                ("Pre-Delay Div", "1/32"),
+                ("Post Shape 1", "Low Cut"),
+                ("Post Freq 1", "250.0 Hz"),
+                ("Post Shape 6", "High Cut"),
+                ("Post Freq 6", "7.0 kHz"),
+            ],
+            -20.0,
+        ),
+        ("snare", "nonlin") => (
+            &[
+                ("Space", "Non-Linear"),
+                ("Mix", "100%"),
+                ("Decay", "30%"),
+                ("Pre-Delay Sync", "Free"),
+                ("Pre-Delay", "0.0 ms"),
+                ("Post Shape 1", "Low Cut"),
+                ("Post Freq 1", "250.0 Hz"),
+                ("Post Shape 6", "High Cut"),
+                ("Post Freq 6", "7.0 kHz"),
+            ],
+            -20.0,
+        ),
+        ("toms", "room") => (
+            &[
+                ("Space", "Room"),
+                ("Mix", "100%"),
+                ("Size", "35%"),
+                ("Decay Mode", "Sync"),
+                ("Decay Div", "1/4"),
+                ("Pre-Delay Sync", "Sync"),
+                ("Pre-Delay Div", "1/64"),
+                ("Post Shape 1", "Low Cut"),
+                ("Post Freq 1", "150.0 Hz"),
+                ("Post Shape 6", "High Cut"),
+                ("Post Freq 6", "6.0 kHz"),
+            ],
+            -26.0,
+        ),
+        ("toms", "nonlin") => (
+            &[
+                ("Space", "Non-Linear"),
+                ("Mix", "100%"),
+                ("Decay", "25%"),
+                ("Pre-Delay Sync", "Free"),
+                ("Pre-Delay", "0.0 ms"),
+                ("Post Shape 1", "Low Cut"),
+                ("Post Freq 1", "150.0 Hz"),
+                ("Post Shape 6", "High Cut"),
+                ("Post Freq 6", "6.0 kHz"),
+            ],
+            -26.0,
+        ),
+        _ => return None,
+    })
+}
+
+/// The drum piece a return sits under (`Drums/Snare/Verb/Plate` →
+/// `snare`) and its name, lowercase, when it is one.
+fn drum_return_of(lower: &[String]) -> Option<(&str, &str)> {
+    let [.., piece, verb, name] = lower else {
+        return None;
+    };
+    (verb == "verb" && lower.iter().all(|p| p != "process"))
+        .then_some((piece.as_str(), name.as_str()))
+}
+
+/// Set the drum pieces' reverb returns ([`drum_return`]): each one's FTS
+/// Reverb (added if it has none) and its fader. `dry`, only say. One line
+/// a return; a setting the reverb does not know, a line under it.
+///
+/// # Errors
+///
+/// A backend call failed.
+pub fn drum_returns(
+    daw: &daw_standalone::sync::Standalone,
+    project: &ProjectContext,
+    dry: bool,
+) -> eyre::Result<Vec<String>> {
+    let tracks = Tracks::all(daw, project.clone());
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let mut said = Vec::new();
+    for track in tracks.iter().filter(|t| !t.is_folder) {
+        let path = crate::gain_stage::path_of(track, &by_guid);
+        let lower: Vec<String> = path.iter().map(|p| p.trim().to_lowercase()).collect();
+        let Some((settings, fader_db)) =
+            drum_return_of(&lower).and_then(|(piece, name)| drum_return(piece, name))
+        else {
+            continue;
+        };
+        let word = |p: &str| {
+            settings
+                .iter()
+                .find(|(k, _)| *k == p)
+                .map_or("", |(_, v)| *v)
+        };
+        let tail = match word("Decay Mode") {
+            "Sync" => format!("{} note", word("Decay Div")),
+            "Time" => format!("{} s", word("Decay Time")),
+            _ => format!("Decay {}", word("Decay")),
+        };
+        said.push(format!(
+            "{}: {} {tail}, {fader_db:.0} dB",
+            path.join("/"),
+            word("Space")
+        ));
+        if dry {
+            continue;
+        }
+        let chain = FxChainContext::Track(track.guid.clone());
+        let mut unknown = Vec::new();
+        match Effects::list(daw, project.clone(), chain.clone())
+            .into_iter()
+            .find(|f| f.name.eq_ignore_ascii_case("FTS Reverb"))
+        {
+            Some(fx) => set(
+                daw,
+                project,
+                &chain,
+                &fx.guid,
+                "FTS Reverb",
+                settings,
+                &mut unknown,
+            )?,
+            None => set_up(daw, project, &chain, "FTS Reverb", settings, &mut unknown)?,
+        }
+        if !unknown.is_empty() {
+            said.push(format!("  not known: {}", unknown.join(", ")));
+        }
+        Tracks::set_volume(
+            daw,
+            project.clone(),
+            daw::service::TrackRef::Guid(track.guid.clone()),
+            10_f64.powf(fader_db / 20.0),
+        )?;
+    }
+    Ok(said)
+}
 
 /// Where a one-note track's fader starts, dB: the band-pass's auto gain
 /// brings it back to the mics' level, all of it at one frequency — a
@@ -312,10 +549,6 @@ pub fn add(
     let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
         tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
     let mut done = Chains::default();
-    // A quarter note at the song's tempo, ms: what the vocal delays are
-    // timed in.
-    let bpm = daw_proto::TempoMap::get_tempo_at(daw, project.clone(), 0.0);
-    let beat = if bpm > 0.0 { 60_000.0 / bpm } else { 500.0 };
     for track in &tracks {
         let chain = FxChainContext::Track(track.guid.clone());
         if Effects::count(daw, project.clone(), chain.clone()) > 0 {
@@ -372,11 +605,17 @@ pub fn add(
             done.gates.push((name.to_owned(), threshold));
             continue;
         }
+        if !track.is_folder
+            && drum_return_of(&lower).is_some_and(|(p, n)| drum_return(p, n).is_some())
+        {
+            // Set after the loop, fader and all.
+            continue;
+        }
         let parent = lower.iter().rev().nth(1).map_or("", String::as_str);
         let in_process = under(&dynamic_template::apply::PROCESS_FOLDER.to_lowercase());
         if !in_process
             && !track.is_folder
-            && let Some((fx, settings)) = return_fx(parent, &name.to_lowercase(), beat)
+            && let Some((fx, settings)) = return_fx(parent, &name.to_lowercase())
         {
             let settings: Vec<(&str, &str)> =
                 settings.iter().map(|(p, v)| (*p, v.as_str())).collect();
@@ -462,6 +701,14 @@ pub fn add(
             done.tone += 1;
         }
     }
+    let returns = drum_returns(daw, project, false)?;
+    done.returns += returns.iter().filter(|l| !l.starts_with(' ')).count();
+    done.unknown.extend(
+        returns
+            .iter()
+            .filter(|l| l.starts_with(' '))
+            .map(|l| l.trim().to_owned()),
+    );
     Ok(done)
 }
 
@@ -502,18 +749,43 @@ fn set_up(
     let Some(guid) = Effects::add(daw, project.clone(), chain.clone(), fx) else {
         return Ok(());
     };
+    set(daw, project, chain, &guid, fx, settings, unknown)
+}
+
+/// `settings` on the FX `guid`, in the plugin's own words. A name ending
+/// in a band's number (`Post Shape 6`) is that band's copy of the
+/// parameter: the bands repeat their parameters in order, so the n-th
+/// is `(n − 1) × band width` past the first.
+fn set(
+    daw: &daw_standalone::sync::Standalone,
+    project: &ProjectContext,
+    chain: &FxChainContext,
+    guid: &str,
+    fx: &str,
+    settings: &[(&str, &str)],
+    unknown: &mut Vec<String>,
+) -> eyre::Result<()> {
+    /// The reverb's post-EQ: four parameters a band.
+    const POST_BAND_WIDTH: u32 = 4;
     let target = FxTarget {
         context: chain.clone(),
-        fx: FxRef::Guid(guid),
+        fx: FxRef::Guid(guid.to_owned()),
     };
     for (param, text) in settings {
-        match builtin_fx::setting(fx, param, text) {
+        let numbered = param
+            .rsplit_once(' ')
+            .and_then(|(base, n)| Some((base, n.parse::<u32>().ok()?)));
+        let (base, band) = match numbered {
+            Some((base, n)) if base.starts_with("Post ") => (base, n.saturating_sub(1)),
+            _ => (*param, 0),
+        };
+        match builtin_fx::setting(fx, base, text) {
             Some((index, value)) => Effects::set_parameter(
                 daw,
                 project.clone(),
                 SetParameterRequest {
                     target: target.clone(),
-                    index,
+                    index: index + band * POST_BAND_WIDTH,
                     value,
                 },
             )?,
@@ -761,4 +1033,73 @@ fn one_note(
     )?;
     done.one_notes.push((track.name.clone(), piece, Some(hz)));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every return's settings are ones its plugin knows — the reverbs'
+    /// times, the delays' note values, the numbered post-EQ bands.
+    #[test]
+    fn returns_speak_their_plugins_words() {
+        let known = |fx: &str, settings: &[(&str, &str)], what: &str| {
+            for (param, text) in settings {
+                let base = param
+                    .trim_end_matches(|c: char| c.is_ascii_digit())
+                    .trim_end();
+                assert!(
+                    builtin_fx::setting(fx, base, text).is_some(),
+                    "{what}: {param}={text}"
+                );
+            }
+        };
+        for (piece, name) in [
+            ("kick", "room"),
+            ("snare", "plate"),
+            ("snare", "hall"),
+            ("snare", "nonlin"),
+            ("toms", "room"),
+            ("toms", "nonlin"),
+        ] {
+            let (settings, fader) = drum_return(piece, name).expect("a drum return");
+            assert!(
+                (-30.0..=-15.0).contains(&fader),
+                "{piece} {name} starts down"
+            );
+            known("FTS Reverb", settings, &format!("{piece} {name}"));
+        }
+        assert!(drum_return("bass", "room").is_none());
+        for (parent, name) in [
+            ("verb", "room"),
+            ("verb", "plate"),
+            ("verb", "hall"),
+            ("verb", "short"),
+            ("verb", "long"),
+            ("verb", "moment"),
+            ("verb", "throw"),
+            ("delay", "short"),
+            ("delay", "long"),
+            ("delay", "throw"),
+        ] {
+            let (fx, settings) = return_fx(parent, name).expect("a return");
+            let settings: Vec<(&str, &str)> =
+                settings.iter().map(|(p, v)| (*p, v.as_str())).collect();
+            known(fx, &settings, &format!("{parent} {name}"));
+        }
+    }
+
+    #[test]
+    fn a_drum_return_is_a_pieces_verb_outside_process() {
+        let path = |p: &[&str]| p.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            drum_return_of(&path(&["drums", "snare", "verb", "plate"])),
+            Some(("snare", "plate"))
+        );
+        assert_eq!(
+            drum_return_of(&path(&["drums", "process", "fx", "verb", "nonlin"])),
+            None
+        );
+        assert_eq!(drum_return_of(&path(&["drums", "kick", "sum", "in"])), None);
+    }
 }

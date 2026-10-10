@@ -52,6 +52,10 @@ pub struct Embedded<P: Plugin> {
     /// engine handed over for this block ([`Self::key`]), the rest are
     /// silent.
     sidechains: Vec<Vec<Vec<f32>>>,
+    /// The song's tempo, bpm, as the engine last told it
+    /// ([`PluginInstance::set_tempo`]): the transport's, for the plugin's
+    /// note-valued times.
+    tempo: Option<f64>,
     /// The sidechain for the next block, left and right, and whether
     /// there is one ([`PluginInstance::set_sidechain`]).
     key: [Vec<f32>; 2],
@@ -95,6 +99,7 @@ impl<P: Plugin> Embedded<P> {
             config: None,
             channels: Vec::new(),
             sidechains: Vec::new(),
+            tempo: None,
             key: [Vec::new(), Vec::new()],
             keyed: false,
             buffer: Buffer::default(),
@@ -163,7 +168,11 @@ impl<P: Plugin> Embedded<P> {
         let mut context = Process::<P> {
             executor: &self.executor,
             latency: &self.latency,
-            transport: Transport::new(sample_rate),
+            transport: {
+                let mut transport = Transport::new(sample_rate);
+                transport.tempo = self.tempo;
+                transport
+            },
         };
         match self
             .plugin
@@ -417,6 +426,10 @@ impl<P: Plugin> PluginInstance for Embedded<P> {
             }
         }
         Ok(())
+    }
+
+    fn set_tempo(&mut self, bpm: f64) {
+        self.tempo = (bpm.is_finite() && bpm > 0.0).then_some(bpm);
     }
 
     fn set_sidechain(&mut self, left: &[f32], right: &[f32]) {

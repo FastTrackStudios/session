@@ -1119,6 +1119,8 @@ fn register_reference(list: &ActionList) {
     register_items(list);
     register_lanes(list);
     register_remove(list);
+    #[cfg(feature = "native")]
+    register_verbs(list);
     register_slip(list);
     register_peaks(list);
     register_reference_map(list);
@@ -1161,6 +1163,38 @@ struct LanesOut {
 #[derive(Facet)]
 struct PlayLaneArg {
     lane: String,
+}
+
+#[cfg(feature = "native")]
+static VERBS: ActionMeta = meta(
+    "DRUMS_VERBS",
+    "drums_verbs",
+    "Drum verbs, in time",
+    "Set the kit's reverb returns (each piece's Verb folder: Kick/Verb/Room, Snare/Verb/Plate, Hall and Nonlin, Toms/Verb/Room and Nonlin) as a drum mix wants them — every tail a time the reverb takes itself (seconds, or a note value it reads against the song's tempo), every pre-delay too, low and high cuts on the snare's and toms', and each fader far down (kick −23 dB, snare −20, toms −26: felt more than heard). Their FTS Reverb is added if missing, set if there. Prepare does the same. `dry_run`.",
+    "Drums",
+    "",
+);
+
+/// Whether to only say.
+#[cfg(feature = "native")]
+#[derive(Facet)]
+struct VerbsArg {
+    dry_run: Option<bool>,
+}
+
+#[cfg(feature = "native")]
+fn register_verbs(list: &ActionList) {
+    list.register(&VERBS, Effect::Mutating, |a: VerbsArg| {
+        let (daw, project) = song()?;
+        let dry = a.dry_run.unwrap_or(false);
+        let said =
+            crate::mix_chains::drum_returns(daw, &project, dry).map_err(|e| e.to_string())?;
+        if !dry {
+            crate::studio::request_resync();
+            crate::actions::list().changed("drums.verbs", "the drum verbs were set");
+        }
+        Ok(said)
+    });
 }
 
 static REMOVE: ActionMeta = meta(
