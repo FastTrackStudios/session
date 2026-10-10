@@ -109,6 +109,11 @@ pub enum Action {
     /// Save the song (Ctrl+S, REAPER's "Save project"): its `.session`,
     /// as `SESSION_SAVE` does.
     Save,
+    /// Undo the last step (Ctrl+Z, REAPER's 40029), as `SESSION_UNDO`.
+    Undo,
+    /// Redo what was undone (Ctrl+Shift+Z, REAPER's 40030), as
+    /// `SESSION_REDO`.
+    Redo,
     /// A binding the window does not do yet, by its REAPER id.
     Unbound(String),
 }
@@ -167,6 +172,8 @@ pub fn action_of(id: &str) -> Action {
         "1013" => Action::ToggleRecord,
         "40078" => Action::ToggleMixer,
         "40026" => Action::Save,
+        "40029" => Action::Undo,
+        "40030" => Action::Redo,
         "FTS_EXPRESSION_EDITOR_OPEN" => Action::ToggleEditor,
         "FTS_TOGGLE_FX" => Action::ToggleFx,
         "FTS_FX_FULL" => Action::FxFull,

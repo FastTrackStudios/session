@@ -129,6 +129,12 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         Action::Save => (SAVE.id, String::new()),
         #[cfg(not(feature = "native"))]
         Action::Save => return None,
+        #[cfg(feature = "native")]
+        Action::Undo => (UNDO.id, String::new()),
+        #[cfg(feature = "native")]
+        Action::Redo => (REDO.id, String::new()),
+        #[cfg(not(feature = "native"))]
+        Action::Undo | Action::Redo => return None,
         Action::ToggleEditor => (TOGGLE_EDITOR.id, String::new()),
         Action::ToggleFx => (TOGGLE_FX.id, String::new()),
         Action::FxFull => (FX_FULL.id, String::new()),
@@ -1132,6 +1138,8 @@ fn register_reference(list: &ActionList) {
     register_verbs(list);
     #[cfg(feature = "native")]
     register_save(list);
+    #[cfg(feature = "native")]
+    register_undo(list);
     register_slip(list);
     register_peaks(list);
     register_reference_map(list);
@@ -1304,6 +1312,26 @@ struct FoldArg {
 }
 
 #[cfg(feature = "native")]
+static UNDO: ActionMeta = meta(
+    "SESSION_UNDO",
+    "session_undo",
+    "Undo",
+    "Take back the last step — a move, a cut, a slip edit, whatever one gesture or action did, as one. Says what it undid, or that there is nothing to.",
+    "Session",
+    "",
+);
+
+#[cfg(feature = "native")]
+static REDO: ActionMeta = meta(
+    "SESSION_REDO",
+    "session_redo",
+    "Redo",
+    "Do again the last step undone. Says what it redid, or that there is nothing to.",
+    "Session",
+    "",
+);
+
+#[cfg(feature = "native")]
 static CHECKPOINT: ActionMeta = meta(
     "SESSION_CHECKPOINT",
     "session_checkpoint",
@@ -1438,7 +1466,7 @@ struct SelectTrackArg {
 }
 
 #[cfg(feature = "native")]
-fn register_save(list: &ActionList) {
+fn register_undo(list: &ActionList) {
     list.register(&FOLD, Effect::Mutating, |a: FoldArg| {
         let (daw, project) = song()?;
         let guid = resolve(daw, &project, &a.track)?;
@@ -1464,6 +1492,36 @@ fn register_save(list: &ActionList) {
         }
         Ok(opened)
     });
+    list.register(&UNDO, Effect::Mutating, |_: NoArg| {
+        let (daw, project) = song()?;
+        let label = daw::service::Projects::last_undo_label(daw, project.clone());
+        if !daw::service::Projects::undo(daw, project) {
+            return Ok("nothing to undo".to_owned());
+        }
+        crate::studio::request_resync();
+        crate::actions::list().changed("items", "undo");
+        Ok(format!(
+            "undid {}",
+            label.unwrap_or_else(|| "a step".to_owned())
+        ))
+    });
+    list.register(&REDO, Effect::Mutating, |_: NoArg| {
+        let (daw, project) = song()?;
+        let label = daw::service::Projects::last_redo_label(daw, project.clone());
+        if !daw::service::Projects::redo(daw, project) {
+            return Ok("nothing to redo".to_owned());
+        }
+        crate::studio::request_resync();
+        crate::actions::list().changed("items", "redo");
+        Ok(format!(
+            "redid {}",
+            label.unwrap_or_else(|| "a step".to_owned())
+        ))
+    });
+}
+
+#[cfg(feature = "native")]
+fn register_save(list: &ActionList) {
     list.register(&SELECT_TRACK, Effect::Mutating, |a: SelectTrackArg| {
         let (daw, project) = song()?;
         let guid = resolve(daw, &project, &a.track)?;

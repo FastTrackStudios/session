@@ -699,7 +699,7 @@ impl Editor {
         for guid in ordered {
             effects.push(Effect::Send(Edit::SelectItem(guid.clone(), false)));
         }
-        as_one_step("Select items", from, effects);
+        selection_as_one_step(from, effects);
     }
 
     /// Whether a razor drag is in flight, and the area it would leave.
@@ -1458,7 +1458,9 @@ impl Editor {
             | Action::ToggleEditor
             | Action::ToggleFx
             | Action::FxFull
-            | Action::Save => {
+            | Action::Save
+            | Action::Undo
+            | Action::Redo => {
                 return false;
             }
             Action::Unbound(id) => {
@@ -2546,23 +2548,36 @@ pub fn grouped(project: &Project, guid: &str) -> Vec<String> {
 }
 
 /// Bracket the sends added since `from` so the undo history sees them
-/// as one step.
+/// as one step — one gesture, one undo, however many edits it made.
 ///
-/// Only when there is more than one. A single edit is already one step,
-/// and an empty block is a step that undoes nothing — both of which
-/// would put a stop in the history that the hand never made.
+/// Even a single edit: the engine records a step only for a bracket
+/// (`Edit::BeginUndo`/`EndUndo`), so an edit left bare could not be
+/// undone at all — moving one item, then Ctrl+Z, did nothing. None when
+/// nothing was sent: a step that undoes nothing is a stop in the history
+/// the hand never made.
 ///
 /// This is what #114 meant by "undo is one action, not N": a drag on a
 /// folded row moves three mics, and an undo that took back one of them
 /// would leave the take out of phase with itself.
 fn as_one_step(label: &str, from: usize, effects: &mut Vec<Effect>) {
+    bracket(label, from, effects, 1);
+}
+
+/// A selection as one step when it touches several items: selecting is
+/// not an edit, and is not undone on its own (REAPER's default).
+fn selection_as_one_step(from: usize, effects: &mut Vec<Effect>) {
+    bracket("Select items", from, effects, 2);
+}
+
+/// Bracket the sends since `from` when there are at least `least`.
+fn bracket(label: &str, from: usize, effects: &mut Vec<Effect>, least: usize) {
     let sends = effects.get(from..).map_or(0, |added| {
         added
             .iter()
             .filter(|effect| matches!(effect, Effect::Send(_)))
             .count()
     });
-    if sends < 2 {
+    if sends < least {
         return;
     }
     effects.insert(from, Effect::Send(Edit::BeginUndo(label.to_owned())));
@@ -3094,6 +3109,15 @@ mod tests {
                 Effect::Send(edit) => Some(edit),
                 _ => None,
             })
+            .collect()
+    }
+
+    /// The edits sent, without the undo step around them: what a gesture
+    /// did, which is what most tests are about.
+    pub(super) fn edits(effects: &[Effect]) -> Vec<&Edit> {
+        sends(effects)
+            .into_iter()
+            .filter(|e| !matches!(e, Edit::BeginUndo(_) | Edit::EndUndo(_)))
             .collect()
     }
 
@@ -4230,11 +4254,10 @@ mod tests {
         );
     }
 
-    /// And a drag on an ordinary row is not bracketed. One edit is
-    /// already one step, and an empty-ish block would put a stop in the
-    /// history the hand never made.
+    /// And a drag on an ordinary row is a step too: the engine records
+    /// steps only for brackets, so a bare move could not be undone.
     #[test]
-    fn a_plain_drag_opens_no_undo_step() {
+    fn a_plain_drag_is_one_undo_step() {
         let mut s = Stage::new();
         let (x, y) = s.point(0, 3.0, 15.0);
         s.press(x, y, Mods::default());
@@ -4242,10 +4265,9 @@ mod tests {
         let effects = s.release(x + 1.3 * PPS, Mods::default());
         let sent = sends(&effects);
         assert!(
-            !sent
-                .iter()
-                .any(|e| matches!(e, Edit::BeginUndo(_) | Edit::EndUndo(_))),
-            "a single edit was wrapped in a step of its own: {sent:?}"
+            matches!(sent.first(), Some(Edit::BeginUndo(_)))
+                && matches!(sent.last(), Some(Edit::EndUndo(_))),
+            "a single move is undone as one step: {sent:?}"
         );
     }
 
@@ -4291,7 +4313,7 @@ mod tests {
         assert_eq!(s.editor.ghost(), Some((0, 3.5, 7.5)));
         assert!(s.editor.dragging());
         let effects = s.release(x + 1.3 * PPS, Mods::default());
-        assert_eq!(sends(&effects), vec![&Edit::MoveItem("k1".into(), 3.5)]);
+        assert_eq!(edits(&effects), vec![&Edit::MoveItem("k1".into(), 3.5)]);
         assert!(effects.contains(&Effect::ReRecord));
         assert!((s.item("k1").position.as_seconds() - 3.5).abs() < 1e-9);
         assert!(!s.editor.dragging());
@@ -4305,7 +4327,7 @@ mod tests {
         s.press(x, y, shift);
         s.drag_to(x + 0.13 * PPS, shift);
         let effects = s.release(x + 0.13 * PPS, shift);
-        let Some(Edit::MoveItem(_, to)) = sends(&effects).first().copied() else {
+        let Some(Edit::MoveItem(_, to)) = edits(&effects).first().copied() else {
             panic!("a move")
         };
         assert!((to - 3.63).abs() < 1e-6);
@@ -4332,7 +4354,7 @@ mod tests {
         s.drag_to(x + 1.0 + 2.0 * PPS, Mods::default());
         let effects = s.release(x + 1.0 + 2.0 * PPS, Mods::default());
         assert_eq!(
-            sends(&effects),
+            edits(&effects),
             vec![&Edit::TrimItem("s1".into(), 6.0, 6.0)]
         );
         s.rerecord();
@@ -4341,7 +4363,7 @@ mod tests {
         s.drag_to(x - 1.0 - 1.0 * PPS, Mods::default());
         let effects = s.release(x - 1.0 - 1.0 * PPS, Mods::default());
         assert_eq!(
-            sends(&effects),
+            edits(&effects),
             vec![&Edit::TrimItem("s1".into(), 6.0, 5.0)]
         );
     }
@@ -4419,7 +4441,7 @@ mod tests {
         let mut effects = Vec::new();
         s.editor.select("k2", true, &mut s.project, &mut effects);
         let (_, effects) = s.key(Action::DeleteSelectedItems);
-        assert_eq!(sends(&effects), vec![&Edit::DeleteItem("k2".into())]);
+        assert_eq!(edits(&effects), vec![&Edit::DeleteItem("k2".into())]);
         assert_eq!(s.project.item_count, 2);
         assert!(s.project.items["kick"].iter().all(|i| i.guid != "k2"));
     }
