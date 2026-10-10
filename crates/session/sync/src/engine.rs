@@ -861,8 +861,14 @@ async fn region_id(project: &Project, guid: &str) -> daw_control::Result<Option<
 }
 
 /// Make the engine's tempo map the doc's: its points replaced, the first
-/// one's tempo and metre the project's own too.
+/// one's tempo and metre the project's own too. A doc with no points
+/// leaves the engine's alone.
 async fn apply_tempo(project: &Project, points: &[TempoPoint]) -> daw_control::Result<()> {
+    // No points is no tempo known (a doc written before it kept one), not
+    // a song without one: the engine's is left as it is.
+    if points.is_empty() {
+        return Ok(());
+    }
     let map = project.tempo_map();
     let count = u32::try_from(map.count().await?).unwrap_or(u32::MAX);
     for index in (0..count).rev() {
