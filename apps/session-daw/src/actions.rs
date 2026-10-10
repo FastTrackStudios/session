@@ -125,6 +125,10 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
             (TRACK_STEP.id, format!(r#"{{"by":{by},"extend":{extend}}}"#))
         }
         Action::ToggleMixer => (TOGGLE_MIXER.id, String::new()),
+        #[cfg(feature = "native")]
+        Action::Save => (SAVE.id, String::new()),
+        #[cfg(not(feature = "native"))]
+        Action::Save => return None,
         Action::ToggleEditor => (TOGGLE_EDITOR.id, String::new()),
         Action::ToggleFx => (TOGGLE_FX.id, String::new()),
         Action::FxFull => (FX_FULL.id, String::new()),
@@ -1234,7 +1238,134 @@ struct CheckSavedArg {
 }
 
 #[cfg(feature = "native")]
+static CHECKPOINT: ActionMeta = meta(
+    "SESSION_CHECKPOINT",
+    "session_checkpoint",
+    "Save a checkpoint",
+    "Save the song as it is now as a named alternative (`name`: \"Organized\", \"Mix A\") beside it — `Song.alternatives/<name>.session`, a complete session — the way Logic keeps alternatives. The song stays open, under its own name; a plain save (SESSION_SAVE) still writes the song. A checkpoint of that name already there is replaced. Open one later from the start screen's Recent.",
+    "Session",
+    "",
+);
+
+/// The checkpoint's name.
+#[cfg(feature = "native")]
+#[derive(Facet)]
+struct CheckpointArg {
+    name: String,
+}
+
+#[cfg(feature = "native")]
+static ALTERNATIVES: ActionMeta = meta(
+    "SESSION_ALTERNATIVES",
+    "session_alternatives",
+    "The song's alternatives",
+    "The open song's own version and its alternatives (checkpoints saved with SESSION_CHECKPOINT), the newest first: name, folder, when saved. Read-only.",
+    "Session",
+    "",
+);
+
+#[cfg(feature = "native")]
+static RECENT: ActionMeta = meta(
+    "SESSION_RECENT",
+    "session_recent",
+    "Songs opened lately",
+    "The songs and setlists opened lately, the newest first: name, the version that was open (the song, or which alternative), when, and the song's alternatives. Read-only.",
+    "Session",
+    "",
+);
+
+/// The open song's checkpoints, the newest first, as `(name, when)` —
+/// for the top bar's Versions. Empty with no song, or one with none.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn open_song_alternatives() -> Vec<(String, String)> {
+    let Ok((daw, ProjectContext::Project(guid))) = song() else {
+        return Vec::new();
+    };
+    song_base(daw, &guid).map_or_else(
+        |_| Vec::new(),
+        |base| {
+            crate::projects::alternatives(&base)
+                .into_iter()
+                .map(|alt| (alt.name, crate::projects::ago(alt.saved)))
+                .collect()
+        },
+    )
+}
+
+/// The open song's base ([`crate::projects::base_of`]): what its
+/// alternatives are kept beside.
+#[cfg(feature = "native")]
+fn song_base(daw: &daw::standalone::Standalone, guid: &str) -> Result<std::path::PathBuf, String> {
+    let path = daw
+        .read_project(guid, |p| p.info.path.clone())
+        .ok_or("no song open")?;
+    crate::projects::base_of(std::path::Path::new(&path))
+        .ok_or_else(|| format!("{path} is not a song's file: nowhere to keep alternatives"))
+}
+
+#[cfg(feature = "native")]
 fn register_save(list: &ActionList) {
+    list.register(&CHECKPOINT, Effect::Mutating, |a: CheckpointArg| {
+        let (daw, project) = song()?;
+        let ProjectContext::Project(guid) = &project else {
+            return Err("no song open".to_owned());
+        };
+        let base = song_base(daw, guid)?;
+        let dir = crate::projects::alternative_path(&base, &a.name)?;
+        crate::session_file::save_session(daw, guid, &dir)?;
+        Ok(format!(
+            "saved {} as {}; the song stays open as it was",
+            a.name.trim(),
+            dir.display()
+        ))
+    });
+    list.register(&ALTERNATIVES, Effect::ReadOnly, |(): ()| {
+        let (daw, project) = song()?;
+        let ProjectContext::Project(guid) = &project else {
+            return Err("no song open".to_owned());
+        };
+        let base = song_base(daw, guid)?;
+        let mut out = vec![format!(
+            "the song: {}",
+            crate::projects::main_of(&base)
+                .map_or_else(|| "(not saved yet)".to_owned(), |p| p.display().to_string())
+        )];
+        out.extend(crate::projects::alternatives(&base).into_iter().map(|alt| {
+            format!(
+                "{}: {} (saved {})",
+                alt.name,
+                alt.path.display(),
+                crate::projects::ago(alt.saved)
+            )
+        }));
+        Ok(out)
+    });
+    list.register(&RECENT, Effect::ReadOnly, |(): ()| {
+        Ok(crate::projects::recent()
+            .into_iter()
+            .map(|r| {
+                let version = r
+                    .opened_alternative()
+                    .map_or_else(String::new, |alt| format!(" as {alt}"));
+                let alternatives: Vec<String> = crate::projects::alternatives(&r.base)
+                    .into_iter()
+                    .map(|a| a.name)
+                    .collect();
+                format!(
+                    "{}{version}, {} — {}{}",
+                    r.name(),
+                    crate::projects::ago(r.at),
+                    r.opened.display(),
+                    if alternatives.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (alternatives: {})", alternatives.join(", "))
+                    }
+                )
+            })
+            .collect::<Vec<_>>())
+    });
     list.register(&SAVE, Effect::Mutating, |a: SaveArg| {
         let (daw, project) = song()?;
         let ProjectContext::Project(guid) = &project else {
@@ -1817,6 +1948,20 @@ fn resolve(
 
 #[cfg(test)]
 mod tests {
+
+    /// Ctrl+S — REAPER's "Save project", as the profile binds it — saves
+    /// the song: the key's action is the list's `SESSION_SAVE`.
+    #[cfg(feature = "native")]
+    #[test]
+    fn ctrl_s_saves_the_song() {
+        let action = crate::keys::action_of("40026");
+        assert_eq!(action, crate::keys::Action::Save);
+        assert_eq!(
+            super::id_and_args(&action).map(|(id, _)| id),
+            Some(super::SAVE.id)
+        );
+    }
+
     use super::{id_and_args, list, take_window, through_list};
     use crate::keys::{Action, Visibility};
 

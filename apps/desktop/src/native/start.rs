@@ -251,6 +251,9 @@ fn use_width() -> Signal<f64> {
 fn Start(opened: Signal<Option<Setlist>>) -> Element {
     let mut opening = use_signal(|| Opening::Idle);
     let mut local = use_signal(documents);
+    // The songs opened lately, each with its alternatives — read again
+    // each time the start screen is shown.
+    let recent = use_hook(session_daw::projects::recent);
     let mut section = use_signal(|| Section::Home);
     let width = use_width();
 
@@ -800,6 +803,21 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             } else {
                 {sign_in_card.clone()}
             }
+            // The songs worked on lately: the song, or any of its
+            // checkpoints.
+            if !recent.is_empty() {
+                Shelf { title: "Recent",
+                    Rows {
+                        for song in recent.iter().take(8).cloned() {
+                            RecentRow {
+                                key: "{song.base.display()}",
+                                song: song.clone(),
+                                on_open: move |path: PathBuf| open_path(path),
+                            }
+                        }
+                    }
+                }
+            }
             // What opens with no connection.
             if !local().is_empty() {
                 Shelf { title: "On this device", on_more: move |()| section.set(Section::Downloads),
@@ -1225,20 +1243,22 @@ fn Hero(
 
 /// A shelf: its title, a way to all of it, and what is on it.
 #[component]
-fn Shelf(title: &'static str, on_more: EventHandler<()>, children: Element) -> Element {
+fn Shelf(title: &'static str, on_more: Option<EventHandler<()>>, children: Element) -> Element {
     rsx! {
         div {
             style: "display:flex; flex-direction:column; gap:12px;",
             div {
                 style: "display:flex; align-items:center; gap:12px;",
                 span { style: "flex:1; min-width:0; font-size:20px; font-weight:750; letter-spacing:-0.01em;", "{title}" }
-                button {
-                    style: "flex:none; display:flex; align-items:center; gap:2px; height:32px; padding:0 4px 0 10px; \
-                            border:none; background:transparent; color:{ACCENT}; font-family:inherit; \
-                            font-size:14px; font-weight:600; cursor:pointer;",
-                    onclick: move |_| on_more.call(()),
-                    "See all"
-                    ChevronRight { size: 16, color: ACCENT }
+                if let Some(on_more) = on_more {
+                    button {
+                        style: "flex:none; display:flex; align-items:center; gap:2px; height:32px; padding:0 4px 0 10px; \
+                                border:none; background:transparent; color:{ACCENT}; font-family:inherit; \
+                                font-size:14px; font-weight:600; cursor:pointer;",
+                        onclick: move |_| on_more.call(()),
+                        "See all"
+                        ChevronRight { size: 16, color: ACCENT }
+                    }
                 }
             }
             {children}
@@ -1761,6 +1781,63 @@ fn LocalRow(
                 }
             }
             Act { title: "Open", on_press: on_open, ChevronRight { size: 18, color: DIM } }
+        }
+    }
+}
+
+/// A song opened lately: its name, which version was open and when, and
+/// a pill for each version to open — the song itself and every
+/// checkpoint saved beside it (`session_daw::projects`).
+#[component]
+fn RecentRow(song: session_daw::projects::Recent, on_open: EventHandler<PathBuf>) -> Element {
+    let name = song.name();
+    let alternatives = session_daw::projects::alternatives(&song.base);
+    let main = session_daw::projects::main_of(&song.base);
+    let detail = match (song.is_song(), song.opened_alternative()) {
+        (_, Some(alt)) => format!("{alt} · {}", session_daw::projects::ago(song.at)),
+        (true, None) => format!("Song · {}", session_daw::projects::ago(song.at)),
+        (false, None) => format!(
+            "{} · {}",
+            kind_of(&song.opened),
+            session_daw::projects::ago(song.at)
+        ),
+    };
+    let last = song.opened.clone();
+    rsx! {
+        div {
+            style: "display:flex; flex-direction:column; gap:8px; padding:10px 4px; border-bottom:1px solid {RULE};",
+            button {
+                style: "display:flex; align-items:center; gap:14px; border:none; background:transparent; \
+                        color:{TEXT}; font-family:inherit; text-align:left; cursor:pointer; padding:0;",
+                onclick: move |_| on_open.call(last.clone()),
+                Art { seed: name.clone(), size: 48, radius: 10, FileMusic { size: 20, color: ART_INK } }
+                div {
+                    style: "flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;",
+                    span { style: "font-size:16px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;", "{name}" }
+                    span { style: "font-size:12px; color:{DIM};", "{detail}" }
+                }
+                ChevronRight { size: 18, color: DIM }
+            }
+            if !alternatives.is_empty() {
+                div {
+                    style: "display:flex; flex-wrap:wrap; gap:8px; padding-left:62px;",
+                    if let Some(main) = main.clone() {
+                        Chip {
+                            label: "The song".to_owned(),
+                            on: song.opened_alternative().is_none(),
+                            on_press: move |()| on_open.call(main.clone()),
+                        }
+                    }
+                    for alt in alternatives {
+                        Chip {
+                            key: "{alt.name}",
+                            label: alt.name.clone(),
+                            on: song.opened_alternative().as_deref() == Some(alt.name.as_str()),
+                            on_press: move |()| on_open.call(alt.path.clone()),
+                        }
+                    }
+                }
+            }
         }
     }
 }

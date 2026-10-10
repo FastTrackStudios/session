@@ -106,6 +106,9 @@ pub enum Action {
     /// Show the session as a scene (`v v` Overview, `v t` Overview TOP),
     /// or, in it already, go back to the view before.
     ToggleScene(&'static str),
+    /// Save the song (Ctrl+S, REAPER's "Save project"): its `.session`,
+    /// as `SESSION_SAVE` does.
+    Save,
     /// A binding the window does not do yet, by its REAPER id.
     Unbound(String),
 }
@@ -163,6 +166,7 @@ pub fn action_of(id: &str) -> Action {
         "40173" => Action::Marker(1),
         "1013" => Action::ToggleRecord,
         "40078" => Action::ToggleMixer,
+        "40026" => Action::Save,
         "FTS_EXPRESSION_EDITOR_OPEN" => Action::ToggleEditor,
         "FTS_TOGGLE_FX" => Action::ToggleFx,
         "FTS_FX_FULL" => Action::FxFull,

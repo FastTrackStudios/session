@@ -64,6 +64,8 @@ pub mod options;
 #[cfg(feature = "native")]
 pub mod organize;
 pub mod plugin_faces;
+#[cfg(feature = "native")]
+pub mod projects;
 pub mod rig;
 pub mod song_modes;
 pub mod song_stream;
@@ -75,6 +77,8 @@ pub mod stream_set;
 pub mod task_account;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod task_set;
+#[cfg(feature = "native")]
+pub mod versions;
 /// On the web there is no in-process tokio runtime: the engine clients
 /// (`engine::Transport`, `Applier`, `Meters`, …) find none and run
 /// read-only, the way they do natively before a session is open. The web

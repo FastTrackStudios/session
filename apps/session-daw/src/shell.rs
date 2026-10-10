@@ -21,6 +21,13 @@ use dioxus::prelude::*;
 use session::modes::Mode;
 
 use crate::setlist::Setlist;
+#[cfg(feature = "native")]
+use crate::versions::Versions;
+#[cfg(not(feature = "native"))]
+#[component]
+fn Versions() -> Element {
+    rsx! {}
+}
 
 /// How tall the top bar is — room for the traffic lights with air around.
 pub const BAR_H: f64 = 40.0;
@@ -996,6 +1003,11 @@ pub fn TopBar(
             Rule {}
             SongTabs { on_pick, on_color, max_shown: tabs_shown(width, crate::touch::use_touch()) }
             Rule {}
+            // Save, and the song's checkpoints.
+            if cfg!(feature = "native") {
+                Versions {}
+                Rule {}
+            }
             // Whatever the host puts here (who is here, together).
             div {
                 style: "flex:none; display:flex; align-items:stretch;",

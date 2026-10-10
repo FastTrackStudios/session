@@ -166,6 +166,8 @@ fn remembered() -> Option<PathBuf> {
 }
 
 fn remember(project: &Path) {
+    // The start screen's Recent, too.
+    session_daw::projects::opened(project);
     let Some(file) = memory() else { return };
     let written = file
         .parent()

@@ -1457,7 +1457,8 @@ impl Editor {
             | Action::ToggleMixer
             | Action::ToggleEditor
             | Action::ToggleFx
-            | Action::FxFull => {
+            | Action::FxFull
+            | Action::Save => {
                 return false;
             }
             Action::Unbound(id) => {
