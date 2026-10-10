@@ -141,6 +141,27 @@ pub fn factor(pixels: f64) -> f64 {
     view_gestures::zoom_factor(pixels)
 }
 
+thread_local! {
+    /// The panel on screen's edit sender ([`ArrangementPanel::send_edits`]),
+    /// for [`send_pending`].
+    static SENDER: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
+/// Send what the panel's widgets have queued to the engine now, frame or
+/// no frame.
+///
+/// The window sends at the start of each frame; a window that draws none
+/// (hidden, minimized, on another desktop) never would, and an edit made
+/// by an action over MCP would wait in it — the shell's loop calls this
+/// between frames. On the UI thread, as the panel is.
+pub fn send_pending() {
+    SENDER.with(|s| {
+        if let Some(send) = s.borrow().as_ref() {
+            send();
+        }
+    });
+}
+
 /// Where edits go: the engine, however this host reaches it.
 pub type Engine = Rc<dyn Fn(crate::engine::Edit)>;
 
@@ -448,6 +469,12 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     {
         *slot.0.borrow_mut() = Some(panel.clone());
     }
+    // The shell sends its edits too, between frames ([`send_pending`]):
+    // an edit made with no frame coming (an action over MCP, the window
+    // hidden) still reaches the engine. Registered as the panel is built,
+    // not as it draws — a window drawing nothing would never register it.
+    let sender = panel.clone();
+    SENDER.with(|s| *s.borrow_mut() = Some(Box::new(move || sender.send_edits())));
     (panel, hosted)
 }
 
@@ -859,8 +886,6 @@ impl ArrangementPanel {
         if *which_shown.peek() != wanted {
             which_shown.set(wanted);
         }
-        // Whatever the widget asked to have done, to the engine.
-        let mut pending: Vec<_> = self.edits.borrow_mut().drain(..).collect();
         if let Some(links) = &self.mixer {
             // `x`, from either widget.
             if links.toggle.take() {
@@ -880,19 +905,9 @@ impl ArrangementPanel {
                     }
                 }
             }
-            // Each widget's edits to the other one, never back to the one
-            // that made them (a toggle would flip twice).
-            links.to_mixer.borrow_mut().extend(pending.iter().cloned());
-            let from_mixer: Vec<_> = links.from_mixer.borrow_mut().drain(..).collect();
-            links
-                .to_arrange
-                .borrow_mut()
-                .extend(from_mixer.iter().cloned());
-            pending.extend(from_mixer);
         }
-        for edit in pending {
-            (self.engine)(edit);
-        }
+        // Whatever the widget asked to have done, to the engine.
+        self.send_edits();
         // Where this panel is, re-read a few times a second: a divider or a
         // window resize moves it without telling anything here.
         let stale = self
@@ -954,6 +969,25 @@ impl ArrangementPanel {
         if let Some(to) = page_to(play_at * pps, across, width, travel) {
             let mut scroll = self.scroll;
             scroll.set(to);
+        }
+    }
+
+    /// What the widgets asked to have done, to the engine: the arrangement's
+    /// edits and the docked mixer's, each also to the other widget (never
+    /// back to the one that made it, or a toggle would flip twice).
+    pub fn send_edits(&self) {
+        let mut pending: Vec<_> = self.edits.borrow_mut().drain(..).collect();
+        if let Some(links) = &self.mixer {
+            links.to_mixer.borrow_mut().extend(pending.iter().cloned());
+            let from_mixer: Vec<_> = links.from_mixer.borrow_mut().drain(..).collect();
+            links
+                .to_arrange
+                .borrow_mut()
+                .extend(from_mixer.iter().cloned());
+            pending.extend(from_mixer);
+        }
+        for edit in pending {
+            (self.engine)(edit);
         }
     }
 

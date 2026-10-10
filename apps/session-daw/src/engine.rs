@@ -377,22 +377,11 @@ impl Edit {
         )
     }
 
-    /// Whether `other` is the same control on the same track.
-    ///
-    /// A send's number is part of its identity here. Without it two
-    /// sends on one track are one control, and dragging the reverb
-    /// send would eat the delay send's last position out of the queue
-    /// — a coalescing bug that looks like a routing bug.
+    /// Which of the track's routes this edit is about, if any — part of a
+    /// control's identity: two sends on one track are two controls, and a
+    /// receive numbered as a send is not that send ([`Queue`]).
     #[must_use]
-    fn same_control_as(&self, other: &Self) -> bool {
-        self.guid() == other.guid()
-            && std::mem::discriminant(self) == std::mem::discriminant(other)
-            && self.route() == other.route()
-    }
-
-    /// Which of the track's routes this edit is about, if any.
-    #[must_use]
-    const fn route(&self) -> Option<crate::routes::At> {
+    pub(crate) const fn route(&self) -> Option<crate::routes::At> {
         match self {
             Self::RemoveRoute(_, at)
             | Self::SetRouteVolume(_, at, _)
@@ -408,30 +397,73 @@ impl Edit {
 }
 
 /// Edits waiting to go out.
+///
+/// A drag's positions collapse to its latest (see [`Edit::coalesces`]),
+/// found by index, not by a scan — a kit's slip edit queues a hundred
+/// thousand edits at once, and a scan per push was minutes of the worker
+/// comparing edits before it sent one. And never across an edit that
+/// depends on the one replaced: a move of an item queued before a split
+/// of it, and another after, are two moves — collapsed, the later
+/// position would be applied before the split.
 #[derive(Debug, Default)]
 pub struct Queue {
     pending: VecDeque<Edit>,
+    /// How many edits have gone out: an edit's number less this is where
+    /// it is in `pending`.
+    popped: u64,
+    /// The number of the latest queued coalescing edit, per control.
+    control: std::collections::HashMap<ControlKey, u64>,
+    /// The number of the latest queued edit that does not coalesce, per
+    /// item or track: nothing before it may take a later value.
+    barrier: std::collections::HashMap<String, u64>,
 }
+
+/// A control's identity: its item or track, which edit, which route.
+type ControlKey = (
+    String,
+    std::mem::Discriminant<Edit>,
+    Option<crate::routes::At>,
+);
 
 impl Queue {
     /// Add an edit, replacing a superseded one if there is one.
     pub fn push(&mut self, edit: Edit) {
+        let number = self
+            .popped
+            .saturating_add(u64::try_from(self.pending.len()).unwrap_or(u64::MAX));
+        let guid = edit.guid().to_owned();
         if edit.coalesces() {
-            if let Some(slot) = self
-                .pending
-                .iter_mut()
-                .find(|queued| queued.same_control_as(&edit))
+            let key: ControlKey = (guid, std::mem::discriminant(&edit), edit.route());
+            let live = self.control.get(&key).copied().filter(|&at| {
+                at >= self.popped && self.barrier.get(&key.0).is_none_or(|&wall| wall < at)
+            });
+            if let Some(at) = live
+                && let Some(slot) = usize::try_from(at.saturating_sub(self.popped))
+                    .ok()
+                    .and_then(|i| self.pending.get_mut(i))
             {
                 *slot = edit;
                 return;
             }
+            self.control.insert(key, number);
+        } else {
+            self.barrier.insert(guid, number);
         }
         self.pending.push_back(edit);
     }
 
     /// The next edit to send.
     pub fn pop(&mut self) -> Option<Edit> {
-        self.pending.pop_front()
+        let next = self.pending.pop_front();
+        if next.is_some() {
+            self.popped = self.popped.saturating_add(1);
+        }
+        if self.pending.is_empty() {
+            // Nothing queued refers to them now.
+            self.control.clear();
+            self.barrier.clear();
+        }
+        next
     }
 
     #[must_use]
@@ -803,6 +835,49 @@ mod tests {
         assert_eq!(q.pop(), Some(Edit::SetVolume("kick".into(), 1.0)));
     }
 
+    /// A move of an item before a split of it and another after are two
+    /// moves, in their order: collapsed, the later position would land
+    /// before the split it was made after.
+    #[test]
+    fn coalescing_never_jumps_a_split() {
+        let mut q = Queue::default();
+        q.push(Edit::MoveItem("a".into(), 1.0));
+        q.push(Edit::SplitItem("a".into(), 2.0, "a-right".into()));
+        q.push(Edit::MoveItem("a".into(), 3.0));
+        q.push(Edit::MoveItem("a".into(), 4.0));
+        assert_eq!(
+            q.len(),
+            3,
+            "the moves after the split collapse, not across it"
+        );
+        assert_eq!(q.pop(), Some(Edit::MoveItem("a".into(), 1.0)));
+        assert!(matches!(q.pop(), Some(Edit::SplitItem(..))));
+        assert_eq!(q.pop(), Some(Edit::MoveItem("a".into(), 4.0)));
+    }
+
+    /// A kit's slip edit is a hundred thousand edits at once: queued in a
+    /// moment, not minutes.
+    #[test]
+    fn a_hundred_thousand_edits_queue_at_once() {
+        let mut q = Queue::default();
+        let started = std::time::Instant::now();
+        for i in 0..100_000_u32 {
+            let item = format!("item{}", i / 8);
+            q.push(Edit::SplitItem(
+                item.clone(),
+                f64::from(i),
+                format!("{item}-{i}"),
+            ));
+            q.push(Edit::MoveItem(item, f64::from(i)));
+        }
+        assert!(
+            started.elapsed().as_secs_f64() < 2.0,
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(q.len(), 200_000);
+    }
+
     /// But two mutes are two mutes. Collapsing them would eat half of a
     /// double-click, and a mute that toggles once for two clicks is
     /// worse than one that lags.
@@ -1160,6 +1235,109 @@ async fn split(item: &daw::rpc::ItemHandle, split_at: f64, new_guid: &str) -> da
     item.set_length(secs(split_at - start)).await
 }
 
+/// An item edit, applied to this window's own engine directly (its
+/// services are synchronous in-process); `false` for anything else, or
+/// with no song open here, which then goes through the facade. The same
+/// edits the facade path makes, call for call.
+#[cfg(feature = "native")]
+fn apply_locally(edit: &Edit) -> bool {
+    use daw_proto::{ItemRef, Items as _, TakeRef, Takes as _};
+    if !edit.is_item() {
+        return false;
+    }
+    let (Some(daw), Some(song)) = (crate::open::local_engine(), crate::open::current_song()) else {
+        return false;
+    };
+    let project = daw_proto::ProjectContext::Project(song);
+    let secs = daw_proto::primitives::Duration::from_seconds;
+    let at = daw_proto::primitives::PositionInSeconds::from_seconds;
+    let outcome = match edit {
+        Edit::DeselectAllItems(_) => daw.select_all_items(project, false),
+        Edit::SelectAllItems(_) => daw.select_all_items(project, true),
+        _ => {
+            let guid = made(edit.guid());
+            let item = ItemRef::Guid(guid.clone());
+            let Some(info) = daw.get_item(project.clone(), item.clone()) else {
+                return true;
+            };
+            match edit {
+                Edit::SetFadeIn(_, s, shape) => daw.set_fade_in(project, item, secs(*s), *shape),
+                Edit::SetFadeOut(_, s, shape) => daw.set_fade_out(project, item, secs(*s), *shape),
+                Edit::SelectItem(_, exclusive) => {
+                    if *exclusive {
+                        let _ = daw.select_all_items(project.clone(), false);
+                    }
+                    daw.set_selected(project, item, true)
+                }
+                Edit::DeselectItem(_) => daw.set_selected(project, item, false),
+                Edit::SlipItem(_, offset) => {
+                    daw.set_start_offset(project, item, TakeRef::Active, secs(*offset))
+                }
+                Edit::MoveItem(_, position) => daw.set_position(project, item, at(*position)),
+                Edit::TrimItem(_, position, length) => daw
+                    .set_position(project.clone(), item.clone(), at(*position))
+                    .and_then(|()| daw.set_length(project, item, secs(*length))),
+                Edit::SplitItem(_, split_at, new_guid) => {
+                    let start = info.position.as_seconds();
+                    let end = start + info.length.as_seconds();
+                    if *split_at <= start || *split_at >= end {
+                        return true;
+                    }
+                    let Some(right) = daw.duplicate_item(project.clone(), item.clone()) else {
+                        return true;
+                    };
+                    remember(new_guid, &right);
+                    let half = ItemRef::Guid(right);
+                    daw.set_position(project.clone(), half.clone(), at(*split_at))
+                        .and_then(|()| {
+                            daw.set_length(project.clone(), half.clone(), secs(end - split_at))
+                        })
+                        .and_then(|()| {
+                            daw.set_start_offset(
+                                project.clone(),
+                                half.clone(),
+                                TakeRef::Active,
+                                secs(info.start_offset.as_seconds() + (split_at - start)),
+                            )
+                        })
+                        .and_then(|()| {
+                            daw.set_fade_in(project.clone(), half, secs(0.0), info.fade_in_shape)
+                        })
+                        .and_then(|()| {
+                            daw.set_fade_out(
+                                project.clone(),
+                                item.clone(),
+                                secs(0.0),
+                                info.fade_out_shape,
+                            )
+                        })
+                        .and_then(|()| daw.set_length(project, item, secs(split_at - start)))
+                }
+                Edit::CopyItem(_, to, new_guid) => daw
+                    .duplicate_item(project.clone(), item)
+                    .map_or(Ok(()), |copy| {
+                        remember(new_guid, &copy);
+                        daw.set_position(project, ItemRef::Guid(copy), at(*to))
+                    }),
+                Edit::SetItemLane(_, lane) => daw.set_fixed_lane(project, item, *lane),
+                Edit::SetItemVolume(_, volume) => {
+                    daw_proto::Items::set_volume(daw, project, item, *volume)
+                }
+                Edit::SetStretchMarkers(_, markers) => {
+                    stretch(&guid, markers);
+                    Ok(())
+                }
+                Edit::DeleteItem(_) => daw.delete_item(project, item),
+                _ => return false,
+            }
+        }
+    };
+    if let Err(error) = outcome {
+        tracing::warn!(error = %error, edit = ?edit, "the engine refused an item edit");
+    }
+    true
+}
+
 /// One edit, against the engine, waited for: what a test or a tool that
 /// needs the result before going on does instead of the queue. False when
 /// there is no runtime to run it on.
@@ -1192,6 +1370,14 @@ async fn apply_reported(edit: &Edit) {
 
 /// One edit, against the engine.
 async fn apply(edit: &Edit) {
+    // An item edit on this window's own engine, straight to it: through
+    // the facade each is a dozen round trips (a split is a lookup, a
+    // duplicate, a move, a length, an offset and two fades), and a kit's
+    // slip edit is a hundred thousand edits — half an hour, through it.
+    #[cfg(feature = "native")]
+    if apply_locally(edit) {
+        return;
+    }
     let Some(daw) = daw::rpc::Daw::try_get() else {
         return;
     };

@@ -32,7 +32,7 @@ use daw_proto::routing::{RouteType, RoutingEvent, TrackRoute};
 /// track can have send 0, receive 0 and hardware output 0 at once, and
 /// three different things they are. Carrying the kind beside the number
 /// is what stops an edit landing on the wrong one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct At {
     pub kind: RouteType,
     pub index: u32,

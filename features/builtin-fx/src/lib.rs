@@ -467,7 +467,7 @@ impl<P: Plugin> PluginInstance for Embedded<P> {
                 .params
                 .iter()
                 // SAFETY: as in `params`.
-                .map(|(id, ptr)| (id.clone(), unsafe { ptr.unmodulated_normalized_value() }))
+                .map(|(id, ptr)| (id.clone(), unsafe { exact_normalized(*ptr) }))
                 .collect(),
             fields: self.object.serialize_fields(),
         };
@@ -478,6 +478,45 @@ impl<P: Plugin> PluginInstance for Embedded<P> {
         if self.config.take().is_some() {
             self.plugin.deactivate();
         }
+    }
+}
+
+/// The normalized value that restores `ptr`'s plain value exactly.
+///
+/// A parameter holds its plain value (a ratio, a time) and derives its
+/// normalized one, so loading a normalized value converts it back, and
+/// through a skewed range in f32 that is not always the value saved:
+/// FTS Comp's ratio came back 0.29048538 → 0.2904854, and a session never
+/// saved the same twice. The value saved is the nearest normalized one
+/// that converts back to exactly the plain value held — the usual one, or
+/// a few float steps from it — so save → load → save is the same bytes.
+///
+/// # Safety
+///
+/// `ptr` points into the plugin's live params, as in `params`.
+unsafe fn exact_normalized(ptr: ParamPtr) -> f32 {
+    /// How many float steps either side to look.
+    const REACH: usize = 64;
+    // SAFETY: the caller's.
+    unsafe {
+        let plain = ptr.unmodulated_plain_value();
+        let start = ptr.unmodulated_normalized_value();
+        let restores = |n: f32| ptr.preview_plain(n).to_bits() == plain.to_bits();
+        if restores(start) {
+            return start;
+        }
+        let (mut up, mut down) = (start, start);
+        for _ in 0..REACH {
+            up = up.next_up().min(1.0);
+            down = down.next_down().max(0.0);
+            if restores(up) {
+                return up;
+            }
+            if restores(down) {
+                return down;
+            }
+        }
+        start
     }
 }
 

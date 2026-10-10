@@ -51,6 +51,11 @@ pub fn velocity(relative_db: f64) -> u8 {
 /// out whatever the length.
 const NOTE_QN: f64 = 0.25;
 
+/// A project file's MIDI resolution, ticks a quarter note: a note is
+/// written on one, so the saved song plays it where the live one did (off
+/// a tick, a hit moved by up to half of one, ~0.3 ms at 100 bpm, on save).
+const TICKS_PER_QN: f64 = 960.0;
+
 /// What setting the samples up did, or would.
 #[derive(Debug, Default)]
 pub struct Report {
@@ -244,22 +249,42 @@ fn write_notes(
         .filter_map(|p| Some((p.position.time?.as_seconds(), p.bpm)))
         .collect();
     let bpm = daw.get_default_tempo(project.clone());
-    let created: Vec<MidiNoteCreate> = notes
-        .iter()
-        .map(|&(time, pitch, vel)| {
-            MidiNoteCreate::new(
-                pitch,
-                vel,
-                crate::drum_reference::qn_between(start, time, &tempos, bpm),
-                NOTE_QN,
-            )
-        })
-        .collect();
+    let created = placed(notes, |time| {
+        crate::drum_reference::qn_between(start, time, &tempos, bpm)
+    });
     let _ = daw.add_notes_ppq(
         MidiTakeLocation::new(location.project, location.item, TakeRef::Active),
         created,
     );
     Ok(())
+}
+
+/// `notes` as MIDI notes, at `qn(time)` quarter notes into the item: each
+/// on a tick ([`TICKS_PER_QN`]) and ending a tick before the next of its
+/// pitch — overlapping notes of one pitch are not two notes once written
+/// as ons and offs (they read back as one cut short and one of no
+/// length), and a drum's sample plays out whatever the note's length.
+fn placed(notes: &[(f64, u8, u8)], qn: impl Fn(f64) -> f64) -> Vec<MidiNoteCreate> {
+    // Whole ticks, divided once — as a file's reader does — so a note
+    // reads back as the very value it was written with.
+    let ticks: Vec<(f64, u8, u8)> = notes
+        .iter()
+        .map(|&(time, pitch, vel)| ((qn(time) * TICKS_PER_QN).round(), pitch, vel))
+        .collect();
+    let longest = NOTE_QN * TICKS_PER_QN;
+    ticks
+        .iter()
+        .enumerate()
+        .map(|(i, &(start, pitch, vel))| {
+            let next = ticks
+                .iter()
+                .skip(i.saturating_add(1))
+                .find(|n| n.1 == pitch && n.0 > start)
+                .map_or(f64::INFINITY, |n| n.0);
+            let length = longest.min(next - start - 1.0).max(1.0);
+            MidiNoteCreate::new(pitch, vel, start / TICKS_PER_QN, length / TICKS_PER_QN)
+        })
+        .collect()
 }
 
 /// An `FTS Kit Mic` on `track` (the one there, or a new one) playing what
@@ -285,6 +310,34 @@ fn kit_mic(
 
 #[cfg(test)]
 mod tests {
+
+    /// Notes land on ticks, and one ends a tick before the next of its
+    /// pitch — never under it — while another pitch is left alone.
+    #[test]
+    fn notes_are_on_ticks_and_never_overlap_their_pitch() {
+        let notes = [(0.0, 36, 100), (0.1, 36, 90), (0.1, 38, 80), (1.0, 36, 70)];
+        let placed = placed(&notes, |t| t + 0.000_31);
+        let tick = 1.0 / TICKS_PER_QN;
+        for n in &placed {
+            let ticks = n.start_ppq / tick;
+            assert!(
+                (ticks - ticks.round()).abs() < 1e-6,
+                "on a tick: {}",
+                n.start_ppq
+            );
+        }
+        let first = &placed[0];
+        assert!((first.start_ppq + first.length_ppq - (placed[1].start_ppq - tick)).abs() < 1e-9);
+        assert!(
+            (placed[2].length_ppq - NOTE_QN).abs() < 1e-9,
+            "the snare keeps its length"
+        );
+        assert!(
+            (placed[3].length_ppq - NOTE_QN).abs() < 1e-9,
+            "room to ring"
+        );
+    }
+
     use super::*;
 
     #[test]
