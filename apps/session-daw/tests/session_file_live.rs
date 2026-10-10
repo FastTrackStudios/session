@@ -1,8 +1,7 @@
-//! A prepared session saved as `.session` opens again as the same session,
-//! through the window's own open path: tracks and folders, the chart's
-//! markers and regions, the tempo, and the guide tracks' instruments.
-
-use std::path::Path;
+//! A prepared session saved as its project file (`Song.session`) opens
+//! again as the same session: tracks and folders, the chart's markers and
+//! regions, the tempo, and the guide tracks' instruments. And once saved,
+//! each edit step goes into the file by itself, under its name.
 
 use daw::service::{Effects, FxChainContext, Markers, ProjectContext, Regions, TempoMap, Tracks};
 
@@ -36,31 +35,42 @@ fn a_saved_session_opens_as_it_was_saved() {
     let saved = rpp.with_extension("session");
     session_daw::session_file::save_session(&opened.daw, &opened.project_guid, &saved)
         .expect("save");
-    let before = snapshot(
-        &opened.daw,
-        &ProjectContext::Project(opened.project_guid.clone()),
-    );
 
-    // Opened again, into a fresh engine, from the saved text.
+    assert!(saved.is_file(), "one file");
+
+    // An edit step after the save: in the file by itself, by its name,
+    // with nothing saved by hand.
+    let song = ProjectContext::Project(opened.project_guid.clone());
+    daw::service::Projects::begin_undo_block(&opened.daw, song.clone(), "Add Pad");
+    Tracks::add(&opened.daw, song.clone(), "Pad", None).expect("a track");
+    daw::service::Projects::end_undo_block(&opened.daw, song.clone(), "Add Pad", None);
+    let steps = || -> Vec<String> {
+        dawfile_store::Store::open(&saved)
+            .and_then(|store| store.steps(dawfile_store::MAIN))
+            .map(|steps| steps.into_iter().map(|s| s.label).collect())
+            .unwrap_or_default()
+    };
+    let began = std::time::Instant::now();
+    while !steps().iter().any(|l| l == "Add Pad") && began.elapsed().as_secs() < 20 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        steps().last().map(String::as_str),
+        Some("Add Pad"),
+        "{:?}",
+        steps()
+    );
+    let before = snapshot(&opened.daw, &song);
+
+    // Opened again, into a fresh engine, from the file.
     let again = daw::standalone::Standalone::new();
     session_daw::guide_instrument::install(
         &again,
         session_daw::guide_instrument::Library::Folder(session_daw::guide_instrument::samples_dir()),
     );
-    let text = session_daw::open::project_text(&saved)
-        .expect("read the session")
-        .text;
-    let loaded = daw::standalone::project_loader::load_rpp_text(
-        &again,
-        "Saved Song",
-        &saved.to_string_lossy(),
-        &text,
-    )
-    .expect("load");
-    let after = snapshot(
-        &again,
-        &ProjectContext::Project(loaded.project_guid.clone()),
-    );
+    let loaded = session_daw::project_file::load(&again, "Saved Song", &saved, dawfile_store::MAIN)
+        .expect("load");
+    let after = snapshot(&again, &ProjectContext::Project(loaded));
 
     assert_eq!(before, after);
     assert!(
@@ -71,7 +81,10 @@ fn a_saved_session_opens_as_it_was_saved() {
         "the click plays through the guide instrument: {:?}",
         before.fx
     );
-    assert!(Path::new(&saved).join("objects").is_dir());
+    assert!(
+        before.tracks.iter().any(|(name, _, _)| name == "Pad"),
+        "the step reopens with the song"
+    );
 }
 
 #[derive(Debug, PartialEq)]
@@ -103,10 +116,15 @@ fn snapshot(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Snap
                 )
             })
             .collect(),
-        markers: Markers::all(daw, project.clone())
-            .into_iter()
-            .map(|m| (m.name, ms(m.position.seconds().unwrap_or(0.0))))
-            .collect(),
+        // By time: the order markers were added in is not saved.
+        markers: {
+            let mut markers: Vec<_> = Markers::all(daw, project.clone())
+                .into_iter()
+                .map(|m| (m.name, ms(m.position.seconds().unwrap_or(0.0))))
+                .collect();
+            markers.sort_by_key(|(name, at)| (*at, name.clone()));
+            markers
+        },
         // By lane and time: a save renumbers regions, and `Regions::all`
         // lists them by number, which is not part of what was saved.
         regions: {

@@ -122,6 +122,31 @@ impl Bridge {
         Ok(true)
     }
 
+    /// The engine finished an edit step named `label`: read it, and record
+    /// what changed as one commit of that name — only what differs
+    /// written. Returns whether anything was recorded.
+    ///
+    /// # Errors
+    /// When the engine cannot be read or the doc cannot be written.
+    pub async fn local_step(&mut self, label: &str) -> eyre::Result<bool> {
+        let mut now = engine::read(
+            &self.project,
+            &self.media,
+            self.blobs.as_ref(),
+            &self.ids,
+            self.direct.as_deref(),
+        )
+        .await?;
+        now.chart.clone_from(&self.shown.chart);
+        if now == self.shown {
+            return Ok(false);
+        }
+        self.doc
+            .write_step(&self.shown, &now, ORIGIN_LOCAL, label)?;
+        self.shown = now;
+        Ok(true)
+    }
+
     /// The chart was edited locally.
     ///
     /// # Errors

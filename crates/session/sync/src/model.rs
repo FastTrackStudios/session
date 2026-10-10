@@ -209,6 +209,8 @@ pub struct MarkerState {
     pub at: f64,
     pub name: String,
     pub color: Option<u32>,
+    /// Which ruler lane it sits on (none: the default).
+    pub lane: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -217,6 +219,9 @@ pub struct RegionState {
     pub end: f64,
     pub name: String,
     pub color: Option<u32>,
+    /// Which ruler lane it sits on (none: the default) — a song's region
+    /// on one, its sections on another.
+    pub lane: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

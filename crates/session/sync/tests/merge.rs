@@ -157,6 +157,7 @@ fn song() -> SessionModel {
             at: 8.0,
             name: "Count".into(),
             color: None,
+            lane: Some(1),
         },
     );
     m

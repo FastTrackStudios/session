@@ -162,6 +162,63 @@ impl SessionDoc {
         Ok(())
     }
 
+    /// Move the doc from `before` — what it holds now — to `model`, as one
+    /// commit under `origin` named `label`: only what differs is written,
+    /// so a step that moved one item of thousands compares one.
+    ///
+    /// `before` must be what the doc reads as (the bridge's last model);
+    /// anything else and the doc keeps what `before` claimed unchanged.
+    ///
+    /// # Errors
+    /// When a Loro operation fails.
+    pub fn write_step(
+        &self,
+        before: &SessionModel,
+        model: &SessionModel,
+        origin: &str,
+        label: &str,
+    ) -> LoroResult<()> {
+        let meta = self.doc.get_map(META);
+        put(&meta, "schema", LoroValue::I64(SCHEMA))?;
+        if before.tempo != model.tempo {
+            put(&meta, "tempo", LoroValue::from(encode_tempo(&model.tempo)))?;
+        }
+        if before.tracks != model.tracks {
+            self.write_tracks(&model.tracks)?;
+            let (fx, sends, envelopes) = track_parts(&model.tracks);
+            write_entities(&self.doc.get_map(FX), &fx, fx_fields)?;
+            write_entities(&self.doc.get_map(SENDS), &sends, send_fields)?;
+            write_entities(&self.doc.get_map(ENVELOPES), &envelopes, envelope_fields)?;
+        }
+        write_changed(
+            &self.doc.get_map(ITEMS),
+            &before.items,
+            &model.items,
+            item_fields,
+        )?;
+        write_changed(
+            &self.doc.get_map(MARKERS),
+            &before.markers,
+            &model.markers,
+            marker_fields,
+        )?;
+        write_changed(
+            &self.doc.get_map(REGIONS),
+            &before.regions,
+            &model.regions,
+            region_fields,
+        )?;
+        if before.chart != model.chart {
+            write_text(&self.doc.get_text(CHART), &model.chart)?;
+        }
+        self.doc.set_next_commit_origin(origin);
+        if !label.is_empty() {
+            self.doc.set_next_commit_message(label);
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
     /// Whether anything has been written or received yet — a joiner
     /// waits for this before letting its bridge at the doc.
     #[must_use]
@@ -358,6 +415,26 @@ fn write_entities<T>(
     Ok(())
 }
 
+/// The entities of `now` that differ from `before` written, and those
+/// `before` had that `now` does not deleted.
+fn write_changed<T: PartialEq>(
+    root: &LoroMap,
+    before: &BTreeMap<String, T>,
+    now: &BTreeMap<String, T>,
+    fields: fn(&T) -> Fields,
+) -> LoroResult<()> {
+    for (guid, entity) in now {
+        if before.get(guid) != Some(entity) {
+            let map = root.ensure_mergeable_map(guid)?;
+            sync_fields(&map, &fields(entity))?;
+        }
+    }
+    for guid in before.keys().filter(|k| !now.contains_key(*k)) {
+        root.delete(guid)?;
+    }
+    Ok(())
+}
+
 fn read_entities<T>(
     root: &LoroMap,
     read: fn(&HashMap<String, LoroValue>) -> T,
@@ -408,6 +485,8 @@ fn map_value(value: &LoroValue) -> HashMap<String, LoroValue> {
 
 // ── field codecs ────────────────────────────────────────────────────────
 
+/// An optional `u32` — a colour, a lane — as the doc keeps it: a number,
+/// or null for none.
 fn color(c: Option<u32>) -> LoroValue {
     c.map_or(LoroValue::Null, |c| LoroValue::I64(i64::from(c)))
 }
@@ -915,6 +994,7 @@ fn marker_fields(m: &MarkerState) -> Fields {
         ("at", LoroValue::Double(m.at)),
         ("name", LoroValue::from(m.name.as_str())),
         ("color", color(m.color)),
+        ("lane", color(m.lane)),
     ]
 }
 
@@ -924,6 +1004,7 @@ fn read_marker(fields: &HashMap<String, LoroValue>) -> MarkerState {
         at: g.f64("at", 0.0),
         name: g.string("name"),
         color: g.color("color"),
+        lane: g.color("lane"),
     }
 }
 
@@ -933,6 +1014,7 @@ fn region_fields(r: &RegionState) -> Fields {
         ("end", LoroValue::Double(r.end)),
         ("name", LoroValue::from(r.name.as_str())),
         ("color", color(r.color)),
+        ("lane", color(r.lane)),
     ]
 }
 
@@ -943,6 +1025,7 @@ fn read_region(fields: &HashMap<String, LoroValue>) -> RegionState {
         end: g.f64("end", 0.0),
         name: g.string("name"),
         color: g.color("color"),
+        lane: g.color("lane"),
     }
 }
 

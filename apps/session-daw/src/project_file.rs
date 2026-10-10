@@ -9,9 +9,14 @@
 //! An alternative or checkpoint is another branch of the same file,
 //! forked from the song.
 //!
-//! A `Song.session` folder (the format before this) is read as it always
-//! was; the first save writes the file and keeps the folder beside it as
-//! `Song.session.legacy`.
+//! Every edit step is history too: once a song is open from (or saved
+//! to) its file, each undo step the engine finishes is read into the doc
+//! as one commit under the step's name and appended to the file, behind
+//! the window ([`record_steps`]). A save is then what folds the file's
+//! log back into it.
+//!
+//! A `Song.session` folder (the format before this) is kept beside the
+//! file as `Song.session.legacy` on the first save.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,18 +27,46 @@ use dawfile_store::{MAIN, Store};
 use session::sync::engine::{Blobs, Direct, MediaRoot};
 use session::sync::{Bridge, SessionDoc};
 
-/// A project file's blobs, as the bridge keeps FX state.
-struct StoreBlobs(Arc<Mutex<Store>>);
+/// A project file's blobs, as the bridge keeps FX state — with the names
+/// already stored remembered, since every read of the engine offers each
+/// FX's state again and storing one is a compression and a write.
+struct StoreBlobs {
+    store: Arc<Mutex<Store>>,
+    stored: Mutex<std::collections::HashSet<String>>,
+}
+
+impl StoreBlobs {
+    fn new(store: Arc<Mutex<Store>>) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            stored: Mutex::default(),
+        })
+    }
+}
 
 impl Blobs for StoreBlobs {
     fn put(&self, bytes: &[u8]) -> String {
-        with_store(&self.0, |store| {
-            store.put_blob("fx", bytes).map_err(|e| e.to_string())
-        })
-        .unwrap_or_else(|_| dawfile_store::hash_of(bytes))
+        let name = dawfile_store::hash_of(bytes);
+        let mut stored = self
+            .stored
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !stored.contains(&name)
+            && with_store(&self.store, |store| {
+                store.put_blob("fx", bytes).map_err(|e| e.to_string())
+            })
+            .is_ok()
+        {
+            stored.insert(name.clone());
+        }
+        drop(stored);
+        name
     }
     fn get(&self, name: &str) -> Option<Vec<u8>> {
-        with_store(&self.0, |store| store.blob(name).map_err(|e| e.to_string())).ok()
+        with_store(&self.store, |store| {
+            store.blob(name).map_err(|e| e.to_string())
+        })
+        .ok()
     }
 }
 
@@ -240,6 +273,7 @@ pub fn save(
 /// The song `guid` into the project file at `path` on `branch`: the
 /// branch's history so far, a bridge reading the song over it.
 async fn begin(daw: &Standalone, guid: &str, path: &Path, branch: &str) -> Result<Open, String> {
+    record_steps();
     let (store, loaded) = open_branch(path, branch)?;
     let doc = SessionDoc::from_loro(loaded);
     let saved = doc.version();
@@ -249,7 +283,7 @@ async fn begin(daw: &Standalone, guid: &str, path: &Path, branch: &str) -> Resul
         media_of(path),
         doc,
         chart,
-        Arc::new(StoreBlobs(store.clone())),
+        StoreBlobs::new(store.clone()),
         Some(direct(daw)),
     )
     .await
@@ -269,7 +303,9 @@ async fn save_open(open: &mut Open, label: &str) -> Result<(), String> {
         .local_changed()
         .await
         .map_err(|e| e.to_string())?;
-    append(open, label)
+    append(open, label)?;
+    // One file again: what was written folded out of the log beside it.
+    with_store(&open.store, |s| s.checkpoint().map_err(|e| e.to_string()))
 }
 
 /// Append what the doc holds past its last save to the song's branch.
@@ -283,8 +319,63 @@ fn append(open: &mut Open, label: &str) -> Result<(), String> {
         })?;
         open.saved = doc.version();
     }
-    // One file again: what was written folded out of the log beside it.
-    with_store(&open.store, |s| s.checkpoint().map_err(|e| e.to_string()))
+    Ok(())
+}
+
+/// Record each edit step the engine finishes into its song's file, once
+/// that song is open from it — on a thread of its own, so the window
+/// never waits on a read of the engine. Steps that finish while one is
+/// being recorded are read together, as one commit named for them all.
+fn record_steps() {
+    static LISTENING: std::sync::Once = std::sync::Once::new();
+    LISTENING.call_once(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
+        let tx = Mutex::new(tx);
+        daw::standalone::steps::listen(Arc::new(move |project, label| {
+            if let Ok(tx) = tx.lock() {
+                let _ = tx.send((project.to_owned(), label.to_owned()));
+            }
+        }));
+        let _ = std::thread::Builder::new()
+            .name("project-file-steps".into())
+            .spawn(move || {
+                while let Ok(first) = rx.recv() {
+                    let mut steps: Vec<(String, Vec<String>)> = Vec::new();
+                    for (project, label) in std::iter::once(first).chain(rx.try_iter()) {
+                        match steps.iter_mut().find(|(p, _)| *p == project) {
+                            Some((_, labels)) => labels.push(label),
+                            None => steps.push((project, vec![label])),
+                        }
+                    }
+                    for (project, labels) in steps {
+                        if let Err(why) = record(&project, &labels.join("; ")) {
+                            tracing::warn!(project.guid = %project, why, "an edit step was not recorded");
+                        }
+                    }
+                }
+            });
+    });
+}
+
+/// The engine finished the step `label` in the song `project_guid`: read
+/// it into the song's doc as one commit and append that to its file — if
+/// the song is open from one.
+fn record(project_guid: &str, label: &str) -> Result<(), String> {
+    let guid = project_guid.to_owned();
+    let label = label.to_owned();
+    run(async move {
+        let mut songs = open_songs().lock().await;
+        let Some(open) = songs.get_mut(&guid) else {
+            return Ok(());
+        };
+        let recorded = match open.bridge.local_step(&label).await {
+            Ok(true) => append(open, &label),
+            Ok(false) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        };
+        drop(songs);
+        recorded
+    })?
 }
 
 /// Open `branch` of the project file at `path` as a new song in `daw`:
@@ -296,6 +387,7 @@ fn append(open: &mut Open, label: &str) -> Result<(), String> {
 /// The file would not open or load, or the engine refused to rebuild it.
 pub fn load(daw: &Standalone, name: &str, path: &Path, branch: &str) -> Result<String, String> {
     let _job = crate::jobs::start("Opening", 0);
+    record_steps();
     let (store, loaded) = open_branch(path, branch)?;
     let doc = SessionDoc::from_loro(loaded);
     let saved = doc.version();
@@ -314,7 +406,7 @@ pub fn load(daw: &Standalone, name: &str, path: &Path, branch: &str) -> Result<S
             project(&daw, &made).await?,
             media_of(&path),
             doc,
-            Arc::new(StoreBlobs(store.clone())),
+            StoreBlobs::new(store.clone()),
             Some(direct(&daw)),
         )
         .await

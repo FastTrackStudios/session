@@ -192,6 +192,7 @@ pub async fn read(
                     at: m.position.time.map_or(0.0, |t| t.as_seconds()),
                     name: m.name,
                     color: m.color,
+                    lane: m.lane,
                 },
             ))
         })
@@ -209,11 +210,12 @@ pub async fn read(
                     end: r.time_range.end_seconds(),
                     name: r.name,
                     color: r.color,
+                    lane: r.lane,
                 },
             ))
         })
         .collect();
-    let tempo = project
+    let mut tempo: Vec<TempoPoint> = project
         .tempo_map()
         .points()
         .await?
@@ -230,6 +232,18 @@ pub async fn read(
             }
         })
         .collect();
+    // No points: the project's own tempo and metre, as the one point a
+    // song with a steady tempo has.
+    if tempo.is_empty() {
+        let map = project.tempo_map();
+        let (beats, unit) = map.default_time_signature().await?;
+        tempo.push(TempoPoint {
+            at: 0.0,
+            bpm: map.default_tempo().await?,
+            beats_per_bar: u32::try_from(beats).unwrap_or(4),
+            beat_unit: u32::try_from(unit).unwrap_or(4),
+        });
+    }
 
     Ok(SessionModel {
         tracks,
@@ -374,8 +388,7 @@ impl<T> Direct for T where
 /// model the changes lead to — structural steps are applied against its
 /// whole track order.
 ///
-/// Chart and tempo steps are skipped: the chart is not engine state, and
-/// the tempo map belongs to the chart once one exists.
+/// Chart steps are skipped: the chart is not engine state.
 ///
 /// # Errors
 /// On the first daw call that fails; the caller re-reads the engine and
@@ -469,7 +482,8 @@ pub async fn apply(
                     project.regions().remove(id).await?;
                 }
             }
-            Change::TempoChanged(_) | Change::ChartChanged(_) => {}
+            Change::TempoChanged(points) => apply_tempo(project, points).await?,
+            Change::ChartChanged(_) => {}
         }
     }
     if structure {
@@ -793,6 +807,33 @@ async fn region_id(project: &Project, guid: &str) -> daw_control::Result<Option<
         .and_then(|r| r.id))
 }
 
+/// Make the engine's tempo map the doc's: its points replaced, the first
+/// one's tempo and metre the project's own too.
+async fn apply_tempo(project: &Project, points: &[TempoPoint]) -> daw_control::Result<()> {
+    let map = project.tempo_map();
+    let count = u32::try_from(map.count().await?).unwrap_or(u32::MAX);
+    for index in (0..count).rev() {
+        map.remove_point(index).await?;
+    }
+    let metre = |p: &TempoPoint| {
+        (
+            i32::try_from(p.beats_per_bar).unwrap_or(4),
+            i32::try_from(p.beat_unit).unwrap_or(4),
+        )
+    };
+    if let Some(first) = points.first() {
+        let (beats, unit) = metre(first);
+        map.set_default_tempo(first.bpm).await?;
+        map.set_default_time_signature(beats, unit).await?;
+    }
+    for point in points {
+        let index = map.add_point(point.at, point.bpm).await?;
+        let (beats, unit) = metre(point);
+        map.set_time_signature_at(index, beats, unit).await?;
+    }
+    Ok(())
+}
+
 async fn set_marker(project: &Project, guid: &str, m: &MarkerState) -> daw_control::Result<()> {
     let markers = project.markers();
     let id = match marker_id(project, guid).await? {
@@ -806,6 +847,7 @@ async fn set_marker(project: &Project, guid: &str, m: &MarkerState) -> daw_contr
     if let Some(c) = m.color {
         markers.set_color(id, c).await?;
     }
+    markers.set_lane(id, m.lane).await?;
     Ok(())
 }
 
@@ -822,6 +864,7 @@ async fn set_region(project: &Project, guid: &str, r: &RegionState) -> daw_contr
     if let Some(c) = r.color {
         regions.set_color(id, c).await?;
     }
+    regions.set_lane(id, r.lane).await?;
     Ok(())
 }
 
