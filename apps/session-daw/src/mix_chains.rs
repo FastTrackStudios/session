@@ -88,10 +88,16 @@ fn return_fx(parent: &str, name: &str) -> Option<(&'static str, Vec<(&'static st
                 ("Mix", "100%"),
             ]),
         ),
-        // No time to set yet: its window does not bound its tail.
+        // Gated: a quarter note, shut on the beat.
         ("verb", "nonlin") => (
             "FTS Reverb",
-            set(&[("Space", "Non-Linear"), ("Decay", "40%"), ("Mix", "100%")]),
+            set(&[
+                ("Space", "Non-Linear"),
+                ("Character A", "35%"),
+                ("Decay Mode", "Sync"),
+                ("Decay Div", "1/4"),
+                ("Mix", "100%"),
+            ]),
         ),
         // The vocal's short verb: a half note, under the next line.
         ("verb", "short") => (
@@ -190,9 +196,10 @@ const ONE_NOTE: &[&str] = &["FTS EQ", "FTS Gate", "FTS Comp", "FTS Saturate"];
 /// - **Toms**: a room a quarter note long, lower than the snare's, a
 ///   sixty-fourth of pre-delay, cut at 150 Hz and 6 kHz (a tom's ring is
 ///   low; its mic hears the cymbals).
-/// - **Non-Linear** has no time to set yet (its window does not bound its
-///   tail — processor's `ReverbChain::decay_for_seconds`), so its Decay is
-///   the plugin's position.
+/// - **Non-Linear**, gated (Character A is its Shape; 25–50 % is Gate):
+///   each hit opens a window that shuts on time — the snare's a quarter
+///   note, the classic gated snare; the toms' an eighth, so a fill does
+///   not smear.
 ///
 /// Post-EQ bands are numbered (`Post Shape 6`): the first the low cut,
 /// the last the high cut.
@@ -245,7 +252,9 @@ fn drum_return(piece: &str, name: &str) -> Option<(&'static [(&'static str, &'st
             &[
                 ("Space", "Non-Linear"),
                 ("Mix", "100%"),
-                ("Decay", "30%"),
+                ("Character A", "35%"),
+                ("Decay Mode", "Sync"),
+                ("Decay Div", "1/4"),
                 ("Pre-Delay Sync", "Free"),
                 ("Pre-Delay", "0.0 ms"),
                 ("Post Shape 1", "Low Cut"),
@@ -275,7 +284,9 @@ fn drum_return(piece: &str, name: &str) -> Option<(&'static [(&'static str, &'st
             &[
                 ("Space", "Non-Linear"),
                 ("Mix", "100%"),
-                ("Decay", "25%"),
+                ("Character A", "35%"),
+                ("Decay Mode", "Sync"),
+                ("Decay Div", "1/8"),
                 ("Pre-Delay Sync", "Free"),
                 ("Pre-Delay", "0.0 ms"),
                 ("Post Shape 1", "Low Cut"),

@@ -116,4 +116,53 @@ mod reverb_time {
         let (a, b) = (rings(&plate, 60.0), rings(&plate, 180.0));
         assert!((a / b - 1.0).abs() < 0.02, "{a} s against {b} s");
     }
+
+    /// A gated Non-Linear on a quarter note shuts on the beat: at 120 bpm
+    /// its last sound within 40 dB of the burst is half a second after the
+    /// hit, and it is silent after that.
+    #[test]
+    fn a_gate_in_notes_shuts_on_the_beat() {
+        let mut fx = builtin_fx::BuiltinFx
+            .create("FTS Reverb", SR)
+            .expect("the reverb");
+        fx.prepare(SR, 512).expect("prepared");
+        let params: Vec<(u32, f64)> = [
+            ("Space", "Non-Linear"),
+            ("Mix", "100%"),
+            ("Pre-Delay", "0.0 ms"),
+            ("Character A", "35%"),
+            ("Decay Mode", "Sync"),
+            ("Decay Div", "1/4"),
+        ]
+        .iter()
+        .map(|(p, t)| builtin_fx::setting("FTS Reverb", p, t).expect("a setting"))
+        .collect();
+        let mut out = Vec::new();
+        for block in 0..SETTLE_BLOCKS + 188 {
+            let mut input = vec![0.0_f32; BLOCK];
+            if block == SETTLE_BLOCKS
+                && let Some(first) = input.first_mut()
+            {
+                *first = 1.0;
+            }
+            let (mut l, mut r) = (vec![0.0_f32; BLOCK], vec![0.0_f32; BLOCK]);
+            let events = PluginEvents {
+                params: if block == 0 { &params } else { &[] },
+                ..PluginEvents::EMPTY
+            };
+            fx.set_tempo(120.0);
+            fx.process_block(&input, &input, &mut l, &mut r, &events)
+                .expect("a block");
+            if block >= SETTLE_BLOCKS {
+                out.extend(l.iter().map(|v| f64::from(*v).abs()));
+            }
+        }
+        let peak = out.iter().copied().fold(0.0_f64, f64::max);
+        let last = out.iter().rposition(|v| *v > peak * 0.01).expect("a burst");
+        let shut = f64::from(u32::try_from(last).expect("short")) / SR;
+        assert!(
+            (shut - 0.5).abs() < 0.025,
+            "a quarter at 120 shut at {shut} s"
+        );
+    }
 }
