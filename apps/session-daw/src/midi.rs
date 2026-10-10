@@ -88,6 +88,48 @@ impl Wave {
         }
     }
 
+    /// A slice `length` long played through stretch `markers` (`(take
+    /// time, source time)`, as the engine takes them): each point from
+    /// the source time its take time plays, so a decay drawn out over a
+    /// gap is drawn drawn out. `origin` is the source time this wave's
+    /// first point stands for. Silence outside it, as [`Self::slice`].
+    #[must_use]
+    pub fn warped(&self, origin: f64, length: f64, markers: &[(f64, f64)]) -> Self {
+        let step = self.step.max(f64::EPSILON);
+        let count = crate::num::index((length / step).ceil());
+        // The source time a take time plays: along the segment holding it
+        // (before the first, the first's; past the last, the last's).
+        let source = |take: f64| -> f64 {
+            let segment = markers
+                .windows(2)
+                .find(|w| w.get(1).is_some_and(|end| take <= end.0))
+                .or_else(|| markers.windows(2).last());
+            match segment {
+                Some(&[(t0, s0), (t1, s1)]) if t1 > t0 => {
+                    (take - t0).mul_add((s1 - s0) / (t1 - t0), s0)
+                }
+                _ => markers.first().map_or(take, |&(t0, s0)| s0 + (take - t0)),
+            }
+        };
+        let points = (0..count)
+            .map(|k| {
+                let at = ((source(crate::num::coord(k) * step) - origin) / step).round();
+                if at < 0.0 {
+                    (0.0, 0.0)
+                } else {
+                    self.points
+                        .get(crate::num::index(at))
+                        .copied()
+                        .unwrap_or((0.0, 0.0))
+                }
+            })
+            .collect();
+        Self {
+            step: self.step,
+            points,
+        }
+    }
+
     /// Fold the engine's per-channel `[min, max, …]` blocks into one
     /// envelope. `None` for a take with no audio to show.
     #[must_use]
@@ -466,6 +508,37 @@ mod wave_tests {
 
 #[cfg(test)]
 mod fold_tests {
+
+    /// A slice drawn out by stretch markers is drawn drawn out: its kept
+    /// start point for point, its decay spread to the new length.
+    #[test]
+    fn a_stretched_slice_draws_its_decay_drawn_out() {
+        let points: Vec<(f32, f32)> = (0..100_u8).map(|k| (f32::from(k) / 100.0, 0.0)).collect();
+        let wave = Wave { step: 0.01, points };
+        // The source from 0.2 s: kept to 0.03 s, then 0.47 s of source over
+        // 0.97 s — half speed.
+        let markers = [(0.0, 0.2), (0.03, 0.23), (1.0, 0.7)];
+        let drawn = wave.warped(0.0, 1.0, &markers);
+        assert_eq!(drawn.points.len(), 100);
+        assert!(
+            (drawn.points[0].0 - 0.20).abs() < 1e-6,
+            "starts where the take does"
+        );
+        assert!(
+            (drawn.points[3].0 - 0.23).abs() < 1e-6,
+            "the attack as it was"
+        );
+        assert!(
+            (drawn.points[99].0 - 0.70).abs() < 0.01,
+            "ends where the source does"
+        );
+        let unstretched = wave.slice(0.2, 1.0);
+        assert!(
+            drawn.points[60].0 < unstretched.points[60].0,
+            "the decay slowed"
+        );
+    }
+
     use super::{Child, Note, Wave, fold_notes, fold_waves};
 
     /// A slice is its take's waveform from where it was cut, and silence

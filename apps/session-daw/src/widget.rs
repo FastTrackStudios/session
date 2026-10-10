@@ -1025,6 +1025,17 @@ impl ArrangementWidget {
             ("Slip edit drums", cut),
             &mut effects,
         );
+        // A slice drawn out over a gap plays through its markers: drawn so.
+        let warps: std::collections::HashMap<&str, &[(f64, f64)]> = effects
+            .iter()
+            .filter_map(|e| match e {
+                crate::arrange_edit::Effect::Send(crate::engine::Edit::SetStretchMarkers(
+                    guid,
+                    markers,
+                )) => Some((guid.as_str(), markers.as_slice())),
+                _ => None,
+            })
+            .collect();
         let sliced: Vec<(String, crate::midi::Wave)> = self
             .project
             .items
@@ -1033,8 +1044,12 @@ impl ArrangementWidget {
             .filter_map(|i| {
                 let take = i.guid.split("-split@").next()?;
                 let (offset, wave) = takes.get(take)?;
-                let from = i.start_offset.as_seconds() - offset;
-                Some((i.guid.clone(), wave.slice(from, i.length.as_seconds())))
+                let length = i.length.as_seconds();
+                let drawn = warps.get(i.guid.as_str()).map_or_else(
+                    || wave.slice(i.start_offset.as_seconds() - offset, length),
+                    |markers| wave.warped(*offset, length, markers),
+                );
+                Some((i.guid.clone(), drawn))
             })
             .collect();
         self.previews.put_waves(sliced);
