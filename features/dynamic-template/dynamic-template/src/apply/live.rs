@@ -700,15 +700,35 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
     }
 
     /// Mute every drum trigger track and folder ([`super::is_trigger`]):
-    /// sources for sample replacement, unmuted when a sampler is put on
-    /// them, never heard raw under the kit. Returns the names muted.
-    /// Idempotent.
+    /// its clicks are never heard, only fed — so each of its sends taps it
+    /// before the fader (a post-fader one is made pre-fader), and what it
+    /// keys or feeds (a gate's sidechain, a sampler) still hears it while
+    /// the track stays muted. Returns the names muted. Idempotent.
     ///
     /// # Errors
     ///
     /// A backend call failed.
     pub fn mute_triggers(&mut self) -> eyre::Result<Vec<String>> {
-        self.mute_where(super::is_trigger)
+        use daw_proto::{routing::SendMode, RouteRef};
+        let muted = self.mute_where(super::is_trigger)?;
+        for track in Tracks::all(&self.daw, self.project.clone()) {
+            if !super::is_trigger(&track.name) {
+                continue;
+            }
+            let source = TrackRef::Guid(track.guid.clone());
+            for send in Routing::sends(&self.daw, self.project.clone(), source.clone()) {
+                if send.send_mode == SendMode::PostFader {
+                    Routing::set_send_mode(
+                        &self.daw,
+                        self.project.clone(),
+                        source.clone(),
+                        RouteRef::Index(send.index),
+                        SendMode::PostFx,
+                    )?;
+                }
+            }
+        }
+        Ok(muted)
     }
 
     /// The golden template's drum Process folder, inside the session's

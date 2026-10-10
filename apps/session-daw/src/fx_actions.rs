@@ -8,9 +8,13 @@
 //! part of it, case aside) or its place (`#2`, from 1); a parameter by its
 //! name (`Decay`; a name a plugin repeats — the reverb's six `Post Freq` —
 //! with its count: `Post Freq 6`) or its index (`#12`, from 0).
+//!
+//! And their automation: a parameter's envelope, its points placed at a
+//! bar (`33:2`, bar 33 beat 2), a time (`12.5s`) or a section (`Chorus 1`,
+//! `Chorus 1 end`), each point's value in the same words a setting takes.
 
 use architect::action::{ActionList, ActionMeta, Effect};
-use daw::service::{Effects, FxChainContext, FxRef, FxTarget, ProjectContext};
+use daw::service::{Effects, FxChainContext, FxRef, FxTarget, ProjectContext, TempoMap as _};
 use facet::Facet;
 
 use crate::actions::{meta, resolve, song};
@@ -51,6 +55,33 @@ static ENABLE: ActionMeta = meta(
     "",
 );
 
+static AUTOMATION: ActionMeta = meta(
+    "FX_AUTOMATION",
+    "fx_automation",
+    "A track's plugin automation",
+    "Every automated FX parameter on `track` (or only `fx`'s, its name or `#place`): the FX, the parameter, its mode, and its points — each at its bar:beat and seconds, its value normalized, and its shape. Read-only.",
+    "FX",
+    "",
+);
+
+static AUTOMATE: ActionMeta = meta(
+    "FX_AUTOMATE",
+    "fx_automate",
+    "Automate an FX parameter",
+    "Write points on one FX parameter's envelope: `track`, `fx` (name or `#place`), `param` (name, `Post Freq 6`, or `#index`), `points` — each `at` a bar (`33`, `33:2`, `33:2.5`), a time (`12.5s`) or a section (`Chorus 1`, `Chorus 1 end`), its `value` in FX_SET's words (`-18 dB`, `Plate`, `=0.4`), and optionally its `shape` to the next point (linear, step, smooth, fast start, fast end). The envelope's points between the first and last new one are replaced; `replace: true` clears the whole envelope first. `mode` sets how it plays (read, trim, touch, latch, write, off; read by default). Plays at once, saves with the song.",
+    "FX",
+    "",
+);
+
+static UNAUTOMATE: ActionMeta = meta(
+    "FX_UNAUTOMATE",
+    "fx_unautomate",
+    "Remove FX parameter automation",
+    "Delete one FX parameter's automation points on `track` (`fx`, `param` as FX_AUTOMATE) — between `from` and `to` (bars, times or sections as FX_AUTOMATE's `at`) or all of them — leaving the parameter at its set value where none are left.",
+    "FX",
+    "",
+);
+
 /// A track.
 #[derive(Facet)]
 struct TrackArg {
@@ -79,6 +110,60 @@ struct EnableArg {
     track: String,
     fx: String,
     on: bool,
+}
+
+/// A track's automation, or one FX's.
+#[derive(Facet)]
+struct AutomationArg {
+    track: String,
+    fx: Option<String>,
+}
+
+/// One point to write.
+#[derive(Facet)]
+struct PointArg {
+    at: String,
+    value: String,
+    shape: Option<String>,
+}
+
+/// Points to write on one parameter's envelope.
+#[derive(Facet)]
+struct AutomateArg {
+    track: String,
+    fx: String,
+    param: String,
+    points: Vec<PointArg>,
+    replace: Option<bool>,
+    mode: Option<String>,
+}
+
+/// One parameter's points to delete, between two moments or all.
+#[derive(Facet)]
+struct UnautomateArg {
+    track: String,
+    fx: String,
+    param: String,
+    from: Option<String>,
+    to: Option<String>,
+}
+
+/// An automated parameter, as listed.
+#[derive(Facet)]
+struct EnvelopeRow {
+    fx: String,
+    param: String,
+    mode: String,
+    points: Vec<PointRow>,
+}
+
+/// One automation point, as listed.
+#[derive(Facet)]
+struct PointRow {
+    bar: String,
+    seconds: f64,
+    value: f64,
+    shape: String,
 }
 
 /// An FX in a chain, as listed.
@@ -240,6 +325,300 @@ fn value_of(fx: &str, param: &daw_proto::fx::FxParameter, text: &str) -> Result<
         })
 }
 
+/// Where `text` is, seconds: a bar (`33`, `33:2`, `33:2.5` — beat 2 and a
+/// half), a time (`12.5s`), or a section by name (`Chorus 1`; its end with
+/// ` end`).
+fn moment(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    text: &str,
+) -> Result<f64, String> {
+    let text = text.trim();
+    if let Some(secs) = text.strip_suffix('s')
+        && let Ok(secs) = secs.trim().parse::<f64>()
+    {
+        return Ok(secs.max(0.0));
+    }
+    let (bar, beat) = text.split_once(':').unwrap_or((text, "1"));
+    if let (Ok(bar), Ok(beat)) = (bar.trim().parse::<i32>(), beat.trim().parse::<f64>()) {
+        use num_traits::ToPrimitive as _;
+        let whole = beat.floor().max(1.0);
+        let into = beat - whole;
+        let beat = whole.to_i32().ok_or_else(|| format!("no beat {whole}"))?;
+        // The beat's start, then the fraction of it on.
+        let start = daw.musical_to_time(project.clone(), bar, beat, 0.0);
+        let next = daw.musical_to_time(project.clone(), bar, beat.saturating_add(1), 0.0);
+        return Ok(into.mul_add(next - start, start));
+    }
+    let (name, end) = text
+        .strip_suffix(" end")
+        .map_or((text, false), |name| (name, true));
+    let sections = crate::actions::sections(daw, project);
+    sections
+        .iter()
+        .find(|s| s.name.trim().eq_ignore_ascii_case(name.trim()))
+        .map(|s| if end { s.end } else { s.start })
+        .ok_or_else(|| {
+            format!(
+                "{text:?} is not a bar (`33:2`), a time (`12.5s`) or a section — the sections are {}",
+                sections
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+/// The shape a word names.
+fn shape_of(word: Option<&str>) -> Result<daw::service::automation::EnvelopeShape, String> {
+    use daw::service::automation::EnvelopeShape;
+    match word.map(|w| w.trim().to_lowercase()).as_deref() {
+        None | Some("" | "linear" | "line" | "ramp") => Ok(EnvelopeShape::Linear),
+        Some("step" | "square" | "jump") => Ok(EnvelopeShape::Square),
+        Some("smooth" | "s-curve" | "slow start end") => Ok(EnvelopeShape::SlowStartEnd),
+        Some("fast start") => Ok(EnvelopeShape::FastStart),
+        Some("fast end") => Ok(EnvelopeShape::FastEnd),
+        Some("bezier") => Ok(EnvelopeShape::Bezier),
+        Some(other) => Err(format!(
+            "no shape {other:?} — linear, step, smooth, fast start, fast end"
+        )),
+    }
+}
+
+/// A shape's word.
+const fn shape_word(shape: daw::service::automation::EnvelopeShape) -> &'static str {
+    use daw::service::automation::EnvelopeShape;
+    match shape {
+        EnvelopeShape::Linear => "linear",
+        EnvelopeShape::Square => "step",
+        EnvelopeShape::SlowStartEnd => "smooth",
+        EnvelopeShape::FastStart => "fast start",
+        EnvelopeShape::FastEnd => "fast end",
+        EnvelopeShape::Bezier => "bezier",
+    }
+}
+
+/// The mode a word names.
+fn mode_of(word: &str) -> Result<daw::service::AutomationMode, String> {
+    use daw::service::AutomationMode;
+    match word.trim().to_lowercase().as_str() {
+        "read" => Ok(AutomationMode::Read),
+        "trim" | "trim/read" => Ok(AutomationMode::TrimRead),
+        "touch" => Ok(AutomationMode::Touch),
+        "latch" => Ok(AutomationMode::Latch),
+        "latch preview" => Ok(AutomationMode::LatchPreview),
+        "write" => Ok(AutomationMode::Write),
+        "off" => Ok(AutomationMode::Off),
+        other => Err(format!(
+            "no mode {other:?} — read, trim, touch, latch, write, off"
+        )),
+    }
+}
+
+/// A mode's word.
+const fn mode_word(mode: daw::service::AutomationMode) -> &'static str {
+    use daw::service::AutomationMode;
+    match mode {
+        AutomationMode::Read => "read",
+        AutomationMode::TrimRead => "trim",
+        AutomationMode::Touch => "touch",
+        AutomationMode::Latch => "latch",
+        AutomationMode::LatchPreview => "latch preview",
+        AutomationMode::Write => "write",
+        AutomationMode::Off => "off",
+    }
+}
+
+/// Where a parameter's envelope is.
+fn envelope_at(
+    target: &FxTarget,
+    track: &str,
+    index: u32,
+) -> Result<daw::service::automation::EnvelopeLocation, String> {
+    let FxRef::Guid(fx_guid) = &target.fx else {
+        return Err("the FX has no guid".to_owned());
+    };
+    Ok(daw::service::automation::EnvelopeLocation::new(
+        daw::service::TrackRef::Guid(track.to_owned()),
+        daw::service::automation::EnvelopeRef::FxParam {
+            fx_guid: fx_guid.clone(),
+            param_index: index,
+        },
+    ))
+}
+
+/// The track a target's chain is on.
+fn track_of(target: &FxTarget) -> Result<&str, String> {
+    match &target.context {
+        FxChainContext::Track(guid) => Ok(guid),
+        _ => Err("not a track's chain".to_owned()),
+    }
+}
+
+/// Delete `at`'s points from `from` to `to`, seconds.
+fn clear(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    at: &daw::service::automation::EnvelopeLocation,
+    (from, to): (f64, f64),
+) {
+    daw::service::Automation::delete_points_in_range(
+        daw,
+        project.clone(),
+        at.clone(),
+        daw::service::automation::TimeRangeParams {
+            start: daw::service::PositionInSeconds::from_seconds(from),
+            end: daw::service::PositionInSeconds::from_seconds(to),
+        },
+    );
+}
+
+/// `FX_AUTOMATION`: the automated parameters on a track, or on one FX.
+fn automation(a: &AutomationArg) -> Result<Vec<EnvelopeRow>, String> {
+    let (daw, project) = song()?;
+    let guid = resolve(daw, &project, &a.track)?;
+    let context = FxChainContext::Track(guid.clone());
+    let chain: Vec<daw_proto::fx::Fx> = match &a.fx {
+        Some(which) => vec![target(daw, &project, &a.track, which)?.1],
+        None => Effects::list(daw, project.clone(), context.clone()),
+    };
+    let envelopes = daw::service::Automation::envelopes(
+        daw,
+        project.clone(),
+        daw::service::TrackRef::Guid(guid.clone()),
+    );
+    let mut rows = Vec::new();
+    for fx in &chain {
+        let fx_target = FxTarget {
+            context: context.clone(),
+            fx: FxRef::Guid(fx.guid.clone()),
+        };
+        let params = Effects::parameters(daw, project.clone(), fx_target.clone());
+        for envelope in &envelopes {
+            let (Some(fx_guid), Some(param_index)) = (&envelope.fx_guid, &envelope.param_index)
+            else {
+                continue;
+            };
+            if fx_guid != &fx.guid {
+                continue;
+            }
+            let at = envelope_at(&fx_target, &guid, *param_index)?;
+            let points = daw::service::Automation::points(daw, project.clone(), at);
+            if points.is_empty() {
+                continue;
+            }
+            rows.push(EnvelopeRow {
+                fx: fx.name.clone(),
+                param: params
+                    .iter()
+                    .find(|p| p.index == *param_index)
+                    .map_or_else(|| format!("#{param_index}"), |p| p.name.clone()),
+                mode: mode_word(envelope.automation_mode).to_owned(),
+                points: points
+                    .iter()
+                    .map(|pt| {
+                        let secs = pt.time.as_seconds();
+                        let (bar, beat, frac) = daw.time_to_musical(project.clone(), secs);
+                        PointRow {
+                            bar: format!("{bar}:{}", f64::from(beat) + frac),
+                            seconds: secs,
+                            value: pt.value,
+                            shape: shape_word(pt.shape).to_owned(),
+                        }
+                    })
+                    .collect(),
+            });
+        }
+    }
+    Ok(rows)
+}
+
+/// `FX_AUTOMATE`: write points on one parameter's envelope.
+fn automate(a: &AutomateArg) -> Result<String, String> {
+    let (daw, project) = song()?;
+    let (target, fx) = target(daw, &project, &a.track, &a.fx)?;
+    let params = Effects::parameters(daw, project.clone(), target.clone());
+    let param = param_of(&params, &a.param)?;
+    let mut points = a
+        .points
+        .iter()
+        .map(|p| {
+            Ok((
+                moment(daw, &project, &p.at)?,
+                value_of(&fx.name, param, &p.value)?,
+                shape_of(p.shape.as_deref())?,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    points.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return Err("no points".to_owned());
+    };
+    let mode = mode_of(a.mode.as_deref().unwrap_or("read"))?;
+    let at = envelope_at(&target, track_of(&target)?, param.index)?;
+    let span = if a.replace.unwrap_or(false) {
+        (0.0, f64::MAX)
+    } else {
+        // A hair either side: a point exactly on the first or last is
+        // replaced too.
+        (first.0 - 1e-6, last.0 + 1e-6)
+    };
+    clear(daw, &project, &at, span);
+    for (time, value, shape) in &points {
+        let _ = daw::service::Automation::add_point(
+            daw,
+            project.clone(),
+            at.clone(),
+            daw::service::automation::AddPointParams::new(
+                daw::service::PositionInSeconds::from_seconds(*time),
+                *value,
+                *shape,
+            ),
+        );
+    }
+    daw::service::Automation::set_automation_mode(daw, project.clone(), at.clone(), mode);
+    crate::actions::list().changed("fx", &fx.guid);
+    Ok(format!(
+        "{} {}: {} points, {} — now {} in all",
+        fx.name,
+        a.param.trim(),
+        points.len(),
+        mode_word(mode),
+        daw::service::Automation::points(daw, project, at).len()
+    ))
+}
+
+/// `FX_UNAUTOMATE`: delete one parameter's points, in a span or all.
+fn unautomate(a: &UnautomateArg) -> Result<String, String> {
+    let (daw, project) = song()?;
+    let (target, fx) = target(daw, &project, &a.track, &a.fx)?;
+    let params = Effects::parameters(daw, project.clone(), target.clone());
+    let param = param_of(&params, &a.param)?;
+    let at = envelope_at(&target, track_of(&target)?, param.index)?;
+    let from = a
+        .from
+        .as_deref()
+        .map(|t| moment(daw, &project, t))
+        .transpose()?
+        .unwrap_or(0.0);
+    let to =
+        a.to.as_deref()
+            .map(|t| moment(daw, &project, t))
+            .transpose()?
+            .unwrap_or(f64::MAX);
+    let before = daw::service::Automation::points(daw, project.clone(), at.clone()).len();
+    clear(daw, &project, &at, (from, to));
+    let after = daw::service::Automation::points(daw, project, at).len();
+    crate::actions::list().changed("fx", &fx.guid);
+    Ok(format!(
+        "{} {}: {} points removed, {after} left",
+        fx.name,
+        a.param.trim(),
+        before.saturating_sub(after)
+    ))
+}
+
 pub(crate) fn register(list: &ActionList) {
     list.register(&LIST, Effect::ReadOnly, |a: TrackArg| {
         let (daw, project) = song()?;
@@ -316,6 +695,13 @@ pub(crate) fn register(list: &ActionList) {
         }
         crate::actions::list().changed("fx", &fx.guid);
         Ok(said)
+    });
+    list.register(&AUTOMATION, Effect::ReadOnly, |a: AutomationArg| {
+        automation(&a)
+    });
+    list.register(&AUTOMATE, Effect::Mutating, |a: AutomateArg| automate(&a));
+    list.register(&UNAUTOMATE, Effect::Mutating, |a: UnautomateArg| {
+        unautomate(&a)
     });
     list.register(&ENABLE, Effect::Mutating, |a: EnableArg| {
         let (daw, project) = song()?;

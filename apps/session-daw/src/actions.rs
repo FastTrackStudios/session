@@ -781,16 +781,19 @@ struct ViewArg {
 
 /// One section.
 #[derive(Facet)]
-struct SectionOut {
-    name: String,
-    start: f64,
-    end: f64,
+pub(crate) struct SectionOut {
+    pub(crate) name: String,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
     first_bar: i32,
     last_bar: i32,
 }
 
 /// The song's sections, in order.
-fn sections(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec<SectionOut> {
+pub(crate) fn sections(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+) -> Vec<SectionOut> {
     let mut all: Vec<SectionOut> =
         <daw::standalone::Standalone as daw::service::region::Regions>::all(daw, project.clone())
             .into_iter()
@@ -1203,7 +1206,30 @@ fn register_verbs(list: &ActionList) {
         }
         Ok(said)
     });
+    list.register(&TRIGGERS, Effect::Mutating, |_: NoArg| {
+        let (daw, project) = song()?;
+        let mut target = dynamic_template::apply::DawTarget::on(daw.clone(), project);
+        let muted = target.mute_triggers().map_err(|e| e.to_string())?;
+        crate::studio::request_resync();
+        crate::actions::list().changed("drums.triggers", "the triggers were muted");
+        Ok(muted)
+    });
 }
+
+#[cfg(feature = "native")]
+static TRIGGERS: ActionMeta = meta(
+    "DRUMS_TRIGGERS",
+    "drums_triggers",
+    "Mute the triggers",
+    "Mute every drum trigger track (`Trig`, `T1 Trig`, …) — its clicks are never heard — and make each of its sends pre-fader, so the gates it keys and whatever it feeds still hear it. Prepare does the same. Returns the tracks it muted (none when all already were).",
+    "Drums",
+    "",
+);
+
+/// No arguments.
+#[cfg(feature = "native")]
+#[derive(Facet)]
+struct NoArg {}
 
 #[cfg(feature = "native")]
 static SAVE: ActionMeta = meta(
@@ -1215,9 +1241,11 @@ static SAVE: ActionMeta = meta(
     "",
 );
 
-/// Where to save, if not the song's own `.session`.
+/// Where to save, if not the song's own `.session`. Only `to`: a
+/// misnamed argument (`dir`) would otherwise save over the song's own.
 #[cfg(feature = "native")]
 #[derive(Facet)]
+#[facet(deny_unknown_fields)]
 struct SaveArg {
     to: Option<String>,
 }
