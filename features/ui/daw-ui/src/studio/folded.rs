@@ -266,6 +266,53 @@ pub fn refold(project: &mut super::project::Project, shown: &[daw_proto::Track],
     project.tracks = tracks;
 }
 
+/// `spans` with the seams joined.
+///
+/// Spans that touch or overlap — a cut, a crossfade — are one, so a take
+/// edited into slices reads as the take it still is. A gap between them,
+/// where nothing sounds, still parts them.
+///
+/// What a folder row shows when the edits are not what is being looked
+/// at (mixing, playing live). A joined span is whole only when it was
+/// one span already: its children's edges are not its own.
+#[must_use]
+pub fn join(spans: &[Span]) -> Vec<Span> {
+    let mut out: Vec<Span> = Vec::new();
+    for span in spans {
+        match out.last_mut() {
+            Some(last) if span.start <= last.end + GRAIN => {
+                last.end = last.end.max(span.end);
+                for guid in &span.from {
+                    if !last.from.contains(guid) {
+                        last.from.push(guid.clone());
+                    }
+                }
+                last.whole = false;
+            }
+            _ => out.push(span.clone()),
+        }
+    }
+    out
+}
+
+/// Every fold on `project` with its seams joined ([`join`]): after
+/// [`refold`], for a window not showing the cuts.
+pub fn join_seams(project: &mut super::project::Project) {
+    let folders: Vec<daw_proto::Track> = project
+        .tracks
+        .iter()
+        .filter(|t| project.folds.contains_key(&t.guid))
+        .cloned()
+        .collect();
+    for folder in folders {
+        if let Some(fold) = project.folds.get_mut(&folder.guid) {
+            let spans = join(&fold.spans);
+            fold.items = lane(&folder, &spans);
+            fold.spans = spans;
+        }
+    }
+}
+
 /// Every collapsed folder's folded lane, by folder guid.
 ///
 /// `descendants` answers which tracks are under a folder — the caller's
@@ -456,6 +503,26 @@ mod tests {
             length: Duration::from_seconds(len),
             ..Item::default()
         }
+    }
+
+    /// A take slip-edited into slices, crossfaded at each seam, is one
+    /// take again with the seams joined — and a real gap still parts it.
+    #[test]
+    fn joined_seams_read_as_the_take() {
+        let slices = [
+            item("a", 0.0, 1.005),
+            item("b", 1.0, 1.0),
+            item("c", 2.0, 0.5),
+            item("d", 3.0, 1.0),
+        ];
+        let cut = spans(&[&slices]);
+        assert!(cut.len() >= 4, "every slice shows: {cut:?}");
+        let joined = super::join(&cut);
+        let edges: Vec<(f64, f64)> = joined.iter().map(|s| (s.start, s.end)).collect();
+        assert_eq!(edges, [(0.0, 2.5), (3.0, 4.0)]);
+        assert_eq!(joined[0].from, ["a", "b", "c"]);
+        assert!(!joined[0].whole, "its children's edges are not its own");
+        assert!(joined[1].whole, "a span alone is as whole as it was");
     }
 
     /// A guitar's `Main` with its DI nested under it and hidden is a track,
