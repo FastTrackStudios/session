@@ -180,7 +180,7 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
 }
 
 /// An action's description, as the list and its menus show it.
-const fn meta(
+pub(crate) const fn meta(
     id: &'static str,
     method_name: &'static str,
     display_name: &'static str,
@@ -948,6 +948,8 @@ fn register_data(list: &ActionList) {
     register_fundamental(list);
     register_track_set(list);
     register_reference(list);
+    #[cfg(feature = "native")]
+    crate::fx_actions::register(list);
 }
 
 static REFERENCE_MAP: ActionMeta = meta(
@@ -2098,7 +2100,7 @@ fn register_track_set(list: &ActionList) {
 }
 
 /// The engine and the open song.
-fn song() -> Result<(&'static daw::standalone::Standalone, ProjectContext), String> {
+pub(crate) fn song() -> Result<(&'static daw::standalone::Standalone, ProjectContext), String> {
     let daw = crate::open::local_engine().ok_or("no song open in this window's engine")?;
     let guid = crate::open::current_song().ok_or("no song open")?;
     Ok((daw, ProjectContext::Project(guid)))
@@ -2106,7 +2108,7 @@ fn song() -> Result<(&'static daw::standalone::Standalone, ProjectContext), Stri
 
 /// A track by its GUID, its path (`Kick/Sum/Trig`, any tail of it) or its
 /// name — refused, naming the candidates, when more than one fits.
-fn resolve(
+pub(crate) fn resolve(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     what: &str,
