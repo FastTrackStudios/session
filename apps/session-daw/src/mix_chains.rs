@@ -460,14 +460,17 @@ const COMPRESS: &[Preset] = &[
     ),
 ];
 
-/// Each room's settings: fed by a send, so all wet.
+/// Each room's settings: fed by a send, so all wet. Every tail a time the
+/// reverb takes itself — a room's in seconds (a room is a size, whatever
+/// the song), a plate's and a gate's in notes against the song's tempo.
 const ROOMS: &[Preset] = &[
     (
         "Room Sim",
         &[
             ("Space", "Room"),
             ("Size", "20%"),
-            ("Decay", "20%"),
+            ("Decay Mode", "Time"),
+            ("Decay Time", "0.30"),
             ("Mix", "100%"),
         ],
     ),
@@ -476,7 +479,8 @@ const ROOMS: &[Preset] = &[
         &[
             ("Space", "Chamber"),
             ("Size", "35%"),
-            ("Decay", "35%"),
+            ("Decay Mode", "Time"),
+            ("Decay Time", "0.60"),
             ("Damping", "50%"),
             ("Mix", "100%"),
         ],
@@ -486,7 +490,8 @@ const ROOMS: &[Preset] = &[
         &[
             ("Space", "Studio"),
             ("Size", "50%"),
-            ("Decay", "45%"),
+            ("Decay Mode", "Time"),
+            ("Decay Time", "0.90"),
             ("Mix", "100%"),
         ],
     ),
@@ -495,7 +500,8 @@ const ROOMS: &[Preset] = &[
         &[
             ("Space", "Arena"),
             ("Size", "95%"),
-            ("Decay", "85%"),
+            ("Decay Mode", "Time"),
+            ("Decay Time", "4.00"),
             ("Mix", "100%"),
         ],
     ),
@@ -503,17 +509,29 @@ const ROOMS: &[Preset] = &[
         "RMX 16",
         &[
             ("Space", "Digital Plate"),
-            ("Decay", "50%"),
+            ("Decay Mode", "Sync"),
+            ("Decay Div", "1/2"),
             ("Mix", "100%"),
         ],
     ),
     (
         "Nonlin",
-        &[("Space", "Non-Linear"), ("Decay", "40%"), ("Mix", "100%")],
+        &[
+            ("Space", "Non-Linear"),
+            ("Character A", "35%"),
+            ("Decay Mode", "Sync"),
+            ("Decay Div", "1/4"),
+            ("Mix", "100%"),
+        ],
     ),
     (
         "Brick Wall",
-        &[("Space", "Plate"), ("Decay", "60%"), ("Mix", "100%")],
+        &[
+            ("Space", "Plate"),
+            ("Decay Mode", "Time"),
+            ("Decay Time", "1.80"),
+            ("Mix", "100%"),
+        ],
     ),
 ];
 
@@ -1081,6 +1099,16 @@ mod tests {
             known("FTS Reverb", settings, &format!("{piece} {name}"));
         }
         assert!(drum_return("bass", "room").is_none());
+        // The check refuses what a plugin does not know.
+        assert!(builtin_fx::setting("FTS Reverb", "Decay Div", "1/3").is_none());
+        for (name, settings) in ROOMS.iter().chain(COMPRESS) {
+            let fx = if ROOMS.iter().any(|(n, _)| n == name) {
+                "FTS Reverb"
+            } else {
+                "FTS Comp"
+            };
+            known(fx, settings, name);
+        }
         for (parent, name) in [
             ("verb", "room"),
             ("verb", "plate"),
