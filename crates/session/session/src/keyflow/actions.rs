@@ -964,15 +964,22 @@ fn parse_loose(trimmed: &str) -> Option<SectionType> {
     SectionType::parse(last).ok()
 }
 
-pub(crate) fn section_type_color(section_type: &SectionType) -> u32 {
+/// The colour keyflow gives a section of `section_type`, packed as the
+/// engine keeps a region's (REAPER's native colour): its palette's bright
+/// shade, a count-in the count-in marker's.
+#[must_use]
+pub fn section_type_color(section_type: &SectionType) -> u32 {
     if matches!(section_type, SectionType::CountIn) {
         return MarkerKind::CountIn.default_color();
     }
 
-    let color_i32 = colors_for_section_type(section_type)
-        .bright
-        .to_reaper_native();
-    u32::try_from(color_i32).unwrap_or(0)
+    // Packed here rather than by the palette's `to_reaper_native`: the
+    // palette keyflow builds on still packs RGB off Windows, which every
+    // engine reads back byte-swapped (a chorus came out orange).
+    let bright = colors_for_section_type(section_type).bright;
+    reaper_native_rgb(
+        (u32::from(bright.r()) << 16) | (u32::from(bright.g()) << 8) | u32::from(bright.b()),
+    )
 }
 
 fn marker_color_for_name(name: &str) -> Option<u32> {
@@ -1085,27 +1092,21 @@ impl SectionKind {
     #[must_use]
     pub fn css_color(self) -> String {
         let native = section_type_color(&self.section_type());
-        // Undo `reaper_native_rgb`: BGR with a flag on Windows, RGB with a
-        // flag elsewhere.
-        #[cfg(target_os = "windows")]
+        // Undo `reaper_native_rgb`: BGR with a flag.
         let rgb = ((native & 0xff) << 16) | (native & 0xff00) | ((native >> 16) & 0xff);
-        #[cfg(not(target_os = "windows"))]
-        let rgb = native & 0x00ff_ffff;
         format!("#{rgb:06x}")
     }
 }
 
-#[cfg(target_os = "windows")]
+/// `0xRRGGBB` as REAPER's native colour, `0x01BBGGRR` — on every
+/// platform: the packing is the file format's and the API's, not the
+/// machine's (a branch that wrote RGB off Windows byte-swapped every
+/// colour a Linux session set).
 const fn reaper_native_rgb(rgb: u32) -> u32 {
     let r = rgb & 0x0000FF;
     let g = rgb & 0x00FF00;
     let b = rgb & 0xFF0000;
     0x01000000 | (r << 16) | g | (b >> 16)
-}
-
-#[cfg(not(target_os = "windows"))]
-const fn reaper_native_rgb(rgb: u32) -> u32 {
-    0x0100_0000 | (rgb & 0x00FF_FFFF)
 }
 
 // ── architect::actions implementation ───────────────────────────────────
@@ -1359,11 +1360,12 @@ mod tests {
 
     #[test]
     fn section_colors_use_keyflow_palette() {
-        let chorus_reaper_color = colors_for_section_type(&SectionType::Chorus)
-            .bright
-            .to_reaper_native();
-        let chorus_color = u32::try_from(chorus_reaper_color).unwrap_or(0);
-        assert_eq!(section_type_color(&SectionType::Chorus), chorus_color);
+        // Keyflow's chorus, blue-500 (#3b82f6), as REAPER packs it on
+        // every platform: 0x01BBGGRR.
+        let bright = colors_for_section_type(&SectionType::Chorus).bright;
+        assert_eq!((bright.r(), bright.g(), bright.b()), (0x3b, 0x82, 0xf6));
+        assert_eq!(section_type_color(&SectionType::Chorus), 0x01f6_823b);
+        assert_eq!(SectionKind::Chorus.css_color(), "#3b82f6");
         assert_eq!(
             section_type_color(&SectionType::CountIn),
             MarkerKind::CountIn.default_color()

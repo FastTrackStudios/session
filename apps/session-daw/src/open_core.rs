@@ -234,9 +234,39 @@ pub fn load_in(
     media: Media,
 ) -> eyre::Result<Opened> {
     #[cfg(feature = "native")]
-    if let Some((file, branch)) = crate::project_file::file_and_branch(path) {
-        return load_project_file(daw, path, &file, &branch, media);
+    let opened = match crate::project_file::file_and_branch(path) {
+        Some((file, branch)) => load_project_file(daw, path, &file, &branch, media)?,
+        None => load_rpp_in(folder, daw, path, media)?,
+    };
+    #[cfg(not(feature = "native"))]
+    let opened = load_rpp_in(folder, daw, path, media)?;
+    colour_sections(&opened);
+    Ok(opened)
+}
+
+/// The song's sections in keyflow's colours ([`crate::section_colors`]),
+/// as one step — none when they are coloured already.
+fn colour_sections(opened: &Opened) {
+    let project = daw::service::ProjectContext::Project(opened.project_guid.clone());
+    if crate::section_colors::pending(&opened.daw, &project) == 0 {
+        return;
     }
+    daw::service::Projects::begin_undo_block(&opened.daw, project.clone(), "Colour the sections");
+    let coloured = crate::section_colors::apply(&opened.daw, &project);
+    daw::service::Projects::end_undo_block(&opened.daw, project, "Colour the sections", None);
+    match coloured {
+        Ok(count) => tracing::info!(sections.coloured = count, "sections coloured"),
+        Err(e) => tracing::warn!(error = %e, "the sections could not be coloured"),
+    }
+}
+
+/// [`load_in`] for an `.RPP` (or the text a folder holds for one).
+fn load_rpp_in(
+    folder: &dyn Folder,
+    daw: &Standalone,
+    path: &Path,
+    media: Media,
+) -> eyre::Result<Opened> {
     let ProjectText { text, media_dir } = project_text_in(folder, path)?;
     let daw = daw.clone();
     daw.media_bay().set_file_resolver(Box::new(
