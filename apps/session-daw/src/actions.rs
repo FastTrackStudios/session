@@ -1114,6 +1114,8 @@ fn reference(
 fn register_reference(list: &ActionList) {
     #[cfg(feature = "signal")]
     register_samples(list);
+    #[cfg(feature = "signal")]
+    register_bass_rig(list);
     register_items(list);
     register_lanes(list);
     register_remove(list);
@@ -1233,6 +1235,31 @@ struct SamplesOut {
 /// The kit samples blend in unless told otherwise.
 #[cfg(feature = "signal")]
 const DEFAULT_KIT: &str = "/run/media/AudioHaven/Signal/Libraries/Drum Kits/GGD Modern and Massive 2/Presets/Heavy Thwacky.signalpreset";
+
+#[cfg(feature = "signal")]
+static BASS_RIG: ActionMeta = meta(
+    "BASS_RIG",
+    "bass_rig",
+    "Bass rig on the bass",
+    "signal's bass rig (FTS Bass Rig: drive capture, amp capture, cab, trims) on each track under Bass, first in its chain, with the patch its name holds: Clean (the DP3X preamp fed low, barely breaking up), Harmonics (the DP3X as captured), Crunch (an HM2 drive into it). A track no patch fits is left, and said. Reran, the rig there takes the patch again. `dry_run`.",
+    "Bass",
+    "",
+);
+
+/// Whether to only say.
+#[cfg(feature = "signal")]
+#[derive(Facet)]
+struct BassRigArg {
+    dry_run: Option<bool>,
+}
+
+#[cfg(feature = "signal")]
+fn register_bass_rig(list: &ActionList) {
+    list.register(&BASS_RIG, Effect::Mutating, |a: BassRigArg| {
+        let (daw, project) = song()?;
+        crate::bass_rig::set_up(daw, &project, a.dry_run.unwrap_or(false))
+    });
+}
 
 #[cfg(feature = "signal")]
 fn register_samples(list: &ActionList) {

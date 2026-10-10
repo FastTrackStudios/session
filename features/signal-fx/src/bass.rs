@@ -247,8 +247,13 @@ impl PluginInstance for BassRig {
     fn load_state(&mut self, state: &[u8]) -> Result<(), PluginError> {
         self.state = serde_json::from_slice(state)
             .map_err(|e| PluginError::LoadFailed(format!("bass rig state: {e}")))?;
-        // The chain the new state names, at the next prepare.
-        self.prepared = false;
+        // The chain the new state names, loaded here — on the caller's
+        // thread, never the audio's — at the size it was last prepared
+        // for; not yet prepared, at the next prepare.
+        if self.prepared {
+            let block = u32::try_from(self.a[0].len()).unwrap_or(4_096);
+            self.stages = self.load(block);
+        }
         Ok(())
     }
 

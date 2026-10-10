@@ -142,6 +142,8 @@ pub mod open {
 }
 #[cfg(feature = "native")]
 pub mod actions;
+#[cfg(feature = "signal")]
+pub mod bass_rig;
 pub mod detect_overlay;
 pub mod device_audio;
 pub mod drum_edit;

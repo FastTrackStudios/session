@@ -95,6 +95,62 @@ mod assets {
         );
     }
 
+    /// A patch loaded into a rig already playing takes at once, without
+    /// asking to be prepared again (which the renderer would do on the
+    /// audio thread).
+    #[test]
+    fn a_patch_loads_into_a_playing_rig() {
+        if !present(&bass_model()) {
+            return;
+        }
+        let mut rig = BassRig::new(RATE);
+        rig.prepare(RATE, 512).expect("prepare");
+        let state = serde_json::json!({ "amp": bass_model() }).to_string();
+        rig.load_state(state.as_bytes()).expect("state");
+        assert!(rig.is_prepared(), "still prepared");
+        let note: Vec<f32> = (0..BLOCK * 20)
+            .map(|i| 0.3 * (f32::from(u16::try_from(i % 400).unwrap_or(0)) / 400.0 - 0.5))
+            .collect();
+        let out = run(&mut rig, &note, 20, &[]);
+        let diff: Vec<f32> = note.iter().zip(&out).map(|(a, b)| a - b).collect();
+        assert!(
+            rms(&diff[BLOCK * 10..]) > 1e-3,
+            "the capture plays, not a wire"
+        );
+    }
+
+    /// A drive capture in front of the amp: both load, and the pair plays
+    /// louder-driven than the amp alone on the same note.
+    #[test]
+    fn a_drive_and_an_amp_chain() {
+        let drive = PathBuf::from(
+            "/run/media/AudioHaven/Signal/NAM_models/Jason Z Boss HM2 v1 kinda bass heavy with medium distortion pure everything turned all the way up tone.nam",
+        );
+        if !present(&bass_model()) || !present(&drive) {
+            return;
+        }
+        let note: Vec<f32> = (0..BLOCK * 40)
+            .map(|i| {
+                let t = f32::from(u16::try_from(i % 60_000).unwrap_or(0)) / 48_000.0;
+                0.1 * (t * 2.0 * std::f32::consts::PI * 55.0).sin()
+            })
+            .collect();
+        let play = |state: serde_json::Value| {
+            let mut rig = BassRig::new(RATE);
+            rig.load_state(state.to_string().as_bytes()).expect("state");
+            rig.prepare(RATE, 512).expect("prepare");
+            run(&mut rig, &note, 40, &[])
+        };
+        let amp = play(serde_json::json!({ "amp": bass_model() }));
+        let both = play(serde_json::json!({ "drive": drive, "amp": bass_model() }));
+        assert!(both.iter().all(|s| s.is_finite()));
+        let (a, b) = (rms(&amp[BLOCK * 20..]), rms(&both[BLOCK * 20..]));
+        assert!(
+            b > 1e-3 && (b - a).abs() > 0.01 * a.max(b),
+            "the drive changes it: {a} → {b}"
+        );
+    }
+
     const fn note(key: u8, velocity: u8) -> PluginMidiEvent {
         PluginMidiEvent {
             offset: 10,
