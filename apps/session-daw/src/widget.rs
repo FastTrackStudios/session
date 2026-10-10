@@ -1636,6 +1636,13 @@ impl ArrangementWidget {
                 ) else {
                     return;
                 };
+                // A comp is the group's: its media-edit group plays the
+                // same lane, while grouping is on.
+                for peer in crate::lanes::grouped_tracks(&self.tracks, &guid) {
+                    let edit = Edit::SetLanePlays(peer, mask);
+                    self.assume(&edit);
+                    self.edits.borrow_mut().push(edit);
+                }
                 Edit::SetLanePlays(guid, mask)
             }
             C::Name => Edit::Select(guid),

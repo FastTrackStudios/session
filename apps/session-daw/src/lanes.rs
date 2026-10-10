@@ -61,6 +61,28 @@ pub fn stepped(track: &daw_proto::Track, items: &[daw_proto::Item], next: bool) 
     Some(1_u64 << steps.get(to)?)
 }
 
+/// The other tracks `guid`'s media-edit group moves with it, while
+/// grouping is on: those following the group it leads.
+#[must_use]
+pub fn grouped_tracks(tracks: &[daw_proto::Track], guid: &str) -> Vec<String> {
+    if !crate::options::GROUPING.get() {
+        return Vec::new();
+    }
+    let Some(lead) = tracks
+        .iter()
+        .find(|t| t.guid == guid)
+        .map(|t| t.grouping.media_edit_lead)
+        .filter(|lead| *lead != 0)
+    else {
+        return Vec::new();
+    };
+    tracks
+        .iter()
+        .filter(|t| t.guid != guid && t.grouping.media_edit_follow & lead != 0)
+        .map(|t| t.guid.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

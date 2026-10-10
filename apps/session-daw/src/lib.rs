@@ -26,6 +26,8 @@ pub mod collab_bar;
 pub mod collab_pointers;
 pub mod compact;
 pub mod cursor;
+#[cfg(feature = "native")]
+pub mod drum_group;
 pub mod editor_view;
 pub mod engine;
 pub mod expression;

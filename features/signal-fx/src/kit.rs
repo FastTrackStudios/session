@@ -18,8 +18,13 @@
 //!
 //! each fed the same notes for a piece, so the hits agree across them.
 //!
+//! With `split`, one Kit Mic plays a piece's every mic on its Sample
+//! track: the close mics on the main pair, the overheads on 3/4 and the
+//! rooms on 5/6 (`PluginInstance::aux_out`), which the track sends into
+//! the recorded overheads and rooms — no track of their own.
+//!
 //! State, JSON: `{"preset": "…/Heavy Thwacky.signalpreset", "pieces":
-//! ["kick"], "mics": ["close"], "gain_db": 0}`. `pieces` absent: every
+//! ["kick"], "mics": ["close"], "gain_db": 0, "split": false}`. `pieces` absent: every
 //! piece. A mic is a group — `close` (any not a bus mic), `overhead`,
 //! `room` — or a mic's own name.
 
@@ -46,6 +51,23 @@ pub struct KitState {
     /// Level, dB.
     #[serde(default)]
     pub gain_db: f64,
+    /// Close mics on the main pair, overheads on 3/4, rooms on 5/6 —
+    /// rather than every mic on the main pair.
+    #[serde(default)]
+    pub split: bool,
+}
+
+/// Which output a mic plays on when split: 0 the main pair (a close
+/// mic), 1 the 3/4 pair (an overhead), 2 the 5/6 pair (a room).
+#[must_use]
+pub fn output_of(id: &str) -> usize {
+    if wants(&["overhead".to_owned()], id) {
+        1
+    } else if wants(&["room".to_owned()], id) {
+        2
+    } else {
+        0
+    }
 }
 
 /// Whether the mic `id` is one `wanted` names.
@@ -82,7 +104,8 @@ struct Piece {
     id: String,
     transpose: i8,
     gain: f32,
-    engines: Vec<SampleEngine>,
+    /// Each mic's engine and the output it plays on ([`output_of`]).
+    engines: Vec<(SampleEngine, usize)>,
 }
 
 /// The kit's voices.
@@ -96,6 +119,10 @@ pub struct KitMic {
     pieces: Vec<Piece>,
     /// One engine's block, interleaved stereo.
     scratch: Vec<f32>,
+    /// The 3/4 and 5/6 outputs' last block, left and right.
+    aux: [(Vec<f32>, Vec<f32>); 2],
+    /// How long the last block was.
+    frames: usize,
 }
 
 fn resolve(path: &str, base: &Path) -> PathBuf {
@@ -118,6 +145,8 @@ impl KitMic {
             routing: KitRouting::default(),
             pieces: Vec::new(),
             scratch: Vec::new(),
+            aux: Default::default(),
+            frames: 0,
         }
     }
 
@@ -221,7 +250,8 @@ impl KitMic {
             let _ = engine
                 .cache_handle()
                 .preload(paths.iter().map(PathBuf::as_path));
-            engines.push(engine);
+            let output = if self.state.split { output_of(&mic) } else { 0 };
+            engines.push((engine, output));
         }
         Ok(Piece {
             id: er.id.clone(),
@@ -258,7 +288,7 @@ impl KitMic {
                     .clamp(0, 127),
             )
             .unwrap_or(note);
-            for engine in &mut piece.engines {
+            for (engine, _) in &mut piece.engines {
                 if on {
                     engine.note_on_articulated(key, velocity, articulation.as_deref());
                 } else {
@@ -268,19 +298,33 @@ impl KitMic {
         }
     }
 
-    /// Every voice's next `frames`, summed into `out` from `at`.
+    /// Every voice's next `frames`, summed into its output from `at`: the
+    /// main pair `out`, or the aux pairs.
     fn render(&mut self, out_l: &mut [f32], out_r: &mut [f32], (at, frames): (usize, usize)) {
         let level = gain(self.state.gain_db);
         let want = frames.saturating_mul(2);
-        for piece in &mut self.pieces {
-            for engine in &mut piece.engines {
-                let Some(scratch) = self.scratch.get_mut(..want) else {
+        let Self {
+            pieces,
+            scratch,
+            aux,
+            ..
+        } = self;
+        for piece in pieces.iter_mut() {
+            for (engine, output) in &mut piece.engines {
+                let Some(scratch) = scratch.get_mut(..want) else {
                     return;
                 };
                 scratch.fill(0.0);
                 engine.render(scratch);
                 let g = piece.gain * level;
-                let (Some(ls), Some(rs)) = (out_l.get_mut(at..), out_r.get_mut(at..)) else {
+                let (to_l, to_r): (&mut [f32], &mut [f32]) = match output.checked_sub(1) {
+                    None => (&mut *out_l, &mut *out_r),
+                    Some(pair) => match aux.get_mut(pair) {
+                        Some((l, r)) => (l.as_mut_slice(), r.as_mut_slice()),
+                        None => continue,
+                    },
+                };
+                let (Some(ls), Some(rs)) = (to_l.get_mut(at..), to_r.get_mut(at..)) else {
                     return;
                 };
                 for ((l, r), pair) in ls
@@ -336,6 +380,10 @@ impl PluginInstance for KitMic {
         }
         let frames = usize::try_from(block_size).unwrap_or(4_096);
         self.scratch.resize(frames.saturating_mul(2), 0.0);
+        for (l, r) in &mut self.aux {
+            l.resize(frames, 0.0);
+            r.resize(frames, 0.0);
+        }
         self.prepared = true;
         Ok(())
     }
@@ -356,6 +404,16 @@ impl PluginInstance for KitMic {
         let frames = out_l.len().min(out_r.len());
         out_l.fill(0.0);
         out_r.fill(0.0);
+        self.frames = frames;
+        for (l, r) in &mut self.aux {
+            if l.len() < frames || r.len() < frames {
+                // A block longer than prepared: grown once, not per block.
+                l.resize(frames, 0.0);
+                r.resize(frames, 0.0);
+            }
+            l.fill(0.0);
+            r.fill(0.0);
+        }
         // Each note where it falls in the block: the voices rendered up to
         // it, then the note.
         let mut at = 0_usize;
@@ -394,11 +452,31 @@ impl PluginInstance for KitMic {
     fn deactivate(&mut self) {
         self.prepared = false;
     }
+
+    fn aux_out(&self, pair: usize) -> Option<(&[f32], &[f32])> {
+        if !self.state.split {
+            return None;
+        }
+        let (l, r) = self.aux.get(pair)?;
+        Some((l.get(..self.frames)?, r.get(..self.frames)?))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Split, a close mic plays on the main pair, an overhead on 3/4, a
+    /// room on 5/6.
+    #[test]
+    fn a_mic_plays_on_its_groups_output() {
+        assert_eq!(output_of("In 1"), 0);
+        assert_eq!(output_of("Sub"), 0);
+        assert_eq!(output_of("Overhead"), 1);
+        assert_eq!(output_of("OH"), 1);
+        assert_eq!(output_of("Room Close"), 2);
+        assert_eq!(output_of("Room Far"), 2);
+    }
 
     #[test]
     fn mic_groups_pick_the_mics_they_name() {

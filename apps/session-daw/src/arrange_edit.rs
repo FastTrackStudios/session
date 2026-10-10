@@ -2484,13 +2484,65 @@ fn targets(
 ) -> Option<Vec<String>> {
     use daw_ui::studio::folded::Spread;
     match project.spread(guid, destructive) {
-        Spread::Direct => Some(vec![guid.to_owned()]),
+        Spread::Direct => Some(grouped(project, guid)),
         Spread::Children(items) => Some(items),
         Spread::Refused(why) => {
             effects.push(refused(guid, why));
             None
         }
     }
+}
+
+/// `guid` and the items its track's group edits with it.
+///
+/// While grouping is on: on every track following the media-edit group
+/// the track leads, the item in the same place — same start, same length,
+/// same lane. A kit's edit lands on every mic at once, as one take.
+#[must_use]
+pub fn grouped(project: &Project, guid: &str) -> Vec<String> {
+    /// How near two items' edges must be to be the same place.
+    const SAME: f64 = 1e-3;
+    let mut out = vec![guid.to_owned()];
+    if !crate::options::GROUPING.get() {
+        return out;
+    }
+    let Some((track, item)) = project
+        .items
+        .iter()
+        .find_map(|(track, items)| items.iter().find(|i| i.guid == guid).map(|i| (track, i)))
+    else {
+        return out;
+    };
+    let Some(lead) = project
+        .tracks
+        .iter()
+        .find(|t| &t.guid == track)
+        .map(|t| t.grouping.media_edit_lead)
+        .filter(|lead| *lead != 0)
+    else {
+        return out;
+    };
+    let (at, length) = (item.position.as_seconds(), item.length.as_seconds());
+    for other in project
+        .tracks
+        .iter()
+        .filter(|t| &t.guid != track && t.grouping.media_edit_follow & lead != 0)
+    {
+        out.extend(
+            project
+                .items
+                .get(&other.guid)
+                .into_iter()
+                .flatten()
+                .filter(|i| {
+                    i.fixed_lane == item.fixed_lane
+                        && (i.position.as_seconds() - at).abs() < SAME
+                        && (i.length.as_seconds() - length).abs() < SAME
+                })
+                .map(|i| i.guid.clone()),
+        );
+    }
+    out
 }
 
 /// Bracket the sends added since `from` so the undo history sees them
@@ -2783,6 +2835,27 @@ mod tests {
             item_count: 3,
             ..Project::default()
         }
+    }
+
+    /// A track group's media edit carries an edit to the item in the same
+    /// place on every grouped track — and only while grouping is on.
+    #[test]
+    fn a_grouped_tracks_item_in_the_same_place_is_edited_with_it() {
+        let mut p = project();
+        for t in &mut p.tracks {
+            t.grouping.media_edit_lead = 1;
+            t.grouping.media_edit_follow = 1;
+        }
+        let mut s2 = p.items["kick"][0].clone();
+        s2.guid = "s2".to_owned();
+        s2.track_guid = "snare".to_owned();
+        p.items.get_mut("snare").expect("the snare").push(s2);
+        assert_eq!(super::grouped(&p, "k1"), vec!["k1", "s2"]);
+        assert_eq!(super::grouped(&p, "k2"), vec!["k2"], "nothing in its place");
+        crate::options::GROUPING.set(false);
+        let off = super::grouped(&p, "k1");
+        crate::options::GROUPING.set(true);
+        assert_eq!(off, vec!["k1"], "grouping off");
     }
 
     /// The same project with the kick shut: its two mics fold onto its

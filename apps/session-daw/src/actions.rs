@@ -1206,6 +1206,16 @@ fn register_verbs(list: &ActionList) {
         }
         Ok(said)
     });
+    list.register(&GROUP, Effect::Mutating, |a: VerbsArg| {
+        let (daw, project) = song()?;
+        let dry = a.dry_run.unwrap_or(false);
+        let grouped = crate::drum_group::group(daw, &project, dry)?;
+        if !dry {
+            crate::studio::request_resync();
+            crate::actions::list().changed("drums.group", "the kit was grouped");
+        }
+        Ok(grouped)
+    });
     list.register(&TRIGGERS, Effect::Mutating, |_: NoArg| {
         let (daw, project) = song()?;
         let mut target = dynamic_template::apply::DawTarget::on(daw.clone(), project);
@@ -1215,6 +1225,16 @@ fn register_verbs(list: &ActionList) {
         Ok(muted)
     });
 }
+
+#[cfg(feature = "native")]
+static GROUP: ActionMeta = meta(
+    "DRUMS_GROUP",
+    "drums_group",
+    "Group the kit",
+    "Put every recorded drum track (each mic and trigger under the top-level Drums folder; not a Sample track, not the Process or a Verb folder) in one track group, `Drums`, for record arm and media edit only: armed together, so the kit is never recorded part by part while grouping is on (the toolbar's Grouping); edited together, so a slip, cut or comp on one track is on all. Faders, mutes and solos stay each track's own. Returns the tracks grouped; `dry_run` names them and changes nothing.",
+    "Drums",
+    "",
+);
 
 #[cfg(feature = "native")]
 static TRIGGERS: ActionMeta = meta(

@@ -237,6 +237,9 @@ pub fn MainToolbar(
         other => {
             if let Some(option) = other.option() {
                 let now = option.toggle();
+                if other == Toggle::Grouping {
+                    crate::options::grouping_changed(now);
+                }
                 if other == Toggle::Lock
                     && let Some(mut lock) = pins.map(|p| p.lock)
                 {

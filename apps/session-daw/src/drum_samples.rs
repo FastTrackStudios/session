@@ -7,15 +7,15 @@
 //!
 //! - each piece's hits written as notes on its **Sample** track (the
 //!   kit's General MIDI note for the piece, the velocity from the hit's
-//!   level), and an `FTS Kit Mic` there playing that piece's **close**
-//!   mics;
-//! - an **OH Sample** track beside the overheads and a **Room Sample**
-//!   track beside the rooms, every piece's notes on each, playing the
-//!   kit's overhead and room mics — sent into the recorded overheads and
-//!   rooms, so the sample's ambience is processed and faded with theirs.
+//!   level), and an `FTS Kit Mic` there playing every mic of that piece,
+//!   split: its **close** mics on the track's own output, its
+//!   **overhead** mics on 3/4 and its **room** mics on 5/6;
+//! - the Sample track sending its 3/4 into the recorded overheads and its
+//!   5/6 into the rooms, so the sample's ambience is processed and faded
+//!   with theirs — sends, not tracks of their own.
 //!
-//! A piece's voices on all three get the same notes, so each hit is the
-//! same sample on every one (signal picks a round robin from the notes).
+//! One instrument plays all of a piece's mics from the same notes, so each
+//! hit is the same sample on every one.
 
 use daw::service::TempoMap as _;
 use daw::service::{FxChainContext, ItemRef, Items as _, ProjectContext, TrackRef, Tracks};
@@ -95,12 +95,9 @@ pub fn set_up(
         }
     }
     let tracks = Tracks::all(daw, project.clone());
+    let overheads = bus_track(&tracks, &["ohs", "overheads", "oh"]).cloned();
+    let rooms = bus_track(&tracks, &["rooms", "room"]).cloned();
     let mut report = Report::default();
-    let mut every: Notes = Vec::new();
-    // The kit's pieces this session has triggers for (a kick, a snare,
-    // toms): the overhead and room voices load only theirs — a cymbal no
-    // trigger caught would never be played.
-    let mut played: Vec<String> = Vec::new();
     for (name, _, hits) in &kit {
         let Some(note) = note_for(name) else {
             report
@@ -130,7 +127,7 @@ pub fn set_up(
             .collect();
         report.notes = report.notes.saturating_add(notes.len());
         report.tracks.push(format!(
-            "{}: {} notes on {note} ({piece}), its close mics{}",
+            "{}: {} notes on {note} ({piece}), its close mics out, overheads on 3/4, rooms on 5/6{}",
             sample.name,
             notes.len(),
             if from_mics.contains(name) {
@@ -139,63 +136,43 @@ pub fn set_up(
                 ""
             }
         ));
-        every.extend(notes.iter().copied());
-        if !played.contains(&piece) {
-            played.push(piece.clone());
-        }
         if !dry {
             write_notes(daw, project, &sample.guid, &notes)?;
-            let state =
-                serde_json::json!({ "preset": preset, "pieces": [piece], "mics": ["close"] });
+            let state = serde_json::json!({
+                "preset": preset,
+                "pieces": [piece],
+                "mics": ["close", "overhead", "room"],
+                "split": true,
+            });
             kit_mic(daw, project, &sample.guid, &state)?;
+            for (from, bus) in [(2, &overheads), (4, &rooms)] {
+                if let Some(bus) = bus {
+                    send_from(daw, project, &sample.guid, &bus.guid, from)?;
+                }
+            }
         }
     }
-    every.sort_by(|a, b| a.0.total_cmp(&b.0));
-    // Each just after the bus it feeds, at its level.
-    for (name, beside, mics) in [
-        ("OH Sample", &["ohs", "overheads", "oh"][..], "overhead"),
-        ("Room Sample", &["rooms", "room"][..], "room"),
-    ] {
-        let Some(bus) = bus_track(&tracks, beside) else {
-            report.tracks.push(format!(
-                "{name}: no {} track to send into",
-                beside.join(" / ")
-            ));
-            continue;
-        };
-        report.tracks.push(format!(
-            "{name}: {} notes, the {mics} mics of {}, sent into {}",
-            every.len(),
-            played.join(", "),
-            bus.name
-        ));
-        if dry {
-            continue;
+    // The separate ambience tracks an earlier set-up made: their mics are
+    // now the Sample tracks' own, sent from 3/4 and 5/6.
+    for t in &tracks {
+        if ["oh sample", "room sample"].contains(&t.name.trim().to_ascii_lowercase().as_str()) {
+            report
+                .tracks
+                .push(format!("{}: removed — sent from each Sample track", t.name));
+            if !dry {
+                Tracks::remove(daw, project.clone(), TrackRef::Guid(t.guid.clone()))
+                    .map_err(|e| e.to_string())?;
+            }
         }
-        let guid = if let Some(t) = tracks
-            .iter()
-            .find(|t| t.name.trim().eq_ignore_ascii_case(name))
-        {
-            t.guid.clone()
-        } else {
-            let at = bus.index.saturating_add(1);
-            let guid =
-                Tracks::add(daw, project.clone(), name, Some(at)).map_err(|e| e.to_string())?;
-            // Into the bus, not past it as well: its parent hears it
-            // through the bus.
-            daw.set_parent_send_enabled(project.clone(), TrackRef::Guid(guid.clone()), false)
-                .map_err(|e| e.to_string())?;
-            daw.add_send(
-                project.clone(),
-                TrackRef::Guid(guid.clone()),
-                TrackRef::Guid(bus.guid.clone()),
-            )
-            .ok_or("the send would not add")?;
-            guid
-        };
-        write_notes(daw, project, &guid, &every)?;
-        let state = serde_json::json!({ "preset": preset, "pieces": played, "mics": [mics] });
-        kit_mic(daw, project, &guid, &state)?;
+    }
+    for (bus, pair, beside) in [
+        (&overheads, "3/4", &["ohs", "overheads", "oh"][..]),
+        (&rooms, "5/6", &["rooms", "room"][..]),
+    ] {
+        report.tracks.push(bus.as_ref().map_or_else(
+            || format!("no {} track to send {pair} into", beside.join(" / ")),
+            |bus| format!("each Sample's {pair} sent into {}", bus.name),
+        ));
     }
     if !dry {
         crate::studio::request_resync();
@@ -303,6 +280,45 @@ fn placed(notes: &[(f64, u8, u8)], qn: impl Fn(f64) -> f64) -> Vec<MidiNoteCreat
             MidiNoteCreate::new(pitch, vel, start / TICKS_PER_QN, length / TICKS_PER_QN)
         })
         .collect()
+}
+
+/// A send from `track`'s channels `from`+1/`from`+2 (2: its 3/4, 4: its
+/// 5/6) into `bus`, post-fader — the one there, or a new one.
+fn send_from(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    bus: &str,
+    from: u32,
+) -> Result<(), String> {
+    let source = TrackRef::Guid(track.to_owned());
+    let there = daw
+        .sends(project.clone(), source.clone())
+        .into_iter()
+        .find(|s| {
+            s.dest_track_guid.as_deref() == Some(bus) && s.source_channels.start_channel == from
+        });
+    let index = match there {
+        Some(send) => send.index,
+        None => daw
+            .add_send(
+                project.clone(),
+                source.clone(),
+                TrackRef::Guid(bus.to_owned()),
+            )
+            .ok_or("the send would not add")?,
+    };
+    daw.set_source_channels(
+        project.clone(),
+        daw_proto::RouteLocation {
+            track: source,
+            route_type: daw_proto::RouteType::Send,
+            route: daw_proto::RouteRef::Index(index),
+        },
+        from,
+        2,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// An `FTS Kit Mic` on `track` (the one there, or a new one) playing what

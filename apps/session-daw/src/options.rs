@@ -49,8 +49,19 @@ pub static GRID: Option = Option::new(true);
 pub static RIPPLE: Option = Option::new(false);
 /// Overlapping items crossfade on their own.
 pub static AUTO_CROSSFADE: Option = Option::new(true);
-/// Grouped items move together.
+/// Grouped tracks move together: their items edited as one (a track
+/// group's media edit), their arms armed as one — the engine's grouping
+/// switch follows it ([`grouping_changed`]).
 pub static GROUPING: Option = Option::new(true);
+
+/// Grouping turned on or off: the engine's switch with it, so arming a
+/// grouped track arms its group only while grouping is on.
+pub fn grouping_changed(on: bool) {
+    #[cfg(feature = "native")]
+    daw::standalone::grouping::set_enabled(on);
+    #[cfg(not(feature = "native"))]
+    let _ = on;
+}
 /// Locked, nothing is moved by a drag: an arrangement's items stay put
 /// and the drag scrolls the view; a mixer's faders, pans and rack
 /// controls stay put and the drag scrolls the mixer. Presses still
