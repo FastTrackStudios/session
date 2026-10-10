@@ -1546,6 +1546,11 @@ fn register_undo(list: &ActionList) {
     });
     list.register(&UNDO, Effect::Mutating, |_: NoArg| {
         let (daw, project) = song()?;
+        // A song open from its file undoes through its doc: only this
+        // peer's steps, a collaborator's edits left standing.
+        if let Some(said) = undo_through_doc(daw, &project, true)? {
+            return Ok(said);
+        }
         let label = daw::service::Projects::last_undo_label(daw, project.clone());
         if !daw::service::Projects::undo(daw, project) {
             return Ok("nothing to undo".to_owned());
@@ -1559,6 +1564,9 @@ fn register_undo(list: &ActionList) {
     });
     list.register(&REDO, Effect::Mutating, |_: NoArg| {
         let (daw, project) = song()?;
+        if let Some(said) = undo_through_doc(daw, &project, false)? {
+            return Ok(said);
+        }
         let label = daw::service::Projects::last_redo_label(daw, project.clone());
         if !daw::service::Projects::redo(daw, project) {
             return Ok("nothing to redo".to_owned());
@@ -1570,6 +1578,39 @@ fn register_undo(list: &ActionList) {
             label.unwrap_or_else(|| "a step".to_owned())
         ))
     });
+}
+
+/// Undo (`back`) or redo through the song's doc, when it is open from its
+/// project file: what to say, or `None` for the engine's own undo.
+#[cfg(feature = "native")]
+fn undo_through_doc(
+    daw: &daw::standalone::Standalone,
+    project: &daw::service::ProjectContext,
+    back: bool,
+) -> Result<Option<String>, String> {
+    use crate::project_file::Undone;
+    let daw::service::ProjectContext::Project(guid) = project else {
+        return Ok(None);
+    };
+    let done = if back {
+        crate::project_file::undo(daw, guid)?
+    } else {
+        crate::project_file::redo(daw, guid)?
+    };
+    let (verb, none) = if back {
+        ("undid", "nothing to undo")
+    } else {
+        ("redid", "nothing to redo")
+    };
+    Ok(match done {
+        Undone::NotOpen => None,
+        Undone::Nothing => Some(none.to_owned()),
+        Undone::Step(name) => {
+            crate::studio::request_resync();
+            crate::actions::list().changed("items", if back { "undo" } else { "redo" });
+            Some(format!("{verb} {name}"))
+        }
+    })
 }
 
 #[cfg(feature = "native")]

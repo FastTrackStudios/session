@@ -378,6 +378,81 @@ fn record(project_guid: &str, label: &str) -> Result<(), String> {
     })?
 }
 
+/// What an undo or redo through a song's doc came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Undone {
+    /// The song is not open from a project file: its engine's own undo
+    /// is the one there is.
+    NotOpen,
+    /// Nothing of this peer's to undo (or redo).
+    Nothing,
+    /// The step of this name was undone (or redone).
+    Step(String),
+}
+
+/// Undo the last step of the song `project_guid` through its doc —
+/// this peer's own, others' edits since left standing — the engine made
+/// to match and the undo appended to its file. A step the engine finished
+/// that is not recorded yet is recorded first, so it is the one undone.
+///
+/// # Errors
+/// The engine would not be read or made to match, or the file refused
+/// the write.
+pub fn undo(daw: &Standalone, project_guid: &str) -> Result<Undone, String> {
+    through_doc(daw, project_guid, true)
+}
+
+/// Redo the step last undone in the song `project_guid`, as [`undo`].
+///
+/// # Errors
+/// As [`undo`].
+pub fn redo(daw: &Standalone, project_guid: &str) -> Result<Undone, String> {
+    through_doc(daw, project_guid, false)
+}
+
+fn through_doc(daw: &Standalone, project_guid: &str, back: bool) -> Result<Undone, String> {
+    let pending = daw::service::Projects::last_undo_label(
+        daw,
+        daw_proto::ProjectContext::Project(project_guid.to_owned()),
+    )
+    .unwrap_or_else(|| "Edits".to_owned());
+    let guid = project_guid.to_owned();
+    run(async move {
+        let mut songs = open_songs().lock().await;
+        let Some(open) = songs.get_mut(&guid) else {
+            return Ok(Undone::NotOpen);
+        };
+        let done = step_back(open, &pending, back).await;
+        drop(songs);
+        done
+    })?
+}
+
+async fn step_back(open: &mut Open, pending: &str, back: bool) -> Result<Undone, String> {
+    if open
+        .bridge
+        .local_step(pending)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        append(open, pending)?;
+    }
+    let step = if back {
+        open.bridge.undo().await
+    } else {
+        open.bridge.redo().await
+    }
+    .map_err(|e| e.to_string())?;
+    let Some(name) = step else {
+        return Ok(Undone::Nothing);
+    };
+    append(
+        open,
+        &format!("{} {name}", if back { "Undo" } else { "Redo" }),
+    )?;
+    Ok(Undone::Step(name))
+}
+
 /// Open `branch` of the project file at `path` as a new song in `daw`:
 /// its doc rebuilt in the engine. Its media resolves against the file's
 /// folder. Returns the engine's project guid.

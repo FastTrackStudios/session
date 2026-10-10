@@ -1,7 +1,8 @@
 //! A prepared session saved as its project file (`Song.session`) opens
 //! again as the same session: tracks and folders, the chart's markers and
 //! regions, the tempo, and the guide tracks' instruments. And once saved,
-//! each edit step goes into the file by itself, under its name.
+//! each edit step goes into the file by itself, under its name — and
+//! undoes and redoes through the file's doc.
 
 use daw::service::{Effects, FxChainContext, Markers, ProjectContext, Regions, TempoMap, Tracks};
 
@@ -60,6 +61,32 @@ fn a_saved_session_opens_as_it_was_saved() {
         "{:?}",
         steps()
     );
+
+    // Undone through the doc, and redone: the engine follows, the file
+    // keeps both.
+    let pads = || {
+        Tracks::all(&opened.daw, song.clone())
+            .iter()
+            .filter(|t| t.name == "Pad")
+            .count()
+    };
+    let guid = opened.project_guid.clone();
+    assert_eq!(
+        session_daw::project_file::undo(&opened.daw, &guid),
+        Ok(session_daw::project_file::Undone::Step(
+            "Add Pad".to_owned()
+        ))
+    );
+    assert_eq!(pads(), 0, "the pad undone");
+    assert_eq!(steps().last().map(String::as_str), Some("Undo Add Pad"));
+    assert_eq!(
+        session_daw::project_file::redo(&opened.daw, &guid),
+        Ok(session_daw::project_file::Undone::Step(
+            "Add Pad".to_owned()
+        ))
+    );
+    assert_eq!(pads(), 1, "the pad redone");
+    assert_eq!(steps().last().map(String::as_str), Some("Redo Add Pad"));
     let before = snapshot(&opened.daw, &song);
 
     // Opened again, into a fresh engine, from the file.

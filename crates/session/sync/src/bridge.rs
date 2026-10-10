@@ -6,6 +6,10 @@
 //! goes into the engine. Either way the remembered model moves to the
 //! engine's new state, so the engine never hears its own edit back and the
 //! doc never records a remote edit twice.
+//!
+//! Undo is the doc's too ([`Bridge::undo`]): this peer's own steps,
+//! undone in the doc — where another peer's edits since stay as they are —
+//! and the engine made to match.
 
 use daw_control::Project;
 
@@ -26,6 +30,38 @@ pub struct Bridge {
     direct: Option<std::sync::Arc<dyn Direct>>,
     /// What the engine showed after the last reconcile, chart included.
     shown: SessionModel,
+    /// This peer's steps, to undo and redo — from when the bridge began,
+    /// so opening a song is not a step.
+    undo: loro::UndoManager,
+    /// The name the next step pushed onto either stack is given.
+    naming: std::sync::Arc<std::sync::Mutex<String>>,
+}
+
+/// An undo manager on `doc` whose steps carry the name `naming` holds
+/// when each is pushed.
+fn undo_manager(doc: &SessionDoc) -> (loro::UndoManager, std::sync::Arc<std::sync::Mutex<String>>) {
+    let naming = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let mut undo = loro::UndoManager::new(doc.loro());
+    undo.set_max_undo_steps(UNDO_STEPS);
+    let named = std::sync::Arc::clone(&naming);
+    undo.set_on_push(Some(Box::new(move |_, _, _| {
+        let name = named.lock().map(|n| n.clone()).unwrap_or_default();
+        loro::undo::UndoItemMeta {
+            value: loro::LoroValue::from(name),
+            cursors: Vec::new(),
+        }
+    })));
+    (undo, naming)
+}
+
+/// How many steps back a song can be undone.
+const UNDO_STEPS: usize = 200;
+
+fn name_of(value: Option<loro::LoroValue>) -> String {
+    match value {
+        Some(loro::LoroValue::String(name)) => name.to_string(),
+        _ => String::new(),
+    }
 }
 
 impl Bridge {
@@ -47,6 +83,7 @@ impl Bridge {
             engine::read(&project, &media, blobs.as_ref(), &ids, direct.as_deref()).await?;
         shown.chart = chart;
         doc.write(&shown, ORIGIN_LOCAL)?;
+        let (undo, naming) = undo_manager(&doc);
         Ok(Self {
             doc,
             project,
@@ -55,6 +92,8 @@ impl Bridge {
             ids,
             direct,
             shown,
+            undo,
+            naming,
         })
     }
 
@@ -74,6 +113,7 @@ impl Bridge {
         let ids = EngineIds::default();
         let current =
             engine::read(&project, &media, blobs.as_ref(), &ids, direct.as_deref()).await?;
+        let (undo, naming) = undo_manager(&doc);
         let mut bridge = Self {
             doc,
             project,
@@ -82,6 +122,8 @@ impl Bridge {
             ids,
             direct,
             shown: current,
+            undo,
+            naming,
         };
         bridge.remote_changed().await?;
         Ok(bridge)
@@ -117,6 +159,7 @@ impl Bridge {
         if now == self.shown {
             return Ok(false);
         }
+        self.name_next("Edits");
         self.doc.write(&now, ORIGIN_LOCAL)?;
         self.shown = now;
         Ok(true)
@@ -141,10 +184,66 @@ impl Bridge {
         if now == self.shown {
             return Ok(false);
         }
+        self.name_next(label);
         self.doc
             .write_step(&self.shown, &now, ORIGIN_LOCAL, label)?;
         self.shown = now;
         Ok(true)
+    }
+
+    /// Undo this peer's last step: in the doc, then in the engine. Returns
+    /// its name, or `None` with nothing to undo.
+    ///
+    /// # Errors
+    /// When the doc cannot undo or the engine cannot be made to match.
+    pub async fn undo(&mut self) -> eyre::Result<Option<String>> {
+        if !self.undo.can_undo() {
+            return Ok(None);
+        }
+        let name = name_of(self.undo.top_undo_value());
+        // Its redo goes by the same name.
+        self.name_next(&name);
+        self.undo.undo()?;
+        self.remote_changed().await?;
+        Ok(Some(name))
+    }
+
+    /// Redo the step last undone: in the doc, then in the engine. Returns
+    /// its name, or `None` with nothing to redo.
+    ///
+    /// # Errors
+    /// When the doc cannot redo or the engine cannot be made to match.
+    pub async fn redo(&mut self) -> eyre::Result<Option<String>> {
+        if !self.undo.can_redo() {
+            return Ok(None);
+        }
+        let name = name_of(self.undo.top_redo_value());
+        self.name_next(&name);
+        self.undo.redo()?;
+        self.remote_changed().await?;
+        Ok(Some(name))
+    }
+
+    /// The name of the step that would be undone next, if any.
+    #[must_use]
+    pub fn next_undo(&self) -> Option<String> {
+        self.undo
+            .can_undo()
+            .then(|| name_of(self.undo.top_undo_value()))
+    }
+
+    /// The name of the step that would be redone next, if any.
+    #[must_use]
+    pub fn next_redo(&self) -> Option<String> {
+        self.undo
+            .can_redo()
+            .then(|| name_of(self.undo.top_redo_value()))
+    }
+
+    fn name_next(&self, name: &str) {
+        if let Ok(mut naming) = self.naming.lock() {
+            name.clone_into(&mut naming);
+        }
     }
 
     /// The chart was edited locally.
@@ -156,6 +255,7 @@ impl Bridge {
             return Ok(());
         }
         self.shown.chart = chart.to_string();
+        self.name_next("Edit chart");
         self.doc.write(&self.shown, ORIGIN_LOCAL)?;
         Ok(())
     }
