@@ -1140,6 +1140,7 @@ fn register_reference(list: &ActionList) {
     register_save(list);
     #[cfg(feature = "native")]
     register_undo(list);
+    register_style(list);
     register_slip(list);
     register_peaks(list);
     register_reference_map(list);
@@ -1463,6 +1464,30 @@ static SELECT_TRACK: ActionMeta = meta(
 #[derive(Facet)]
 struct SelectTrackArg {
     track: String,
+}
+
+static ITEM_STYLE: ActionMeta = meta(
+    "SESSION_ITEM_STYLE",
+    "session_item_style",
+    "Item style",
+    "How items are drawn: `outlined: true` (the default) a faint body in the item's colour with the waveform standing out over it in the full colour and a line round each item; `false` the half-strength block of colour the waveform is read against.",
+    "View",
+    "",
+);
+
+/// Outlined or not.
+#[derive(Facet)]
+struct ItemStyleArg {
+    outlined: bool,
+}
+
+fn register_style(list: &ActionList) {
+    list.register(&ITEM_STYLE, Effect::Mutating, |a: ItemStyleArg| {
+        crate::options::OUTLINED.set(a.outlined);
+        // The lanes are recorded with their bodies: read back, drawn anew.
+        crate::studio::request_resync();
+        Ok(if a.outlined { "outlined" } else { "filled" })
+    });
 }
 
 #[cfg(feature = "native")]

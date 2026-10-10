@@ -1092,7 +1092,7 @@ impl Arrangement {
                 lanes.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
-                    color.multiply_alpha(0.42),
+                    color.multiply_alpha(body_alpha()),
                     None,
                     &Rect::new(x0, y + inset, x1, y + body - inset),
                 );
@@ -1164,11 +1164,24 @@ impl Arrangement {
                     let body = command_index(&lanes).saturating_sub(1);
                     index.waves.insert(body, drawn);
                 }
+                // On a folder of recorded audio (a kit, a piece of it) the
+                // notes under it are a hint — the drum MIDI, a sample's
+                // triggers — so faint, in a strip along the bottom, under
+                // the audio's own shape rather than over it.
+                let hint = is_folder && wave.is_some();
+                let (roll_top, roll_ink) = if hint {
+                    (
+                        (bottom - top).mul_add(-0.22, bottom),
+                        color.multiply_alpha(0.35),
+                    )
+                } else {
+                    (top, color)
+                };
                 if let Some(roll) = notes
                     .as_deref()
-                    .and_then(|notes| midi_preview(notes, x0, x1, top, bottom))
+                    .and_then(|notes| midi_preview(notes, x0, x1, roll_top, bottom))
                 {
-                    lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &roll);
+                    lanes.fill(Fill::NonZero, Affine::IDENTITY, roll_ink, None, &roll);
                     index.x.push((x0, x1));
                 }
                 // The fades, as the part of the item they take away:
@@ -1842,7 +1855,7 @@ pub fn slip_overlay(
     painter.fill(
         Fill::NonZero,
         at,
-        item.color.multiply_alpha(0.42),
+        item.color.multiply_alpha(body_alpha()),
         None,
         &Rect::new(item.x0, y0, item.x1, y1),
     );
@@ -2054,6 +2067,66 @@ pub fn detection_overlay(
     }
 }
 
+/// An item body's strength: faint when items are drawn outlined
+/// ([`crate::options::OUTLINED`]), so the waveform carries the colour.
+fn body_alpha() -> f32 {
+    if crate::options::OUTLINED.get() {
+        0.12
+    } else {
+        0.42
+    }
+}
+
+/// Every item's outline on screen ([`crate::options::OUTLINED`]).
+///
+/// Drawn per frame, a pixel wide in each item's own colour. Where a box
+/// starts as the one before ends — a cut on a shut folder's row, the
+/// slices of an edited take — the line between them is the cut.
+pub fn outlines_overlay(
+    painter: &mut impl PaintScene,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+) {
+    let (ox, oy) = origin;
+    let pps = view.pps.max(f64::EPSILON);
+    let (from, to) = ((view.panel_w - ox) / pps, (view.width - ox) / pps);
+    let rows = scene.visible_rows(view);
+    let thin = vello::kurbo::Stroke::new(1.0);
+    let top_of_lanes = crate::ruler::ruler_h();
+    // Per row, the last edge drawn: zoomed out, one line a pixel.
+    let mut last: Option<(usize, f64)> = None;
+    for item in &scene.items {
+        if !rows.contains(&item.row) || item.x1 < from || item.x0 > to {
+            continue;
+        }
+        let Some((top, height)) = scene.item_box(item) else {
+            continue;
+        };
+        let y0 = top.mul_add(view.zoom_y, oy).max(top_of_lanes);
+        let y1 = (top + height).mul_add(view.zoom_y, oy).min(view.height);
+        if y1 <= y0 {
+            continue;
+        }
+        let x0 = item.x0.mul_add(pps, ox).max(view.panel_w);
+        let x1 = item.x1.mul_add(pps, ox).min(view.width);
+        if x1 - x0 < 1.0 {
+            continue;
+        }
+        if last.is_some_and(|(row, x)| row == item.row && x0 - x < 1.0) {
+            continue;
+        }
+        last = Some((item.row, x0));
+        painter.stroke(
+            &thin,
+            Affine::IDENTITY,
+            item.color.multiply_alpha(0.9),
+            None,
+            &Rect::new(x0 + 0.5, y0 + 0.5, x1 - 0.5, y1 - 0.5),
+        );
+    }
+}
+
 /// Every cut on a shut folder's row (Edit mode).
 ///
 /// A thin line where one of its boxes starts as the one before it ends.
@@ -2102,7 +2175,7 @@ pub fn cuts_overlay(
             .unwrap_or(&[])
             .windows(2)
         {
-            let (before, item) = (&pair[0], &pair[1]);
+            let [before, item] = pair else { continue };
             let at = item.position.as_seconds();
             if at > to {
                 break;

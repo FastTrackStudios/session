@@ -49,6 +49,12 @@ pub static GRID: Option = Option::new(true);
 pub static RIPPLE: Option = Option::new(false);
 /// Overlapping items crossfade on their own.
 pub static AUTO_CROSSFADE: Option = Option::new(true);
+/// Items drawn outlined.
+///
+/// A faint body in the item's colour, the waveform over it in the full
+/// colour standing out, and a line round each item — rather than a
+/// half-strength block of colour the waveform is read against.
+pub static OUTLINED: Option = Option::new(true);
 /// Grouped tracks move together: their items edited as one (a track
 /// group's media edit), their arms armed as one — the engine's grouping
 /// switch follows it ([`grouping_changed`]).

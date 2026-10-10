@@ -3158,8 +3158,11 @@ impl ArrangementWidget {
             &self.editor.selected,
             self.editor.ghost(),
         );
-        // In Edit mode, every cut on a shut folder's row.
-        if self.editing.get() && crate::folds::cuts_shown() {
+        // Every item's outline, its cuts with it; without outlines, in
+        // Edit mode, the cuts on a shut folder's row.
+        if crate::options::OUTLINED.get() {
+            crate::arrangement::outlines_overlay(&mut out, &self.scene, view, lanes_at);
+        } else if self.editing.get() && crate::folds::cuts_shown() {
             crate::arrangement::cuts_overlay(
                 &mut out,
                 &self.palette,
