@@ -95,12 +95,11 @@ impl Fold {
     #[must_use]
     pub const fn compact(self) -> Option<i32> {
         match self {
-            Self::Open => Some(0),
+            // REAPER cannot drop a folder's row and keep its tracks: a
+            // lifted folder shows open there.
+            Self::Open | Self::Lifted => Some(0),
             Self::Small => Some(1),
             Self::Collapsed => Some(2),
-            // REAPER cannot drop a folder's row and keep its tracks: it
-            // shows the folder open.
-            Self::Lifted => Some(0),
             Self::Hidden => None,
         }
     }
