@@ -122,8 +122,6 @@ pub fn set_up(
             .map_err(fail)?;
     }
     if !dry && !said.is_empty() {
-        // The window in the Edit phase, where EDIT plays.
-        session::mode_phases::choose(session::modes::Mode::Edit, "edit");
         crate::studio::request_resync();
         crate::actions::list().changed("drums.lanes", "the kit's lanes were set up");
     }

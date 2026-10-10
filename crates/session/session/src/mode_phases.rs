@@ -28,27 +28,12 @@ pub const ORGANIZE: [Phase; 2] = [
     },
 ];
 
-/// Editing a song: comp the best takes together, then edit the comp —
-/// on the lanes `COMP` and `EDIT`, so the edit can always be weighed
-/// against the comp it was made from.
-pub const EDIT: [Phase; 2] = [
-    Phase {
-        slug: "comp",
-        name: "Comp",
-    },
-    Phase {
-        slug: "edit",
-        name: "Edit",
-    },
-];
-
 /// The phases of `mode`, in the order they are worked through — empty
 /// for a mode that has none.
 #[must_use]
 pub fn of(mode: Mode) -> Vec<Phase> {
     match mode {
         Mode::Organize => ORGANIZE.to_vec(),
-        Mode::Edit => EDIT.to_vec(),
         Mode::Mix => MixPhase::ALL
             .iter()
             .map(|phase| Phase {
