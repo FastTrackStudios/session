@@ -220,6 +220,8 @@ dawfile-reaper = { workspace = true, optional = true }
 builtin-fx = { workspace = true, optional = true }
 realfft = { workspace = true, optional = true }
 architect-mcp = { workspace = true, optional = true, features = ["http"] }
+# signal's rigs, as built-in FX (`signal` feature).
+signal-fx = { workspace = true, optional = true }
 num-traits = { workspace = true }
 facet = { workspace = true }
 facet-json = { workspace = true }
@@ -248,6 +250,9 @@ tokio = { version = "1.48", default-features = false, features = ["sync", "macro
 
 [features]
 default = ["native"]
+# signal's rigs run in Session's own engine: the bass rig's NAM amp and
+# cab on a bass track, the drum sampler's per-mic voices on the kit.
+signal = ["native", "dep:signal-fx"]
 # The desktop app: dioxus-native (Blitz) hosts for the panels, the
 # in-process engine with its audio device, threads, the plugin-UI graph.
 native = [

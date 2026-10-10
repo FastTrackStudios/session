@@ -16,6 +16,7 @@ members = [
     "libs/vendor/dioxus-native-dom",
     "libs/vendor/dioxus-native",
     "features/builtin-fx",
+    "features/signal-fx",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
     "features/expression-editor/expression-editor-corpus",
@@ -323,6 +324,12 @@ pitch-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v
 tune-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
 unison-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
 builtin-fx = { path = "features/builtin-fx" }
+# signal's rigs in the session engine: the bass rig, the kit's voices.
+signal-fx = { path = "features/signal-fx" }
+# signal's in-process rig engine (NAM, convolver, the sampler), from the
+# sibling checkout as daw is: both resolve daw to ../daw, so its
+# processors are the session engine's `PluginInstance`s.
+signal-sampler = { path = "../signal/features/sampler/signal-sampler" }
 
 expression-editor-audio = { path = "features/expression-editor/expression-editor-audio" }
 expression-editor-core = { path = "features/expression-editor/expression-editor-core" }
@@ -1214,6 +1221,8 @@ opt-level = 3
 
 # Preserve audio sources on newly split items until the upstream exporter is fixed.
 [patch."https://github.com/FastTrackStudios/daw"]
+# And signal's, from daw (signal-fx).
+midicore-pipewire = { path = "../daw/crates/midicore/midicore-pipewire" }
 # The daw repository is developed as a SIBLING CHECKOUT, not consumed
 # by tag. Edit `../daw` directly and push upstream when a change is
 # worth landing; nothing here needs a tag bump to try something.
@@ -1313,7 +1322,30 @@ tune-dsp = { path = "../daw/features/fx/tune/tune-dsp" }
 utils = { path = "../daw/libs/utils" }
 world-sys = { path = "../daw/libs/vendor/world" }
 
+[patch."https://github.com/FastTrackStudios/neural-amp-modeler-rs"]
+# signal's NAM, from its sibling checkout as signal builds it (signal-fx).
+neural-amp-modeler = { path = "../neural-amp-modeler-rs" }
+
 [patch."https://github.com/FastTrackStudios/processor"]
+# What signal's rigs build against, from the same checkout as the rest (signal-fx).
+chorus-dsp = { path = "../processor/features/fx/modulation/chorus-dsp" }
+comp = { path = "../processor/features/fx/comp/comp" }
+delay = { path = "../processor/features/fx/delay/delay" }
+delay-profiles = { path = "../processor/features/fx/delay/delay-profiles" }
+eq = { path = "../processor/features/fx/eq/eq" }
+eq-dsp = { path = "../processor/features/fx/eq/eq-dsp" }
+fx-blocks = { path = "../processor/features/fx/fx-blocks" }
+modulation = { path = "../processor/features/fx/modulation/modulation" }
+modulation-profiles = { path = "../processor/features/fx/modulation/modulation-profiles" }
+musical-time = { path = "../processor/features/fx/musical-time/musical-time" }
+musical-time-ui = { path = "../processor/features/fx/musical-time/musical-time-ui" }
+pattern-ui = { path = "../processor/features/fx/modulation/pattern-ui" }
+reverb = { path = "../processor/features/fx/reverb/reverb" }
+reverb-profiles = { path = "../processor/features/fx/reverb/reverb-profiles" }
+spectrum-analyzer-ui = { path = "../processor/features/fx/eq/spectrum-analyzer/spectrum-analyzer-ui" }
+trem-dsp = { path = "../processor/features/fx/modulation/trem-dsp" }
+tune = { path = "../processor/features/fx/tune/tune" }
+wah-dsp = { path = "../processor/features/fx/modulation/wah-dsp" }
 # baseview lives in the processor repo's own `vendor/`, which is why it
 # is patched from here rather than from a fork's URL — see the
 # `[workspace.dependencies]` entry.

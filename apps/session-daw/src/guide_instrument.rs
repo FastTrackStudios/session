@@ -332,9 +332,13 @@ pub fn install(daw: &daw_standalone::Standalone, library: Library) {
     // The FTS processors run built in beside it (`builtin_fx`): an FX
     // named `FTS Comp` — or a project's `CLAP: FTS Comp (FastTrackStudios)`
     // — is the engine's own, no plugin file loaded.
+    // And signal's rigs, with the `signal` feature: the bass rig's NAM
+    // amp and cab, the drum kit's sampled voices.
     #[cfg(feature = "native")]
     let factory: Arc<dyn FxFactory> = Arc::new(builtin_fx::Chain(vec![
         Arc::new(builtin_fx::BuiltinFx),
+        #[cfg(feature = "signal")]
+        Arc::new(signal_fx::SignalFx),
         guide,
     ]));
     #[cfg(not(feature = "native"))]

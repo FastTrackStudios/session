@@ -76,6 +76,22 @@ jobs:
           repository: FastTrackStudios/processor
           ref: 473ade6c8cdd1d10e26b4baff19f30aefa56154f
           path: processor
+      # signal's rigs (signal-fx: the bass rig, the kit's voices) build
+      # from ../signal, and its NAM from ../neural-amp-modeler-rs — path
+      # dependencies, which cargo needs on disk to read the workspace at
+      # all, the `signal` feature on or off.
+      - name: Sibling checkout — signal
+        uses: actions/checkout@v4
+        with:
+          repository: FastTrackStudios/signal
+          ref: 2858d926a98164d15aea408e409a0df2042d4abc
+          path: signal
+      - name: Sibling checkout — neural-amp-modeler-rs
+        uses: actions/checkout@v4
+        with:
+          repository: FastTrackStudios/neural-amp-modeler-rs
+          ref: 28035789bbe3ceaeff2acfb4639bba8ba29d3666
+          path: neural-amp-modeler-rs
       - name: Persistent target dir
         run: |
           # On the runner's big disk ($CI_CACHE_DIR: the runner module's
