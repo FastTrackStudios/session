@@ -11,13 +11,17 @@ use daw_control::Project;
 
 use crate::diff::{Change, diff};
 use crate::doc::{ORIGIN_LOCAL, SessionDoc};
-use crate::engine::{self, MediaRoot};
+use crate::engine::{self, Blobs, EngineIds, MediaRoot};
 use crate::model::SessionModel;
 
 pub struct Bridge {
     doc: SessionDoc,
     project: Project,
     media: MediaRoot,
+    /// Where FX state is kept (the project's store).
+    blobs: std::sync::Arc<dyn Blobs>,
+    /// Which engine FX each doc FX is, here.
+    ids: EngineIds,
     /// What the engine showed after the last reconcile, chart included.
     shown: SessionModel,
 }
@@ -33,14 +37,18 @@ impl Bridge {
         media: MediaRoot,
         doc: SessionDoc,
         chart: String,
+        blobs: std::sync::Arc<dyn Blobs>,
     ) -> eyre::Result<Self> {
-        let mut shown = engine::read(&project, &media).await?;
+        let ids = EngineIds::default();
+        let mut shown = engine::read(&project, &media, blobs.as_ref(), &ids).await?;
         shown.chart = chart;
         doc.write(&shown, ORIGIN_LOCAL)?;
         Ok(Self {
             doc,
             project,
             media,
+            blobs,
+            ids,
             shown,
         })
     }
@@ -51,12 +59,20 @@ impl Bridge {
     ///
     /// # Errors
     /// When the engine cannot be read or an engine call fails.
-    pub async fn join(project: Project, media: MediaRoot, doc: SessionDoc) -> eyre::Result<Self> {
-        let current = engine::read(&project, &media).await?;
+    pub async fn join(
+        project: Project,
+        media: MediaRoot,
+        doc: SessionDoc,
+        blobs: std::sync::Arc<dyn Blobs>,
+    ) -> eyre::Result<Self> {
+        let ids = EngineIds::default();
+        let current = engine::read(&project, &media, blobs.as_ref(), &ids).await?;
         let mut bridge = Self {
             doc,
             project,
             media,
+            blobs,
+            ids,
             shown: current,
         };
         bridge.remote_changed().await?;
@@ -81,7 +97,8 @@ impl Bridge {
     /// # Errors
     /// When the engine cannot be read or the doc cannot be written.
     pub async fn local_changed(&mut self) -> eyre::Result<bool> {
-        let mut now = engine::read(&self.project, &self.media).await?;
+        let mut now =
+            engine::read(&self.project, &self.media, self.blobs.as_ref(), &self.ids).await?;
         now.chart.clone_from(&self.shown.chart);
         if now == self.shown {
             return Ok(false);
@@ -117,8 +134,17 @@ impl Bridge {
         if changes.is_empty() {
             return Ok(changes);
         }
-        let applied = engine::apply(&self.project, &self.media, &changes, &target).await;
-        let mut now = engine::read(&self.project, &self.media).await?;
+        let applied = engine::apply(
+            &self.project,
+            &self.media,
+            &changes,
+            &target,
+            self.blobs.as_ref(),
+            &mut self.ids,
+        )
+        .await;
+        let mut now =
+            engine::read(&self.project, &self.media, self.blobs.as_ref(), &self.ids).await?;
         now.chart = target.chart;
         self.shown = now;
         applied?;

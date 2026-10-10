@@ -59,6 +59,83 @@ pub struct TrackState {
     pub parent_send: bool,
     pub visible_in_tcp: bool,
     pub visible_in_mixer: bool,
+    /// REAPER 7's fixed lanes: how many, what each is called, which play.
+    pub lanes: LaneState,
+    /// Its part in each track group: a family's lead or follow mask by
+    /// name (`recarm_lead`, `media_edit_follow`, …), the non-zero ones.
+    pub grouping: BTreeMap<String, u128>,
+    /// Its FX, in chain order.
+    pub fx: Vec<FxState>,
+    /// Its sends, in order.
+    pub sends: Vec<SendState>,
+    /// Its automation, by what is automated ([`EnvelopeState`]).
+    pub envelopes: BTreeMap<String, EnvelopeState>,
+}
+
+/// A track's fixed lanes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LaneState {
+    pub count: u32,
+    pub names: Vec<String>,
+    /// Bit `n`: lane `n` plays.
+    pub play_mask: u64,
+}
+
+/// One FX on a track.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FxState {
+    pub guid: String,
+    /// What the engine adds it by: a built-in's name, a plugin's id or
+    /// bundle.
+    pub plugin: String,
+    /// As shown.
+    pub name: String,
+    pub enabled: bool,
+    pub offline: bool,
+    /// Everything it holds (its parameters, a sampler's kit, a rig's
+    /// capture), as a blob's name in the project's store — kept once,
+    /// however many versions hold it.
+    pub state: Option<String>,
+}
+
+/// One send from a track.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SendState {
+    /// The destination track's guid.
+    pub dest: String,
+    /// `post_fader`, `pre_fx`, `post_fx`.
+    pub mode: String,
+    pub volume: f64,
+    pub pan: f64,
+    pub muted: bool,
+    /// The source's first channel (0: its main pair, 2: its 3/4, 4: 5/6).
+    pub from: u32,
+    /// The destination's first channel (2: its sidechain).
+    pub to: u32,
+}
+
+/// One automation envelope: what plays it, and its points.
+///
+/// Keyed on its track by what it automates: `volume`, `pan`, `mute`,
+/// `volume_prefx`, `pan_prefx`, `width`, or `fx:<fx guid>:<param>`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EnvelopeState {
+    /// `read`, `trim`, `touch`, `latch`, `latch_preview`, `write`, `off`.
+    pub mode: String,
+    pub visible: bool,
+    pub armed: bool,
+    pub points: Vec<EnvelopePointState>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EnvelopePointState {
+    /// Seconds.
+    pub at: f64,
+    pub value: f64,
+    /// REAPER's shape number: 0 linear, 1 square, 2 slow start/end, 3
+    /// fast start, 4 fast end, 5 bezier.
+    pub shape: u8,
+    pub tension: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -82,6 +159,10 @@ pub struct ItemState {
     pub label: String,
     pub color: Option<u32>,
     pub take: TakeState,
+    /// The fixed lane it sits on, on a track with lanes.
+    pub fixed_lane: Option<u32>,
+    /// Its source loops across it.
+    pub loop_source: bool,
 }
 
 /// The item's active take: what it plays.
@@ -94,6 +175,33 @@ pub struct TakeState {
     /// Seconds into the source where the item starts.
     pub start_offset: f64,
     pub playrate: f64,
+    /// A MIDI take (its notes are [`Self::notes`]), not audio.
+    pub midi: bool,
+    /// Its stretch markers, in order.
+    pub stretch: Vec<StretchPoint>,
+    /// A MIDI take's notes, in order.
+    pub notes: Vec<NoteState>,
+}
+
+/// A stretch marker: where in the take it sits and what source moment
+/// it holds there.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StretchPoint {
+    /// Seconds into the take.
+    pub at: f64,
+    /// Seconds into the source.
+    pub source: f64,
+    pub slope: f64,
+}
+
+/// One MIDI note, in the take's quarter notes.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct NoteState {
+    pub start: f64,
+    pub length: f64,
+    pub pitch: u8,
+    pub velocity: u8,
+    pub channel: u8,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

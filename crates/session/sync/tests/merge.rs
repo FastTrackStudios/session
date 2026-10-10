@@ -8,8 +8,9 @@
 )]
 
 use session_sync::{
-    Change, ItemField, ItemState, MarkerState, ORIGIN_LOCAL, SessionDoc, SessionModel, TakeState,
-    TempoPoint, TrackField, TrackState, diff,
+    Change, EnvelopePointState, EnvelopeState, FxState, ItemField, ItemState, LaneState,
+    MarkerState, NoteState, ORIGIN_LOCAL, SendState, SessionDoc, SessionModel, StretchPoint,
+    TakeState, TempoPoint, TrackField, TrackState, diff,
 };
 
 fn track(guid: &str, parent: Option<&str>, name: &str) -> TrackState {
@@ -38,6 +39,7 @@ fn item(track: &str, position: f64) -> ItemState {
             source: Some("Media/Kick.wav".into()),
             start_offset: 0.0,
             playrate: 1.0,
+            ..TakeState::default()
         },
         ..ItemState::default()
     }
@@ -62,6 +64,93 @@ fn song() -> SessionModel {
     };
     m.items.insert("i-kick".into(), item("kick", 0.0));
     m.items.insert("i-bass".into(), item("bass", 2.0));
+    // Schema 2: a kick with lanes, a group, an FX chain, a send and its
+    // automation; an edited slice and a MIDI take.
+    let kick = &mut m.tracks[1];
+    kick.lanes = LaneState {
+        count: 3,
+        names: vec!["COMP".into(), "C1".into(), "EDIT".into()],
+        play_mask: 1 << 2,
+    };
+    kick.grouping.insert("recarm_lead".into(), 1);
+    kick.grouping
+        .insert("media_edit_follow".into(), 1 | (1 << 100));
+    kick.fx = vec![
+        FxState {
+            guid: "fx-gate".into(),
+            plugin: "FTS Gate".into(),
+            name: "Gate".into(),
+            enabled: true,
+            offline: false,
+            state: Some("ab12".into()),
+        },
+        FxState {
+            guid: "fx-comp".into(),
+            plugin: "FTS Comp".into(),
+            name: "Comp".into(),
+            enabled: false,
+            offline: false,
+            state: None,
+        },
+    ];
+    kick.sends = vec![SendState {
+        dest: "bass".into(),
+        mode: "post_fx".into(),
+        volume: 0.5,
+        pan: 0.0,
+        muted: false,
+        from: 2,
+        to: 0,
+    }];
+    kick.envelopes.insert(
+        "fx:fx-gate:3".into(),
+        EnvelopeState {
+            mode: "read".into(),
+            visible: true,
+            armed: false,
+            points: vec![
+                EnvelopePointState {
+                    at: 1.0,
+                    value: 0.25,
+                    shape: 0,
+                    tension: 0.0,
+                },
+                EnvelopePointState {
+                    at: 2.5,
+                    value: 0.75,
+                    shape: 1,
+                    tension: 0.0,
+                },
+            ],
+        },
+    );
+    let slice = m.items.get_mut("i-kick").unwrap();
+    slice.fixed_lane = Some(2);
+    slice.take.stretch = vec![StretchPoint {
+        at: 0.5,
+        source: 0.48,
+        slope: 0.0,
+    }];
+    let mut midi = item("bass", 8.0);
+    midi.take.source = None;
+    midi.loop_source = true;
+    midi.take.notes = vec![
+        NoteState {
+            start: 0.0,
+            length: 0.25,
+            pitch: 36,
+            velocity: 110,
+            channel: 9,
+        },
+        NoteState {
+            start: 1.0,
+            length: 0.25,
+            pitch: 38,
+            velocity: 90,
+            channel: 9,
+        },
+    ];
+    m.items.insert("i-midi".into(), midi);
     m.markers.insert(
         "m1".into(),
         MarkerState {
@@ -320,4 +409,46 @@ fn a_chart_caret_stays_on_its_character_while_others_type() {
     assert_eq!(&chart[now..now + 4], "4 6m", "{chart}");
     assert!(b.has_session());
     assert!(!SessionDoc::new().has_session());
+}
+
+/// One bypasses a plugin while the other automates its gate: both land,
+/// as each FX and each envelope is its own entry.
+#[test]
+fn one_bypasses_an_fx_while_the_other_automates_it() {
+    let (a, b) = two_peers();
+    let mut ma = a.read();
+    ma.tracks[1].fx[0].enabled = false;
+    a.write(&ma, ORIGIN_LOCAL).unwrap();
+    let mut mb = b.read();
+    mb.tracks[1]
+        .envelopes
+        .get_mut("fx:fx-gate:3")
+        .unwrap()
+        .points
+        .push(EnvelopePointState {
+            at: 4.0,
+            value: 0.5,
+            shape: 0,
+            tension: 0.0,
+        });
+    b.write(&mb, ORIGIN_LOCAL).unwrap();
+
+    sync(&a, &b);
+    let merged = a.read();
+    assert_eq!(merged, b.read(), "converged");
+    let kick = &merged.tracks[1];
+    assert!(!kick.fx[0].enabled, "the bypass landed");
+    assert_eq!(
+        kick.envelopes["fx:fx-gate:3"].points.len(),
+        3,
+        "the point landed"
+    );
+    let changes = diff(&song(), &merged);
+    assert!(
+        changes
+            .iter()
+            .any(|c| matches!(c, Change::TrackChanged { fields, .. }
+            if fields.contains(&TrackField::Fx) && fields.contains(&TrackField::Envelopes))),
+        "the engine is told both: {changes:?}"
+    );
 }

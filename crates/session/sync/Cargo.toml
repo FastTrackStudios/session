@@ -13,6 +13,8 @@ engine = ["dep:daw-control", "dep:daw-proto", "dep:eyre"]
 net = ["dep:crdt", "dep:architect", "dep:uuid", "dep:futures", "dep:vox", "dep:eyre", "dep:tracing", "dep:facet"]
 
 [dependencies]
+num-traits = { workspace = true }
+sha2 = { workspace = true }
 loro.workspace = true
 # The shared clock, positions and drift correction (backend-agnostic).
 daw-transport-sync.workspace = true
@@ -30,6 +32,13 @@ facet = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+# The engine round trip: a project built in daw-standalone, hosted into the
+# doc, and rebuilt from it in a second project.
+daw = { workspace = true }
+daw-standalone = { workspace = true, features = ["bootstrap", "decode"] }
+daw-control = { workspace = true }
+daw-proto = { workspace = true }
+eyre = { workspace = true }
 crdt = { workspace = true, features = ["vox"] }
 architect = { workspace = true, features = ["vox", "local"] }
 

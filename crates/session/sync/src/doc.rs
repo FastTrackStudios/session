@@ -12,7 +12,20 @@
 //! markers: Map   guid → Map { at, name, color }
 //! regions: Map   guid → Map { start, end, name, color }
 //! chart  : Text  the keyflow chart
+//! fx     : Map   fx id → Map { track, index, plugin, name, enabled,
+//!                offline, state }  (state: a blob's name in the store)
+//! sends  : Map   "<track>#<n>" → Map { track, index, dest, mode, volume,
+//!                pan, muted, from, to }
+//! envelopes: Map "<track>|<what>" → Map { track, what, mode, visible,
+//!                armed, points }  (points: [at, value, shape, tension]…)
 //! ```
+//!
+//! Schema 2 adds `fx`, `sends` and `envelopes`, a track's fixed lanes and
+//! groups (`lanes.*`, `group.*` on its node), and an item's fixed lane,
+//! loop, stretch markers and MIDI notes (`take.stretch`, `take.notes`,
+//! flat number lists). An FX, a send, an envelope is each its own map, so
+//! one person bypassing a plugin while another automates a fader both
+//! land.
 //!
 //! Every field is its own map entry, so two people changing different
 //! things about the same item — one moves it, one turns it down — both
@@ -35,11 +48,12 @@ use loro::{
 };
 
 use crate::model::{
-    ItemState, MarkerState, RegionState, SessionModel, TakeState, TempoPoint, TrackState,
+    EnvelopePointState, EnvelopeState, FxState, ItemState, LaneState, MarkerState, NoteState,
+    RegionState, SendState, SessionModel, StretchPoint, TakeState, TempoPoint, TrackState,
 };
 
 /// The schema version written into `meta.schema`.
-pub const SCHEMA: i64 = 1;
+pub const SCHEMA: i64 = 2;
 
 const META: &str = "meta";
 const TRACKS: &str = "tracks";
@@ -47,6 +61,9 @@ const ITEMS: &str = "items";
 const MARKERS: &str = "markers";
 const REGIONS: &str = "regions";
 const CHART: &str = "chart";
+const FX: &str = "fx";
+const SENDS: &str = "sends";
+const ENVELOPES: &str = "envelopes";
 
 /// Origin tag for commits made from the local engine.
 pub const ORIGIN_LOCAL: &str = "local";
@@ -135,6 +152,10 @@ impl SessionDoc {
         write_entities(&self.doc.get_map(ITEMS), &model.items, item_fields)?;
         write_entities(&self.doc.get_map(MARKERS), &model.markers, marker_fields)?;
         write_entities(&self.doc.get_map(REGIONS), &model.regions, region_fields)?;
+        let (fx, sends, envelopes) = track_parts(&model.tracks);
+        write_entities(&self.doc.get_map(FX), &fx, fx_fields)?;
+        write_entities(&self.doc.get_map(SENDS), &sends, send_fields)?;
+        write_entities(&self.doc.get_map(ENVELOPES), &envelopes, envelope_fields)?;
         write_text(&self.doc.get_text(CHART), &model.chart)?;
         self.doc.set_next_commit_origin(origin);
         self.doc.commit();
@@ -176,8 +197,15 @@ impl SessionDoc {
             .and_then(as_string)
             .map(|s| decode_tempo(&s))
             .unwrap_or_default();
+        let mut tracks = self.read_tracks();
+        attach_parts(
+            &mut tracks,
+            &read_entities(&self.doc.get_map(FX), read_fx),
+            &read_entities(&self.doc.get_map(SENDS), read_send),
+            &read_entities(&self.doc.get_map(ENVELOPES), read_envelope),
+        );
         SessionModel {
-            tracks: self.read_tracks(),
+            tracks,
             items: read_entities(&self.doc.get_map(ITEMS), read_item),
             markers: read_entities(&self.doc.get_map(MARKERS), read_marker),
             regions: read_entities(&self.doc.get_map(REGIONS), read_region),
@@ -435,6 +463,12 @@ impl Get<'_> {
     fn color(&self, key: &str) -> Option<u32> {
         self.0.get(key).and_then(as_color)
     }
+    fn i64(&self, key: &str, default: i64) -> i64 {
+        match self.0.get(key) {
+            Some(LoroValue::I64(i)) => *i,
+            _ => default,
+        }
+    }
 }
 
 fn track_fields(t: &TrackState) -> Fields {
@@ -450,7 +484,71 @@ fn track_fields(t: &TrackState) -> Fields {
         ("parent_send", LoroValue::Bool(t.parent_send)),
         ("visible_in_tcp", LoroValue::Bool(t.visible_in_tcp)),
         ("visible_in_mixer", LoroValue::Bool(t.visible_in_mixer)),
+        ("lanes.count", LoroValue::I64(i64::from(t.lanes.count))),
+        (
+            "lanes.names",
+            LoroValue::from(
+                t.lanes
+                    .names
+                    .iter()
+                    .map(|n| LoroValue::from(n.as_str()))
+                    .collect::<Vec<_>>(),
+            ),
+        ),
+        // The bits as they are: lane 63 playing is a negative number.
+        (
+            "lanes.play",
+            LoroValue::I64(i64::from_ne_bytes(t.lanes.play_mask.to_ne_bytes())),
+        ),
+        ("grouping", grouping_value(&t.grouping)),
     ]
+}
+
+/// A track's group masks, as `family → hex`.
+fn grouping_value(grouping: &BTreeMap<String, u128>) -> LoroValue {
+    let map: HashMap<String, LoroValue> = grouping
+        .iter()
+        .filter(|(_, mask)| **mask != 0)
+        .map(|(family, mask)| (family.clone(), LoroValue::from(format!("{mask:x}"))))
+        .collect();
+    LoroValue::from(map)
+}
+
+fn read_grouping(v: Option<&LoroValue>) -> BTreeMap<String, u128> {
+    match v {
+        Some(LoroValue::Map(map)) => map
+            .iter()
+            .filter_map(|(family, hex)| {
+                let mask = u128::from_str_radix(&as_string(hex)?, 16).ok()?;
+                Some((family.clone(), mask))
+            })
+            .collect(),
+        _ => BTreeMap::new(),
+    }
+}
+
+fn strings(v: Option<&LoroValue>) -> Vec<String> {
+    match v {
+        Some(LoroValue::List(list)) => list.iter().filter_map(as_string).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A flat list of numbers.
+fn numbers(v: Option<&LoroValue>) -> Vec<f64> {
+    match v {
+        Some(LoroValue::List(list)) => list.iter().filter_map(as_f64).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn number_list(values: impl IntoIterator<Item = f64>) -> LoroValue {
+    LoroValue::from(
+        values
+            .into_iter()
+            .map(LoroValue::Double)
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn read_track(fields: &HashMap<String, LoroValue>, folder: Option<&str>) -> Option<TrackState> {
@@ -469,6 +567,15 @@ fn read_track(fields: &HashMap<String, LoroValue>, folder: Option<&str>) -> Opti
         parent_send: g.bool("parent_send", true),
         visible_in_tcp: g.bool("visible_in_tcp", true),
         visible_in_mixer: g.bool("visible_in_mixer", true),
+        lanes: LaneState {
+            count: u32::try_from(g.i64("lanes.count", 0)).unwrap_or(0),
+            names: strings(fields.get("lanes.names")),
+            play_mask: u64::from_ne_bytes(g.i64("lanes.play", 0).to_ne_bytes()),
+        },
+        grouping: read_grouping(fields.get("grouping")),
+        fx: Vec::new(),
+        sends: Vec::new(),
+        envelopes: BTreeMap::new(),
     })
 }
 
@@ -491,6 +598,34 @@ fn item_fields(i: &ItemState) -> Fields {
         ("take.source", opt_str(i.take.source.as_deref())),
         ("take.start_offset", LoroValue::Double(i.take.start_offset)),
         ("take.playrate", LoroValue::Double(i.take.playrate)),
+        ("take.midi", LoroValue::Bool(i.take.midi)),
+        (
+            "fixed_lane",
+            i.fixed_lane
+                .map_or(LoroValue::Null, |l| LoroValue::I64(i64::from(l))),
+        ),
+        ("loop", LoroValue::Bool(i.loop_source)),
+        (
+            "take.stretch",
+            number_list(
+                i.take
+                    .stretch
+                    .iter()
+                    .flat_map(|m| [m.at, m.source, m.slope]),
+            ),
+        ),
+        (
+            "take.notes",
+            number_list(i.take.notes.iter().flat_map(|n| {
+                [
+                    n.start,
+                    n.length,
+                    f64::from(n.pitch),
+                    f64::from(n.velocity),
+                    f64::from(n.channel),
+                ]
+            })),
+        ),
     ]
 }
 
@@ -515,6 +650,262 @@ fn read_item(fields: &HashMap<String, LoroValue>) -> ItemState {
             source: g.opt_string("take.source"),
             start_offset: g.f64("take.start_offset", 0.0),
             playrate: g.f64("take.playrate", 1.0),
+            midi: g.bool("take.midi", false),
+            stretch: numbers(fields.get("take.stretch"))
+                .chunks_exact(3)
+                .filter_map(|m| match *m {
+                    [at, source, slope] => Some(StretchPoint { at, source, slope }),
+                    _ => None,
+                })
+                .collect(),
+            notes: numbers(fields.get("take.notes"))
+                .chunks_exact(5)
+                .filter_map(|n| match *n {
+                    [start, length, pitch, velocity, channel] => Some(NoteState {
+                        start,
+                        length,
+                        pitch: byte(pitch),
+                        velocity: byte(velocity),
+                        channel: byte(channel),
+                    }),
+                    _ => None,
+                })
+                .collect(),
+        },
+        fixed_lane: match fields.get("fixed_lane") {
+            Some(LoroValue::I64(l)) => u32::try_from(*l).ok(),
+            _ => None,
+        },
+        loop_source: g.bool("loop", false),
+    }
+}
+
+/// A MIDI byte stored as a number.
+fn byte(v: f64) -> u8 {
+    num_traits::ToPrimitive::to_u8(&v.round().clamp(0.0, 127.0)).unwrap_or(0)
+}
+
+// ── a track's parts: its FX, sends, envelopes ──────────────────────────
+
+/// One FX as the doc keeps it, with the track it is on and its place.
+#[derive(Debug, Clone, PartialEq)]
+struct FxEntry {
+    track: String,
+    index: usize,
+    fx: FxState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SendEntry {
+    track: String,
+    index: usize,
+    send: SendState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct EnvelopeEntry {
+    track: String,
+    what: String,
+    envelope: EnvelopeState,
+}
+
+type Parts = (
+    BTreeMap<String, FxEntry>,
+    BTreeMap<String, SendEntry>,
+    BTreeMap<String, EnvelopeEntry>,
+);
+
+/// Every track's FX, sends and envelopes, each keyed as the doc keeps it.
+fn track_parts(tracks: &[TrackState]) -> Parts {
+    let mut fx = BTreeMap::new();
+    let mut sends = BTreeMap::new();
+    let mut envelopes = BTreeMap::new();
+    for t in tracks {
+        for (index, f) in t.fx.iter().enumerate() {
+            fx.insert(
+                f.guid.clone(),
+                FxEntry {
+                    track: t.guid.clone(),
+                    index,
+                    fx: f.clone(),
+                },
+            );
+        }
+        for (index, send) in t.sends.iter().enumerate() {
+            sends.insert(
+                format!("{}#{index}", t.guid),
+                SendEntry {
+                    track: t.guid.clone(),
+                    index,
+                    send: send.clone(),
+                },
+            );
+        }
+        for (what, envelope) in &t.envelopes {
+            envelopes.insert(
+                format!("{}|{what}", t.guid),
+                EnvelopeEntry {
+                    track: t.guid.clone(),
+                    what: what.clone(),
+                    envelope: envelope.clone(),
+                },
+            );
+        }
+    }
+    (fx, sends, envelopes)
+}
+
+/// Each part back onto its track, in order.
+fn attach_parts(
+    tracks: &mut [TrackState],
+    fx: &BTreeMap<String, FxEntry>,
+    sends: &BTreeMap<String, SendEntry>,
+    envelopes: &BTreeMap<String, EnvelopeEntry>,
+) {
+    let by_track: HashMap<String, usize> = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.guid.clone(), i))
+        .collect();
+    let mut chains: HashMap<usize, Vec<FxEntry>> = HashMap::new();
+    for (id, entry) in fx {
+        if let Some(&i) = by_track.get(entry.track.as_str()) {
+            // The FX's id is the key it is kept under.
+            let mut entry = entry.clone();
+            entry.fx.guid.clone_from(id);
+            chains.entry(i).or_default().push(entry);
+        }
+    }
+    let mut routes: HashMap<usize, Vec<&SendEntry>> = HashMap::new();
+    for entry in sends.values() {
+        if let Some(&i) = by_track.get(entry.track.as_str()) {
+            routes.entry(i).or_default().push(entry);
+        }
+    }
+    for (i, mut chain) in chains {
+        // By place, then id: two FX given one place at once (two people
+        // adding at the same time) keep one order on every replica.
+        chain.sort_by(|a, b| a.index.cmp(&b.index).then(a.fx.guid.cmp(&b.fx.guid)));
+        if let Some(t) = tracks.get_mut(i) {
+            t.fx = chain.into_iter().map(|e| e.fx).collect();
+        }
+    }
+    for (i, mut route) in routes {
+        route.sort_by_key(|e| e.index);
+        if let Some(t) = tracks.get_mut(i) {
+            t.sends = route.into_iter().map(|e| e.send.clone()).collect();
+        }
+    }
+    for entry in envelopes.values() {
+        if let Some(t) = by_track
+            .get(entry.track.as_str())
+            .and_then(|&i| tracks.get_mut(i))
+        {
+            t.envelopes
+                .insert(entry.what.clone(), entry.envelope.clone());
+        }
+    }
+}
+
+fn fx_fields(e: &FxEntry) -> Fields {
+    vec![
+        ("track", LoroValue::from(e.track.as_str())),
+        ("index", LoroValue::I64(i64::try_from(e.index).unwrap_or(0))),
+        ("plugin", LoroValue::from(e.fx.plugin.as_str())),
+        ("name", LoroValue::from(e.fx.name.as_str())),
+        ("enabled", LoroValue::Bool(e.fx.enabled)),
+        ("offline", LoroValue::Bool(e.fx.offline)),
+        ("state", opt_str(e.fx.state.as_deref())),
+    ]
+}
+
+fn read_fx(fields: &HashMap<String, LoroValue>) -> FxEntry {
+    let g = Get(fields);
+    FxEntry {
+        track: g.string("track"),
+        index: usize::try_from(g.i64("index", 0)).unwrap_or(0),
+        fx: FxState {
+            guid: String::new(),
+            plugin: g.string("plugin"),
+            name: g.string("name"),
+            enabled: g.bool("enabled", true),
+            offline: g.bool("offline", false),
+            state: g.opt_string("state"),
+        },
+    }
+}
+
+fn send_fields(e: &SendEntry) -> Fields {
+    vec![
+        ("track", LoroValue::from(e.track.as_str())),
+        ("index", LoroValue::I64(i64::try_from(e.index).unwrap_or(0))),
+        ("dest", LoroValue::from(e.send.dest.as_str())),
+        ("mode", LoroValue::from(e.send.mode.as_str())),
+        ("volume", LoroValue::Double(e.send.volume)),
+        ("pan", LoroValue::Double(e.send.pan)),
+        ("muted", LoroValue::Bool(e.send.muted)),
+        ("from", LoroValue::I64(i64::from(e.send.from))),
+        ("to", LoroValue::I64(i64::from(e.send.to))),
+    ]
+}
+
+fn read_send(fields: &HashMap<String, LoroValue>) -> SendEntry {
+    let g = Get(fields);
+    SendEntry {
+        track: g.string("track"),
+        index: usize::try_from(g.i64("index", 0)).unwrap_or(0),
+        send: SendState {
+            dest: g.string("dest"),
+            mode: g.string("mode"),
+            volume: g.f64("volume", 1.0),
+            pan: g.f64("pan", 0.0),
+            muted: g.bool("muted", false),
+            from: u32::try_from(g.i64("from", 0)).unwrap_or(0),
+            to: u32::try_from(g.i64("to", 0)).unwrap_or(0),
+        },
+    }
+}
+
+fn envelope_fields(e: &EnvelopeEntry) -> Fields {
+    vec![
+        ("track", LoroValue::from(e.track.as_str())),
+        ("what", LoroValue::from(e.what.as_str())),
+        ("mode", LoroValue::from(e.envelope.mode.as_str())),
+        ("visible", LoroValue::Bool(e.envelope.visible)),
+        ("armed", LoroValue::Bool(e.envelope.armed)),
+        (
+            "points",
+            number_list(
+                e.envelope
+                    .points
+                    .iter()
+                    .flat_map(|p| [p.at, p.value, f64::from(p.shape), p.tension]),
+            ),
+        ),
+    ]
+}
+
+fn read_envelope(fields: &HashMap<String, LoroValue>) -> EnvelopeEntry {
+    let g = Get(fields);
+    EnvelopeEntry {
+        track: g.string("track"),
+        what: g.string("what"),
+        envelope: EnvelopeState {
+            mode: g.string("mode"),
+            visible: g.bool("visible", false),
+            armed: g.bool("armed", false),
+            points: numbers(fields.get("points"))
+                .chunks_exact(4)
+                .filter_map(|p| match *p {
+                    [at, value, shape, tension] => Some(EnvelopePointState {
+                        at,
+                        value,
+                        shape: num_traits::ToPrimitive::to_u8(&shape).unwrap_or(0),
+                        tension,
+                    }),
+                    _ => None,
+                })
+                .collect(),
         },
     }
 }

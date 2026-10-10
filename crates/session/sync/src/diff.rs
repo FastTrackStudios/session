@@ -77,6 +77,14 @@ pub enum TrackField {
     ParentSend,
     VisibleInTcp,
     VisibleInMixer,
+    /// Its fixed lanes: how many, their names, which play.
+    Lanes,
+    /// Its part in the track groups.
+    Grouping,
+    /// Its FX chain: an FX added, removed, moved, bypassed or set.
+    Fx,
+    Sends,
+    Envelopes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +102,14 @@ pub enum ItemField {
     FadeOutShape,
     Label,
     Color,
+    /// The active take's name, source, offset and rate.
     Take,
+    FixedLane,
+    Loop,
+    /// The take's stretch markers.
+    Stretch,
+    /// A MIDI take's notes.
+    Notes,
 }
 
 /// The steps from `old` to `new`.
@@ -240,6 +255,11 @@ fn track_fields(a: &TrackState, b: &TrackState) -> Vec<TrackField> {
             a.visible_in_mixer != b.visible_in_mixer,
             TrackField::VisibleInMixer,
         ),
+        (a.lanes != b.lanes, TrackField::Lanes),
+        (a.grouping != b.grouping, TrackField::Grouping),
+        (a.fx != b.fx, TrackField::Fx),
+        (a.sends != b.sends, TrackField::Sends),
+        (a.envelopes != b.envelopes, TrackField::Envelopes),
     ];
     checks
         .into_iter()
@@ -267,7 +287,18 @@ fn item_fields(a: &ItemState, b: &ItemState) -> Vec<ItemField> {
         ),
         (a.label != b.label, ItemField::Label),
         (a.color != b.color, ItemField::Color),
-        (a.take != b.take, ItemField::Take),
+        (
+            a.take.name != b.take.name
+                || a.take.source != b.take.source
+                || a.take.start_offset != b.take.start_offset
+                || a.take.playrate != b.take.playrate
+                || a.take.midi != b.take.midi,
+            ItemField::Take,
+        ),
+        (a.fixed_lane != b.fixed_lane, ItemField::FixedLane),
+        (a.loop_source != b.loop_source, ItemField::Loop),
+        (a.take.stretch != b.take.stretch, ItemField::Stretch),
+        (a.take.notes != b.take.notes, ItemField::Notes),
     ];
     checks
         .into_iter()
