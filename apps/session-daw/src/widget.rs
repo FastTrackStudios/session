@@ -2015,6 +2015,7 @@ impl ArrangementWidget {
                 pre_roll_us,
                 crossfade_us,
                 stretch_over_us,
+                attacks_us,
             } = &action
             {
                 let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1e6;
@@ -2022,6 +2023,7 @@ impl ArrangementWidget {
                     pre_roll: seconds(*pre_roll_us),
                     crossfade: seconds(*crossfade_us),
                     stretch_over: (*stretch_over_us > 0).then(|| seconds(*stretch_over_us)),
+                    attacks: attacks_us.iter().map(|us| seconds(*us)).collect(),
                 };
                 handled |= self.slip_drums(moves, cut);
                 continue;

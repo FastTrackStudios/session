@@ -32,6 +32,7 @@ fn be_the_window(path: &Path) {
             pre_roll_us,
             crossfade_us,
             stretch_over_us,
+            attacks_us,
         } = action
         else {
             continue;
@@ -45,6 +46,7 @@ fn be_the_window(path: &Path) {
             pre_roll: seconds(pre_roll_us),
             crossfade: seconds(crossfade_us),
             stretch_over: (stretch_over_us > 0).then(|| seconds(stretch_over_us)),
+            attacks: attacks_us.iter().map(|us| seconds(*us)).collect(),
         };
         let mut effects = Vec::new();
         Editor::slip_items(

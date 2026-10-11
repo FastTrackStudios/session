@@ -176,10 +176,36 @@ pub fn reset_edit(
             daw.delete_item(project.clone(), ItemRef::Guid(item.guid.clone()))
                 .map_err(fail)?;
         }
-        for item in fresh {
+        // A comp cut where nothing changes — the same recording running
+        // on, split by a stray edit — copies as one: a seam the edit did
+        // not make is one it cannot close.
+        let mut fresh = fresh;
+        fresh.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
+        let spans: Vec<(f64, f64, f64)> = fresh
+            .iter()
+            .map(|i| {
+                (
+                    i.position.as_seconds(),
+                    i.length.as_seconds(),
+                    i.start_offset.as_seconds(),
+                )
+            })
+            .collect();
+        for (first, length) in glued(&spans) {
+            let Some(item) = fresh.get(first) else {
+                continue;
+            };
             let copy = daw
                 .duplicate_item(project.clone(), ItemRef::Guid(item.guid.clone()))
                 .ok_or_else(|| format!("{path}: an item would not copy"))?;
+            if (length - item.length.as_seconds()).abs() > 1e-9 {
+                daw.set_length(
+                    project.clone(),
+                    ItemRef::Guid(copy.clone()),
+                    daw_proto::primitives::Duration::from_seconds(length),
+                )
+                .map_err(fail)?;
+            }
             daw.set_fixed_lane(project.clone(), ItemRef::Guid(copy), edit)
                 .map_err(fail)?;
         }
@@ -197,6 +223,35 @@ pub fn reset_edit(
         }
     }
     Ok(said)
+}
+
+/// How near two comp items must meet, on the timeline and in their
+/// source, to be one recording running on, seconds.
+const RUNS_ON: f64 = 0.001;
+
+/// Comp items (`(position, length, source offset)`, by position) as the
+/// runs to copy: each run's first item and the length it covers.
+///
+/// Items that meet where the one before ends, on the timeline and in the
+/// source, are one.
+#[must_use]
+pub fn glued(items: &[(f64, f64, f64)]) -> Vec<(usize, f64)> {
+    let mut runs: Vec<(usize, f64)> = Vec::new();
+    let mut last: Option<(f64, f64)> = None;
+    for (k, &(at, length, from)) in items.iter().enumerate() {
+        let joins = last.is_some_and(|(end, source_end)| {
+            (at - end).abs() <= RUNS_ON && (from - source_end).abs() <= RUNS_ON
+        });
+        match runs.last_mut() {
+            Some((first, run)) if joins => {
+                let start = items.get(*first).map_or(at, |i| i.0);
+                *run = at + length - start;
+            }
+            _ => runs.push((k, length)),
+        }
+        last = Some((at + length, from + length));
+    }
+    runs
 }
 
 /// Play the lane named `name` on every drum track that has one; how many
@@ -246,5 +301,20 @@ mod tests {
         assert_eq!(lane_named(&track, "COMP"), Some(0));
         assert_eq!(lane_named(&track, " edit "), Some(2));
         assert_eq!(lane_named(&track, "ghost"), None, "past the lane count");
+    }
+}
+
+#[cfg(test)]
+mod glue_tests {
+    use super::glued;
+
+    /// A take split at 2 s and 19.5 s where nothing changed copies as one
+    /// item; a real comp seam — another take's audio — stays two.
+    #[test]
+    fn a_stray_split_copies_as_one() {
+        let take = [(0.0, 2.0, 1.5), (2.0, 17.5, 3.5), (19.5, 250.0, 21.0)];
+        assert_eq!(glued(&take), [(0, 269.5)]);
+        let comped = [(0.0, 2.0, 1.5), (2.0, 17.5, 40.0)];
+        assert_eq!(glued(&comped), [(0, 2.0), (1, 17.5)]);
     }
 }

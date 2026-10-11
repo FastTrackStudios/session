@@ -68,6 +68,9 @@ pub enum Action {
         crossfade_us: i64,
         /// A gap longer than this is stretched over (0: never).
         stretch_over_us: i64,
+        /// Every hit of the kit where it plays now, µs, by time: no seam
+        /// reaches back over one.
+        attacks_us: Vec<i64>,
     },
     /// Gain stage the session (Shift+G), or with `clear` (Alt+G) put every
     /// staged item back at an item volume of 1 (`crate::gain_stage`).

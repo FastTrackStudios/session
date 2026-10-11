@@ -1509,6 +1509,18 @@ pub fn overlay(
     }
 }
 
+/// Where in its take `source` plays, through `markers` (by position): `None`
+/// with fewer than two, or outside them.
+fn stretched(markers: &[daw_proto::StretchMarker], source: f64) -> Option<f64> {
+    markers.windows(2).find_map(|pair| {
+        let [a, b] = pair else { return None };
+        let span = b.source_position - a.source_position;
+        (source >= a.source_position && source <= b.source_position && span > 0.0).then(|| {
+            ((source - a.source_position) / span).mul_add(b.position - a.position, a.position)
+        })
+    })
+}
+
 /// Every hit of the kit where it plays now — a hit cut into two slices
 /// that both play it is here twice, one cut away is not here at all.
 #[must_use]
@@ -1541,6 +1553,26 @@ pub fn playback(daw: &daw::standalone::Standalone, project: &ProjectContext) -> 
             };
             let from = take.start_offset.as_seconds();
             let to = item.length.as_seconds().mul_add(rate, from);
+            // A slice drawn out over a gap plays less of its source than
+            // its length says: where its stretch markers say.
+            let stretch = daw_proto::StretchMarkers::get_stretch_markers(
+                daw,
+                project.clone(),
+                ItemRef::Guid(item.guid.clone()),
+                TakeRef::Active,
+            );
+            let (from, to) = match (stretch.first(), stretch.last()) {
+                (Some(first), Some(last)) if stretch.len() > 1 => {
+                    (first.source_position, last.source_position)
+                }
+                _ => (from, to),
+            };
+            let at = |source: f64| {
+                stretched(&stretch, source).map_or_else(
+                    || item.position.as_seconds() + (source - from) / rate,
+                    |t| item.position.as_seconds() + t,
+                )
+            };
             let markers = by_source.entry(path).or_insert_with(|| {
                 daw.get_take_markers(
                     project.clone(),
@@ -1559,7 +1591,7 @@ pub fn playback(daw: &daw::standalone::Standalone, project: &ProjectContext) -> 
                 out.push(Played {
                     id: m.id.clone(),
                     piece: h.piece.clone(),
-                    time: item.position.as_seconds() + (m.source_position_seconds - from) / rate,
+                    time: at(m.source_position_seconds),
                     peak_db: h.peak_db,
                     mark: h.clone(),
                 });
@@ -1707,17 +1739,24 @@ pub fn check(
             }
         }
     }
-    let mut offs: Vec<f64> = targets
-        .iter()
-        .filter_map(|t| {
-            after
-                .iter()
-                .map(|p| (p.time - t).abs())
-                .filter(|d| *d < 0.010)
-                .min_by(f64::total_cmp)
-        })
-        .map(|d| d * 1_000.0)
-        .collect();
+    let mut offs: Vec<f64> = Vec::new();
+    for t in targets {
+        let Some((d, near)) = after
+            .iter()
+            .map(|p| ((p.time - t).abs(), p))
+            .filter(|(d, _)| *d < 0.010)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+        else {
+            continue;
+        };
+        if d > 0.002 && out.problems.len() < 20 {
+            out.problems.push(format!(
+                "sent to {t:.4}, the nearest hit ({} {}) plays at {:.4}",
+                near.piece, near.id, near.time
+            ));
+        }
+        offs.push(d * 1_000.0);
+    }
     offs.sort_by(f64::total_cmp);
     out.off_target = u32::try_from(offs.iter().filter(|d| **d > 2.0).count()).unwrap_or(u32::MAX);
     // Outside the span nothing moves: a gesture at its edge may take a hit

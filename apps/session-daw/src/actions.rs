@@ -1301,7 +1301,7 @@ fn register_review(list: &ActionList) {
                         .filter(|t| *t >= lo && *t < hi)
                     {
                         hits = hits.saturating_add(1);
-                        let step = 4.0 * edge(daw, &project, h);
+                        let step = sixteenth(daw, &project, h);
                         let mine = nearest(&own, h).filter(|n| (n - h).abs() <= step + 0.01);
                         let any = nearest(&all, h).filter(|n| (n - h).abs() <= ON_NOTE_REVIEW);
                         match (mine, any) {
@@ -2817,11 +2817,16 @@ enum Placed {
     Nothing,
 }
 
+/// A sixteenth at `t`, seconds.
+fn sixteenth(daw: &daw::standalone::Standalone, project: &ProjectContext, t: f64) -> f64 {
+    15.0 / daw.get_tempo_at(project.clone(), t).max(1.0)
+}
+
 /// Half a sixteenth at `t`, seconds: how far before a section's downbeat
 /// a hit still belongs to it — a downbeat pushed early is the section's
 /// first hit, not the last of the one before.
 fn edge(daw: &daw::standalone::Standalone, project: &ProjectContext, t: f64) -> f64 {
-    7.5 / daw.get_tempo_at(project.clone(), t).max(1.0)
+    sixteenth(daw, project, t) / 2.0
 }
 
 /// Each moment's target and what placed it. With `target: Guided` or
@@ -2859,11 +2864,14 @@ fn targets(
         .map(|(n, _, h)| (n.clone(), h.iter().map(|h| h.time).collect()))
         .collect();
     let map = crate::drum_reference::learn_map(&notes, &named, NOTE_WINDOW);
-    let step = 4.0 * edge(daw, project, span.0);
+    let step = sixteenth(daw, project, span.0);
     let (lo, hi) = (span.0 - edge(daw, project, span.0), span.1);
     // Each piece's hits in the span and the note each is.
     let mut written: Vec<(&str, f64, f64)> = Vec::new();
-    let mut feels: Vec<f64> = Vec::new();
+    // Every piece's hits plainly their notes, `(hit, offset)`: the feel.
+    let mut plain: Vec<(f64, f64)> = Vec::new();
+    // The lines the chart writes a piece of the kit on.
+    let mut kit_lines: Vec<f64> = Vec::new();
     // Every line the chart writes anything on — a piece of the kit, or a
     // note the map cannot name (a tom with no trigger, a cymbal on the
     // kick) — each on its line.
@@ -2878,6 +2886,9 @@ fn targets(
                 .filter(|line| (line - n.time).abs() <= ON_ITS_LINE)
         })
         .collect();
+    // Each piece's notes and hits in the span; first the feel, read off
+    // every piece's plain matches together, then each piece's own match.
+    let mut pieces: Vec<(&str, Vec<f64>, Vec<f64>)> = Vec::new();
     for (name, _, hits) in kit {
         let pitches: Vec<u8> = map
             .iter()
@@ -2900,30 +2911,34 @@ fn targets(
             .collect();
         its.sort_by(f64::total_cmp);
         its.dedup_by(|x, y| (*x - *y).abs() < 0.002);
+        kit_lines.extend(its.iter().copied());
         let played: Vec<f64> = hits
             .iter()
             .map(|h| h.time)
             .filter(|t| *t >= lo && *t < hi)
             .collect();
-        if played.is_empty() || its.is_empty() {
-            continue;
+        if !played.is_empty() && !its.is_empty() {
+            plain.extend(crate::written::plain(&played, &its, step));
+            pieces.push((name.as_str(), played, its));
         }
-        let aligned = crate::written::align(&played, &its, step);
-        if aligned.notes.iter().flatten().count() >= 4 {
-            feels.push(aligned.feel);
-        }
+    }
+    plain.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let feel = |t: f64| crate::written::feel_at(&plain, t);
+    for (name, played, its) in &pieces {
+        let aligned = crate::written::align(played, its, step, feel);
         written.extend(
             played
                 .iter()
                 .zip(&aligned.notes)
-                .filter_map(|(h, n)| n.map(|n| (name.as_str(), *h, n))),
+                .filter_map(|(h, n)| n.map(|n| (*name, *h, n))),
         );
     }
-    feels.sort_by(f64::total_cmp);
-    let feel = feels.get(feels.len() / 2).copied().unwrap_or(0.0);
     lines.sort_by(f64::total_cmp);
     lines.dedup_by(|x, y| (*x - *y).abs() < 0.002);
+    kit_lines.sort_by(f64::total_cmp);
+    kit_lines.dedup_by(|x, y| (*x - *y).abs() < 0.002);
     let nearest_written = |t: f64| nearest_of(&lines, t);
+    let nearest_kit = |t: f64| nearest_of(&kit_lines, t);
     let sure = settings.sure_ms / 1_000.0;
     Ok(moments
         .iter()
@@ -2945,14 +2960,19 @@ fn targets(
                 .max_by_key(|n| said.iter().filter(|o| (*o - **n).abs() < 0.002).count())
                 .copied();
             let inside = m.time >= lo && m.time < hi;
-            let felt = if inside { m.time + feel } else { m.time };
+            let felt = if inside {
+                m.time + feel(m.time)
+            } else {
+                m.time
+            };
             let within = |t: f64| (t - m.time).abs() <= step + FURTHEST_PAST;
             if let Some(note) = note {
                 // A fill plays a written figure with the pieces swapped —
                 // a kick where the chart has a snare. Nearer another
-                // written line than its own piece's note, the hit is that
-                // line's.
-                let line = nearest_written(felt)
+                // piece's note than its own, the hit is that line's (a
+                // piece of the kit: a hat on every sixteenth says nothing
+                // of where a kick goes).
+                let line = nearest_kit(felt)
                     .filter(|w| (w - felt).abs() < (note - felt).abs())
                     .unwrap_or(note);
                 if within(line) {
@@ -3307,9 +3327,7 @@ fn detect(
                     // Never out of the span: the next section's first hit
                     // is where its own edit starts.
                     .filter(|line| *line >= span.0 && *line < span.1 - SEAM_ROOM)
-                    .filter(|line| {
-                        (line - *h).abs() <= 4.0f64.mul_add(edge(daw, project, *h), FURTHEST_PAST)
-                    })
+                    .filter(|line| (line - *h).abs() <= sixteenth(daw, project, *h) + FURTHEST_PAST)
             {
                 let nearest = grid_line(daw, project, *h, settings.grid);
                 if (line - nearest).abs() > 0.002 {
@@ -3474,7 +3492,7 @@ static QUANTIZE: ActionMeta = meta(
     "QUANTIZE",
     "quantize",
     "Quantize the drums",
-    "Quantize the kit from its hit markers (HITS_DETECT first): every drum track cut `lead_ms` before each hit and moved together so the HIT lands on its target — the item starts before the beat, the attack is on it — the seams crossfaded (`xfade_ms`). Over `sections` (by name, from the SECTIONS lane: `Verse 1`, `Chorus`) or `from`/`to` (seconds), each with these settings — so a verse and a chorus can each be quantized their own way. The edit zones (ZONES_LIST) are left as played — `fills: Include` edits them too (a fill that keeps a grid, on that grid: `grid: 12` for 8th triplets, 24 for 16th triplets), `Only` edits only them; the drum-edit settings (grid, strength, target, tolerance, lead, crossfade…) can be given for this call alone. `target: Pattern` places each hit by the section's own groove (DRUMS_GROOVE): a hit in a slot the section plays bar after bar goes to that slot's line, however far it drifted, and `by_groove` lists each sent to a line other than the nearest. `dry_run` says what it would do; `brief` leaves out the lists of moves. After an edit, a check from the markers: hits lost, hits doubled (a double attack), and how far the moved hits landed from where they were sent.",
+    "Quantize the kit from its hit markers (HITS_DETECT first): every drum track cut `lead_ms` before each hit and moved together so the HIT lands on its target — the item starts before the beat, the attack is on it — the seams crossfaded (`xfade_ms`). Over `sections` (by name, from the SECTIONS lane: `Verse 1`, `Chorus`) or `from`/`to` (seconds), each with these settings — so a verse and a chorus can each be quantized their own way. The edit zones (ZONES_LIST) are left as played — `fills: Include` edits them too (a fill that keeps a grid, on that grid: `grid: 12` for 8th triplets, 24 for 16th triplets), `Only` edits only them; the drum-edit settings (grid, strength, target, tolerance, lead, crossfade…) can be given for this call alone. `target: Pattern` places each hit by the section's own groove (DRUMS_GROOVE): a hit in a slot the section plays bar after bar goes to that slot's line, however far it drifted, and `by_groove` lists each sent to a line other than the nearest. `dry_run` says what it would do; `brief` leaves out the lists of moves and keeps three of each span's calls. After an edit, a check from the markers: hits lost, hits doubled (a double attack), and how far the moved hits landed from where they were sent.",
     "Drums",
     "",
 );
@@ -3646,6 +3664,10 @@ struct QuantizeArg {
     #[facet(default)]
     plan: Vec<PlanStep>,
 }
+
+/// How many of a span's groove and MIDI calls a brief answer keeps:
+/// `DRUMS_REVIEW` holds every hit up to the chart.
+const BRIEF_CALLS: usize = 3;
 
 /// One step of a quantize's plan.
 #[derive(Facet)]
@@ -4296,6 +4318,8 @@ fn register_quantize(list: &ActionList) {
             for span in &mut out {
                 span.result.biggest.clear();
                 span.result.to_check.clear();
+                span.by_groove.truncate(BRIEF_CALLS);
+                span.by_written.truncate(BRIEF_CALLS);
             }
         }
         Ok(out)
@@ -4475,7 +4499,13 @@ fn slip_now(
     }
     #[cfg(not(feature = "signal"))]
     let _ = (daw, project);
+    let mut attacks_us: Vec<i64> = crate::hits::playback(daw, project)
+        .iter()
+        .map(|p| us(p.time))
+        .collect();
+    attacks_us.sort_unstable();
     queue(Action::SlipDrums {
+        attacks_us,
         moves: cuts,
         pre_roll_us: us(settings.lead_ms / 1_000.0),
         crossfade_us: us(settings.xfade_ms / 1_000.0),

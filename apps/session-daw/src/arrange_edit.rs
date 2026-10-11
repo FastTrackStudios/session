@@ -12,7 +12,7 @@
 //! The window's copy of the project is edited here too (`&mut
 //! Project`), so a prediction and the edit it predicts are one place.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use daw_proto::Track;
 use daw_ui::studio::project::Project;
@@ -1838,6 +1838,7 @@ fn slip_takes(
     // Every cut first, in the take's own time, then every move. Cut and
     // move hit by hit and each move shifts the audio the next cut is
     // placed on: the error runs down the take.
+    let cut_lead = cut.pre_roll;
     let mut cuts: Vec<(f64, f64)> = moves
         .iter()
         .map(|&(hit, shift)| (hit - cut.pre_roll, shift))
@@ -1860,6 +1861,9 @@ fn slip_takes(
     // before reaches over its seam by the crossfade, and must not be cut
     // there.
     let mut seams: Vec<f64> = Vec::new();
+    // Each seam's slice and where its hit is in it: what the seams know
+    // not to reach back past.
+    let mut seam_hits: Vec<(f64, f64)> = Vec::new();
     for cut in &mut cuts {
         let at = starts.partition_point(|s| *s <= cut.0 + SEAM_SNAP);
         if let Some(seam) = at
@@ -1868,6 +1872,7 @@ fn slip_takes(
             .copied()
             .filter(|s| cut.0 - s <= SEAM_REACH)
         {
+            seam_hits.push((seam, cut.0 + cut_lead - seam));
             cut.0 = seam;
             seams.push(seam);
         }
@@ -1944,12 +1949,40 @@ fn slip_takes(
             .filter(|c| (c.0 - pos).abs() < 1e-6)
             .map(|c| c.1)
     };
-    let of_mics = |guid: &str| mics.iter().any(|m| piece_of(guid, m));
+    // Where every slice of the kit is before the moves, and where in its
+    // source it starts: a hit's time then is a place in its source.
+    let was_at: HashMap<String, (f64, f64)> = project
+        .items
+        .values()
+        .flatten()
+        .filter(|i| of_mics(&i.guid, &mic_set))
+        .map(|i| {
+            (
+                i.guid.clone(),
+                (i.position.as_seconds(), i.start_offset.as_seconds()),
+            )
+        })
+        .collect();
+    let snap_at = |pos: f64| {
+        seam_hits
+            .iter()
+            .find(|(seam, _)| (seam - pos).abs() < 1e-6)
+            .map(|(_, into)| *into)
+    };
     for item in project.items.values_mut().flatten() {
         let pos = item.position.as_seconds();
+        if !of_mics(&item.guid, &mic_set) {
+            continue;
+        }
+        // A slice already there that a hit is in: where.
+        if let Some(into) = snap_at(pos)
+            && item.snap_offset.as_seconds() <= 0.0
+        {
+            item.snap_offset = Duration::from_seconds(into);
+            effects.push(Effect::Send(Edit::SetSnapOffset(item.guid.clone(), into)));
+        }
         if let Some(shift) = shift_at(pos)
             && shift.abs() >= 1e-4
-            && of_mics(&item.guid)
         {
             let landing = pos + shift;
             item.position = PositionInSeconds::from_seconds(landing);
@@ -1965,7 +1998,7 @@ fn slip_takes(
         });
     if touched.0.is_finite() {
         let window = (touched.0 - SEAM_WINDOW, touched.1 + SEAM_WINDOW);
-        close_seams(project, &mic_set, window, cut, effects);
+        close_seams(project, (&mic_set, &was_at), window, &cut, effects);
     }
 }
 
@@ -2214,9 +2247,9 @@ const SAME_TAKE: f64 = 0.25;
 /// hit's attack.
 fn close_seams(
     project: &mut Project,
-    mics: &HashSet<&str>,
+    (mics, was_at): (&HashSet<&str>, &HashMap<String, (f64, f64)>),
     (from, to): (f64, f64),
-    cut: SlipCut,
+    cut: &SlipCut,
     effects: &mut Vec<Effect>,
 ) {
     let fade = if crate::options::AUTO_CROSSFADE.get() {
@@ -2236,7 +2269,7 @@ fn close_seams(
         }
         for pieces in by_lane.values_mut() {
             pieces.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
-            seams(pieces, (cut, fade), effects);
+            seams(pieces, (cut, fade, was_at), effects);
         }
     }
 }
@@ -2244,7 +2277,7 @@ fn close_seams(
 /// [`close_seams`] on one lane's slices, by position.
 fn seams(
     pieces: &mut [&mut daw_proto::Item],
-    (cut, fade): (SlipCut, f64),
+    (cut, fade, was_at): (&SlipCut, f64, &HashMap<String, (f64, f64)>),
     effects: &mut Vec<Effect>,
 ) {
     use daw_proto::primitives::{Duration, PositionInSeconds};
@@ -2289,10 +2322,22 @@ fn seams(
             // never into the hit before it. That one's attack is a lead
             // into the slice before; reached past, it plays twice (a
             // snare 64 ms before a kick sent 58 ms later did).
+            // And never over any hit at all in its own source before its
+            // own — one the slip did not cut on (a flam's grace riding in
+            // its stroke's slice) is as much an attack to play twice.
+            let uncut = was_at.get(&piece.guid).and_then(|&(at, from)| {
+                let own = at + (attack_of(piece, cut.pre_roll) - from);
+                let i = cut.attacks.partition_point(|t| *t < own - SEAM_GUARD);
+                let latest = i.checked_sub(1).and_then(|i| cut.attacks.get(i))?;
+                Some(from + (latest - at) + SEAM_GUARD)
+            });
             let floor = before
                 .last()
                 .filter(|_| joined)
                 .map(|prev| attack_of(prev, cut.pre_roll) + SEAM_GUARD)
+                .into_iter()
+                .chain(uncut)
+                .reduce(f64::max)
                 .filter(|f| *f < piece.start_offset.as_seconds());
             let room = if joined {
                 floor.map_or(0.0, |f| piece.start_offset.as_seconds() - f)
@@ -2322,7 +2367,16 @@ fn seams(
                 && let Some(prev) = before.last_mut()
             {
                 let source_end = prev.start_offset.as_seconds() + prev.length.as_seconds();
-                let attack = was_cut + cut.pre_roll;
+                // This slice's hit: the lead into it — or, a slice with no
+                // hit in it (a take's own start, no cut, no snap), none:
+                // the slice before may run on over all of it.
+                let hit_free =
+                    piece.snap_offset.as_seconds() <= 0.0 && !piece.guid.contains("-split@");
+                let attack = if hit_free {
+                    piece.start_offset.as_seconds() + piece.length.as_seconds()
+                } else {
+                    was_cut + cut.pre_roll
+                };
                 let more = left.min(attack - SEAM_GUARD - source_end).max(0.0);
                 if more > 0.0 {
                     let length = prev.length.as_seconds() + more;
@@ -2331,6 +2385,34 @@ fn seams(
                         prev.guid.clone(),
                         prev.position.as_seconds(),
                         length,
+                    )));
+                }
+            }
+            // Still short — two hits a gap apart, each side stopped at an
+            // attack — the last resort: the slice before drawn out over
+            // what is left, its decay slowed a little, rather than the
+            // kit dropping out.
+            if let Some(prev) = before.last_mut() {
+                let meets = piece.position.as_seconds() + fade;
+                let short = meets - (prev.position.as_seconds() + prev.length.as_seconds());
+                // A few milliseconds are worth a slower tail; more is a
+                // gap to see, not to hide.
+                let least = if short <= RESIDUAL {
+                    RESIDUAL_LEAST_RATE
+                } else {
+                    STRETCH_LEAST_RATE
+                };
+                if short > 1e-6
+                    && let Some(markers) = draw_out_to(prev, meets, least)
+                {
+                    effects.push(Effect::Send(Edit::TrimItem(
+                        prev.guid.clone(),
+                        prev.position.as_seconds(),
+                        prev.length.as_seconds(),
+                    )));
+                    effects.push(Effect::Send(Edit::SetStretchMarkers(
+                        prev.guid.clone(),
+                        markers,
                     )));
                 }
             }
@@ -2441,17 +2523,29 @@ pub const STRETCH_KEEP: f64 = 0.030;
 /// filled the usual way instead.
 pub const STRETCH_LEAST_RATE: f64 = 0.8;
 
+/// A gap no seam could close this short, seconds…
+const RESIDUAL: f64 = 0.012;
+
+/// …is drawn over at down to this rate: a short tail slowed is not heard,
+/// a dropout is.
+const RESIDUAL_LEAST_RATE: f64 = 0.5;
+
 /// `item` drawn out to end at `to`: its first [`STRETCH_KEEP`] as it was,
 /// the rest slowed to reach — the markers that say so, `(take time,
 /// source time)`, and the item lengthened. `None`, and the item left, when
 /// that would slow it below [`STRETCH_LEAST_RATE`].
 fn draw_out(item: &mut daw_proto::Item, to: f64) -> Option<Vec<(f64, f64)>> {
+    draw_out_to(item, to, STRETCH_LEAST_RATE)
+}
+
+/// [`draw_out`], slowing it no further than `least` of its rate.
+fn draw_out_to(item: &mut daw_proto::Item, to: f64, least: f64) -> Option<Vec<(f64, f64)>> {
     use daw_proto::primitives::Duration;
     let length = item.length.as_seconds();
     let longer = to - item.position.as_seconds();
     let keep = STRETCH_KEEP.min(length / 2.0);
     let decay = length - keep;
-    if longer <= length || decay <= 0.0 || decay / (longer - keep) < STRETCH_LEAST_RATE {
+    if longer <= length || decay <= 0.0 || decay / (longer - keep) < least {
         return None;
     }
     let offset = item.start_offset.as_seconds();
@@ -2481,7 +2575,7 @@ pub const SEAM_REACH: f64 = 0.035;
 
 /// Where a slip cuts and how its seams are joined — Perfect Timing!'s
 /// Lead and Xfade, in seconds.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SlipCut {
     /// How far before a hit the cut is ([`QUANTIZE_PRE_ROLL`]).
     pub pre_roll: f64,
@@ -2493,6 +2587,11 @@ pub struct SlipCut {
     /// by the slice after reaching back into audio it already played.
     /// `None`: never; stretching is the last resort.
     pub stretch_over: Option<f64>,
+    /// Every hit of the kit where it plays before the slip, by time — the
+    /// ones it cuts on and the ones it does not (a flam's grace riding in
+    /// its stroke's slice, a ghost, bleed): no slice reaches back over
+    /// any of them. Empty: only the cut hits are known.
+    pub attacks: std::sync::Arc<[f64]>,
 }
 
 impl Default for SlipCut {
@@ -2501,6 +2600,7 @@ impl Default for SlipCut {
             pre_roll: QUANTIZE_PRE_ROLL,
             crossfade: QUANTIZE_CROSSFADE,
             stretch_over: None,
+            attacks: std::sync::Arc::from(Vec::new()),
         }
     }
 }
@@ -2954,6 +3054,40 @@ mod tests {
 
     const PPS: f64 = 100.0;
 
+    /// A hit the slip did not cut on — a flam's grace riding in its
+    /// stroke's slice — is never played twice: the slice after reaching
+    /// back over a gap stops short of it.
+    #[test]
+    fn no_seam_reaches_back_over_a_grace() {
+        let (lead, fade) = (0.005, 0.005);
+        // A tom at 1.0 and its grace at 1.03 in one slice; a kick at 1.1
+        // sent 75 ms later — reaching back over the gap would start it at
+        // 1.015 in its source, before the grace.
+        let cut = SlipCut {
+            pre_roll: lead,
+            crossfade: fade,
+            stretch_over: None,
+            attacks: std::sync::Arc::from(vec![1.0, 1.03, 1.1]),
+        };
+        let mut tom = slice("t-split@0.995", 0.995, 0.995, 0.1, lead);
+        let mut kick = slice("t-split@1.095", 1.17, 1.095, 0.5, lead);
+        let was_at = HashMap::from([
+            (tom.guid.clone(), (0.995, 0.995)),
+            (kick.guid.clone(), (1.095, 1.095)),
+        ]);
+        let mut pieces = vec![&mut tom, &mut kick];
+        let mut effects = Vec::new();
+        seams(&mut pieces, (&cut, fade, &was_at), &mut effects);
+        let [_, kick] = pieces.as_slice() else {
+            panic!("two slices");
+        };
+        assert!(
+            kick.start_offset.as_seconds() > 1.03,
+            "the kick's slice reaches back to {:.4}, over the grace at 1.03",
+            kick.start_offset.as_seconds()
+        );
+    }
+
     /// A slice of one recording: `at` on the timeline, `from` in the
     /// source, `length` long, its hit `lead` in.
     fn slice(guid: &str, at: f64, from: f64, length: f64, lead: f64) -> daw_proto::Item {
@@ -2977,6 +3111,7 @@ mod tests {
             pre_roll: lead,
             crossfade: fade,
             stretch_over: None,
+            attacks: std::sync::Arc::from(Vec::new()),
         };
         // Four slices of one take, cut 5 ms before hits at 1.0, 1.5, 2.0
         // and 2.04: the second left where it was, the third moved 2 ms
@@ -2990,7 +3125,7 @@ mod tests {
         c.length = Duration::from_seconds(0.5);
         let mut pieces = vec![&mut a, &mut b, &mut c, &mut d];
         let mut effects = Vec::new();
-        seams(&mut pieces, (cut, fade), &mut effects);
+        seams(&mut pieces, (&cut, fade, &HashMap::new()), &mut effects);
         for pair in pieces.windows(2) {
             let [prev, next] = pair else { continue };
             let ends = prev.position.as_seconds() + prev.length.as_seconds();
