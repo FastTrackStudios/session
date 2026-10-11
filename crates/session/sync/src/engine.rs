@@ -14,9 +14,9 @@ use daw_proto::{FadeShape, TrackRef};
 
 use crate::diff::{Change, ItemField, TrackField};
 use crate::model::{
-    EnvelopePointState, EnvelopeState, FxState, HitState, ItemState, LaneState, MarkerState,
-    NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint, TakeMarkerState,
-    TakeState, TempoPoint, TrackState,
+    EnvelopePointState, EnvelopeState, FxState, GainPoint, HitState, ItemState, LaneState,
+    MarkerState, NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint,
+    TakeMarkerState, TakeState, TempoPoint, TrackState,
 };
 
 /// Where an FX's state is kept: put its bytes, get its name back (a
@@ -440,7 +440,11 @@ async fn read_items(
                 } else {
                     Vec::new()
                 };
-                Some((take, stretch, notes))
+                let volume = match active.envelopes().await {
+                    Ok(envelopes) => envelopes.volume().points().await.unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                };
+                Some((take, stretch, notes, volume))
             }
             // An item with no take (a label-only KEY item, say).
             Err(_) => None,
@@ -451,12 +455,40 @@ async fn read_items(
 }
 
 /// A take as the engine reports it: itself, its stretch markers, its
-/// notes (a MIDI take's).
+/// notes (a MIDI take's), its volume envelope.
 pub type TakeRead = (
     daw_proto::item::Take,
     Vec<daw_proto::StretchMarker>,
     Vec<daw_proto::MidiNote>,
+    Vec<daw_proto::automation::EnvelopePoint>,
 );
+
+/// How far past an item a take's volume curve is kept, seconds.
+const CURVE_PAD: f64 = 1.0;
+
+/// `points` (by time) cut to those over an item `length` long and
+/// [`CURVE_PAD`] either side, with the nearest beyond each end kept so
+/// the curve is what it was at the edges: a drum slice keeps its own
+/// stretch of a whole take's leveling, not all of it.
+fn over_item(points: &[GainPoint], length: f64) -> Vec<GainPoint> {
+    let (from, to) = (-CURVE_PAD, length + CURVE_PAD);
+    let first = points
+        .iter()
+        .position(|p| p.at >= from)
+        .unwrap_or(points.len());
+    let last = points
+        .iter()
+        .rposition(|p| p.at <= to)
+        .map_or(0, |i| i.saturating_add(1));
+    let (keep_from, keep_to) = (
+        first.saturating_sub(1),
+        last.saturating_add(1).min(points.len()),
+    );
+    points
+        .get(keep_from..keep_to.max(keep_from))
+        .unwrap_or_default()
+        .to_vec()
+}
 
 /// An item, with its active take, as the doc keeps it.
 #[must_use]
@@ -466,7 +498,7 @@ pub fn item_state(item: daw_proto::Item, take: Option<TakeRead>, media: &MediaRo
             playrate: 1.0,
             ..TakeState::default()
         },
-        |(take, stretch, notes)| TakeState {
+        |(take, stretch, notes, volume)| TakeState {
             stretch: stretch
                 .into_iter()
                 .map(|m| StretchPoint {
@@ -475,6 +507,16 @@ pub fn item_state(item: daw_proto::Item, take: Option<TakeRead>, media: &MediaRo
                     slope: m.slope,
                 })
                 .collect(),
+            volume: over_item(
+                &volume
+                    .into_iter()
+                    .map(|p| GainPoint {
+                        at: p.time.as_seconds(),
+                        value: p.value,
+                    })
+                    .collect::<Vec<_>>(),
+                item.length.as_seconds(),
+            ),
             notes: notes
                 .into_iter()
                 .map(|n| NoteState {
@@ -524,7 +566,13 @@ fn context_of(project: &Project) -> daw_proto::ProjectContext {
 /// the facade's per-call encoding — a kit of thirty thousand slices is
 /// that many items.
 pub trait Direct:
-    daw_proto::Items + daw_proto::Takes + daw_proto::Midi + daw_proto::StretchMarkers + Send + Sync
+    daw_proto::Items
+    + daw_proto::Takes
+    + daw_proto::Midi
+    + daw_proto::StretchMarkers
+    + daw_proto::automation::Automation
+    + Send
+    + Sync
 {
 }
 
@@ -533,6 +581,7 @@ impl<T> Direct for T where
         + daw_proto::Takes
         + daw_proto::Midi
         + daw_proto::StretchMarkers
+        + daw_proto::automation::Automation
         + Send
         + Sync
 {
@@ -924,6 +973,15 @@ async fn set_item_fields(
                             .collect(),
                     )
                     .await?;
+            }
+            ItemField::TakeVolume => {
+                let volume = h.active_take().envelopes().await?.volume();
+                volume.clear().await?;
+                for g in &item.take.volume {
+                    volume
+                        .add_point_linear(PositionInSeconds::from_seconds(g.at), g.value)
+                        .await?;
+                }
             }
             ItemField::Notes => {
                 let notes = item
@@ -1496,4 +1554,25 @@ async fn apply_grouping(
 /// An engine refusal, as the facade reports one.
 fn engine_error(e: &daw_proto::DawError) -> daw_control::Error {
     daw_control::Error::Other(e.to_string())
+}
+
+#[cfg(test)]
+mod curve_tests {
+    use super::{GainPoint, over_item};
+
+    /// A slice keeps its own stretch of a take's curve, and the points
+    /// just beyond it, so the curve at its edges is what it was.
+    #[test]
+    fn a_slice_keeps_its_stretch_of_the_curve() {
+        let curve: Vec<GainPoint> = (-50..50)
+            .map(|s| GainPoint {
+                at: f64::from(s),
+                value: 1.0,
+            })
+            .collect();
+        let kept = over_item(&curve, 2.0);
+        let at: Vec<f64> = kept.iter().map(|g| g.at).collect();
+        assert_eq!(at, [-2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0]);
+        assert!(over_item(&[], 2.0).is_empty());
+    }
 }

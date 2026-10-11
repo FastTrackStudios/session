@@ -1444,7 +1444,10 @@ impl ArrangementWidget {
         // Audio items made since the song opened (a lane's copy, a slice
         // cut elsewhere): their peaks read behind the window, each drawn
         // as it arrives, rather than left blank for good.
-        let waves = unread_audio(&fresh, &self.previews);
+        // And those whose sound changed under them (leveled: a new volume
+        // curve), read again in place — drawn as before until they are.
+        let mut waves = unread_audio(&fresh, &self.previews);
+        waves.extend(crate::midi::take_stale());
         if !waves.is_empty() {
             let previews = self.previews.clone();
             crate::wave_pool::spawn(move || previews.fill_waves_blocking(waves));

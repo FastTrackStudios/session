@@ -57,9 +57,9 @@ use loro::{
 };
 
 use crate::model::{
-    EnvelopePointState, EnvelopeState, FxState, HitState, ItemState, LaneState, MarkerState,
-    NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint, TakeMarkerState,
-    TakeState, TempoPoint, TrackState,
+    EnvelopePointState, EnvelopeState, FxState, GainPoint, HitState, ItemState, LaneState,
+    MarkerState, NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint,
+    TakeMarkerState, TakeState, TempoPoint, TrackState,
 };
 
 /// The schema version written into `meta.schema`.
@@ -943,6 +943,10 @@ fn item_fields(i: &ItemState) -> Fields {
             ),
         ),
         (
+            "take.volume",
+            number_list(i.take.volume.iter().flat_map(|g| [g.at, g.value])),
+        ),
+        (
             "take.notes",
             number_list(i.take.notes.iter().flat_map(|n| {
                 [
@@ -983,6 +987,13 @@ fn read_item(fields: &HashMap<String, LoroValue>) -> ItemState {
                 .chunks_exact(3)
                 .filter_map(|m| match *m {
                     [at, source, slope] => Some(StretchPoint { at, source, slope }),
+                    _ => None,
+                })
+                .collect(),
+            volume: numbers(fields.get("take.volume"))
+                .chunks_exact(2)
+                .filter_map(|g| match *g {
+                    [at, value] => Some(GainPoint { at, value }),
                     _ => None,
                 })
                 .collect(),

@@ -118,6 +118,9 @@ pub enum ItemField {
     Loop,
     /// The take's stretch markers.
     Stretch,
+    /// The take's volume envelope (after [`Self::Take`]: a take's offset
+    /// moves its envelope with its audio).
+    TakeVolume,
     /// A MIDI take's notes.
     Notes,
 }
@@ -346,6 +349,7 @@ pub fn item_fields(a: &ItemState, b: &ItemState) -> Vec<ItemField> {
         (a.fixed_lane != b.fixed_lane, ItemField::FixedLane),
         (a.loop_source != b.loop_source, ItemField::Loop),
         (a.take.stretch != b.take.stretch, ItemField::Stretch),
+        (a.take.volume != b.take.volume, ItemField::TakeVolume),
         (a.take.notes != b.take.notes, ItemField::Notes),
     ];
     checks

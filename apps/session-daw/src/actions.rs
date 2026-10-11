@@ -1167,6 +1167,40 @@ fn register_reference(list: &ActionList) {
     register_compare(list);
     register_restore_midi(list);
     register_review(list);
+    register_level(list);
+}
+
+static LEVEL: ActionMeta = meta(
+    "DRUMS_LEVEL",
+    "drums_level",
+    "Level the drums",
+    "Even each drum out before it is edited: every stroke (its hit marker's level) brought toward the drum's median — the kick most of the way, the snare a little less, the toms half — a few ms before its attack, held through its ring; ghosts, bleed and a flam's grace ride under the stroke before. Written as the take volume envelope of each drum's close mics on the comp (the same gain on every mic), replacing any earlier leveling: the envelope rides with the audio through every edit, so DRUMS_EDIT_LANES `reset` and the quantize after carry it. `pieces` (all when left out), `amount` 0..1 for every drum, `dry_run`. Says per drum the target, how many strokes went up and down, and the most.",
+    "Drums",
+    "",
+);
+
+/// What to level.
+#[derive(Facet)]
+struct LevelArg {
+    #[facet(default)]
+    pieces: Vec<String>,
+    amount: Option<f64>,
+    dry_run: Option<bool>,
+}
+
+fn register_level(list: &ActionList) {
+    list.register(&LEVEL, Effect::Mutating, |a: LevelArg| {
+        let (daw, project) = song()?;
+        crate::drum_level::level(
+            daw,
+            &project,
+            &a.pieces,
+            (
+                a.amount.map(|x| x.clamp(0.0, 1.0)),
+                a.dry_run.unwrap_or(false),
+            ),
+        )
+    });
 }
 
 static REVIEW: ActionMeta = meta(
@@ -3825,6 +3859,9 @@ fn spans(
 /// Wait for a queued slip to reach the engine: until the kit's hits play
 /// somewhere other than `before`, then a moment more for the rest of its
 /// steps. At most a few seconds.
+/// The longest a slip is waited for, seconds.
+const SLIP_LANDS: u64 = 30;
+
 fn wait_for_slip(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
@@ -3844,14 +3881,18 @@ fn wait_for_slip(
     let started = std::time::Instant::now();
     let mut last = was.clone();
     let mut steady_since: Option<std::time::Instant> = None;
-    while started.elapsed() < std::time::Duration::from_secs(8) {
+    // Long enough for a whole song's slip (thousands of edits, each
+    // slice's volume curve carried with it) to land, and steady for a
+    // second before it is judged — not caught halfway.
+    while started.elapsed() < std::time::Duration::from_secs(SLIP_LANDS) {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let now = print(&crate::hits::playback(daw, project));
         if now == was {
             continue;
         }
         if now == last {
-            if steady_since.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(300)) {
+            if steady_since.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(1_000))
+            {
                 return;
             }
             steady_since.get_or_insert_with(std::time::Instant::now);

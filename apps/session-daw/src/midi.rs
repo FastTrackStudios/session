@@ -60,7 +60,81 @@ pub struct Wave {
     pub points: Vec<(f32, f32)>,
 }
 
+/// Audio items whose waveform no longer draws what they play — their
+/// take's volume curve was rewritten — to be read again.
+static STALE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Say `items`' waveforms are stale: the window reads them again.
+pub fn mark_stale(items: impl IntoIterator<Item = String>) {
+    if let Ok(mut stale) = STALE.lock() {
+        stale.extend(items);
+    }
+}
+
+/// The items said stale since last asked.
+#[must_use]
+pub fn take_stale() -> Vec<String> {
+    STALE
+        .lock()
+        .map(|mut s| std::mem::take(&mut *s))
+        .unwrap_or_default()
+}
+
+/// The volume envelope of `item`'s active take, `(seconds into the item,
+/// linear gain)` by time: none when it has none.
+#[cfg(feature = "native")]
+fn take_volume(
+    daw: &daw::standalone::Standalone,
+    project: &daw::service::ProjectContext,
+    item: &str,
+) -> Vec<(f64, f64)> {
+    use daw::service::{ItemRef, Takes as _};
+    use daw_proto::automation::Automation as _;
+    let Some(take) = daw.get_active_take(project.clone(), ItemRef::Guid(item.to_owned())) else {
+        return Vec::new();
+    };
+    let location = daw_proto::EnvelopeLocation {
+        track: daw_proto::TrackRef::Index(0),
+        envelope: daw_proto::EnvelopeRef::Take {
+            item_guid: item.to_owned(),
+            take_guid: take.guid,
+            kind: daw_proto::TakeEnvelopeKind::Volume,
+        },
+    };
+    daw.points(project.clone(), location)
+        .into_iter()
+        .map(|p| (p.time.as_seconds(), p.value))
+        .collect()
+}
+
 impl Wave {
+    /// This one through a gain curve — `(seconds into it, linear gain)`,
+    /// by time, straight between points, the first's before it and the
+    /// last's after — as it plays through its take's volume envelope.
+    #[must_use]
+    pub fn through(mut self, curve: &[(f64, f64)]) -> Self {
+        if curve.is_empty() {
+            return self;
+        }
+        let gain_at = |t: f64| {
+            let at = curve.partition_point(|(x, _)| *x <= t);
+            match (at.checked_sub(1).and_then(|i| curve.get(i)), curve.get(at)) {
+                (Some(&(x0, g0)), Some(&(x1, g1))) if x1 > x0 => {
+                    ((t - x0) / (x1 - x0)).mul_add(g1 - g0, g0)
+                }
+                (Some(&(_, g)), _) | (None, Some(&(_, g))) => g,
+                (None, None) => 1.0,
+            }
+        };
+        let step = self.step;
+        for (k, point) in self.points.iter_mut().enumerate() {
+            let t = (crate::num::coord(k) + 0.5) * step;
+            let g = num_traits::ToPrimitive::to_f32(&gain_at(t)).unwrap_or(1.0);
+            *point = (point.0 * g, point.1 * g);
+        }
+        self
+    }
+
     /// The part of this one from `from` seconds into it, `length` long —
     /// silence where that reaches outside it. A slice of a take plays the
     /// take's own audio, so its waveform is this, cut where it was.
@@ -359,7 +433,10 @@ impl Previews {
                 TakeRef::Active,
                 WAVE_BLOCK,
             );
-            Wave::from_peaks(&peaks).map(|wave| (guid.clone(), wave))
+            // Drawn as it plays: through its take's volume envelope (a
+            // leveled drum's strokes even, as they sound).
+            let curve = take_volume(daw, &project, guid);
+            Wave::from_peaks(&peaks).map(|wave| (guid.clone(), wave.through(&curve)))
         });
         if let Ok(mut waves) = self.waves.lock() {
             for (guid, wave) in read.into_iter().flatten() {
@@ -481,7 +558,30 @@ async fn read(project: &daw_control::Project, guid: &str, length: f64) -> Vec<No
 
 #[cfg(test)]
 mod tests {
-    use super::{Note, Previews};
+    use super::{Note, Previews, Wave};
+
+    /// A wave through its take's volume curve is drawn as it plays: up
+    /// where the curve is up, down where it is down, as it was before.
+    #[test]
+    fn a_wave_is_drawn_through_its_volume_curve() {
+        let wave = Wave {
+            step: 0.5,
+            points: vec![(0.5, -0.5); 4],
+        };
+        let curve = [(0.9, 1.0), (1.0, 2.0), (1.9, 2.0), (2.0, 0.5)];
+        let drawn = wave.clone().through(&curve);
+        assert!(
+            (drawn.points[0].0 - 0.5).abs() < 1e-6,
+            "before the curve: as the first point"
+        );
+        assert!(
+            (drawn.points[2].0 - 1.0).abs() < 1e-6,
+            "doubled: {:?}",
+            drawn.points
+        );
+        assert!((drawn.points[2].1 + 1.0).abs() < 1e-6);
+        assert_eq!(wave.clone().through(&[]), wave, "no curve, no change");
+    }
 
     /// Absent and empty mean different things.
     ///

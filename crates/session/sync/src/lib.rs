@@ -35,7 +35,7 @@ pub use diff::{Change, ItemField, TrackField, diff};
 pub use doc::{ORIGIN_LOCAL, SCHEMA, SessionDoc};
 pub use loro;
 pub use model::{
-    EnvelopePointState, EnvelopeState, FxState, HitState, ItemState, LaneState, MarkerState,
-    NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint, TakeMarkerState,
-    TakeState, TempoPoint, TrackState,
+    EnvelopePointState, EnvelopeState, FxState, GainPoint, HitState, ItemState, LaneState,
+    MarkerState, NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint,
+    TakeMarkerState, TakeState, TempoPoint, TrackState,
 };

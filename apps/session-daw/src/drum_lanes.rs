@@ -8,7 +8,7 @@
 //! lane steps, `DRUMS_PLAY_LANE`): a phase never switches it, so what has
 //! been edited plays edited in every mode.
 
-use daw::service::{ItemRef, Items as _, ProjectContext, TrackRef, Tracks};
+use daw::service::{ItemRef, Items as _, ProjectContext, Takes as _, TrackRef, Tracks};
 
 /// The comp's lane name.
 pub const COMP: &str = "COMP";
@@ -205,6 +205,16 @@ pub fn reset_edit(
                     daw_proto::primitives::Duration::from_seconds(length),
                 )
                 .map_err(fail)?;
+                // The run's volume curves as one: each item's on from where
+                // it starts in the run (a leveled kick stays leveled).
+                let start = item.position.as_seconds();
+                let run: Vec<&daw_proto::Item> = fresh
+                    .iter()
+                    .skip(first)
+                    .take_while(|i| i.position.as_seconds() < start + length - 1e-9)
+                    .copied()
+                    .collect();
+                join_curves(daw, project, &run, &copy);
             }
             daw.set_fixed_lane(project.clone(), ItemRef::Guid(copy), edit)
                 .map_err(fail)?;
@@ -223,6 +233,69 @@ pub fn reset_edit(
         }
     }
     Ok(said)
+}
+
+/// The take volume curves of `run` (comp items meeting end to end, by
+/// position) written as one onto `onto`, each from where its item starts
+/// in the run — what joining them into one copy keeps.
+fn join_curves(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    run: &[&daw_proto::Item],
+    onto: &str,
+) {
+    use daw_proto::automation::{AddPointParams, Automation as _};
+    let volume = |item: &str| {
+        let take = daw.get_active_take(project.clone(), ItemRef::Guid(item.to_owned()))?;
+        Some(daw_proto::EnvelopeLocation {
+            track: TrackRef::Index(0),
+            envelope: daw_proto::EnvelopeRef::Take {
+                item_guid: item.to_owned(),
+                take_guid: take.guid,
+                kind: daw_proto::TakeEnvelopeKind::Volume,
+            },
+        })
+    };
+    let Some(start) = run.first().map(|i| i.position.as_seconds()) else {
+        return;
+    };
+    let points: Vec<(f64, f64)> = run
+        .iter()
+        .filter_map(|i| {
+            let at = i.position.as_seconds() - start;
+            Some(
+                daw.points(project.clone(), volume(&i.guid)?)
+                    .into_iter()
+                    .map(move |p| (p.time.as_seconds() + at, p.value)),
+            )
+        })
+        .flatten()
+        .collect();
+    let Some(target) = volume(onto) else {
+        return;
+    };
+    if points.is_empty() {
+        return;
+    }
+    let had = daw.points(project.clone(), target.clone()).len();
+    for i in (0..had).rev() {
+        daw.delete_point(
+            project.clone(),
+            target.clone(),
+            u32::try_from(i).unwrap_or(u32::MAX),
+        );
+    }
+    for (at, value) in points {
+        daw.add_point(
+            project.clone(),
+            target.clone(),
+            AddPointParams::new(
+                daw_proto::PositionInSeconds::from_seconds(at),
+                value,
+                daw_proto::automation::EnvelopeShape::Linear,
+            ),
+        );
+    }
 }
 
 /// How near two comp items must meet, on the timeline and in their

@@ -8,7 +8,7 @@
 )]
 
 use session_sync::{
-    Change, EnvelopePointState, EnvelopeState, FxState, ItemField, ItemState, LaneState,
+    Change, EnvelopePointState, EnvelopeState, FxState, GainPoint, ItemField, ItemState, LaneState,
     MarkerState, NoteState, ORIGIN_LOCAL, SendState, SessionDoc, SessionModel, StretchPoint,
     TakeState, TempoPoint, TrackField, TrackState, diff,
 };
@@ -131,6 +131,17 @@ fn song() -> SessionModel {
         source: 0.48,
         slope: 0.0,
     }];
+    // A leveled kick: its take's volume curve is the song's too.
+    slice.take.volume = vec![
+        GainPoint {
+            at: 0.995,
+            value: 1.0,
+        },
+        GainPoint {
+            at: 0.996,
+            value: 1.41,
+        },
+    ];
     let mut midi = item("bass", 8.0);
     midi.take.source = None;
     midi.loop_source = true;

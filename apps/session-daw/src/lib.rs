@@ -162,6 +162,7 @@ pub mod device_audio;
 pub mod drum_edit;
 #[cfg(feature = "native")]
 pub mod drum_lanes;
+pub mod drum_level;
 pub mod drum_reference;
 #[cfg(feature = "signal")]
 pub mod drum_samples;

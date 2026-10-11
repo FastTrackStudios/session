@@ -14629,6 +14629,7 @@ dependencies = [
  "input-keybinds",
  "js-sys",
  "keyflow",
+ "level-dsp",
  "live-proto",
  "lucide-dioxus",
  "modulation-ui",

@@ -36,11 +36,25 @@ pub fn read_items(
                 } else {
                     Vec::new()
                 };
-                (take, stretch, notes)
+                let volume = d.points(ctx.clone(), volume_of(&item.guid, &take.guid));
+                (take, stretch, notes, volume)
             });
             (ids.items.doc(&item.guid), item_state(item, take, media))
         })
         .collect()
+}
+
+/// Where `item`'s take `take`'s volume envelope is.
+fn volume_of(item: &str, take: &str) -> daw_proto::EnvelopeLocation {
+    daw_proto::EnvelopeLocation {
+        // Ignored for a take's envelope: the item and take say where.
+        track: daw_proto::TrackRef::Index(0),
+        envelope: daw_proto::EnvelopeRef::Take {
+            item_guid: item.to_owned(),
+            take_guid: take.to_owned(),
+            kind: daw_proto::TakeEnvelopeKind::Volume,
+        },
+    }
 }
 
 fn location(ctx: &ProjectContext, item: &ItemRef) -> MidiTakeLocation {
@@ -173,6 +187,29 @@ pub fn set_item_fields(
                     })
                     .collect(),
             )?,
+            ItemField::TakeVolume => {
+                let ItemRef::Guid(guid) = at() else {
+                    return Ok(());
+                };
+                if let Some(take) = d.get_active_take(c(), at()) {
+                    let location = volume_of(&guid, &take.guid);
+                    let had = d.points(c(), location.clone()).len();
+                    for i in (0..had).rev() {
+                        d.delete_point(c(), location.clone(), u32::try_from(i).unwrap_or(u32::MAX));
+                    }
+                    for g in &item.take.volume {
+                        d.add_point(
+                            c(),
+                            location.clone(),
+                            daw_proto::automation::AddPointParams::new(
+                                daw_proto::PositionInSeconds::from_seconds(g.at),
+                                g.value,
+                                daw_proto::automation::EnvelopeShape::Linear,
+                            ),
+                        );
+                    }
+                }
+            }
             ItemField::Notes => {
                 let here = location(ctx, &at());
                 d.write_take(

@@ -185,8 +185,20 @@ pub struct TakeState {
     pub midi: bool,
     /// Its stretch markers, in order.
     pub stretch: Vec<StretchPoint>,
+    /// Its volume envelope — a leveled drum's stroke-by-stroke gain — in
+    /// order.
+    pub volume: Vec<GainPoint>,
     /// A MIDI take's notes, in order.
     pub notes: Vec<NoteState>,
+}
+
+/// A point on a take's volume envelope.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GainPoint {
+    /// Seconds into the item.
+    pub at: f64,
+    /// Linear gain (1 is unity).
+    pub value: f64,
 }
 
 /// A stretch marker: where in the take it sits and what source moment
