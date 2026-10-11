@@ -3206,7 +3206,7 @@ static QUANTIZE: ActionMeta = meta(
     "QUANTIZE",
     "quantize",
     "Quantize the drums",
-    "Quantize the kit from its hit markers (HITS_DETECT first): every drum track cut `lead_ms` before each hit and moved together so the HIT lands on its target — the item starts before the beat, the attack is on it — the seams crossfaded (`xfade_ms`). Over `sections` (by name, from the SECTIONS lane: `Verse 1`, `Chorus`) or `from`/`to` (seconds), each with these settings — so a verse and a chorus can each be quantized their own way. The edit zones (ZONES_LIST) are left as played; the drum-edit settings (grid, strength, target, tolerance, lead, crossfade…) can be given for this call alone. `dry_run` says what it would do. After an edit, a check from the markers: hits lost, hits doubled (a double attack), and how far the moved hits landed from where they were sent.",
+    "Quantize the kit from its hit markers (HITS_DETECT first): every drum track cut `lead_ms` before each hit and moved together so the HIT lands on its target — the item starts before the beat, the attack is on it — the seams crossfaded (`xfade_ms`). Over `sections` (by name, from the SECTIONS lane: `Verse 1`, `Chorus`) or `from`/`to` (seconds), each with these settings — so a verse and a chorus can each be quantized their own way. The edit zones (ZONES_LIST) are left as played — `fills: Include` edits them too (a fill that keeps a grid, on that grid: `grid: 12` for 8th triplets, 24 for 16th triplets), `Only` edits only them; the drum-edit settings (grid, strength, target, tolerance, lead, crossfade…) can be given for this call alone. `dry_run` says what it would do. After an edit, a check from the markers: hits lost, hits doubled (a double attack), and how far the moved hits landed from where they were sent.",
     "Drums",
     "",
 );
@@ -3564,7 +3564,7 @@ fn register_quantize(list: &ActionList) {
         for (name, from, to) in quantize_spans(daw, &project, &a)? {
             let found = detect(daw, &project, &settings, (from, to))?;
             let inside = |h: f64| h >= from && h < to;
-            let held = |h: f64| {
+            let in_fill = |h: f64| {
                 if zones.is_empty() {
                     in_a_fill(daw, &project, &found.fills, h)
                 } else {
@@ -3574,6 +3574,15 @@ fn register_quantize(list: &ActionList) {
                         60.0 / daw.get_tempo_at(project.clone(), h).max(1.0),
                     )
                 }
+            };
+            // What stays as played: the fills, unless they are asked for
+            // (a fill that keeps a grid — a run of 16ths, a triplet fill —
+            // is edited on its own grid); with only the fills asked for,
+            // everything else.
+            let held = |h: f64| match settings.fills {
+                crate::drum_settings::Fills::Skip => in_fill(h),
+                crate::drum_settings::Fills::Include => false,
+                crate::drum_settings::Fills::Only => !in_fill(h),
             };
             let targets = match &a.lock {
                 Some(piece) => {
@@ -3594,7 +3603,9 @@ fn register_quantize(list: &ActionList) {
                 .collect();
             let before = crate::hits::playback(daw, &project);
             let mut result = judge(daw, &project, &settings, (&pairs, &left_out), dry);
-            result.in_fills = u32::try_from(left_out.len()).unwrap_or(u32::MAX);
+            if settings.fills == crate::drum_settings::Fills::Skip {
+                result.in_fills = u32::try_from(left_out.len()).unwrap_or(u32::MAX);
+            }
             let check = result.applied.then(|| {
                 wait_for_slip(daw, &project, &before);
                 // Where each moved hit was sent: its target, or as far
