@@ -995,6 +995,7 @@ fn register_data(list: &ActionList) {
     register_tracks(list);
     register_hits(list);
     register_fundamental(list);
+    crate::hits::register(list);
     register_track_set(list);
     register_reference(list);
     #[cfg(feature = "native")]

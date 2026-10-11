@@ -14604,6 +14604,7 @@ dependencies = [
  "dioxus-native",
  "dioxus-native-dom",
  "dirs",
+ "drum-hits",
  "dynamic-template",
  "editor-crdt",
  "editor-keyflow-lang",

@@ -171,6 +171,8 @@ pub mod drum_samples;
 pub mod drum_settings;
 pub mod fundamental;
 pub mod gain_stage;
+#[cfg(feature = "native")]
+pub mod hits;
 #[cfg(test)]
 mod hook_rules;
 #[cfg(feature = "native")]

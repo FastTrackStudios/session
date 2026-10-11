@@ -144,10 +144,15 @@ fn with_trigger(piece: &Piece<'_>, rate: f64, settings: &Settings) -> RoundOne {
     } else {
         health(calibration.as_ref())
     };
-    let hits = (verdict == Health::Working).then(|| {
-        let mic_hits = calibration.map_or_else(Vec::new, |c| gate_on(&scan, piece.mic, &c.gate));
-        fuse(piece.mic, rate, &truth, &mic_hits)
-    });
+    let hits = match verdict {
+        Health::Working => {
+            let mic_hits =
+                calibration.map_or_else(Vec::new, |c| gate_on(&scan, piece.mic, &c.gate));
+            Some(fuse(piece.mic, rate, &truth, &mic_hits))
+        }
+        Health::MicSilent(_) => Some(fuse(piece.mic, rate, &truth, &[])),
+        Health::Dead(_) => None,
+    };
     RoundOne {
         scan,
         trigger: Some(verdict),

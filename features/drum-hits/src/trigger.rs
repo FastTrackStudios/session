@@ -38,6 +38,9 @@ pub fn spikes(samples: &[f32], rate: f64, under_db: f64, retrig_secs: f64) -> Ve
 pub enum Health {
     /// It agrees with its close mic: its hits are the piece's.
     Working,
+    /// It has hits and its mic has almost none: the mic was off, or
+    /// silent, and the trigger alone is believed.
+    MicSilent(String),
     /// It is not believed, and why.
     Dead(String),
 }
@@ -47,11 +50,28 @@ pub enum Health {
 /// against its mic on every Unbreakable piece; the dead one, 0.26.
 pub const AGREES: f64 = 0.6;
 
+/// A mic finding under this share of its trigger's hits is not hearing
+/// the drum at all.
+pub const SILENT: f64 = 0.2;
+
 /// Judge a trigger by how well the best-calibrated close mic agrees with
 /// it. `None` (no mic, or nothing calibrated) believes the trigger.
+///
+/// Disagreement is the trigger's fault unless the mic found almost
+/// nothing: a mic that was off says nothing about the trigger.
 #[must_use]
 pub fn health(best: Option<&super::Calibration>) -> Health {
     match best {
+        Some(c)
+            if c.agreement.f1() < AGREES
+                && super::seconds(c.agreement.found, 1.0)
+                    < SILENT * super::seconds(c.agreement.truth, 1.0) =>
+        {
+            Health::MicSilent(format!(
+                "its mic found {} of its {} hits: the trigger alone is used",
+                c.agreement.found, c.agreement.truth
+            ))
+        }
         Some(c) if c.agreement.f1() < AGREES => Health::Dead(format!(
             "agrees with its mic on {:.0}% (needs {:.0}%): its {} hits against the mic's {}",
             c.agreement.f1() * 100.0,

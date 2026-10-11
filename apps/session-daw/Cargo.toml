@@ -69,6 +69,8 @@ session-guide = { workspace = true }
 # rule resolved against the session's own taxonomy — not a list of GUIDs
 # this window keeps. See `src/plan.rs`.
 dynamic-template = { workspace = true }
+# The hit detector (native: it reads whole recordings and runs on cores).
+drum-hits = { workspace = true, optional = true }
 # The album's plan and the room's profile, behind the Patch List view —
 # see `src/patch_list.rs`. The window reads them; applying one to a
 # session is the session's job, not this window's.
@@ -293,6 +295,7 @@ native = [
     "dep:keyflow-editor-lang",
     "dep:futures-channel",
     "dep:rayon",
+    "dep:drum-hits",
     "dep:dawfile-store",
     "dep:futures-util",
     "session/collab",
@@ -373,6 +376,11 @@ frame-times = ["anyrender_vello?/log_frame_times"]
 [[bin]]
 name = "bench"
 path = "src/bin/bench.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "hits"
+path = "src/bin/hits.rs"
 required-features = ["native"]
 
 [[bin]]
