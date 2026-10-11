@@ -1,27 +1,13 @@
 //! Drum editing's settings: sticky, one set for the session.
 //!
-//! What a detector and a slip are dialled to stays dialled — set once,
-//! every detection, fill search and slip after uses it, and it is still
-//! set after a restart (`~/.config/fts/drum-edit.json`). That is how
-//! they are tuned: change one, look at what is detected now, change it
-//! again, for whatever stretch is being edited. A call may still carry
-//! its own for that call alone ([`Patch`], flattened into its
-//! arguments), without moving the ones that stay.
+//! What a quantize is dialled to stays dialled — set once, every
+//! quantize after uses it, and it is still set after a restart
+//! (`~/.config/fts/drum-edit.json`). A call may still carry its own for
+//! that call alone ([`Patch`], flattened into its arguments), without
+//! moving the ones that stay. How the hits are found is the hit
+//! detector's own (`crate::hits`).
 
 use facet::Facet;
-
-/// How the hits are found.
-#[derive(Facet, Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Detector {
-    /// A spike within `under_db` of the trigger's loudest — for a
-    /// trigger, whose spikes are all there is to it.
-    Level,
-    /// Perfect Timing!'s: the attack outrunning the signal by
-    /// `sensitivity_db`, over `threshold_db` — where a hit STARTS, however
-    /// hard; for mics as well as triggers.
-    Transient,
-}
 
 /// What to move the hits to.
 #[derive(Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,17 +41,6 @@ pub enum Fills {
 /// Every setting.
 #[derive(Facet, Clone, Debug, PartialEq)]
 pub struct Settings {
-    pub detector: Detector,
-    /// Level: how far under the trigger's loudest a hit can be, dB.
-    pub under_db: f64,
-    /// Transient: a hit is louder than this, dBFS.
-    pub threshold_db: f64,
-    /// Transient: how far the attack outruns the signal, dB.
-    pub sensitivity_db: f64,
-    /// From one hit to the next, ms.
-    pub retrig_ms: f64,
-    /// Added to every hit found, ms.
-    pub offset_ms: f64,
     /// The grid: a whole note's division (32: thirty-seconds).
     pub grid: u32,
     /// One hit per grid line, the loudest near it.
@@ -96,12 +71,6 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            detector: Detector::Level,
-            under_db: 24.0,
-            threshold_db: -60.0,
-            sensitivity_db: 5.0,
-            retrig_ms: 40.0,
-            offset_ms: 0.0,
             grid: 32,
             grid_scan: false,
             grid_tolerance_ms: None,
@@ -121,12 +90,6 @@ impl Default for Settings {
 /// Some settings: each one given replaces the one there.
 #[derive(Facet, Clone, Debug, Default, PartialEq)]
 pub struct Patch {
-    pub detector: Option<Detector>,
-    pub under_db: Option<f64>,
-    pub threshold_db: Option<f64>,
-    pub sensitivity_db: Option<f64>,
-    pub retrig_ms: Option<f64>,
-    pub offset_ms: Option<f64>,
     pub grid: Option<u32>,
     pub grid_scan: Option<bool>,
     pub grid_tolerance_ms: Option<f64>,
@@ -143,24 +106,11 @@ pub struct Patch {
 }
 
 impl Settings {
-    /// These, with `patch`'s in place of theirs. A transient setting
-    /// given without a detector means that detector: tuning its
-    /// sensitivity says which one is meant.
+    /// These, with `patch`'s in place of theirs.
     #[must_use]
     pub fn with(&self, patch: &Patch) -> Self {
         let pick = |given: Option<f64>, was: f64| given.unwrap_or(was);
-        let transient_tuned = patch.threshold_db.is_some() || patch.sensitivity_db.is_some();
         Self {
-            detector: patch.detector.unwrap_or(if transient_tuned {
-                Detector::Transient
-            } else {
-                self.detector
-            }),
-            under_db: pick(patch.under_db, self.under_db),
-            threshold_db: pick(patch.threshold_db, self.threshold_db),
-            sensitivity_db: pick(patch.sensitivity_db, self.sensitivity_db),
-            retrig_ms: pick(patch.retrig_ms, self.retrig_ms).max(0.0),
-            offset_ms: pick(patch.offset_ms, self.offset_ms),
             grid: patch.grid.unwrap_or(self.grid).max(1),
             grid_scan: patch.grid_scan.unwrap_or(self.grid_scan),
             // Zero or less: no tolerance — every hit is some line's.
@@ -182,16 +132,6 @@ impl Settings {
                 None => self.stretch_gaps_ms,
             },
             fills: patch.fills.unwrap_or(self.fills),
-        }
-    }
-
-    /// The transient detector's settings.
-    #[must_use]
-    pub fn detect(&self) -> crate::drum_edit::Detect {
-        crate::drum_edit::Detect {
-            threshold_db: self.threshold_db,
-            sensitivity_db: self.sensitivity_db,
-            retrig: self.retrig_ms / 1_000.0,
         }
     }
 }
@@ -286,25 +226,6 @@ mod tests {
         );
     }
 
-    /// Tuning the sensitivity means the detector that has one.
-    #[test]
-    fn tuning_the_transient_detector_chooses_it() {
-        let now = Settings::default().with(&Patch {
-            sensitivity_db: Some(9.0),
-            ..Patch::default()
-        });
-        assert_eq!(now.detector, Detector::Transient);
-        let back = now.with(&Patch {
-            detector: Some(Detector::Level),
-            ..Patch::default()
-        });
-        assert_eq!(back.detector, Detector::Level);
-        assert!(
-            (back.sensitivity_db - 9.0).abs() < f64::EPSILON,
-            "and its tuning is kept for later"
-        );
-    }
-
     /// A call's arguments, its settings written in among them.
     #[derive(Facet)]
     struct Call {
@@ -330,7 +251,6 @@ mod tests {
     #[test]
     fn saved_settings_read_back() {
         let tuned = Settings::default().with(&Patch {
-            detector: Some(Detector::Transient),
             grid_tolerance_ms: Some(25.0),
             fills: Some(Fills::Only),
             ..Patch::default()
@@ -339,6 +259,13 @@ mod tests {
         let patch: Patch = facet_json::from_slice(&bytes).expect("reads as a patch");
         assert_eq!(Settings::default().with(&patch), tuned);
         let old: Patch = facet_json::from_slice(br#"{"lead_ms":7.0}"#).expect("an older file");
+        // A file from when the hits were found here too: its detector's
+        // settings, gone since, are passed over.
+        let older: Patch = facet_json::from_slice(
+            br#"{"detector":"Level","under_db":24.0,"retrig_ms":40.0,"lead_ms":6.0}"#,
+        )
+        .expect("a file with the old detector's settings");
+        assert_eq!(older.lead_ms, Some(6.0));
         assert_eq!(
             Settings::default().with(&old).xfade_ms.to_bits(),
             5.0_f64.to_bits()

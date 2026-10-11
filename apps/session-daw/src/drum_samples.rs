@@ -1,9 +1,9 @@
 //! Drum samples under the recorded kit: signal's sampled kit, played from
 //! the hits the triggers caught.
 //!
-//! Session reads the kit's hits offline (its triggers, through the drum
-//! edit's detector, on the EDIT lane once there is one); signal plays a
-//! sampled kit from notes. This joins them, blended under the recording:
+//! Session's hit markers say where the kit's hits are (`crate::hits`,
+//! found once from the triggers and mics); signal plays a sampled kit
+//! from notes. This joins them, blended under the recording:
 //!
 //! - each piece's hits written as notes on its **Sample** track (the
 //!   kit's General MIDI note for the piece, the velocity from the hit's
@@ -78,27 +78,16 @@ pub fn set_up(
     preset: &std::path::Path,
     dry: bool,
 ) -> Result<Report, String> {
-    let settings = crate::drum_settings::current();
-    let mut kit = crate::actions::kit(daw, project, &settings);
-    let triggers = crate::drum_reference::pieces(daw, project);
-    // A piece whose trigger is dead has no hits from it: its close mic's,
-    // what is its own there (`crate::close_mic`).
-    let mut from_mics: Vec<String> = Vec::new();
-    for (name, trigger) in &triggers {
-        if kit.iter().any(|(n, _, _)| n == name) {
-            continue;
-        }
-        let hits = crate::close_mic::hits(daw, project, trigger, &settings);
-        if !hits.is_empty() {
-            from_mics.push(name.clone());
-            kit.push((name.clone(), crate::drum_edit::Piece::of(name), hits));
-        }
+    let kit = played(daw, project);
+    if kit.is_empty() {
+        return Err("no hit markers: find the hits first (HITS_DETECT)".to_owned());
     }
+    let triggers = crate::drum_reference::pieces(daw, project);
     let tracks = Tracks::all(daw, project.clone());
     let overheads = bus_track(&tracks, &["ohs", "overheads", "oh"]).cloned();
     let rooms = bus_track(&tracks, &["rooms", "room"]).cloned();
     let mut report = Report::default();
-    for (name, _, hits) in &kit {
+    for (name, hits) in &kit {
         let Some(note) = note_for(name) else {
             report
                 .tracks
@@ -123,18 +112,13 @@ pub fn set_up(
         };
         let notes: Notes = hits
             .iter()
-            .map(|h| (h.time, note, velocity(h.relative_db)))
+            .map(|&(time, relative_db)| (time, note, velocity(relative_db)))
             .collect();
         report.notes = report.notes.saturating_add(notes.len());
         report.tracks.push(format!(
-            "{}: {} notes on {note} ({piece}), its close mics out, overheads on 3/4, rooms on 5/6{}",
+            "{}: {} notes on {note} ({piece}), its close mics out, overheads on 3/4, rooms on 5/6",
             sample.name,
             notes.len(),
-            if from_mics.contains(name) {
-                " — the hits its close mic heard, its trigger dead"
-            } else {
-                ""
-            }
         ));
         if !dry {
             write_notes(daw, project, &sample.guid, &notes)?;
@@ -179,6 +163,84 @@ pub fn set_up(
         crate::actions::list().changed("drums.samples", "the kit's samples were set up");
     }
     Ok(report)
+}
+
+/// Each piece's hits where they play now, `(time, dB against the piece's
+/// loudest)`, earliest first: every hit marker but a bleed nobody checked
+/// — a ghost note too, at its own quiet velocity.
+fn played(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+) -> Vec<(String, Vec<(f64, f64)>)> {
+    let mut by_piece: Vec<(String, Vec<(f64, f64)>)> = Vec::new();
+    for p in crate::hits::playback(daw, project) {
+        if p.mark.bleed && p.mark.origin == daw_proto::MarkOrigin::Auto {
+            continue;
+        }
+        let at = by_piece
+            .iter()
+            .position(|(n, _)| *n == p.piece)
+            .unwrap_or_else(|| {
+                by_piece.push((p.piece.clone(), Vec::new()));
+                by_piece.len().saturating_sub(1)
+            });
+        if let Some((_, hits)) = by_piece.get_mut(at) {
+            hits.push((p.time, p.peak_db));
+        }
+    }
+    for (_, hits) in &mut by_piece {
+        let loudest = hits.iter().map(|h| h.1).fold(f64::NEG_INFINITY, f64::max);
+        for h in hits.iter_mut() {
+            h.1 -= loudest;
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+    }
+    by_piece
+}
+
+/// Move the samples with an edit about to be made.
+///
+/// Every Sample track already set up (holding its notes) is written again
+/// from the hit markers, each hit where `moved` puts it; the rest are
+/// left. Returns how many tracks were written.
+///
+/// # Errors
+///
+/// The engine refusing a write.
+pub fn follow(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    moved: impl Fn(f64) -> f64,
+) -> Result<usize, String> {
+    let tracks = Tracks::all(daw, project.clone());
+    let triggers = crate::drum_reference::pieces(daw, project);
+    let mut written = 0_usize;
+    for (name, hits) in played(daw, project) {
+        let Some(note) = note_for(&name) else {
+            continue;
+        };
+        let Some(sample) = triggers
+            .iter()
+            .find(|(n, _)| *n == name)
+            .and_then(|(_, trigger)| sample_track(&tracks, trigger))
+        else {
+            continue;
+        };
+        if daw
+            .get_items(project.clone(), TrackRef::Guid(sample.guid.clone()))
+            .is_empty()
+        {
+            continue;
+        }
+        let mut notes: Notes = hits
+            .iter()
+            .map(|&(time, relative_db)| (moved(time), note, velocity(relative_db)))
+            .collect();
+        notes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        write_notes(daw, project, &sample.guid, &notes)?;
+        written = written.saturating_add(1);
+    }
+    Ok(written)
 }
 
 /// The recorded mics' track a sample bus sends into: the first of

@@ -158,8 +158,6 @@ pub mod open {
 pub mod actions;
 #[cfg(feature = "signal")]
 pub mod bass_rig;
-#[cfg(feature = "signal")]
-pub mod close_mic;
 pub mod device_audio;
 pub mod drum_edit;
 #[cfg(feature = "native")]

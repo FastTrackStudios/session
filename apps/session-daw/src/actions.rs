@@ -3212,6 +3212,22 @@ fn uncrossed(mut pairs: Vec<(f64, Option<f64>)>) -> Vec<(f64, Option<f64>)> {
 }
 
 #[cfg(test)]
+mod shift_tests {
+    use super::shift_at;
+
+    #[test]
+    fn a_hit_moves_with_the_slice_it_is_in() {
+        // Cuts at 1.0 (+20 ms) and 1.5 (stays); a hit before the first
+        // cut stays, one in each slice moves with it.
+        let slices = [(1.5, 0.0), (1.0, 0.020)];
+        assert!(shift_at(&slices, 0.9).abs() < 1e-12);
+        assert!((shift_at(&slices, 1.0) - 0.020).abs() < 1e-12);
+        assert!((shift_at(&slices, 1.3) - 0.020).abs() < 1e-12);
+        assert!(shift_at(&slices, 1.6).abs() < 1e-12);
+    }
+}
+
+#[cfg(test)]
 mod lock_tests {
     use super::lock_in_order;
 
@@ -3411,7 +3427,7 @@ fn judge(
     let tolerance = settings.tolerance_ms / 1_000.0;
     let strength = settings.strength;
     let at = |hit: f64, off: f64, shift: f64| {
-        let (bar, beat, frac) = crate::song_bars::musical(daw, &project, hit);
+        let (bar, beat, frac) = crate::song_bars::musical(daw, project, hit);
         SlipMove {
             time: hit,
             bar,
@@ -3456,6 +3472,28 @@ fn judge(
             )
             .collect();
         cuts.sort_unstable();
+        // The samples first, so they and the recording move in the one
+        // step the slip makes: each hit where its slice is going.
+        #[cfg(feature = "signal")]
+        {
+            let lead = settings.lead_ms / 1_000.0;
+            let slices: Vec<(f64, f64)> = moves
+                .iter()
+                .map(|(h, _, shift)| (*h - lead, *shift))
+                .chain(cuts.iter().filter(|c| c.1 == 0).map(|c| {
+                    (
+                        num_traits::ToPrimitive::to_f64(&c.0).unwrap_or(0.0) / 1_000_000.0 - lead,
+                        0.0,
+                    )
+                }))
+                .collect();
+            let goes_to = |t: f64| t + shift_at(&slices, t);
+            match crate::drum_samples::follow(daw, project, goes_to) {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(samples.tracks = n, "drums: the samples follow the slip"),
+                Err(why) => tracing::warn!(why, "drums: the samples could not follow the slip"),
+            }
+        }
         queue(Action::SlipDrums {
             moves: cuts,
             pre_roll_us: us(settings.lead_ms / 1_000.0),
@@ -3480,6 +3518,17 @@ fn judge(
             .collect(),
         to_check,
     }
+}
+
+/// How far the slice holding `t` moves: the one cut last at or before it
+/// (`slices`: each cut and its slice's shift, any order); none before the
+/// first.
+fn shift_at(slices: &[(f64, f64)], t: f64) -> f64 {
+    slices
+        .iter()
+        .filter(|(cut, _)| *cut <= t + 1e-9)
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map_or(0.0, |(_, shift)| *shift)
 }
 
 /// Which audio.
