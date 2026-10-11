@@ -11,10 +11,10 @@
 //!
 //! The curve goes on each of the drum's close mics as its take's volume
 //! envelope — the same gain on every mic, so they stay in balance — on
-//! the comp the edit is cut from. It is done before the edit: a take's
-//! envelope rides with its audio through every split, slip and move, so
-//! an edit made after carries the leveling with it, and the waveforms
-//! drawn are the leveled ones.
+//! the comp the edit is cut from, and on the edit's slices, each from its
+//! own hits. Done before the edit, the curve rides with the audio through
+//! every split, slip and move; turned after it, every slice is leveled
+//! where it is. The waveforms drawn are the leveled ones.
 
 #![cfg(feature = "native")]
 
@@ -85,8 +85,24 @@ fn hits_on(
     hits
 }
 
-/// The ride for a drum by its name.
-fn ride_for(piece: &str, amount: Option<f64>) -> level_dsp::drums::DrumRide {
+/// How hard to level: the knobs a hand turns.
+#[derive(Facet, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Knobs {
+    /// How consistent the strokes are made, 0..1: 1 brings every stroke
+    /// to the target — all one level — 0.5 halves how far each is from
+    /// it, 0 leaves them. Each drum's own when not given (a kick 0.75, a
+    /// snare 0.6, a tom 0.5).
+    pub consistency: Option<f64>,
+    /// The most a stroke is raised or lowered, dB (the drum's own when
+    /// not given: 6 dB).
+    pub range_db: Option<f64>,
+    /// Every stroke brought toward the drum's level over the whole song,
+    /// not the playing around it: a quiet verse comes up to the chorus.
+    pub whole_song: bool,
+}
+
+/// The ride for a drum by its name, turned by `knobs`.
+fn ride_for(piece: &str, knobs: &Knobs) -> level_dsp::drums::DrumRide {
     let name = piece.to_lowercase();
     let ride = if name.contains("kick") {
         level_dsp::drums::DrumRide::KICK
@@ -95,7 +111,13 @@ fn ride_for(piece: &str, amount: Option<f64>) -> level_dsp::drums::DrumRide {
     } else {
         level_dsp::drums::DrumRide::TOM
     };
-    amount.map_or(ride, |amount| level_dsp::drums::DrumRide { amount, ..ride })
+    let range = knobs.range_db.map(f64::abs);
+    level_dsp::drums::DrumRide {
+        amount: knobs.consistency.map_or(ride.amount, |c| c.clamp(0.0, 1.0)),
+        max_gain_db: range.unwrap_or(ride.max_gain_db),
+        max_cut_db: range.unwrap_or(ride.max_cut_db),
+        ..ride
+    }
 }
 
 /// The items a drum's mic plays its comp from: its COMP lane's, once the
@@ -115,8 +137,29 @@ fn comp_items(
         .collect()
 }
 
+/// The items leveled on a drum's mic: its comp's, and the slices of its
+/// edit — each from its own hits, so turning the leveling after an edit
+/// does not ask for the edit again.
+fn leveled_items(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+) -> Vec<daw_proto::Item> {
+    let mut items = comp_items(daw, project, track);
+    if let Some(t) = Tracks::get(daw, project.clone(), TrackRef::Guid(track.to_owned()))
+        && let Some(edit) = crate::drum_lanes::lane_named(&t, crate::drum_lanes::EDIT)
+    {
+        items.extend(
+            daw.get_items(project.clone(), TrackRef::Guid(track.to_owned()))
+                .into_iter()
+                .filter(|i| i.fixed_lane == Some(edit)),
+        );
+    }
+    items
+}
+
 /// Level `pieces` (every drum of the kit when empty): see the module.
-/// `amount` overrides each drum's own; `dry` only says.
+/// `knobs` turn each drum's own ride; `dry` only says.
 ///
 /// # Errors
 ///
@@ -125,7 +168,7 @@ pub fn level(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     pieces: &[String],
-    (amount, dry): (Option<f64>, bool),
+    (knobs, dry): (&Knobs, bool),
 ) -> Result<Vec<Leveled>, String> {
     let (kit, _) = crate::hits::kit(daw, project);
     if kit.is_empty() {
@@ -140,7 +183,7 @@ pub fn level(
         .iter()
         .filter(|p| pieces.is_empty() || pieces.contains(&p.name))
     {
-        let ride = ride_for(&piece.name, amount);
+        let ride = ride_for(&piece.name, knobs);
         // The target from the drum's first mic: one target, so every mic
         // takes the same gain at each stroke.
         let Some(first) = piece.mics.first() else {
@@ -164,7 +207,13 @@ pub fn level(
         let Some(target) = level_dsp::drums::target(&all) else {
             continue;
         };
-        let around = |t: f64| level_dsp::drums::target_at(&all, t).unwrap_or(target);
+        let around = |t: f64| {
+            if knobs.whole_song {
+                target
+            } else {
+                level_dsp::drums::target_at(&all, t).unwrap_or(target)
+            }
+        };
         let mut said = Leveled {
             piece: piece.name.clone(),
             target_db: Some(target),
@@ -186,7 +235,7 @@ pub fn level(
         }
         if !dry {
             for mic in &piece.mics {
-                for item in comp_items(daw, project, mic) {
+                for item in leveled_items(daw, project, mic) {
                     let at = item.position.as_seconds();
                     let curve = level_dsp::drums::ride(
                         &hits_on(daw, project, &item, &piece.name),
@@ -254,13 +303,23 @@ fn write_curve(
 
 #[cfg(test)]
 mod tests {
-    use super::ride_for;
+    use super::{Knobs, ride_for};
 
     #[test]
     fn each_drum_has_its_own_ride() {
-        assert_eq!(ride_for("Kick", None), level_dsp::drums::DrumRide::KICK);
-        assert_eq!(ride_for("Snare", None), level_dsp::drums::DrumRide::SNARE);
-        assert_eq!(ride_for("Tom 3", None), level_dsp::drums::DrumRide::TOM);
-        assert!((ride_for("Kick", Some(0.3)).amount - 0.3).abs() < 1e-12);
+        let none = Knobs::default();
+        assert_eq!(ride_for("Kick", &none), level_dsp::drums::DrumRide::KICK);
+        assert_eq!(ride_for("Snare", &none), level_dsp::drums::DrumRide::SNARE);
+        assert_eq!(ride_for("Tom 3", &none), level_dsp::drums::DrumRide::TOM);
+        let all_one = Knobs {
+            consistency: Some(1.0),
+            range_db: Some(24.0),
+            whole_song: true,
+        };
+        let ride = ride_for("Kick", &all_one);
+        assert!((ride.amount - 1.0).abs() < 1e-12);
+        assert!((ride.max_gain_db - 24.0).abs() < 1e-12 && (ride.max_cut_db - 24.0).abs() < 1e-12);
+        // At 100% a stroke lands on the target, as far as the range allows.
+        assert!((level_dsp::drums::gain(-30.0, -20.0, &ride) - 10.0).abs() < 1e-12);
     }
 }

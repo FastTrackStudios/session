@@ -253,6 +253,60 @@ pub fn groove_lines(answer: &Value) -> Vec<String> {
     lines
 }
 
+/// The leveling's knobs as the panel turns them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Leveling {
+    /// Percent: 100 brings every stroke to one level.
+    pub consistency: u32,
+    /// The most a stroke moves, dB.
+    pub range_db: u32,
+    /// Toward the drum's level over the whole song, not the playing
+    /// around each stroke.
+    pub whole_song: bool,
+}
+
+impl Default for Leveling {
+    fn default() -> Self {
+        Self {
+            consistency: 75,
+            range_db: 6,
+            whole_song: false,
+        }
+    }
+}
+
+/// The `DRUMS_LEVEL` arguments for `leveling`.
+#[must_use]
+pub fn level_args(leveling: &Leveling) -> String {
+    serde_json::json!({
+        "consistency": leveling.consistency.min(100),
+        "range_db": leveling.range_db,
+        "whole_song": leveling.whole_song,
+    })
+    .to_string()
+}
+
+/// A `DRUMS_LEVEL` answer as lines, a drum each.
+#[must_use]
+pub fn level_lines(answer: &Value) -> Vec<String> {
+    let n = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
+    answer
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|d| {
+            format!(
+                "{}: {} strokes, {} up, {} down, at most {:+.1} dB",
+                d.get("piece").and_then(Value::as_str).unwrap_or(""),
+                n(d, "strokes"),
+                n(d, "raised"),
+                n(d, "lowered"),
+                d.get("most_db").and_then(Value::as_f64).unwrap_or(0.0),
+            )
+        })
+        .collect()
+}
+
 /// A show-or-hide asked for from outside the shell (`SESSION_QUANTIZE_PANEL`
 /// on the Action List): the arrangement panel takes it on its next frame
 /// and turns the shell's pin.
@@ -311,6 +365,7 @@ pub fn QuantizePanel() -> Element {
     let mut said = use_signal(Vec::<String>::new);
     let mut groove = use_signal(Vec::<String>::new);
     let mut busy = use_signal(|| false);
+    let mut leveling = use_signal(Leveling::default);
 
     // The song's sections, and the one under the edit cursor to start;
     // the settings `q` would use, when Apply has not been pressed yet.
@@ -395,6 +450,7 @@ pub fn QuantizePanel() -> Element {
     };
 
     let c = choices.read().clone();
+    let lv = *leveling.read();
     let has_selection = c.selection.is_some();
     rsx! {
         div {
@@ -502,6 +558,60 @@ pub fn QuantizePanel() -> Element {
                     disabled: busy(),
                     onclick: move |_| go(false),
                     "Apply"
+                }
+            }
+            div { style: HEAD, "LEVEL — HOW CONSISTENT EACH DRUM'S STROKES" }
+            div {
+                style: ROW,
+                for percent in [0_u32, 25, 50, 75, 90, 100] {
+                    button {
+                        key: "{percent}",
+                        style: chip(lv.consistency == percent),
+                        title: "100%: every stroke brought to one level",
+                        onclick: move |_| leveling.with_mut(|l| l.consistency = percent),
+                        "{percent}%"
+                    }
+                }
+            }
+            div {
+                style: ROW,
+                for db in [6_u32, 12, 24] {
+                    button {
+                        key: "{db}",
+                        style: chip(lv.range_db == db),
+                        title: "The most a stroke is raised or lowered",
+                        onclick: move |_| leveling.with_mut(|l| l.range_db = db),
+                        "±{db} dB"
+                    }
+                }
+                button {
+                    style: chip(!lv.whole_song),
+                    title: "Each stroke toward the strokes around it: a quiet verse stays quieter",
+                    onclick: move |_| leveling.with_mut(|l| l.whole_song = false),
+                    "Around it"
+                }
+                button {
+                    style: chip(lv.whole_song),
+                    title: "Every stroke toward the drum's level over the whole song",
+                    onclick: move |_| leveling.with_mut(|l| l.whole_song = true),
+                    "Whole song"
+                }
+                button {
+                    style: chip(true),
+                    disabled: busy(),
+                    onclick: move |_| {
+                        let args = level_args(&leveling.read());
+                        busy.set(true);
+                        said.set(vec!["Leveling…".into()]);
+                        spawn(async move {
+                            said.set(match run("DRUMS_LEVEL", args).await {
+                                Ok(answer) => level_lines(&answer),
+                                Err(why) => vec![why],
+                            });
+                            busy.set(false);
+                        });
+                    },
+                    "Level"
                 }
             }
             if !said.read().is_empty() {
@@ -618,6 +728,25 @@ mod tests {
             from_sticky(Choices::default(), &other).target,
             "Pattern",
             "a target the panel does not offer leaves its own"
+        );
+    }
+
+    #[test]
+    fn the_level_knob_reaches_the_action() {
+        let all = Leveling {
+            consistency: 100,
+            range_db: 24,
+            whole_song: true,
+        };
+        let args: Value = serde_json::from_str(&level_args(&all)).expect("json");
+        assert_eq!(args["consistency"], 100);
+        assert_eq!(args["range_db"], 24);
+        assert_eq!(args["whole_song"], true);
+        let answer = serde_json::json!([{"piece": "Kick", "strokes": 1000, "raised": 477,
+            "lowered": 416, "most_db": 6.0}]);
+        assert_eq!(
+            level_lines(&answer),
+            ["Kick: 1000 strokes, 477 up, 416 down, at most +6.0 dB"]
         );
     }
 

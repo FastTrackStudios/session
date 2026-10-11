@@ -1166,6 +1166,7 @@ fn register_reference(list: &ActionList) {
     register_reference_notes(list);
     register_compare(list);
     register_restore_midi(list);
+    register_copy_to_lane(list);
     register_review(list);
     register_level(list);
 }
@@ -1174,7 +1175,7 @@ static LEVEL: ActionMeta = meta(
     "DRUMS_LEVEL",
     "drums_level",
     "Level the drums",
-    "Even each drum out before it is edited: every stroke (its hit marker's level) brought toward the drum's median — the kick most of the way, the snare a little less, the toms half — a few ms before its attack, held through its ring; ghosts, bleed and a flam's grace ride under the stroke before. Written as the take volume envelope of each drum's close mics on the comp (the same gain on every mic), replacing any earlier leveling: the envelope rides with the audio through every edit, so DRUMS_EDIT_LANES `reset` and the quantize after carry it. `pieces` (all when left out), `amount` 0..1 for every drum, `dry_run`. Says per drum the target, how many strokes went up and down, and the most.",
+    "Even each drum out before it is edited: every stroke (its hit marker's level) brought toward the drum's median — the kick most of the way, the snare a little less, the toms half — a few ms before its attack, held through its ring; ghosts, bleed and a flam's grace ride under the stroke before. Written as the take volume envelope of each drum's close mics on the comp (the same gain on every mic), replacing any earlier leveling: the envelope rides with the audio through every edit, so DRUMS_EDIT_LANES `reset` and the quantize after carry it. `pieces` (all when left out); `consistency` 0–100 % for every drum (100: every stroke brought to one level; each drum's own when left out — kick 75, snare 60, toms 50); `range_db`, the most a stroke moves (6 unless given; widen it with a high consistency); `whole_song`, toward the drum's level over the whole song rather than the playing around each stroke; `dry_run`. Says per drum the target, how many strokes went up and down, and the most.",
     "Drums",
     "",
 );
@@ -1184,21 +1185,27 @@ static LEVEL: ActionMeta = meta(
 struct LevelArg {
     #[facet(default)]
     pieces: Vec<String>,
-    amount: Option<f64>,
+    /// How consistent, percent: 100 every stroke one level.
+    consistency: Option<f64>,
+    /// The most a stroke moves, dB.
+    range_db: Option<f64>,
+    whole_song: Option<bool>,
     dry_run: Option<bool>,
 }
 
 fn register_level(list: &ActionList) {
     list.register(&LEVEL, Effect::Mutating, |a: LevelArg| {
         let (daw, project) = song()?;
+        let knobs = crate::drum_level::Knobs {
+            consistency: a.consistency.map(|c| (c / 100.0).clamp(0.0, 1.0)),
+            range_db: a.range_db,
+            whole_song: a.whole_song.unwrap_or(false),
+        };
         crate::drum_level::level(
             daw,
             &project,
             &a.pieces,
-            (
-                a.amount.map(|x| x.clamp(0.0, 1.0)),
-                a.dry_run.unwrap_or(false),
-            ),
+            (&knobs, a.dry_run.unwrap_or(false)),
         )
     });
 }
@@ -1385,6 +1392,81 @@ fn register_review(list: &ActionList) {
             })
             .map(Ok)
             .collect::<Result<Vec<Reviewed>, String>>()
+    });
+}
+
+static COPY_TO_LANE: ActionMeta = meta(
+    "TRACK_COPY_TO_LANE",
+    "track_copy_to_lane",
+    "Copy an item to a lane",
+    "Copy the item `item` (its GUID) onto lane `lane` of its own track — where it is, or over `from`..`to` (seconds) playing the same recording there (its source run on or back to that span): to fill a hole in a comp from the recording either side of it. Says the copy's GUID. One undo step.",
+    "Edit",
+    "",
+);
+
+/// Which item, onto which lane.
+#[derive(Facet)]
+struct CopyToLaneArg {
+    item: String,
+    lane: u32,
+    from: Option<f64>,
+    to: Option<f64>,
+}
+
+fn register_copy_to_lane(list: &ActionList) {
+    list.register(&COPY_TO_LANE, Effect::Mutating, |a: CopyToLaneArg| {
+        let (daw, project) = song()?;
+        let label = "Copy an item to a lane";
+        daw::service::Projects::begin_undo_block(daw, project.clone(), label);
+        let copy = daw::service::Items::duplicate_item(
+            daw,
+            project.clone(),
+            daw_proto::ItemRef::Guid(a.item.clone()),
+        )
+        .ok_or_else(|| format!("no item {}", a.item));
+        let placed = copy.and_then(|copy| {
+            let at = daw_proto::ItemRef::Guid(copy.clone());
+            daw::service::Items::set_fixed_lane(daw, project.clone(), at.clone(), a.lane)
+                .map_err(|e| e.to_string())?;
+            if let (Some(from), Some(to)) = (a.from, a.to)
+                && to > from
+            {
+                let item = daw::service::Items::get_item(daw, project.clone(), at.clone())
+                    .ok_or("the copy went")?;
+                let into = item.start_offset.as_seconds() + (from - item.position.as_seconds());
+                if into < 0.0 {
+                    return Err("the recording does not reach back that far".to_owned());
+                }
+                daw::service::Items::set_position(
+                    daw,
+                    project.clone(),
+                    at.clone(),
+                    daw_proto::PositionInSeconds::from_seconds(from),
+                )
+                .and_then(|()| {
+                    daw::service::Items::set_length(
+                        daw,
+                        project.clone(),
+                        at.clone(),
+                        daw_proto::primitives::Duration::from_seconds(to - from),
+                    )
+                })
+                .and_then(|()| {
+                    daw_proto::Takes::set_start_offset(
+                        daw,
+                        project.clone(),
+                        at.clone(),
+                        daw_proto::TakeRef::Active,
+                        daw_proto::primitives::Duration::from_seconds(into),
+                    )
+                })
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(copy)
+        });
+        daw::service::Projects::end_undo_block(daw, project, label, None);
+        crate::studio::request_resync();
+        placed
     });
 }
 
@@ -2162,7 +2244,7 @@ static ITEMS: ActionMeta = meta(
     "TRACK_ITEMS",
     "track_items",
     "A track's items",
-    "A track's items from `from` to `to` (seconds; all, unless given): each one's GUID, position, length and end, how far into its source it starts, its lane (and whether that plays), fades — to see what an edit made: the slices, where they sit, what they play. 500 at most.",
+    "A track's items from `from` to `to` (seconds; all, unless given): each one's GUID, position, length and end, how far into its source it starts and the source's file, its lane (and whether that plays), fades — to see what an edit made: the slices, where they sit, what they play. 500 at most.",
     "Data",
     "",
 );
@@ -2183,6 +2265,8 @@ struct ItemRow {
     length: f64,
     end: f64,
     source_offset: f64,
+    /// The recording it plays: its file's name.
+    source: Option<String>,
     lane: u32,
     plays: bool,
     fade_in_ms: f64,
@@ -2200,12 +2284,23 @@ fn register_items(list: &ActionList) {
             a.to.unwrap_or(f64::INFINITY),
         );
         let mut rows: Vec<ItemRow> =
-            daw::service::Items::get_items(daw, project, TrackRef::Guid(guid))
+            daw::service::Items::get_items(daw, project.clone(), TrackRef::Guid(guid))
                 .into_iter()
                 .filter_map(|i| {
                     let position = i.position.as_seconds();
                     let end = position + i.length.as_seconds();
                     (end >= from && position <= to).then(|| ItemRow {
+                        source: daw_proto::Takes::get_active_take(
+                            daw,
+                            project.clone(),
+                            daw_proto::ItemRef::Guid(i.guid.clone()),
+                        )
+                        .and_then(|t| t.source_file_path)
+                        .and_then(|p| {
+                            std::path::Path::new(&p)
+                                .file_name()
+                                .map(|f| f.to_string_lossy().into_owned())
+                        }),
                         lane: i.fixed_lane.unwrap_or(0),
                         plays: daw_ui::studio::project::on_playing_lane(&track, &i),
                         guid: i.guid.clone(),
@@ -3862,10 +3957,19 @@ fn spans(
 /// The longest a slip is waited for, seconds.
 const SLIP_LANDS: u64 = 30;
 
+/// How near its target a moved hit is to have landed, seconds (the
+/// check's own "off target").
+const LANDED: f64 = 0.002;
+
+/// A hit this near its target is not moved, seconds: past the
+/// quantize's tolerance.
+const STAYS: f64 = 0.004;
+
 fn wait_for_slip(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
-    before: &[crate::hits::Played],
+    (before, sent): (&[crate::hits::Played], &[(f64, Option<f64>)]),
+    span: (f64, f64),
 ) {
     let print = |p: &[crate::hits::Played]| -> Vec<(String, i64)> {
         p.iter()
@@ -3877,21 +3981,45 @@ fn wait_for_slip(
             })
             .collect()
     };
+    // Where the hits that move were sent (those already within the
+    // quantize's tolerance stay): the slip has landed when a hit plays at
+    // each of them.
+    let targets: Vec<f64> = sent
+        .iter()
+        .filter_map(|(h, t)| t.filter(|t| (t - h).abs() > STAYS))
+        .collect();
+    let landed = |now: &[crate::hits::Played]| {
+        let mut times: Vec<f64> = now.iter().map(|p| p.time).collect();
+        times.sort_by(f64::total_cmp);
+        targets.iter().all(|t| {
+            let at = times.partition_point(|x| *x < t - LANDED);
+            times.get(at).is_some_and(|x| (x - t).abs() <= LANDED)
+        })
+    };
     let was = print(before);
     let started = std::time::Instant::now();
     let mut last = was.clone();
     let mut steady_since: Option<std::time::Instant> = None;
     // Long enough for a whole song's slip (thousands of edits, each
-    // slice's volume curve carried with it) to land, and steady for a
-    // second before it is judged — not caught halfway.
+    // slice's volume curve carried with it) to land. Done when every hit
+    // is where it was sent — or, short of that, when nothing has changed
+    // for a while (the check then says what did not land).
     while started.elapsed() < std::time::Duration::from_secs(SLIP_LANDS) {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        let now = print(&crate::hits::playback(daw, project));
+        let played = crate::hits::playback(daw, project);
+        let now = print(&played);
         if now == was {
             continue;
         }
         if now == last {
-            if steady_since.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(1_000))
+            let quiet =
+                steady_since.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(300));
+            let gave_up =
+                steady_since.is_some_and(|t| t.elapsed() >= std::time::Duration::from_secs(3));
+            // Landed, and its seams closed: the moves go first, the
+            // trims and reaches that close the seams after them.
+            if (quiet && landed(&played) && crate::hits::gaps(daw, project, span).is_empty())
+                || gave_up
             {
                 return;
             }
@@ -4363,7 +4491,12 @@ fn register_place(list: &ActionList) {
         );
         if result.applied {
             slip_now(daw, &project, &settings, cuts);
-            wait_for_slip(daw, &project, &before);
+            wait_for_slip(
+                daw,
+                &project,
+                (&before, &[(now, Some(to))]),
+                (now.min(to) - 1.0, now.max(to) + 1.0),
+            );
         }
         let span = (now.min(to) - 1.0, now.max(to) + 1.0);
         Ok(checked(
@@ -4424,7 +4557,7 @@ fn register_quantize(list: &ActionList) {
         }
         if !dry && cuts.iter().any(|c| c.1 != 0) {
             slip_now(daw, &project, &base, cuts);
-            wait_for_slip(daw, &project, &before);
+            wait_for_slip(daw, &project, (&before, &sent), whole);
             // One edit, one check: every hit sent, held up to where it
             // was sent; none outside the edit moved.
             let check = checked(daw, &project, (&base, &sent), &before, whole);
