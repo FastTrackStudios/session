@@ -113,6 +113,7 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         Action::ToggleRecord => (TOGGLE_RECORD.id, String::new()),
         Action::SplitAtCursor => (SPLIT.id, String::new()),
         Action::QuantizeDrums => (QUANTIZE_DRUMS.id, String::new()),
+        Action::RevertDrums => (REVERT_DRUMS.id, String::new()),
         Action::QuantizePanel => (QUANTIZE_PANEL.id, String::new()),
         Action::GainStage { clear: false } => (GAIN_STAGE.id, String::new()),
         Action::GainStage { clear: true } => (GAIN_STAGE_CLEAR.id, String::new()),
@@ -295,6 +296,14 @@ static QUANTIZE_DRUMS: ActionMeta = meta(
     "QUANTIZE over the span of the selected folded rows, or the time selection: the whole kit edited from its hit markers with the settings the Quantize panel last applied (else the sticky ones, DRUMS_EDIT_SETTINGS); the window says how the check came out.",
     "Drums",
     "Q",
+);
+static REVERT_DRUMS: ActionMeta = meta(
+    "SESSION_REVERT_DRUMS",
+    "revert_drums",
+    "Put the drums back as played",
+    "DRUMS_REVERT over the span of the selected folded rows, or the time selection: the edit undone there, the hit markers kept to edit by hand, a no-quantize zone over it; the window says how the check came out.",
+    "Drums",
+    "Alt+Q",
 );
 static GAIN_STAGE: ActionMeta = meta(
     "SESSION_GAIN_STAGE",
@@ -522,13 +531,14 @@ fn register_window(list: &ActionList) {
         crate::quantize_panel::ask();
         Ok("the Quantize panel shown, or hidden if it was".to_owned())
     });
-    let plain: [(&'static ActionMeta, Effect, Action); 16] = [
+    let plain: [(&'static ActionMeta, Effect, Action); 17] = [
         (&PLAY_STOP, Effect::Mutating, Action::PlayStop),
         (&PLAY_PAUSE, Effect::Mutating, Action::PlayPause),
         (&GO_TO_START, Effect::Mutating, Action::GoToStart),
         (&TOGGLE_RECORD, Effect::Destructive, Action::ToggleRecord),
         (&SPLIT, Effect::Mutating, Action::SplitAtCursor),
         (&QUANTIZE_DRUMS, Effect::Mutating, Action::QuantizeDrums),
+        (&REVERT_DRUMS, Effect::Mutating, Action::RevertDrums),
         (
             &GAIN_STAGE,
             Effect::Mutating,
@@ -4362,10 +4372,23 @@ fn quantize_span(
             h >= z.start - edge(daw, project, z.start) && h < z.end - edge(daw, project, z.end)
         })
     };
-    let held = |h: f64| match settings.fills {
-        crate::drum_settings::Fills::Skip => in_fill(h) && !in_written_fill(h),
-        crate::drum_settings::Fills::Include => false,
-        crate::drum_settings::Fills::Only => !in_fill(h),
+    // A no-quantize zone (a stretch put back as played, to edit by hand)
+    // is never quantized, whatever is asked of the fills.
+    let excepted = |h: f64| {
+        zones.iter().any(|z| {
+            z.kind == crate::hits::ZoneKind::Exception
+                && z.origin != crate::hits::ZoneOrigin::Rejected
+                && h >= z.start - edge(daw, project, z.start)
+                && h < z.end - edge(daw, project, z.end)
+        })
+    };
+    let held = |h: f64| {
+        excepted(h)
+            || match settings.fills {
+                crate::drum_settings::Fills::Skip => in_fill(h) && !in_written_fill(h),
+                crate::drum_settings::Fills::Include => false,
+                crate::drum_settings::Fills::Only => !in_fill(h),
+            }
     };
     let mut targets = match lock {
         Some(piece) => locked_targets(daw, project, settings, &found, (piece, (from, to)))?,
@@ -4447,6 +4470,123 @@ struct PlaceArg {
 /// How near a line a dropped hit snaps to it, seconds.
 const PLACE_SNAP: f64 = 0.012;
 
+static REVERT: ActionMeta = meta(
+    "DRUMS_REVERT",
+    "drums_revert",
+    "Put the drums back as played",
+    "Undo the drum edit over a stretch — `from`/`to` (seconds, as the song plays now) or `sections` — without undoing anything else: every hit there moved back to where it was played, the whole kit together, the seams crossfaded as a quantize closes them, so the stretch plays as recorded. The hit markers stay, to drag (HITS_PLACE) or quantize again. With `hold` (the default) a no-quantize zone goes over it, so a later quantize leaves it as played; delete the zone (ZONES_REMOVE) to let one in. Says the check, as QUANTIZE does.",
+    "Drums",
+    "",
+);
+
+/// Which stretch to put back.
+#[derive(Facet)]
+struct RevertArg {
+    #[facet(default)]
+    sections: Vec<String>,
+    from: Option<f64>,
+    to: Option<f64>,
+    hold: Option<bool>,
+}
+
+/// The kit's moments in `lo..hi` (`moments`, as they play now — the hits
+/// a quantize cuts on), each with where it was played: `(now, as
+/// recorded)`, read off the hit it starts with.
+fn as_played(
+    moments: &[f64],
+    rows: &[crate::hits::HitRow],
+    (lo, hi): (f64, f64),
+) -> Vec<(f64, Option<f64>)> {
+    let mut played: Vec<(f64, f64)> = rows
+        .iter()
+        .filter_map(|r| r.now.map(|n| (n, r.time)))
+        .collect();
+    played.sort_by(|a, b| a.0.total_cmp(&b.0));
+    moments
+        .iter()
+        .filter(|m| **m >= lo && **m < hi)
+        .filter_map(|m| {
+            let at = played.partition_point(|(n, _)| *n < m - 1e-6);
+            played
+                .get(at)
+                .filter(|(n, _)| (n - m).abs() <= 1e-6)
+                .map(|(n, was)| (*n, Some(*was)))
+        })
+        .collect()
+}
+
+// r[impl hits.revert]
+fn register_revert(list: &ActionList) {
+    list.register(&REVERT, Effect::Mutating, |a: RevertArg| {
+        let (daw, project) = song()?;
+        let settings = crate::drum_settings::current();
+        let mut out: Vec<QuantizeSpan> = Vec::new();
+        let before = crate::hits::playback(daw, &project);
+        let rows = crate::hits::hits(daw, &project, &[]);
+        let moments: Vec<f64> = moments(&kit(daw, &project), None)
+            .iter()
+            .map(|m| m.time)
+            .collect();
+        let mut cuts: Vec<(i64, i64)> = Vec::new();
+        let mut sent: Vec<(f64, Option<f64>)> = Vec::new();
+        let mut whole = (f64::INFINITY, f64::NEG_INFINITY);
+        for (name, from, to) in spans(daw, &project, &a.sections, (a.from, a.to))? {
+            let (lo, hi) = (
+                from - edge(daw, &project, from),
+                to - edge(daw, &project, to),
+            );
+            let pairs = as_played(&moments, &rows, (lo, hi));
+            // The first hit after it stays where it plays: the rest of
+            // the song does not move.
+            let after: Vec<f64> = moments
+                .iter()
+                .copied()
+                .find(|t| *t >= hi)
+                .into_iter()
+                .collect();
+            let (result, planned) = judge(daw, &project, &settings, (&pairs, &after), false);
+            cuts.extend(planned);
+            sent.extend(pairs);
+            whole = (whole.0.min(lo), whole.1.max(hi));
+            if a.hold.unwrap_or(true) {
+                crate::hits::add_zone(
+                    daw,
+                    &project,
+                    (from, to),
+                    (
+                        crate::hits::ZoneKind::Exception,
+                        crate::hits::ZoneOrigin::Manual,
+                        "put back as played: edit by hand",
+                    ),
+                )?;
+            }
+            out.push(QuantizeSpan {
+                name,
+                from,
+                to,
+                result,
+                by_groove: Vec::new(),
+                by_written: Vec::new(),
+                check: None,
+            });
+        }
+        if cuts.iter().any(|c| c.1 != 0) {
+            slip_now(daw, &project, &settings, cuts);
+            wait_for_slip(daw, &project, (&before, &sent), whole);
+            let check = checked(daw, &project, (&settings, &sent), &before, whole);
+            if let Some(last) = out.last_mut() {
+                last.check = Some(check);
+            }
+        }
+        for span in &mut out {
+            span.result.biggest.clear();
+            span.result.to_check.clear();
+        }
+        crate::hit_overlay::refresh();
+        Ok(out)
+    });
+}
+
 // r[impl hits.place]
 fn register_place(list: &ActionList) {
     list.register(&PLACE, Effect::Mutating, |a: PlaceArg| {
@@ -4511,6 +4651,7 @@ fn register_place(list: &ActionList) {
 
 fn register_quantize(list: &ActionList) {
     register_place(list);
+    register_revert(list);
     list.register(&QUANTIZE, Effect::Mutating, |a: QuantizeArg| {
         let (daw, project) = song()?;
         if crate::hits::kit_from_markers(daw, &project).is_none() {

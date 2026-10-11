@@ -253,6 +253,17 @@ pub fn groove_lines(answer: &Value) -> Vec<String> {
     lines
 }
 
+/// The `DRUMS_REVERT` arguments for the stretch `choices` names; `None`
+/// with nothing chosen.
+#[must_use]
+pub fn revert_args(choices: &Choices) -> Option<String> {
+    match (&choices.section, choices.selection) {
+        (Some(name), _) => Some(serde_json::json!({ "sections": [name] }).to_string()),
+        (None, Some((from, to))) => Some(serde_json::json!({ "from": from, "to": to }).to_string()),
+        (None, None) => None,
+    }
+}
+
 /// The leveling's knobs as the panel turns them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Leveling {
@@ -559,6 +570,27 @@ pub fn QuantizePanel() -> Element {
                     onclick: move |_| go(false),
                     "Apply"
                 }
+                button {
+                    style: chip(false),
+                    disabled: busy(),
+                    title: "Undo the edit here: every hit back where it was played, the hit markers kept to drag by hand (Alt+Q)",
+                    onclick: move |_| {
+                        let Some(args) = revert_args(&choices.read()) else {
+                            said.set(vec!["Choose a section, or select a stretch of time".into()]);
+                            return;
+                        };
+                        busy.set(true);
+                        said.set(vec!["Putting it back as played…".into()]);
+                        spawn(async move {
+                            said.set(match run("DRUMS_REVERT", args).await {
+                                Ok(answer) => summary(&answer),
+                                Err(why) => vec![why],
+                            });
+                            busy.set(false);
+                        });
+                    },
+                    "Put back as played"
+                }
             }
             div { style: HEAD, "LEVEL — HOW CONSISTENT EACH DRUM'S STROKES" }
             div {
@@ -729,6 +761,25 @@ mod tests {
             "Pattern",
             "a target the panel does not offer leaves its own"
         );
+    }
+
+    #[test]
+    fn put_back_names_its_stretch() {
+        let section = Choices {
+            section: Some("BD".into()),
+            ..Choices::default()
+        };
+        let args: Value =
+            serde_json::from_str(&revert_args(&section).expect("args")).expect("json");
+        assert_eq!(args["sections"][0], "BD");
+        let selection = Choices {
+            selection: Some((10.0, 12.5)),
+            ..Choices::default()
+        };
+        let args: Value =
+            serde_json::from_str(&revert_args(&selection).expect("args")).expect("json");
+        assert_eq!(args["to"], 12.5);
+        assert!(revert_args(&Choices::default()).is_none());
     }
 
     #[test]

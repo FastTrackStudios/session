@@ -215,4 +215,53 @@ fn quantized_from_its_markers_the_kit_is_on_the_grid() {
             neighbour.time
         );
     }
+
+    // r[verify hits.revert]
+    // The section put back as played: every hit where the drummer played
+    // it, the markers all still there, a no-quantize zone over it.
+    let args = format!(r#"{{"from":{from},"to":{to}}}"#);
+    let revert = std::thread::spawn(move || list().run_json("DRUMS_REVERT", args.as_bytes()));
+    let began = Instant::now();
+    while !revert.is_finished() {
+        assert!(
+            began.elapsed() < Duration::from_secs(60),
+            "the revert finishes"
+        );
+        if window_pending() {
+            be_the_window(&path);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let said = revert.join().expect("it ran").expect("it was not refused");
+    let said = String::from_utf8_lossy(&said);
+    assert!(
+        said.contains(r#""doubled":0"#) && said.contains(r#""lost":0"#),
+        "{said}"
+    );
+    let back = session_daw::hits::playback(daw, &project);
+    assert_eq!(back.len(), before.len(), "no marker lost");
+    for hit in before
+        .iter()
+        .filter(|h| h.time >= from + 0.05 && h.time < to - 0.05)
+    {
+        let now = back
+            .iter()
+            .find(|p| p.id == hit.id)
+            .map(|p| p.time)
+            .expect("it plays");
+        assert!(
+            (now - hit.time).abs() < 0.0031,
+            "{} back where it was played: {:.4} → {now:.4}",
+            hit.id,
+            hit.time
+        );
+    }
+    let zones = session_daw::hits::zones(daw, &project);
+    assert!(
+        zones
+            .iter()
+            .any(|z| z.kind == session_daw::hits::ZoneKind::Exception
+                && (z.start - from).abs() < 1e-6),
+        "a no-quantize zone over it: {zones:?}"
+    );
 }

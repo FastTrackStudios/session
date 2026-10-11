@@ -1077,6 +1077,69 @@ impl ArrangementWidget {
     /// Lay the rows out as `slug` (an overview); pressed again, or the
     /// other overview's key pressed in this one's, go back to the scene
     /// before. `false` with no planner.
+    /// The stretch a drum key works on: the selected folded rows' span,
+    /// else the time selection.
+    fn drum_span(&self) -> Option<(f64, f64)> {
+        let span = self.editor.selected_folds(&self.project).iter().fold(
+            None,
+            |span: Option<(f64, f64)>, (_, _, a, b)| {
+                Some(span.map_or((*a, *b), |(f, t)| (f.min(*a), t.max(*b))))
+            },
+        );
+        span.or_else(|| {
+            self.editor
+                .cursor
+                .selection
+                .filter(|s| s.is_meaningful())
+                .map(|s| (s.start, s.end))
+        })
+    }
+
+    /// Alt+Q: put the drums back as played over the selected folded rows'
+    /// span or the time selection (`DRUMS_REVERT`) — the edit undone
+    /// there, the hit markers kept to edit by hand, a no-quantize zone
+    /// over it — off the frame, as [`Self::quantize_drums`] does.
+    fn revert_drums(&self) -> bool {
+        let Some((from, to)) = self.drum_span() else {
+            *self
+                .staged
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some("select the kit's folded rows, or a stretch of time, to put back as played");
+            return true;
+        };
+        #[cfg(feature = "native")]
+        {
+            let Some(runtime) = crate::open::runtime() else {
+                return false;
+            };
+            let said = std::sync::Arc::clone(&self.staged);
+            runtime.spawn_blocking(move || {
+                let args = format!(r#"{{"from":{from},"to":{to}}}"#);
+                let out = crate::actions::list().run_json("DRUMS_REVERT", args.as_bytes());
+                let text = match &out {
+                    Ok(json) if String::from_utf8_lossy(json).contains(r#""ok":false"#) => {
+                        "drums put back as played — the check found a problem (DRUMS_REVIEW)"
+                    }
+                    Ok(_) => "drums put back as played — the hit markers are there to edit",
+                    Err(e) => {
+                        tracing::warn!(revert.error = %e, "drums: putting back was refused");
+                        "the drums could not be put back"
+                    }
+                };
+                *said
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(text);
+            });
+            true
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            let _ = (from, to);
+            false
+        }
+    }
+
     /// `q`: QUANTIZE the kit over the selected folded rows' span, or the
     /// time selection — from its hit markers, with the settings the
     /// Quantize panel last applied (else the sticky ones) — off the
@@ -1085,20 +1148,7 @@ impl ArrangementWidget {
     /// to quantize over it says so. False in a page (no engine of its own
     /// to read the markers from).
     fn quantize_drums(&self) -> bool {
-        let span = self.editor.selected_folds(&self.project).iter().fold(
-            None,
-            |span: Option<(f64, f64)>, (_, _, a, b)| {
-                Some(span.map_or((*a, *b), |(f, t)| (f.min(*a), t.max(*b))))
-            },
-        );
-        let span = span.or_else(|| {
-            self.editor
-                .cursor
-                .selection
-                .filter(|s| s.is_meaningful())
-                .map(|s| (s.start, s.end))
-        });
-        let Some((from, to)) = span else {
+        let Some((from, to)) = self.drum_span() else {
             *self
                 .staged
                 .lock()
@@ -2002,6 +2052,10 @@ impl ArrangementWidget {
             }
             if action == crate::keys::Action::QuantizeDrums {
                 handled |= self.quantize_drums();
+                continue;
+            }
+            if action == crate::keys::Action::RevertDrums {
+                handled |= self.revert_drums();
                 continue;
             }
             if let crate::keys::Action::Frame { time, tracks } = &action {

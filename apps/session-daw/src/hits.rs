@@ -2030,7 +2030,7 @@ pub fn zone_holds(zones: &[Zone], time: f64, beat_length: f64) -> bool {
 }
 
 /// Put a zone on the ruler. Its region's id.
-fn add_zone(
+pub(crate) fn add_zone(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     (start, end): (f64, f64),

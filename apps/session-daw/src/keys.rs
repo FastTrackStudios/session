@@ -41,6 +41,10 @@ pub enum Action {
     /// QUANTIZE over the selected folded rows' span: the kit edited
     /// from its hit markers.
     QuantizeDrums,
+    /// Put the drums back as played over the selected folded rows' span
+    /// or the time selection (`DRUMS_REVERT`): the edit undone there, the
+    /// hit markers kept.
+    RevertDrums,
     /// Show or hide the Quantize panel (`crate::quantize_panel`).
     QuantizePanel,
     /// Slip-edit the whole kit — every folded row of the drums folder —
@@ -143,6 +147,7 @@ pub fn action_of(id: &str) -> Action {
         "40042" => Action::GoToStart,
         "40757" | "40012" => Action::SplitAtCursor,
         "FTS_QUANTIZE_DRUMS" => Action::QuantizeDrums,
+        "FTS_REVERT_DRUMS" => Action::RevertDrums,
         "FTS_QUANTIZE_PANEL" => Action::QuantizePanel,
         "FTS_GAIN_STAGE" => Action::GainStage { clear: false },
         "FTS_GAIN_STAGE_CLEAR" => Action::GainStage { clear: true },
@@ -448,6 +453,7 @@ const BUILTIN: &str = r#"{
       "e": "FTS_EXPRESSION_EDITOR_OPEN",
       "q": "FTS_QUANTIZE_DRUMS",
       "Shift+q": "FTS_QUANTIZE_PANEL",
+      "Alt+q": "FTS_REVERT_DRUMS",
       "Delete": "40697",
       "Backspace": "40697",
       "Escape": "40020",
@@ -659,6 +665,14 @@ mod tests {
         assert_eq!(
             keys.press(KeyCode::Character("q".into()), shift()),
             vec![Action::QuantizePanel]
+        );
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(
+            keys.press(KeyCode::Character("q".into()), alt),
+            vec![Action::RevertDrums]
         );
     }
 

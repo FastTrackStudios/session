@@ -219,6 +219,14 @@ it, the hits either side left where they play, the seams closed as a
 quantize closes them. Dragging with Ctrl moves the marker alone: where
 the hit was found, not where it plays.
 
+r[hits.revert]
+A stretch of the edit is undone by itself — a selection, the folded kit
+rows, a section — every hit there put back where it was played, the
+whole kit together, the seams closed as a quantize closes them; the hit
+markers stay, to drag into place by hand or quantize again. A
+no-quantize zone goes over it (unless asked not to), so a later
+quantize leaves the hand work alone.
+
 r[quantize.reads-markers]
 Audio quantize reads hit markers and never runs detection. With no hit
 markers in its selection it says so and does nothing.
