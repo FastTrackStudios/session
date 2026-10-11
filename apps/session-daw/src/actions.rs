@@ -113,6 +113,7 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         Action::ToggleRecord => (TOGGLE_RECORD.id, String::new()),
         Action::SplitAtCursor => (SPLIT.id, String::new()),
         Action::QuantizeDrums => (QUANTIZE_DRUMS.id, String::new()),
+        Action::QuantizePanel => (QUANTIZE_PANEL.id, String::new()),
         Action::GainStage { clear: false } => (GAIN_STAGE.id, String::new()),
         Action::GainStage { clear: true } => (GAIN_STAGE_CLEAR.id, String::new()),
         Action::CompTake(take) => (COMP_TAKE.id, format!(r#"{{"take":{take}}}"#)),

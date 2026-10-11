@@ -1450,6 +1450,7 @@ impl Editor {
             | Action::Visibility(_)
             | Action::ToggleScene(_)
             | Action::QuantizeDrums
+            | Action::QuantizePanel
             | Action::SlipDrums { .. }
             | Action::Frame { .. }
             | Action::RemoveRange { .. }
