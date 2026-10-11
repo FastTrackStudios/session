@@ -174,6 +174,25 @@ that lead is set as the item's snap offset, so a hand drag snaps on the
 hit too. An item therefore never has to start on the beat for its hit
 to be on it.
 
+r[quantize.groove]
+Target `Pattern` places each hit by its section's own groove: each
+piece's hits laid over the bar (or a two-bar cycle when the figure takes
+two), bunched where they recur, and the bunches played in most bars kept
+as slots — each with its line, the drummer's feel there and how much it
+wanders. A hit nearer where its slot is usually played than the nearest
+line goes to the slot's line, however far it drifted; otherwise as
+`Guided`. A slot is on a 16th unless the grid is a triplet grid or the
+drum MIDI writes it otherwise; the fill zones are left out of the
+learning. The quantize names every hit the groove sent to a line other
+than the nearest, and `DRUMS_GROOVE` shows each section's groove and the
+bars that depart from it.
+
+r[quantize.stays-in-span]
+Quantizing a span moves nothing outside it: the first hit after it is
+cut where it is, so the slice holding the span's last moved hit does not
+carry the rest of the take with it, and the check fails on any hit
+outside the span that plays somewhere else after the edit.
+
 r[quantize.reads-markers]
 Audio quantize reads hit markers and never runs detection. With no hit
 markers in its selection it says so and does nothing.

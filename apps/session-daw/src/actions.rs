@@ -2608,7 +2608,7 @@ fn targets(
                 // The MIDI is quantized: its note IS the grid line it was
                 // written on — straight or a triplet — which is all it is
                 // asked here.
-                Target::Guided => note.or_else(|| {
+                Target::Guided | Target::Pattern => note.or_else(|| {
                     Some(grid_line(daw, project, h, settings.grid))
                         .filter(|g| (g - h).abs() <= sure)
                 }),
@@ -2623,6 +2623,9 @@ fn targets(
 /// under a 1/32 at 160 bpm (47 ms), so a double kick's 16ths and a
 /// drummer's 32nds stay their own.
 const GESTURE: f64 = 0.040;
+
+/// What a seam takes before a hit: its lead and its crossfade, seconds.
+const SEAM_ROOM: f64 = 0.010;
 
 /// Each gesture — moments nearer together than [`GESTURE`] (a kick into
 /// a snare, a drag, a flam across pieces), or sent to targets that would
@@ -2647,7 +2650,13 @@ fn hold_gestures(pairs: &[(f64, Option<f64>)], loudness: &[f64]) -> Vec<(f64, Op
                 (Some(a), Some(b)) => b - a < 0.5 * (next.0 - prev.0),
                 _ => false,
             };
-            if next.0 - prev.0 >= GESTURE && !collide {
+            // Moved later than the one before by more than the room between
+            // them, a slice reaches back over that one's attack to close its
+            // gap: two kicks 47 ms apart, the second sent 57 ms later, played
+            // the first twice. Together they keep their spacing.
+            let shift = |(h, t): &(f64, Option<f64>)| t.map_or(0.0, |t| t - h);
+            let reaches = shift(next) - shift(prev) > next.0 - prev.0 - SEAM_ROOM;
+            if next.0 - prev.0 >= GESTURE && !collide && !reaches {
                 break;
             }
             end = end.saturating_add(1);
@@ -2881,6 +2890,9 @@ struct Detected {
     moments: Vec<Moment>,
     targets: Vec<(f64, Option<f64>)>,
     fills: Vec<crate::drum_edit::Fill>,
+    /// The moments the groove sent to a line other than the nearest:
+    /// `(time, its line, the nearest)`.
+    by_groove: Vec<(f64, f64, f64)>,
 }
 
 fn detect(
@@ -2898,14 +2910,162 @@ fn detect(
     let moments = moments(&kit, settings.grid_scan.then_some((by_line, tolerance)));
     let times: Vec<f64> = moments.iter().map(|m| m.time).collect();
     let loudness: Vec<f64> = moments.iter().map(|m| m.relative_db).collect();
-    let targets = hold_gestures(&targets(daw, project, settings, &kit, &times)?, &loudness);
+    let mut placed = targets(daw, project, settings, &kit, &times)?;
+    let mut by_groove = Vec::new();
+    if settings.target == crate::drum_settings::Target::Pattern
+        && let Some(groove) = groove_of(daw, project, (&kit, settings.grid.is_multiple_of(3)), span)
+    {
+        for (moment, (h, to)) in moments.iter().zip(placed.iter_mut()) {
+            if *h >= span.0
+                && *h < span.1
+                && let Some(line) = groove
+                    .target(
+                        daw,
+                        project,
+                        &kit,
+                        (moment, grid_line(daw, project, *h, settings.grid)),
+                    )
+                    // Never out of the span: the next section's first hit
+                    // is where its own edit starts.
+                    .filter(|line| *line >= span.0 && *line < span.1 - SEAM_ROOM)
+            {
+                let nearest = grid_line(daw, project, *h, settings.grid);
+                if (line - nearest).abs() > 0.002 {
+                    by_groove.push((*h, line, nearest));
+                }
+                *to = Some(line);
+            }
+        }
+    }
+    let targets = hold_gestures(&placed, &loudness);
     let fills = find_fills(daw, project, &kit, span);
     Ok(Detected {
         kit,
         moments,
         targets,
         fills,
+        by_groove,
     })
+}
+
+/// How far from a slot's hit a written note may be and still vote for its
+/// line, beats: more than a drift the groove still places.
+const VOTE_WINDOW_BEATS: f64 = 0.25;
+
+/// A span's groove, with the kit's hits it was learned from.
+struct SpanGroove {
+    groove: crate::groove::Groove,
+    /// Each hit as the groove placed it, and its time (seconds).
+    hits: Vec<(crate::groove::Hit, f64)>,
+}
+
+/// `t` seconds as a bar and how far into it (beats from its downbeat).
+fn in_bar(daw: &daw::standalone::Standalone, project: &ProjectContext, t: f64) -> (i32, f64) {
+    let (bar, beat, frac) = crate::song_bars::musical(daw, project, t);
+    (bar, f64::from(beat.saturating_sub(1)) + frac)
+}
+
+/// The groove of `kit` over `span` (`crate::groove`), its edit zones —
+/// the fills — left out of the learning: none with too few bars.
+fn groove_of(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    (kit, triplets): (&[KitPiece], bool),
+    (from, to): (f64, f64),
+) -> Option<SpanGroove> {
+    let last = kit
+        .iter()
+        .flat_map(|(_, _, hits)| hits.iter().map(|h| h.time))
+        .fold(f64::NEG_INFINITY, f64::max);
+    let (from, to) = (from.max(0.0), to.min(last + 0.001));
+    if to <= from {
+        return None;
+    }
+    let (first_bar, _) = in_bar(daw, project, from + 1e-6);
+    let (last_bar, _) = in_bar(daw, project, to - 1e-6);
+    let start = crate::song_bars::time(daw, project, first_bar, 1, 0.0);
+    let next = crate::song_bars::time(daw, project, first_bar.saturating_add(1), 1, 0.0);
+    let beat_len = 60.0 / daw.get_tempo_at(project.clone(), start).max(1.0);
+    let beats = ((next - start) / beat_len).round().max(1.0);
+    let zones = crate::hits::zones(daw, project);
+    let hits: Vec<(crate::groove::Hit, f64)> = kit
+        .iter()
+        .enumerate()
+        .flat_map(|(piece, (_, _, hits))| {
+            hits.iter()
+                .map(|h| h.time)
+                .filter(|t| *t >= from && *t < to)
+                .filter(|t| !crate::hits::zone_holds(&zones, *t, beat_len))
+                .map(move |t| (piece, t))
+        })
+        .map(|(piece, t)| {
+            let (bar, beat) = in_bar(daw, project, t);
+            (crate::groove::Hit { piece, bar, beat }, t)
+        })
+        .collect();
+    let bars = u32::try_from(last_bar.saturating_sub(first_bar).saturating_add(1)).ok()?;
+    let placed: Vec<crate::groove::Hit> = hits.iter().map(|h| h.0).collect();
+    let mut groove = crate::groove::Groove::learn_on(&placed, beats, (first_bar, bars), triplets)?;
+    // Which line a slot is on, where the drummer sits between two: what
+    // the drum MIDI writes there, when it mostly agrees.
+    if let Some(midi) = crate::drum_reference::find_track(daw, project) {
+        let notes = crate::drum_reference::notes(daw, project, &midi);
+        let named: Vec<(String, Vec<f64>)> = kit
+            .iter()
+            .map(|(n, _, h)| (n.clone(), h.iter().map(|h| h.time).collect()))
+            .collect();
+        let map = crate::drum_reference::learn_map(&notes, &named, NOTE_WINDOW);
+        let written: Vec<crate::groove::Hit> = notes
+            .iter()
+            .filter(|n| n.time >= from - 1.0 && n.time < to + 1.0)
+            .filter_map(|n| {
+                let name = map.iter().find(|m| m.pitch == n.pitch)?.piece.as_ref()?;
+                let piece = kit.iter().position(|(k, _, _)| k == name)?;
+                let (bar, beat) = in_bar(daw, project, n.time);
+                Some(crate::groove::Hit { piece, bar, beat })
+            })
+            .collect();
+        groove.settle_lines(&placed, &written, VOTE_WINDOW_BEATS);
+    }
+    Some(SpanGroove { groove, hits })
+}
+
+impl SpanGroove {
+    /// Where `moment` goes by the groove: the line of the slot one of its
+    /// pieces is in — the most played such slot, when its pieces
+    /// disagree — or none, in no slot. A slot's line other than the
+    /// `nearest` is taken only for a hit nearer where that slot is
+    /// usually played than it is to the nearest line: a kick 34 ms before
+    /// 2 is beat 2's, not a "1a" played 61 ms late, however wide the
+    /// "1a"s wander.
+    fn target(
+        &self,
+        daw: &daw::standalone::Standalone,
+        project: &ProjectContext,
+        kit: &[KitPiece],
+        (moment, nearest): (&Moment, f64),
+    ) -> Option<f64> {
+        let (bar, beat) = in_bar(daw, project, moment.time);
+        let beat_len = 60.0 / daw.get_tempo_at(project.clone(), moment.time).max(1.0);
+        let to_nearest = (nearest - moment.time) / beat_len;
+        moment
+            .pieces
+            .iter()
+            .filter_map(|name| kit.iter().position(|(n, _, _)| n == name))
+            .filter_map(|piece| {
+                let hit = crate::groove::Hit { piece, bar, beat };
+                let slot = self.groove.slot_of(hit)?;
+                let pull = self.groove.pull(hit)?;
+                let agrees = (pull - to_nearest).abs() < 1e-3;
+                let nearer = self
+                    .groove
+                    .from_middle(hit)
+                    .is_some_and(|m| m.abs() < to_nearest.abs());
+                (agrees || nearer).then_some((slot.cycles, pull))
+            })
+            .max_by_key(|(cycles, _)| *cycles)
+            .map(|(_, pull)| pull.mul_add(beat_len, moment.time))
+    }
 }
 
 /// Whether the hit at `h` is in one of `fills`.
@@ -2923,7 +3083,7 @@ static QUANTIZE: ActionMeta = meta(
     "QUANTIZE",
     "quantize",
     "Quantize the drums",
-    "Quantize the kit from its hit markers (HITS_DETECT first): every drum track cut `lead_ms` before each hit and moved together so the HIT lands on its target — the item starts before the beat, the attack is on it — the seams crossfaded (`xfade_ms`). Over `sections` (by name, from the SECTIONS lane: `Verse 1`, `Chorus`) or `from`/`to` (seconds), each with these settings — so a verse and a chorus can each be quantized their own way. The edit zones (ZONES_LIST) are left as played — `fills: Include` edits them too (a fill that keeps a grid, on that grid: `grid: 12` for 8th triplets, 24 for 16th triplets), `Only` edits only them; the drum-edit settings (grid, strength, target, tolerance, lead, crossfade…) can be given for this call alone. `dry_run` says what it would do. After an edit, a check from the markers: hits lost, hits doubled (a double attack), and how far the moved hits landed from where they were sent.",
+    "Quantize the kit from its hit markers (HITS_DETECT first): every drum track cut `lead_ms` before each hit and moved together so the HIT lands on its target — the item starts before the beat, the attack is on it — the seams crossfaded (`xfade_ms`). Over `sections` (by name, from the SECTIONS lane: `Verse 1`, `Chorus`) or `from`/`to` (seconds), each with these settings — so a verse and a chorus can each be quantized their own way. The edit zones (ZONES_LIST) are left as played — `fills: Include` edits them too (a fill that keeps a grid, on that grid: `grid: 12` for 8th triplets, 24 for 16th triplets), `Only` edits only them; the drum-edit settings (grid, strength, target, tolerance, lead, crossfade…) can be given for this call alone. `target: Pattern` places each hit by the section's own groove (DRUMS_GROOVE): a hit in a slot the section plays bar after bar goes to that slot's line, however far it drifted, and `by_groove` lists each sent to a line other than the nearest. `dry_run` says what it would do; `brief` leaves out the lists of moves. After an edit, a check from the markers: hits lost, hits doubled (a double attack), and how far the moved hits landed from where they were sent.",
     "Drums",
     "",
 );
@@ -2935,6 +3095,142 @@ static ZONES_FIND: ActionMeta = meta(
     "Drums",
     "",
 );
+
+static GROOVE: ActionMeta = meta(
+    "DRUMS_GROOVE",
+    "drums_groove",
+    "The drums' groove",
+    "Each section's groove, learned from its hit markers (its fill zones left out): where in the bar each piece plays bar after bar — each slot counted as a drummer counts (`2a`; `2:3&` in a two-bar cycle), in how many bars of how many it is played, the feel there (ms behind its line, late positive) and how much that wanders — and the bars that depart from it: hits in no slot (`extra`) and slots not played (`missing`), where a fill or a variation is. Over `sections` (by name) or `from`/`to` (seconds). QUANTIZE with `target: Pattern` sends each hit in a slot to the slot's line, however far it drifted. Read-only.",
+    "Drums",
+    "",
+);
+
+/// Where to read the groove.
+#[derive(Facet)]
+struct GrooveArg {
+    #[facet(default)]
+    sections: Vec<String>,
+    from: Option<f64>,
+    to: Option<f64>,
+    /// Let a slot be a triplet's line where it is plainly nearer one —
+    /// what `target: Pattern` does on a triplet grid (`grid: 12`, 24).
+    /// Left out, every slot is on a 16th.
+    triplets: Option<bool>,
+}
+
+/// One slot of a groove.
+#[derive(Facet)]
+struct SlotOut {
+    /// Counted as a drummer counts it: `1`, `2e`, `3&`, `4a`, a
+    /// triplet's `2t`/`2l`; `2:3&` for the second bar of a two-bar cycle.
+    at: String,
+    played: u32,
+    of: u32,
+    /// Where it is played against its line, ms (late positive).
+    feel_ms: f64,
+    /// How much that wanders, ms.
+    spread_ms: f64,
+}
+
+/// One piece's part in a groove.
+#[derive(Facet)]
+struct PieceGroove {
+    piece: String,
+    slots: Vec<SlotOut>,
+}
+
+/// One bar the section departs from its groove in.
+#[derive(Facet)]
+struct Departure {
+    bar: i32,
+    /// Hits in no slot: `Snare 3.62` (the piece, the beat it plays on).
+    extra: Vec<String>,
+    /// Slots not played: `Kick 2a`.
+    missing: Vec<String>,
+}
+
+/// A section's groove.
+#[derive(Facet)]
+struct GrooveOut {
+    name: String,
+    /// Bars in a cycle of it: 1, or 2.
+    cycle_bars: i32,
+    cycles: u32,
+    /// The share of the section's hits a slot places, and of the slots'
+    /// bars that play them.
+    placed: f64,
+    regular: f64,
+    pieces: Vec<PieceGroove>,
+    departures: Vec<Departure>,
+}
+
+/// What `DRUMS_GROOVE` says of one span.
+fn groove_out(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    (kit, triplets): (&[KitPiece], bool),
+    (name, from, to): (String, f64, f64),
+) -> Result<GrooveOut, String> {
+    let found = groove_of(daw, project, (kit, triplets), (from, to))
+        .ok_or_else(|| format!("{name}: too few bars of hits to learn a groove from"))?;
+    let g = &found.groove;
+    let beat_len = 60.0 / daw.get_tempo_at(project.clone(), from.max(0.0)).max(1.0);
+    let ms = |beats: f64| (beats * beat_len * 10_000.0).round() / 10.0;
+    let name_of = |piece: usize| kit.get(piece).map_or_else(String::new, |p| p.0.clone());
+    let pieces = (0..kit.len())
+        .filter_map(|piece| {
+            let mut slots: Vec<&crate::groove::Slot> =
+                g.slots.iter().filter(|s| s.piece == piece).collect();
+            slots.sort_by(|a, b| a.line.total_cmp(&b.line));
+            (!slots.is_empty()).then(|| PieceGroove {
+                piece: name_of(piece),
+                slots: slots
+                    .into_iter()
+                    .map(|s| SlotOut {
+                        at: crate::groove::count(s.line, g.beats, g.cycle_bars),
+                        played: s.cycles,
+                        of: g.cycles,
+                        feel_ms: ms(s.feel),
+                        spread_ms: ms(s.spread),
+                    })
+                    .collect(),
+            })
+        })
+        .collect();
+    let hits: Vec<crate::groove::Hit> = found.hits.iter().map(|h| h.0).collect();
+    let departures = g
+        .departures(&hits)
+        .into_iter()
+        .map(|(cycle, extra, missing)| Departure {
+            bar: cycle
+                .saturating_mul(g.cycle_bars)
+                .saturating_add(g.first_bar),
+            extra: extra
+                .iter()
+                .map(|h| format!("{} {}:{:.2}", name_of(h.piece), h.bar, h.beat + 1.0))
+                .collect(),
+            missing: missing
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{} {}",
+                        name_of(s.piece),
+                        crate::groove::count(s.line, g.beats, g.cycle_bars)
+                    )
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(GrooveOut {
+        name,
+        cycle_bars: g.cycle_bars,
+        cycles: g.cycles,
+        placed: (g.placed * 100.0).round() / 100.0,
+        regular: (g.regular * 100.0).round() / 100.0,
+        pieces,
+        departures,
+    })
+}
 
 #[derive(Facet)]
 struct QuantizeArg {
@@ -2950,6 +3246,9 @@ struct QuantizeArg {
     /// kick): each the line after the last, the kit moved with them;
     /// moments without it stay where they were played.
     lock: Option<String>,
+    /// Leave out each span's lists of moves and hits to check: the
+    /// counts, the groove's calls and the check stay.
+    brief: Option<bool>,
 }
 
 /// What a quantize did over one stretch.
@@ -2960,8 +3259,80 @@ struct QuantizeSpan {
     from: f64,
     to: f64,
     result: SlipResult,
+    /// With `target: Pattern`: the hits the groove sent to a line other
+    /// than the nearest — `bar`/`beat` where each was played, `line` the
+    /// groove's (counted as a drummer counts) and `nearest` the line it
+    /// was nearest. The decisions to listen to.
+    by_groove: Vec<GrooveCall>,
     /// How the edit left the hits (none for a dry run).
     check: Option<crate::hits::Check>,
+}
+
+/// One hit the groove placed against the nearest line.
+#[derive(Facet)]
+struct GrooveCall {
+    time: f64,
+    bar: i32,
+    beat: f64,
+    line: String,
+    nearest: String,
+    /// How far it moves, ms.
+    shift_ms: f64,
+}
+
+/// How a quantize's edit of `span` left the hits ([`crate::hits::check`]),
+/// each moved hit held up to where it was sent: its target, or as far
+/// toward it as the strength takes it.
+fn checked(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    (settings, pairs): (&crate::drum_settings::Settings, &[(f64, Option<f64>)]),
+    before: &[crate::hits::Played],
+    span: (f64, f64),
+) -> crate::hits::Check {
+    let tolerance = settings.tolerance_ms / 1_000.0;
+    let sent: Vec<f64> = pairs
+        .iter()
+        .filter_map(|(h, t)| {
+            let t = (*t)?;
+            ((t - h).abs() > tolerance).then(|| (t - h).mul_add(settings.strength, *h))
+        })
+        .collect();
+    crate::hits::check(daw, project, before, &sent, span)
+}
+
+/// The groove's calls against the nearest line in `span`, as a model
+/// reads them.
+fn groove_calls(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    found: &Detected,
+    (from, to): (f64, f64),
+) -> Vec<GrooveCall> {
+    found
+        .by_groove
+        .iter()
+        .filter(|(h, _, _)| *h >= from && *h < to)
+        .map(|&(h, line, nearest)| {
+            let (bar, beat) = in_bar(daw, project, h);
+            GrooveCall {
+                time: h,
+                bar,
+                beat: beat + 1.0,
+                line: counted(daw, project, line),
+                nearest: counted(daw, project, nearest),
+                shift_ms: ((line - h) * 10_000.0).round() / 10.0,
+            }
+        })
+        .collect()
+}
+
+/// `t` seconds counted as a drummer counts it in its bar: `2a`.
+fn counted(daw: &daw::standalone::Standalone, project: &ProjectContext, t: f64) -> String {
+    let (bar, beat) = in_bar(daw, project, t + 1e-6);
+    let next = crate::song_bars::time(daw, project, bar.saturating_add(1), 1, 0.0);
+    let (_, last) = in_bar(daw, project, next - 1e-6);
+    crate::groove::count(beat, last.ceil().max(1.0), 1)
 }
 
 /// The stretches a quantize covers: each named section (as the SECTIONS
@@ -2971,21 +3342,32 @@ fn quantize_spans(
     project: &ProjectContext,
     a: &QuantizeArg,
 ) -> Result<Vec<(String, f64, f64)>, String> {
-    if a.sections.is_empty() {
-        let (from, to) = (a.from.unwrap_or(0.0), a.to.unwrap_or(f64::INFINITY));
+    spans(daw, project, &a.sections, (a.from, a.to))
+}
+
+/// The stretches `sections` name (by name, from the SECTIONS lane), or
+/// else the one from `from` to `to` (the song's start, its end).
+fn spans(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    sections: &[String],
+    (from, to): (Option<f64>, Option<f64>),
+) -> Result<Vec<(String, f64, f64)>, String> {
+    if sections.is_empty() {
+        let (from, to) = (from.unwrap_or(0.0), to.unwrap_or(f64::INFINITY));
         return Ok(vec![(format!("{from:.2}–{to:.2}"), from, to)]);
     }
-    let sections: Vec<daw_proto::Region> = daw::service::Regions::all(daw, project.clone())
+    let regions: Vec<daw_proto::Region> = daw::service::Regions::all(daw, project.clone())
         .into_iter()
         .filter(|r| {
             r.lane
                 .is_none_or(|l| l == session::ruler_lanes::CoreLane::Sections.lane_index())
         })
         .collect();
-    a.sections
+    sections
         .iter()
         .map(|want| {
-            sections
+            regions
                 .iter()
                 .find(|r| r.name.trim().eq_ignore_ascii_case(want.trim()))
                 .map(|r| {
@@ -2998,7 +3380,7 @@ fn quantize_spans(
                 .ok_or_else(|| {
                     format!(
                         "no section {want}: one of {:?}",
-                        sections.iter().map(|r| &r.name).collect::<Vec<_>>()
+                        regions.iter().map(|r| &r.name).collect::<Vec<_>>()
                     )
                 })
         })
@@ -3070,6 +3452,18 @@ mod gesture_tests {
             (got[1].1.unwrap() - got[0].1.unwrap() - 0.050).abs() < 1e-9,
             "{got:?}"
         );
+    }
+
+    #[test]
+    fn a_hit_sent_past_the_one_before_takes_it_along() {
+        // 47 ms apart, the second sent 57 ms later, the first staying: apart,
+        // the second's slice reaches back over the first.
+        let got = hold_gestures(&[(1.0, None), (1.047, Some(1.104))], &[0.0, 0.0]);
+        assert!((got[0].1.unwrap() - 1.057).abs() < 1e-9, "{got:?}");
+        assert!((got[1].1.unwrap() - 1.104).abs() < 1e-9);
+        // Sent only a little later, each keeps its own.
+        let kept = hold_gestures(&[(1.0, None), (1.047, Some(1.06))], &[0.0, 0.0]);
+        assert_eq!(kept[0], (1.0, None));
     }
 
     #[test]
@@ -3330,40 +3724,54 @@ fn register_quantize(list: &ActionList) {
                 .filter(|(h, _)| inside(*h) && !held(*h))
                 .copied()
                 .collect();
-            let left_out: Vec<f64> = found
+            let mut left_out: Vec<f64> = found
                 .targets
                 .iter()
                 .filter(|(h, _)| inside(*h) && held(*h))
                 .map(|(h, _)| *h)
                 .collect();
+            let in_fills = u32::try_from(left_out.len()).unwrap_or(u32::MAX);
+            // The first hit after the span cut where it is: else the slice
+            // holding the span's last moved hit runs on to the take's end,
+            // and the rest of the song moves with it.
+            if let Some(after) = found.targets.iter().map(|(h, _)| *h).find(|h| *h >= to) {
+                left_out.push(after);
+            }
             let before = crate::hits::playback(daw, &project);
             let mut result = judge(daw, &project, &settings, (&pairs, &left_out), dry);
             if settings.fills == crate::drum_settings::Fills::Skip {
-                result.in_fills = u32::try_from(left_out.len()).unwrap_or(u32::MAX);
+                result.in_fills = in_fills;
             }
             let check = result.applied.then(|| {
                 wait_for_slip(daw, &project, &before);
-                // Where each moved hit was sent: its target, or as far
-                // toward it as the strength takes it.
-                let tolerance = settings.tolerance_ms / 1_000.0;
-                let sent: Vec<f64> = pairs
-                    .iter()
-                    .filter_map(|(h, t)| {
-                        let t = (*t)?;
-                        ((t - h).abs() > tolerance).then(|| (t - h).mul_add(settings.strength, *h))
-                    })
-                    .collect();
-                crate::hits::check(daw, &project, &before, &sent, (from, to))
+                checked(daw, &project, (&settings, &pairs), &before, (from, to))
             });
+            let by_groove = groove_calls(daw, &project, &found, (from, to));
+            if a.brief.unwrap_or(false) {
+                result.biggest.clear();
+                result.to_check.clear();
+            }
             out.push(QuantizeSpan {
                 name,
                 from,
                 to,
                 result,
+                by_groove,
                 check,
             });
         }
         Ok(out)
+    });
+    list.register(&GROOVE, Effect::ReadOnly, |a: GrooveArg| {
+        let (daw, project) = song()?;
+        let kit = kit(daw, &project);
+        if kit.is_empty() {
+            return Err("no hit markers: find the hits first (HITS_DETECT)".to_owned());
+        }
+        spans(daw, &project, &a.sections, (a.from, a.to))?
+            .into_iter()
+            .map(|span| groove_out(daw, &project, (&kit, a.triplets.unwrap_or(false)), span))
+            .collect::<Result<Vec<GrooveOut>, String>>()
     });
     list.register(&ZONES_FIND, Effect::Mutating, |a: SpanArg| {
         let (daw, project) = song()?;
@@ -3520,6 +3928,7 @@ fn judge(
     }
 }
 
+#[cfg(any(test, feature = "signal"))]
 /// How far the slice holding `t` moves: the one cut last at or before it
 /// (`slices`: each cut and its slice's shift, any order); none before the
 /// first.

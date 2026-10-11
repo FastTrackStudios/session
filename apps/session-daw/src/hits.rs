@@ -1600,7 +1600,8 @@ pub fn kit_from_markers(
 pub struct Check {
     /// Hits in the span after the edit.
     pub hits: u32,
-    /// Hits that played before and play nowhere now: cut away.
+    /// Hits that played before and play nowhere now: cut away (a bleed
+    /// nobody checked is not counted).
     pub lost: u32,
     /// Hits that play twice now: a double attack at a seam.
     pub doubled: u32,
@@ -1609,7 +1610,10 @@ pub struct Check {
     pub off_worst_ms: Option<f64>,
     /// Moved hits more than 2 ms from their target.
     pub off_target: u32,
-    /// None lost, none doubled, none off target.
+    /// Hits outside the span that play somewhere else now: the edit
+    /// reached past its span.
+    pub strayed: u32,
+    /// None lost, none doubled, none off target, nothing outside the span moved.
     pub ok: bool,
     /// The first few problems: what and where (project seconds).
     pub problems: Vec<String>,
@@ -1643,7 +1647,10 @@ pub fn check(
             }
         }
     }
-    for b in before.iter().filter(|b| inside(b.time)) {
+    // A bleed nobody checked is another drum heard through this one's mic:
+    // cut away with its slice, nothing is missed (as `audit` counts).
+    let stroke = |b: &&Played| !(b.mark.bleed && b.mark.origin == MarkOrigin::Auto);
+    for b in before.iter().filter(|b| inside(b.time)).filter(stroke) {
         if !count.contains_key(b.id.as_str()) {
             out.lost = out.lost.saturating_add(1);
             if out.problems.len() < 20 {
@@ -1667,9 +1674,27 @@ pub fn check(
         .collect();
     offs.sort_by(f64::total_cmp);
     out.off_target = u32::try_from(offs.iter().filter(|d| **d > 2.0).count()).unwrap_or(u32::MAX);
+    // Outside the span nothing moves: a gesture at its edge may take a hit
+    // just past it along, nothing further.
+    let near = |t: f64| t >= span.0 - STRAY_MARGIN && t <= span.1 + STRAY_MARGIN;
+    for b in before.iter().filter(|b| !near(b.time)) {
+        let now = count.get(b.id.as_str());
+        if now.is_some_and(|times| !times.iter().any(|t| (t - b.time).abs() < 0.001)) {
+            out.strayed = out.strayed.saturating_add(1);
+            if out.problems.len() < 20 {
+                out.problems.push(format!(
+                    "{} ({}) at {:.3}, outside the span, plays at {:.3?} now",
+                    b.id,
+                    b.piece,
+                    b.time,
+                    now.map(Vec::as_slice).unwrap_or_default()
+                ));
+            }
+        }
+    }
     out.off_median_ms = offs.get(offs.len() / 2).copied();
     out.off_worst_ms = offs.last().copied();
-    out.ok = out.lost == 0 && out.doubled == 0 && out.off_target == 0;
+    out.ok = out.lost == 0 && out.doubled == 0 && out.off_target == 0 && out.strayed == 0;
     out
 }
 
@@ -1689,6 +1714,10 @@ pub struct AuditPiece {
     /// The lost strokes and the doubled hits, where (first 40).
     pub problems: Vec<String>,
 }
+
+/// How far past a span's edge an edit may take a hit along, seconds: a
+/// gesture's width.
+const STRAY_MARGIN: f64 = 0.05;
 
 /// How the edit as it stands plays every hit, in `span` (as recorded).
 #[must_use]

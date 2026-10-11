@@ -24,6 +24,11 @@ pub enum Target {
     Reference,
     /// The nearest grid line.
     Grid,
+    /// The section's own groove (`crate::groove`): a hit in a slot the
+    /// section plays bar after bar goes to that slot's line, however far
+    /// it drifted — the line the bars around it say, not the nearest; a
+    /// hit in no slot as Guided.
+    Pattern,
 }
 
 /// What a slip does with the fills.

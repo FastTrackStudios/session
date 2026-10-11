@@ -168,6 +168,7 @@ pub mod drum_samples;
 pub mod drum_settings;
 pub mod fundamental;
 pub mod gain_stage;
+pub mod groove;
 pub mod hit_overlay;
 #[cfg(feature = "native")]
 pub mod hits;
