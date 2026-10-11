@@ -181,6 +181,8 @@ fn against_the_triggers() {
         report(piece, f, truth, rate);
     }
 
+    one_trigger_lost(&pieces, &extra, &truths, rate);
+
     // Every piece from its mic alone: what a kit with no triggers gets.
     let started = Instant::now();
     let alone = detect_kit(
@@ -228,5 +230,38 @@ fn against_the_triggers() {
     }
     if !cfg!(debug_assertions) {
         assert!(took < 1.0, "the kit took {took:.3} s");
+    }
+}
+
+/// One piece's trigger lost, the rest working — Unbreakable's floor tom —
+/// played on each tom whose trigger can score it.
+fn one_trigger_lost(pieces: &[Piece<'_>], extra: &[&[f32]], truths: &[Vec<usize>], rate: f64) {
+    println!("\none trigger lost at a time:");
+    for (lost, (piece, _, _)) in PIECES
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.0.starts_with('T') && p.0 != "T4")
+    {
+        let mut kit = pieces.to_vec();
+        if let Some(p) = kit.get_mut(lost) {
+            p.trigger = None;
+        }
+        let found = detect_kit(&kit, extra, rate, &Settings::default());
+        let hits: Vec<usize> = found
+            .get(lost)
+            .map(|f| f.hits.iter().map(|h| h.at).collect())
+            .unwrap_or_default();
+        let s = agree(
+            &hits,
+            truths.get(lost).map_or(&[][..], Vec::as_slice),
+            samples(TOLERANCE, rate),
+        );
+        println!(
+            "{piece:<6} {:>5} hits  P {:.3} R {:.3} F {:.3}",
+            hits.len(),
+            s.precision(),
+            s.recall(),
+            s.f1()
+        );
     }
 }

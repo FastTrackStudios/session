@@ -10,9 +10,8 @@
 //!   the tom mic, relative to the snare mic, is a fixed property of where
 //!   the mics stand. It is learned at the other piece's *strokes* —
 //!   trigger-verified hits where it has a working trigger, else its own
-//!   confident moments — where this mic is in its own quiet cluster
-//!   ([`bleed_gain`]), and a moment is this piece's only if it is louder
-//!   than that prediction by a margin.
+//!   confident moments ([`bleed_gain`]), and a moment is this piece's
+//!   only if it is louder than that prediction by a margin.
 //!
 //! The strokes matter. Learned from another mic's raw loud moments, the
 //! gain from one floor tom to the other came out above unity — both
@@ -126,25 +125,25 @@ pub fn confident(samples: &[f32], scan: &Scan, crest_db: f64) -> (Vec<usize>, f6
     (kept, valley)
 }
 
-/// How loud `other`'s strokes arrive on `own`, as a gain.
+/// How loud `other`'s strokes arrive on `own`, as a gain: the median,
+/// over `other`'s strokes, of how loud each was on `own` against on
+/// `other`. `None` with too few strokes to say.
 ///
-/// At `other`'s strokes where `own` sits under its own valley (so is
-/// hearing bleed, not its drum), the median of the ratio. `None` with
-/// too few such moments to say.
+/// A stroke counts unless `own` was the louder of the two there — then
+/// it is `own`'s drum the moment belongs to (a kick's bleed among the
+/// snare mic's loud moments, when the snare has no trigger to say which
+/// are its own). Keeping only the strokes where `own` was *quiet*, as
+/// this once did, selects the ones that bled least and the gain comes out
+/// low: on Unbreakable a snare stroke that reached every tom mic at
+/// −32 dBFS was predicted at −41 on the floor tom's and passed as a hit.
 #[must_use]
-pub fn bleed_gain(
-    own: &[f32],
-    other: &[f32],
-    rate: f64,
-    strokes: &[usize],
-    own_valley_db: f64,
-) -> Option<f64> {
+pub fn bleed_gain(own: &[f32], other: &[f32], rate: f64, strokes: &[usize]) -> Option<f64> {
     let mut ratios: Vec<f64> = strokes
         .iter()
         .filter_map(|&t| {
             let mine = attack_level(own, rate, t);
             let theirs = attack_level(other, rate, t);
-            (crate::db(mine) < own_valley_db && theirs > 0.0).then(|| mine / theirs)
+            (theirs > 0.0 && mine < theirs).then(|| mine / theirs)
         })
         .collect();
     if ratios.len() < 5 {
@@ -168,12 +167,12 @@ pub struct Other<'a> {
 #[must_use]
 pub fn without_trigger(own: &[f32], scan: &Scan, others: &[Other<'_>], crest_db: f64) -> Vec<Hit> {
     let rate = scan.rate();
-    let (moments, valley) = confident(own, scan, crest_db);
+    let (moments, _) = confident(own, scan, crest_db);
     let gains: Vec<(usize, f64)> = others
         .iter()
         .enumerate()
         .filter_map(|(n, other)| {
-            bleed_gain(own, other.samples, rate, other.strokes, valley).map(|g| (n, g))
+            bleed_gain(own, other.samples, rate, other.strokes).map(|g| (n, g))
         })
         .collect();
     let hits = moments

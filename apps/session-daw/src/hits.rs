@@ -1163,10 +1163,7 @@ pub fn add_hit(
             )
         })?;
     let tracks: Vec<&String> = p.tracks().collect();
-    let take = takes(daw, project, &tracks)
-        .into_iter()
-        .filter(|t| t.origin <= time)
-        .max_by(|a, b| a.origin.total_cmp(&b.origin))
+    let take = take_at(takes(daw, project, &tracks), p, time)
         .ok_or_else(|| format!("no take of {} covers {time:.3} s", p.name))?;
     let mut at = time - take.origin;
     if snap
@@ -1209,6 +1206,22 @@ pub fn add_hit(
     }
     Projects::end_undo_block(daw, project.clone(), "Place a drum hit", None);
     Ok(id)
+}
+
+/// The take of `piece` that `time` (project seconds) is in: one the song
+/// plays when there is one — a kit keeps many passes recorded from the
+/// same place, and the one heard is the one meant — else the latest to
+/// start before it.
+fn take_at(all: Vec<KitTake>, piece: &KitPiece, time: f64) -> Option<KitTake> {
+    let mut fits: Vec<KitTake> = all
+        .into_iter()
+        .filter(|t| t.origin <= time && piece.mics.iter().any(|m| t.by_track.contains_key(m)))
+        .collect();
+    if fits.iter().any(KitTake::in_use) {
+        fits.retain(KitTake::in_use);
+    }
+    fits.into_iter()
+        .max_by(|a, b| a.origin.total_cmp(&b.origin))
 }
 
 // ── looking closer ────────────────────────────────────────────────────
@@ -1282,10 +1295,7 @@ pub fn explain(
         .flat_map(KitPiece::tracks)
         .chain(&extras)
         .collect();
-    let take = takes(daw, project, &kit_tracks)
-        .into_iter()
-        .filter(|t| t.origin <= time && p.mics.iter().any(|m| t.by_track.contains_key(m)))
-        .max_by(|a, b| a.origin.total_cmp(&b.origin))
+    let take = take_at(takes(daw, project, &kit_tracks), p, time)
         .ok_or_else(|| format!("no take of {} covers {time:.3} s", p.name))?;
     let names: HashMap<String, String> = Tracks::all(daw, project.clone())
         .into_iter()
