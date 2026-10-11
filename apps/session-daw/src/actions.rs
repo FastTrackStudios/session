@@ -2829,10 +2829,11 @@ fn edge(daw: &daw::standalone::Standalone, project: &ProjectContext, t: f64) -> 
     sixteenth(daw, project, t) / 2.0
 }
 
+// r[impl quantize.written]
 /// Each moment's target and what placed it. With `target: Guided` or
 /// `Pattern` the drum MIDI places what it can: in `span`, each piece's
 /// hits matched one to one with its own notes, the section's feel taken
-/// out first (`r[quantize.written]`); the rest go to the nearest line —
+/// out first; the rest go to the nearest line —
 /// again with the feel out — when within `sure_ms` of it.
 fn targets(
     daw: &daw::standalone::Standalone,
@@ -4256,7 +4257,86 @@ fn quantize_span(
     ))
 }
 
+static PLACE: ActionMeta = meta(
+    "HITS_PLACE",
+    "hits_place",
+    "Place a drum hit",
+    "Move the hit `id` so it plays at `to` (project seconds, as the song plays now) or `by_ms` later: the whole kit cut a lead before it and moved together — every mic, in phase — the hits either side left where they play, the seams crossfaded. `snap` (the default) puts it on the nearest thirty-second or sixteenth triplet within 12 ms of where it is dropped. A hand fixing one hit the quantize placed wrong — what dragging a hit's flag does. Says the check, as QUANTIZE does.",
+    "Drums",
+    "",
+);
+
+/// Which hit, and where.
+#[derive(Facet)]
+struct PlaceArg {
+    id: String,
+    to: Option<f64>,
+    by_ms: Option<f64>,
+    snap: Option<bool>,
+}
+
+/// How near a line a dropped hit snaps to it, seconds.
+const PLACE_SNAP: f64 = 0.012;
+
+// r[impl hits.place]
+fn register_place(list: &ActionList) {
+    list.register(&PLACE, Effect::Mutating, |a: PlaceArg| {
+        let (daw, project) = song()?;
+        let before = crate::hits::playback(daw, &project);
+        let hit = before
+            .iter()
+            .find(|p| p.id == a.id)
+            .ok_or_else(|| format!("no hit {} plays now", a.id))?;
+        let now = hit.time;
+        let mut to = match (a.to, a.by_ms) {
+            (Some(to), _) => to,
+            (None, Some(ms)) => now + ms / 1_000.0,
+            (None, None) => return Err("say where: `to` or `by_ms`".to_owned()),
+        };
+        if a.snap.unwrap_or(true) {
+            let line = [32, 24]
+                .into_iter()
+                .map(|division| grid_line(daw, &project, to, division))
+                .min_by(|x, y| (x - to).abs().total_cmp(&(y - to).abs()));
+            if let Some(line) = line.filter(|l| (l - to).abs() <= PLACE_SNAP) {
+                to = line;
+            }
+        }
+        let settings = crate::drum_settings::current();
+        // The kit's moments either side stay: only this hit's slice moves.
+        let kit = kit(daw, &project);
+        let times: Vec<f64> = moments(&kit, None).iter().map(|m| m.time).collect();
+        let at = times.partition_point(|t| *t < now - KIT_MERGE);
+        let neighbours: Vec<f64> = [at.checked_sub(1), Some(at.saturating_add(1))]
+            .into_iter()
+            .flatten()
+            .filter_map(|i| times.get(i).copied())
+            .filter(|t| (t - now).abs() > KIT_MERGE)
+            .collect();
+        let (result, cuts) = judge(
+            daw,
+            &project,
+            &settings,
+            (&[(now, Some(to))], &neighbours),
+            false,
+        );
+        if result.applied {
+            slip_now(daw, &project, &settings, cuts);
+            wait_for_slip(daw, &project, &before);
+        }
+        let span = (now.min(to) - 1.0, now.max(to) + 1.0);
+        Ok(checked(
+            daw,
+            &project,
+            (&settings, &[(now, Some(to))]),
+            &before,
+            span,
+        ))
+    });
+}
+
 fn register_quantize(list: &ActionList) {
+    register_place(list);
     list.register(&QUANTIZE, Effect::Mutating, |a: QuantizeArg| {
         let (daw, project) = song()?;
         if crate::hits::kit_from_markers(daw, &project).is_none() {

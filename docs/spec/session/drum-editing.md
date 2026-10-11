@@ -193,6 +193,32 @@ cut where it is, so the slice holding the span's last moved hit does not
 carry the rest of the take with it, and the check fails on any hit
 outside the span that plays somewhere else after the edit.
 
+r[quantize.written]
+With the drum MIDI to guide by, each piece's hits are matched one to one,
+in order, with that piece's own written notes, after the drummer's feel
+read from the hits around each one (a section can be pushed in one half
+and dragged in the other); a hit and a note that are each other's nearest
+are a match. A hit the chart has goes to its note — even past the line
+before it — and a fill the chart writes is edited like the rest of its
+section. A hit the chart does not have is placed by the section's groove
+or the nearest line. No hit is sent more than a sixteenth and a little
+from where it was played.
+
+r[quantize.seams]
+An edit leaves no silence: every seam between two slices overlaps by the
+crossfade, a slice reaching back into its own source but never over any
+hit's attack (a cut hit's, or one riding uncut in a slice, like a flam's
+grace), the slice before running on into the next hit's lead-in, and what
+neither can close drawn over by the slice before. A quantize of several
+spans is one edit, its seams closed together; the check counts any gap.
+
+r[hits.place]
+A hit is put where it should play by hand — dragging its flag, or
+`HITS_PLACE` — and the whole kit is cut a lead before it and moved with
+it, the hits either side left where they play, the seams closed as a
+quantize closes them. Dragging with Ctrl moves the marker alone: where
+the hit was found, not where it plays.
+
 r[quantize.reads-markers]
 Audio quantize reads hit markers and never runs detection. With no hit
 markers in its selection it says so and does nothing.

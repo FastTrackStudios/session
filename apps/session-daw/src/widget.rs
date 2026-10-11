@@ -254,6 +254,10 @@ struct HitDrag {
     id: String,
     from_x: f64,
     x: f64,
+    /// Ctrl held at the press: the marker alone moves — where the hit
+    /// was found is corrected, the audio stays. Without it the kit moves
+    /// so the hit plays where it is dropped.
+    marker_only: bool,
 }
 
 /// What is under the pointer in a piece row's flag strip.
@@ -941,7 +945,12 @@ impl ArrangementWidget {
                         true
                     }
                     Some(id) => {
-                        self.hit_drag = Some(HitDrag { id, from_x: x, x });
+                        self.hit_drag = Some(HitDrag {
+                            id,
+                            from_x: x,
+                            x,
+                            marker_only: held.ctrl,
+                        });
                         true
                     }
                     None => {
@@ -985,10 +994,12 @@ impl ArrangementWidget {
                         .pps
                         .max(f64::EPSILON);
                     let ms = (x - drag.from_x) / pps * 1_000.0;
-                    run_hit_action(
-                        "HITS_MOVE",
-                        format!(r#"{{"id":"{}","by_ms":{ms}}}"#, drag.id),
-                    );
+                    let id = if drag.marker_only {
+                        "HITS_MOVE"
+                    } else {
+                        "HITS_PLACE"
+                    };
+                    run_hit_action(id, format!(r#"{{"id":"{}","by_ms":{ms}}}"#, drag.id));
                 }
                 true
             }

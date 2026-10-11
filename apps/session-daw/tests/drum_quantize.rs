@@ -169,4 +169,50 @@ fn quantized_from_its_markers_the_kit_is_on_the_grid() {
         }
     }
     assert!(on_grid > 8, "hits quantized: {on_grid}");
+
+    // r[verify hits.place]
+    // A hand puts one hit 20 ms later: the kit moves under it, the hits
+    // either side stay where they play.
+    let inside_now: Vec<&session_daw::hits::Played> =
+        after.iter().filter(|p| inside(p.time)).collect();
+    let (Some(mid), Some(prev), Some(next)) = (
+        inside_now.get(inside_now.len() / 2),
+        inside_now.get(inside_now.len() / 2 - 1),
+        inside_now.get(inside_now.len() / 2 + 1),
+    ) else {
+        panic!("hits in the section");
+    };
+    let (id, was) = (mid.id.clone(), mid.time);
+    let args = format!(r#"{{"id":"{id}","by_ms":20,"snap":false}}"#);
+    let place = std::thread::spawn(move || list().run_json("HITS_PLACE", args.as_bytes()));
+    let began = Instant::now();
+    while !place.is_finished() {
+        assert!(
+            began.elapsed() < Duration::from_secs(60),
+            "the place finishes"
+        );
+        if window_pending() {
+            be_the_window(&path);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let said = place.join().expect("it ran").expect("it was not refused");
+    let said = String::from_utf8_lossy(&said);
+    assert!(said.contains(r#""doubled":0"#), "{said}");
+    let placed = session_daw::hits::playback(daw, &project);
+    let at = |id: &str| placed.iter().find(|p| p.id == id).map(|p| p.time);
+    let landed = at(&id).expect("it plays");
+    assert!(
+        (landed - (was + 0.020)).abs() < 0.001,
+        "{was:.4} → {landed:.4}"
+    );
+    for neighbour in [prev, next] {
+        let now = at(&neighbour.id).expect("it plays");
+        assert!(
+            (now - neighbour.time).abs() < 0.001,
+            "{} beside it stays: {:.4} → {now:.4}",
+            neighbour.id,
+            neighbour.time
+        );
+    }
 }

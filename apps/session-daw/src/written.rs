@@ -189,6 +189,7 @@ mod tests {
     /// The pre-chorus of Unbreakable: the kick written on 1, the "and" of
     /// 2 and 4, played 40 ms early — and the one on 4 100 ms early, nearer
     /// the sixteenth before it. Its note is still 4.
+    /// r[verify quantize.written]
     #[test]
     fn a_hit_pushed_past_the_line_before_is_still_its_notes() {
         let bar = 61.5;
@@ -265,6 +266,7 @@ mod tests {
     /// A section pushed in its first half and dragged in its second has
     /// no feel on the whole; each half has its own, and the hit pushed
     /// past the line before is still its note's.
+    /// r[verify quantize.written]
     #[test]
     fn the_feel_is_read_where_the_hit_is() {
         let beat = 0.375;

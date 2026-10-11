@@ -2234,6 +2234,7 @@ fn attack_of(piece: &daw_proto::Item, lead: f64) -> f64 {
 /// one recording, seconds: more than any shift a quantize makes.
 const SAME_TAKE: f64 = 0.25;
 
+// r[impl quantize.seams]
 /// The second half of a quantize: the seams between the kit's slices
 /// closed, track by track, from `from` to `to` — every slice there,
 /// whichever edit cut it — with a short crossfade across each while
@@ -3057,6 +3058,7 @@ mod tests {
     /// A hit the slip did not cut on — a flam's grace riding in its
     /// stroke's slice — is never played twice: the slice after reaching
     /// back over a gap stops short of it.
+    /// r[verify quantize.seams]
     #[test]
     fn no_seam_reaches_back_over_a_grace() {
         let (lead, fade) = (0.005, 0.005);
@@ -3104,6 +3106,7 @@ mod tests {
     /// The seams of slices that only meet, or are a hair apart, or apart
     /// by more than the crossfade, all overlap by the crossfade after —
     /// no slice reaching back past the hit before its own.
+    /// r[verify quantize.seams]
     #[test]
     fn every_seam_overlaps_by_the_crossfade() {
         let (lead, fade) = (0.005, 0.005);
