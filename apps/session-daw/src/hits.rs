@@ -1491,17 +1491,23 @@ pub fn kit_from_markers(
     if played.is_empty() {
         return None;
     }
-    // The quieter stroke of a flam is no cut of its own: it rides in its
-    // main stroke's slice. Cut on, it is quantized on its own and the
-    // flam's spacing goes — a grace note 33 ms after the stroke pulled
-    // to the next 1/32, 47 ms after it.
-    let peaks: HashMap<&str, f64> = played.iter().map(|p| (p.id.as_str(), p.peak_db)).collect();
+    // The quieter stroke of a flam after its main one is no cut of its
+    // own: it rides in its main stroke's slice. Cut on, it is quantized
+    // on its own and the flam's spacing goes — a grace note 33 ms after
+    // the stroke pulled to the next 1/32, 47 ms after it. A grace before
+    // its main stroke stays a cut: not cut on, it plays in the slice
+    // before, and again in the main's slice reaching back (Unbreakable,
+    // bar 166). The two are one gesture, moved by the louder.
+    let peaks: HashMap<&str, (f64, f64)> = played
+        .iter()
+        .map(|p| (p.id.as_str(), (p.peak_db, p.time)))
+        .collect();
     let grace = |p: &Played| {
         p.mark
             .flam_with
             .as_deref()
             .and_then(|other| peaks.get(other))
-            .is_some_and(|other| *other > p.peak_db)
+            .is_some_and(|(peak, time)| *peak > p.peak_db && *time < p.time)
     };
     let mut by_piece: BTreeMap<String, Vec<&Played>> = BTreeMap::new();
     for p in played.iter().filter(|p| {

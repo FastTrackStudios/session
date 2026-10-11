@@ -2225,6 +2225,9 @@ fn close_seams(
         })
         .collect();
     pieces.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
+    // Where each slice started in its source before any reached back: a
+    // slice's hit is its lead after that.
+    let cut_at: Vec<f64> = pieces.iter().map(|p| p.start_offset.as_seconds()).collect();
     let mut prev_end: Option<f64> = None;
     for k in 0..pieces.len() {
         let (before, rest) = pieces.split_at_mut(k);
@@ -2252,8 +2255,18 @@ fn close_seams(
         if let Some(ends) = prev_end
             && ends + fade < start
         {
-            // A gap: this slice reaches back to meet the one before.
-            let reach = start - ends + fade;
+            // A gap: this slice reaches back to meet the one before — but
+            // never into the hit before it. That one's attack is a lead
+            // into the slice before; reached past, it plays twice (a
+            // snare 64 ms before a kick sent 58 ms later did). What is
+            // left of the gap the seam's fade covers.
+            let floor = (k > 0)
+                .then(|| cut_at.get(k.saturating_sub(1)))
+                .flatten()
+                .map(|c| c + cut.pre_roll + SEAM_GUARD)
+                .filter(|f| *f < piece.start_offset.as_seconds());
+            let room = floor.map_or(f64::INFINITY, |f| piece.start_offset.as_seconds() - f);
+            let reach = (start - ends + fade).min(room).max(0.0);
             let (at, length) = (start - reach, piece.length.as_seconds() + reach);
             let offset = (piece.start_offset.as_seconds() - reach).max(0.0);
             piece.position = PositionInSeconds::from_seconds(at);
@@ -2330,6 +2343,10 @@ fn draw_out(item: &mut daw_proto::Item, to: f64) -> Option<Vec<(f64, f64)>> {
         (longer, offset + length),
     ])
 }
+
+/// How far after the hit before it a slice reaching back over a gap must
+/// still start, seconds: past its attack's first instant.
+const SEAM_GUARD: f64 = 0.002;
 
 /// The crossfade across a quantize's seams, with auto-crossfade on.
 pub const QUANTIZE_CROSSFADE: f64 = 0.005;

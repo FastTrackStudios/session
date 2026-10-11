@@ -2907,10 +2907,11 @@ fn targets(
 /// drummer's 32nds stay their own.
 const GESTURE: f64 = 0.040;
 
-/// Each gesture — moments nearer together than [`GESTURE`]: a kick into
-/// a snare, a drag, a flam across pieces — moved by one shift, its
-/// loudest targeted moment's, so the gesture keeps its own timing; none
-/// when no moment of it has a target.
+/// Each gesture — moments nearer together than [`GESTURE`] (a kick into
+/// a snare, a drag, a flam across pieces), or sent to targets that would
+/// close them up past half their spacing (two hits pulled onto one grid
+/// line) — moved by one shift, its loudest targeted moment's, so the
+/// gesture keeps its own timing; none when no moment of it has a target.
 ///
 /// Moved apart, a slice moved later reaches back into its own source to
 /// close the gap, and with the hit before it nearer than that reach, it
@@ -2922,7 +2923,14 @@ fn hold_gestures(pairs: &[(f64, Option<f64>)], loudness: &[f64]) -> Vec<(f64, Op
     while start < pairs.len() {
         let mut end = start.saturating_add(1);
         while let (Some(prev), Some(next)) = (pairs.get(end.saturating_sub(1)), pairs.get(end)) {
-            if next.0 - prev.0 >= GESTURE {
+            // Sent to targets that close up more than half the room
+            // between them — the same grid line, often, from either side —
+            // two moments are one gesture as surely as two close ones.
+            let collide = match (prev.1, next.1) {
+                (Some(a), Some(b)) => b - a < 0.5 * (next.0 - prev.0),
+                _ => false,
+            };
+            if next.0 - prev.0 >= GESTURE && !collide {
                 break;
             }
             end = end.saturating_add(1);
@@ -2947,6 +2955,206 @@ fn hold_gestures(pairs: &[(f64, Option<f64>)], loudness: &[f64]) -> Vec<(f64, Op
         start = end;
     }
     out
+}
+
+/// A rest longer than this many grid steps ends a locked run: the next
+/// is placed on its own.
+const RUN_BREAK: f64 = 2.5;
+/// How many of a run's first hits place it.
+const ANCHOR_HITS: usize = 4;
+/// How far from a timekeeping hit (a grid step's fraction) a locked hit
+/// can be and still be the one played with it.
+const ANCHOR_REACH: f64 = 0.6;
+
+/// `hits` (sorted, seconds) locked in order to the lines of a grid `step`
+/// seconds apart: each hit the line after the one before it — or as many
+/// lines after as the hits are steps apart — so a run of 16ths stays a
+/// run of 16ths, never two on one line or one skipped, however far the
+/// player drifts from the grid within it. Each run (hits less than
+/// [`RUN_BREAK`] steps apart) is placed by its first [`ANCHOR_HITS`],
+/// `line_of` giving the line nearest a time. Each hit with its target.
+///
+/// What "nearest line" gets wrong: a double kick dragging steadily — the
+/// hands on the grid, the feet up to 0.24 beat behind by a bar's end on
+/// Unbreakable — has its later kicks nearer the *next* 16th than their
+/// own, and nearest-line sends them there.
+fn lock_in_order(hits: &[f64], step: f64, line_of: impl Fn(f64) -> f64) -> Vec<(f64, f64)> {
+    let mut out = Vec::with_capacity(hits.len());
+    let mut start = 0_usize;
+    while start < hits.len() {
+        // The run, and each hit's line counted from the run's first.
+        let mut idx: Vec<f64> = vec![0.0];
+        let mut end = start.saturating_add(1);
+        while let (Some(prev), Some(next)) = (hits.get(end.saturating_sub(1)), hits.get(end)) {
+            let steps = (next - prev) / step;
+            if steps > RUN_BREAK {
+                break;
+            }
+            let last = idx.last().copied().unwrap_or(0.0);
+            idx.push(last + steps.round().max(1.0));
+            end = end.saturating_add(1);
+        }
+        let run = hits.get(start..end).unwrap_or_default();
+        let first = run.first().copied().unwrap_or(0.0);
+        let base = line_of(first);
+        // Placed by how it starts: a run begins where it is meant to and
+        // drifts from there, so fitting the whole of it would let the
+        // drift pull every hit a line along.
+        let cost = |a: f64| -> f64 {
+            run.iter()
+                .zip(&idx)
+                .take(ANCHOR_HITS)
+                .map(|(h, i)| (h - (i + a).mul_add(step, base)).abs())
+                .sum()
+        };
+        let anchor = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
+            .into_iter()
+            .min_by(|a, b| cost(*a).total_cmp(&cost(*b)))
+            .unwrap_or(0.0);
+        out.extend(
+            run.iter()
+                .zip(&idx)
+                .map(|(h, i)| (*h, (i + anchor).mul_add(step, base))),
+        );
+        start = end;
+    }
+    out
+}
+
+/// `hits` (sorted) between two anchored ones, the first on `from` and the
+/// last on `to` (both lines), each sent to a line between them in order,
+/// one a line: the order that lands them nearest their hits. With more
+/// hits than lines, each to its nearest (the gestures they make are held
+/// whole after).
+fn spread_between(hits: &[f64], (from, to): (f64, f64), step: f64) -> Vec<f64> {
+    let lines = ((to - from) / step).round();
+    let free = num_traits::ToPrimitive::to_usize(&(lines - 1.0).max(0.0)).unwrap_or(0);
+    let line = |k: usize| {
+        step.mul_add(
+            num_traits::ToPrimitive::to_f64(&k.saturating_add(1)).unwrap_or(0.0),
+            from,
+        )
+    };
+    if hits.len() > free || free == 0 {
+        return hits
+            .iter()
+            .map(|h| {
+                let k = ((h - from) / step).round() - 1.0;
+                let k = num_traits::ToPrimitive::to_usize(&k.max(0.0))
+                    .unwrap_or(0)
+                    .min(free.saturating_sub(1));
+                line(k)
+            })
+            .collect();
+    }
+    // cost[i][k]: the least cost of the first i+1 hits with hit i on line k.
+    let m = hits.len();
+    let inf = f64::INFINITY;
+    let mut cost = vec![vec![inf; free]; m];
+    let mut from_k = vec![vec![0_usize; free]; m];
+    for (i, h) in hits.iter().enumerate() {
+        let mut best = (inf, 0_usize);
+        for k in 0..free {
+            if i > 0 && k > 0 {
+                let prev = cost
+                    .get(i.saturating_sub(1))
+                    .and_then(|r| r.get(k.saturating_sub(1)))
+                    .copied()
+                    .unwrap_or(inf);
+                if prev < best.0 {
+                    best = (prev, k.saturating_sub(1));
+                }
+            }
+            let before = if i == 0 { 0.0 } else { best.0 };
+            if let Some(c) = cost.get_mut(i).and_then(|r| r.get_mut(k)) {
+                *c = before + (h - line(k)).abs();
+            }
+            if let Some(f) = from_k.get_mut(i).and_then(|r| r.get_mut(k)) {
+                *f = best.1;
+            }
+        }
+    }
+    let mut k = cost
+        .get(m.saturating_sub(1))
+        .and_then(|r| {
+            r.iter()
+                .enumerate()
+                .min_by(|a, b| a.1.total_cmp(b.1))
+                .map(|(k, _)| k)
+        })
+        .unwrap_or(0);
+    let mut out = vec![0.0; m];
+    for i in (0..m).rev() {
+        if let Some(o) = out.get_mut(i) {
+            *o = line(k);
+        }
+        k = from_k.get(i).and_then(|r| r.get(k)).copied().unwrap_or(0);
+    }
+    out
+}
+
+/// `hits` (sorted) locked to a grid `step` apart with `anchors`: hits
+/// known to be on a line (index into `hits`, the line) — a kick played
+/// with the snare on 2 and 4, the hands keeping time while the feet
+/// drift. Between two anchors the hits take the lines between them in
+/// order ([`spread_between`]); before the first and after the last they
+/// run on in order ([`lock_in_order`]) from it. With no anchors, the
+/// whole of `hits` is locked in order.
+///
+/// Counted forward from where a run starts alone, a double kick that
+/// drags, then squeezes a beat to catch up, lands a whole 16th out by the
+/// next bar — the snare on 2 pulled to the 16th before it, on Unbreakable.
+fn lock_anchored(
+    hits: &[f64],
+    anchors: &[(usize, f64)],
+    step: f64,
+    line_of: impl Fn(f64) -> f64 + Copy,
+) -> Vec<(f64, f64)> {
+    let (Some(&(first, first_line)), Some(&(last, last_line))) = (anchors.first(), anchors.last())
+    else {
+        return lock_in_order(hits, step, line_of);
+    };
+    let mut to: Vec<f64> = vec![0.0; hits.len()];
+    // Before the first anchor: counted back from it.
+    let before = hits.get(..first).unwrap_or_default();
+    let mut slot = first_line;
+    let mut at = hits.get(first).copied().unwrap_or(0.0);
+    for (i, h) in before.iter().enumerate().rev() {
+        slot -= step * ((at - h) / step).round().max(1.0);
+        at = *h;
+        if let Some(t) = to.get_mut(i) {
+            *t = slot;
+        }
+    }
+    for pair in anchors.windows(2) {
+        let [(a, la), (b, lb)] = pair else { continue };
+        if let Some(t) = to.get_mut(*a) {
+            *t = *la;
+        }
+        let between = hits.get(a.saturating_add(1)..*b).unwrap_or_default();
+        for (k, line) in spread_between(between, (*la, *lb), step)
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(t) = to.get_mut(a.saturating_add(1).saturating_add(k)) {
+                *t = line;
+            }
+        }
+    }
+    if let Some(t) = to.get_mut(last) {
+        *t = last_line;
+    }
+    // After the last: counted on from it.
+    let mut slot = last_line;
+    let mut at = hits.get(last).copied().unwrap_or(0.0);
+    for (i, h) in hits.iter().enumerate().skip(last.saturating_add(1)) {
+        slot += step * ((h - at) / step).round().max(1.0);
+        at = *h;
+        if let Some(t) = to.get_mut(i) {
+            *t = slot;
+        }
+    }
+    hits.iter().copied().zip(to).collect()
 }
 
 /// What the settings make of the kit: its pieces, its moments (with
@@ -3021,6 +3229,10 @@ struct QuantizeArg {
     from: Option<f64>,
     to: Option<f64>,
     dry_run: Option<bool>,
+    /// Lock this piece's hits in order to the grid (`Kick` for a double
+    /// kick): each the line after the last, the kit moved with them;
+    /// moments without it stay where they were played.
+    lock: Option<String>,
 }
 
 /// What a quantize did over one stretch.
@@ -3132,6 +3344,18 @@ mod gesture_tests {
     }
 
     #[test]
+    fn two_hits_sent_to_one_line_move_as_one() {
+        // 50 ms apart on an 8th grid: one 31 ms early, one 19 ms late, both
+        // pulled to the same line. Apart, the first lands on the second.
+        let pairs = [(1.000, Some(1.031)), (1.050, Some(1.031))];
+        let got = hold_gestures(&pairs, &[0.0, -6.0]);
+        assert!(
+            (got[1].1.unwrap() - got[0].1.unwrap() - 0.050).abs() < 1e-9,
+            "{got:?}"
+        );
+    }
+
+    #[test]
     fn a_gesture_with_no_target_stays() {
         let got = hold_gestures(&[(1.0, None), (1.02, None)], &[0.0, 0.0]);
         assert_eq!(got, vec![(1.0, None), (1.02, None)]);
@@ -3142,6 +3366,188 @@ mod gesture_tests {
         let got = hold_gestures(&[(1.0, Some(1.01)), (1.03, Some(1.02))], &[-12.0, 0.0]);
         assert!((got[0].1.unwrap() - 0.99).abs() < 1e-9, "{got:?}");
         assert!((got[1].1.unwrap() - 1.02).abs() < 1e-9);
+    }
+}
+
+/// The moments' targets with `piece` locked in order over `span`: a
+/// moment holding one of its hits goes where that hit is locked to (the
+/// moment's other hits with it); any other moment has none, and is cut
+/// where it was played. Gestures held whole.
+fn locked_targets(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    settings: &crate::drum_settings::Settings,
+    found: &Detected,
+    (piece, (from, to)): (&str, (f64, f64)),
+) -> Result<Vec<(f64, Option<f64>)>, String> {
+    let hits: Vec<f64> = found
+        .kit
+        .iter()
+        .find(|(name, _, _)| name.eq_ignore_ascii_case(piece))
+        .ok_or_else(|| format!("no piece {piece} to lock"))?
+        .2
+        .iter()
+        .map(|h| h.time)
+        .filter(|t| *t >= from && *t < to)
+        .collect();
+    let mid = f64::midpoint(from, to.min(from + 600.0));
+    let step =
+        240.0 / daw.get_tempo_at(project.clone(), mid).max(1.0) / f64::from(settings.grid.max(1));
+    // Anchors: the locked piece's hits played with the snare (on 2 and
+    // 4, the hands keeping time), on the snare's line.
+    let others: Vec<f64> = found
+        .kit
+        .iter()
+        .filter(|(name, _, _)| !name.eq_ignore_ascii_case(piece))
+        .filter(|(name, _, _)| name.eq_ignore_ascii_case("snare"))
+        .flat_map(|(_, _, h)| h.iter().map(|h| h.time))
+        .collect();
+    // And where each run starts, after a rest: the first hit of it is
+    // where it is meant to begin (a double kick's downbeat).
+    let mut anchors: Vec<(usize, f64)> = hits
+        .iter()
+        .enumerate()
+        .filter_map(|(i, h)| {
+            let starts = i == 0
+                || hits
+                    .get(i.saturating_sub(1))
+                    .is_some_and(|p| h - p > RUN_BREAK * step);
+            others
+                .iter()
+                .find(|o| anchor_of(&hits, **o, step) == Some(i))
+                .map(|o| (i, grid_line(daw, project, *o, settings.grid)))
+                .or_else(|| starts.then(|| (i, grid_line(daw, project, *h, settings.grid))))
+        })
+        .collect();
+    // An anchor at or before the one before it says nothing usable.
+    let mut last_line = f64::NEG_INFINITY;
+    anchors.retain(|(_, line)| {
+        let keep = *line > last_line;
+        if keep {
+            last_line = *line;
+        }
+        keep
+    });
+    let locked = lock_anchored(&hits, &anchors, step, |h| {
+        grid_line(daw, project, h, settings.grid)
+    });
+    let raw: Vec<(f64, Option<f64>)> = found
+        .moments
+        .iter()
+        .map(|m| {
+            let mine = m.pieces.iter().any(|p| p.eq_ignore_ascii_case(piece));
+            let to = mine
+                .then(|| {
+                    locked
+                        .iter()
+                        .filter(|(h, _)| (h - m.time).abs() <= KIT_MERGE)
+                        .min_by(|a, b| (a.0 - m.time).abs().total_cmp(&(b.0 - m.time).abs()))
+                        .map(|(h, t)| m.time + (t - h))
+                })
+                .flatten();
+            (m.time, to)
+        })
+        .collect();
+    let loudness: Vec<f64> = found.moments.iter().map(|m| m.relative_db).collect();
+    Ok(hold_gestures(&uncrossed(raw), &loudness))
+}
+
+/// Which of `hits` (sorted) a timekeeping hit at `at` anchors: within
+/// [`ANCHOR_REACH`] of a grid step, the one played before it if any —
+/// moved onto `at`'s line it never crosses `at` — else the one after.
+fn anchor_of(hits: &[f64], at: f64, step: f64) -> Option<usize> {
+    let reach = ANCHOR_REACH * step;
+    let before = hits
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| **h <= at + 0.005 && at - **h <= reach)
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(i, _)| i);
+    before.or_else(|| {
+        hits.iter()
+            .enumerate()
+            .filter(|(_, h)| **h > at && **h - at <= reach)
+            .min_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(i, _)| i)
+    })
+}
+
+/// `pairs` with no target sent across a moment that stays: a slice
+/// cannot be moved past audio played before it, and one that was played
+/// the snare after, sent back over it onto its beat, played the snare
+/// twice. A hit that would cross stays, as the one it would cross does.
+fn uncrossed(mut pairs: Vec<(f64, Option<f64>)>) -> Vec<(f64, Option<f64>)> {
+    let stays: Vec<f64> = pairs
+        .iter()
+        .filter(|(_, t)| t.is_none())
+        .map(|(h, _)| *h)
+        .collect();
+    for (h, t) in &mut pairs {
+        if let Some(to) = *t
+            && stays
+                .iter()
+                .any(|s| (*s > *h && to >= *s - 0.002) || (*s < *h && to <= *s + 0.002))
+        {
+            *t = None;
+        }
+    }
+    pairs
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::lock_in_order;
+
+    #[test]
+    fn a_dragging_run_keeps_one_kick_a_line() {
+        // 16ths 93.75 ms apart played 97.8 ms apart: by the 16th kick the
+        // player is 60 ms behind, nearer the next line than its own.
+        let step = 0.09375;
+        let hits: Vec<f64> = (0..17).map(|k| 0.02 + f64::from(k) * 0.0978).collect();
+        let line = |h: f64| (h / step).round() * step;
+        let got = lock_in_order(&hits, step, line);
+        for (k, (_, t)) in got.iter().enumerate() {
+            let want = step * f64::from(u32::try_from(k).unwrap());
+            assert!((t - want).abs() < 1e-9, "kick {k} sent to {t}, not {want}");
+        }
+    }
+
+    #[test]
+    fn anchors_hold_a_run_that_drags_and_catches_up() {
+        // Lines every 0.1. The kick on 0.0 and on 0.8 are played with the
+        // snare (anchors); between them seven kicks dragging behind and
+        // squeezing to catch up, the last of them nearer 0.8 than 0.7.
+        let step = 0.1;
+        let hits = [0.0, 0.12, 0.24, 0.36, 0.47, 0.58, 0.68, 0.76, 0.8];
+        let got = super::lock_anchored(&hits, &[(0, 0.0), (8, 0.8)], step, |h| {
+            (h / step).round() * step
+        });
+        let to: Vec<f64> = got.iter().map(|p| (p.1 * 10.0).round() / 10.0).collect();
+        assert_eq!(to, vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+    }
+
+    #[test]
+    fn a_snare_anchors_the_kick_played_before_it() {
+        // The snare on a beat with a kick 53 ms before it and one 47 ms
+        // after: the one before is the beat's, so nothing crosses it.
+        let hits = [0.9, 0.953, 1.047];
+        assert_eq!(super::anchor_of(&hits, 1.0, 0.09375), Some(1));
+    }
+
+    #[test]
+    fn nothing_is_sent_across_what_stays() {
+        let got = super::uncrossed(vec![(1.0, None), (1.047, Some(0.995)), (1.2, Some(1.19))]);
+        assert_eq!(got[1].1, None, "it would cross the snare: it stays");
+        assert_eq!(got[2].1, Some(1.19));
+    }
+
+    #[test]
+    fn a_rest_keeps_its_lines() {
+        let step = 0.1;
+        let hits = [0.0, 0.1, 0.3, 0.4];
+        let got = lock_in_order(&hits, step, |h| (h / step).round() * step);
+        let to: Vec<f64> = got.iter().map(|p| (p.1 * 10.0).round() / 10.0).collect();
+        assert_eq!(to, vec![0.0, 0.1, 0.3, 0.4]);
     }
 }
 
@@ -3169,8 +3575,13 @@ fn register_quantize(list: &ActionList) {
                     )
                 }
             };
-            let pairs: Vec<(f64, Option<f64>)> = found
-                .targets
+            let targets = match &a.lock {
+                Some(piece) => {
+                    locked_targets(daw, &project, &settings, &found, (piece, (from, to)))?
+                }
+                None => found.targets.clone(),
+            };
+            let pairs: Vec<(f64, Option<f64>)> = targets
                 .iter()
                 .filter(|(h, _)| inside(*h) && !held(*h))
                 .copied()
