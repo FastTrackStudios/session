@@ -96,6 +96,7 @@ impl AudioSession {
                             name: name.to_string(),
                             source_position_seconds: at,
                             color: marker_colour(r.kind),
+                            ..Default::default()
                         },
                     )
                     .is_some()

@@ -14,8 +14,9 @@ use daw_proto::{FadeShape, TrackRef};
 
 use crate::diff::{Change, ItemField, TrackField};
 use crate::model::{
-    EnvelopePointState, EnvelopeState, FxState, ItemState, LaneState, MarkerState, NoteState,
-    RegionState, SendState, SessionModel, StretchPoint, TakeState, TempoPoint, TrackState,
+    EnvelopePointState, EnvelopeState, FxState, HitState, ItemState, LaneState, MarkerState,
+    NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint, TakeMarkerState,
+    TakeState, TempoPoint, TrackState,
 };
 
 /// Where an FX's state is kept: put its bytes, get its name back (a
@@ -167,6 +168,7 @@ pub async fn read_keeping(
         None => read_tracks(project, blobs, ids).await?,
     };
     let items = read_items(project, media, ids, direct).await?;
+    let take_markers = read_take_markers(project, &items, ids).await?;
 
     let markers = project
         .markers()
@@ -240,7 +242,123 @@ pub async fn read_keeping(
         regions,
         tempo,
         chart: String::new(),
+        take_markers,
     })
+}
+
+/// Every recording's markers, keyed as the doc keeps them: read once a
+/// recording, through any item cut from it.
+async fn read_take_markers(
+    project: &Project,
+    items: &BTreeMap<String, ItemState>,
+    ids: &EngineIds,
+) -> daw_control::Result<BTreeMap<String, TakeMarkerState>> {
+    let mut sources: BTreeMap<&str, &str> = BTreeMap::new();
+    for (guid, item) in items {
+        if let Some(source) = item.take.source.as_deref() {
+            sources.entry(source).or_insert(guid.as_str());
+        }
+    }
+    let mut out = BTreeMap::new();
+    for (source, guid) in sources {
+        let Some(handle) = project.items().by_guid(&ids.items.engine(guid)).await? else {
+            continue;
+        };
+        for m in handle.active_take().markers().await.unwrap_or_default() {
+            let state = take_marker_state(source, m);
+            out.insert(state.key(), state);
+        }
+    }
+    Ok(out)
+}
+
+/// A take marker as the doc keeps it, on the recording `source` names.
+fn take_marker_state(source: &str, m: daw_proto::TakeMarker) -> TakeMarkerState {
+    TakeMarkerState {
+        source: source.to_owned(),
+        // A backend that keeps no ids (REAPER) is keyed by place.
+        id: if m.id.is_empty() {
+            format!("@{}", m.index)
+        } else {
+            m.id
+        },
+        at: m.source_position_seconds,
+        name: m.name,
+        color: m.color,
+        hit: m.hit.map(|h| HitState {
+            piece: h.piece,
+            origin: match h.origin {
+                daw_proto::MarkOrigin::Auto => "auto",
+                daw_proto::MarkOrigin::Manual => "manual",
+                daw_proto::MarkOrigin::Approved => "approved",
+            }
+            .to_owned(),
+            run: h.run,
+            peak_db: h.peak_db,
+            confidence: h.confidence,
+            heard: Sources {
+                trigger: h.from_trigger,
+                mic: h.from_mic,
+            },
+            ghost: h.ghost,
+            bleed: h.bleed,
+            flam_with: h.flam_with,
+            note: h.note,
+        }),
+    }
+}
+
+/// A doc take marker as the engine takes it.
+fn proto_take_marker(m: &TakeMarkerState) -> daw_proto::TakeMarker {
+    daw_proto::TakeMarker {
+        index: 0,
+        id: m.id.clone(),
+        name: m.name.clone(),
+        source_position_seconds: m.at,
+        color: m.color,
+        hit: m.hit.as_ref().map(|h| daw_proto::HitMark {
+            piece: h.piece.clone(),
+            origin: match h.origin.as_str() {
+                "manual" => daw_proto::MarkOrigin::Manual,
+                "approved" => daw_proto::MarkOrigin::Approved,
+                _ => daw_proto::MarkOrigin::Auto,
+            },
+            run: h.run.clone(),
+            peak_db: h.peak_db,
+            confidence: h.confidence,
+            from_trigger: h.heard.trigger,
+            from_mic: h.heard.mic,
+            ghost: h.ghost,
+            bleed: h.bleed,
+            flam_with: h.flam_with.clone(),
+            note: h.note.clone(),
+        }),
+    }
+}
+
+/// Set a recording's markers through an item cut from it. Nothing when
+/// no item plays it any more.
+async fn set_take_markers(
+    project: &Project,
+    target: &SessionModel,
+    ids: &EngineIds,
+    (source, markers): (&str, &[TakeMarkerState]),
+) -> daw_control::Result<()> {
+    let Some(guid) = target
+        .items
+        .iter()
+        .find(|(_, i)| i.take.source.as_deref() == Some(source))
+        .map(|(g, _)| g)
+    else {
+        return Ok(());
+    };
+    if let Some(handle) = project.items().by_guid(&ids.items.engine(guid)).await? {
+        handle
+            .active_take()
+            .set_markers(markers.iter().map(proto_take_marker).collect())
+            .await?;
+    }
+    Ok(())
 }
 
 /// Every track as the doc keeps it, its FX, sends and envelopes with it.
@@ -506,20 +624,15 @@ pub async fn apply(
                     }
                 }
             }
-            Change::MarkerSet { guid, marker } => set_marker(project, guid, marker).await?,
-            Change::MarkerRemoved { guid } => {
-                if let Some(id) = marker_id(project, guid).await? {
-                    project.markers().remove(id).await?;
-                }
-            }
-            Change::RegionSet { guid, region } => set_region(project, guid, region).await?,
-            Change::RegionRemoved { guid } => {
-                if let Some(id) = region_id(project, guid).await? {
-                    project.regions().remove(id).await?;
-                }
-            }
+            Change::MarkerSet { .. }
+            | Change::MarkerRemoved { .. }
+            | Change::RegionSet { .. }
+            | Change::RegionRemoved { .. } => apply_mark(project, change).await?,
             Change::TempoChanged(points) => apply_tempo(project, points).await?,
             Change::ChartChanged(_) => {}
+            Change::TakeMarkersSet { source, markers } => {
+                set_take_markers(project, target, ids, (source, markers)).await?;
+            }
         }
     }
     if structure {
@@ -889,6 +1002,26 @@ async fn apply_tempo(project: &Project, points: &[TempoPoint]) -> daw_control::R
         let index = map.add_point(point.at, point.bpm).await?;
         let (beats, unit) = metre(point);
         map.set_time_signature_at(index, beats, unit).await?;
+    }
+    Ok(())
+}
+
+/// A marker or region set or removed; anything else is left alone.
+async fn apply_mark(project: &Project, change: &Change) -> daw_control::Result<()> {
+    match change {
+        Change::MarkerSet { guid, marker } => set_marker(project, guid, marker).await?,
+        Change::MarkerRemoved { guid } => {
+            if let Some(id) = marker_id(project, guid).await? {
+                project.markers().remove(id).await?;
+            }
+        }
+        Change::RegionSet { guid, region } => set_region(project, guid, region).await?,
+        Change::RegionRemoved { guid } => {
+            if let Some(id) = region_id(project, guid).await? {
+                project.regions().remove(id).await?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

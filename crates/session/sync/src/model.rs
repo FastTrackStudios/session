@@ -27,6 +27,9 @@ pub struct SessionModel {
     pub tempo: Vec<TempoPoint>,
     /// The song's keyflow chart, as text.
     pub chart: String,
+    /// Take markers, by [`TakeMarkerState::key`]: a recording's markers —
+    /// its drum hits among them — whichever items are cut from it.
+    pub take_markers: BTreeMap<String, TakeMarkerState>,
 }
 
 impl SessionModel {
@@ -234,4 +237,62 @@ pub struct TempoPoint {
     pub bpm: f64,
     pub beats_per_bar: u32,
     pub beat_unit: u32,
+}
+
+/// A marker on a recording (a take's source), drum hits among them.
+///
+/// Kept by recording rather than by item: a slip edit cuts one take into
+/// hundreds of items, and every one of them shows the same hits. One
+/// stroke on a piece is a marker on each of its mics' recordings, all
+/// with the hit's `id`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TakeMarkerState {
+    /// The recording, relative to the session folder (as
+    /// [`TakeState::source`]).
+    pub source: String,
+    /// What the marker is, whatever its place among the others.
+    pub id: String,
+    /// Seconds into the recording.
+    pub at: f64,
+    pub name: String,
+    pub color: Option<u32>,
+    /// A drum hit's properties, when it is one.
+    pub hit: Option<HitState>,
+}
+
+impl TakeMarkerState {
+    /// Where the doc keeps it: its recording and id.
+    #[must_use]
+    pub fn key(&self) -> String {
+        format!("{}#{}", self.source, self.id)
+    }
+}
+
+/// Which of a piece's inputs reported a hit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Sources {
+    /// Its trigger.
+    pub trigger: bool,
+    /// Its close mic.
+    pub mic: bool,
+}
+
+/// A drum hit, as a take marker carries it (`daw_proto::HitMark`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HitState {
+    pub piece: String,
+    /// `auto`, `manual` or `approved`.
+    pub origin: String,
+    /// The detector run that placed it; empty when placed by hand.
+    pub run: String,
+    /// The attack's peak on the close mic, dBFS.
+    pub peak_db: f64,
+    pub confidence: f64,
+    /// Which inputs reported it.
+    pub heard: Sources,
+    pub ghost: bool,
+    pub bleed: bool,
+    /// The other stroke of a flam: that marker's id.
+    pub flam_with: Option<String>,
+    pub note: String,
 }

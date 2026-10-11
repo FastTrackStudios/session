@@ -10,9 +10,11 @@
 //! created before anything is put on them, moved before they are edited,
 //! and removed only after every item on them has gone.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use crate::model::{ItemState, MarkerState, RegionState, SessionModel, TempoPoint, TrackState};
+use crate::model::{
+    ItemState, MarkerState, RegionState, SessionModel, TakeMarkerState, TempoPoint, TrackState,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
@@ -63,6 +65,12 @@ pub enum Change {
     },
     TempoChanged(Vec<TempoPoint>),
     ChartChanged(String),
+    /// A recording's markers are now these, in time order — every one of
+    /// them, since an engine replaces a recording's markers whole.
+    TakeMarkersSet {
+        source: String,
+        markers: Vec<TakeMarkerState>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,6 +213,9 @@ pub fn diff(old: &SessionModel, new: &SessionModel) -> Vec<Change> {
     if old.chart != new.chart {
         out.push(Change::ChartChanged(new.chart.clone()));
     }
+    // After the items: a recording's markers are set through an item cut
+    // from it, which has to be there.
+    out.extend(take_markers(old, new));
 
     let kept: HashSet<&str> = new.tracks.iter().map(|t| t.guid.as_str()).collect();
     // Deepest first, so a folder goes after what it held.
@@ -219,6 +230,38 @@ pub fn diff(old: &SessionModel, new: &SessionModel) -> Vec<Change> {
         });
     }
     out
+}
+
+/// For each recording whose markers changed, all of its markers now.
+fn take_markers(old: &SessionModel, new: &SessionModel) -> Vec<Change> {
+    let changed: BTreeSet<&str> = new
+        .take_markers
+        .iter()
+        .filter(|(key, m)| old.take_markers.get(*key) != Some(*m))
+        .map(|(_, m)| m.source.as_str())
+        .chain(
+            old.take_markers
+                .iter()
+                .filter(|(key, _)| !new.take_markers.contains_key(*key))
+                .map(|(_, m)| m.source.as_str()),
+        )
+        .collect();
+    changed
+        .into_iter()
+        .map(|source| {
+            let mut markers: Vec<TakeMarkerState> = new
+                .take_markers
+                .values()
+                .filter(|m| m.source == source)
+                .cloned()
+                .collect();
+            markers.sort_by(|a, b| a.at.total_cmp(&b.at));
+            Change::TakeMarkersSet {
+                source: source.to_owned(),
+                markers,
+            }
+        })
+        .collect()
 }
 
 /// Each track's index among its folder's children.

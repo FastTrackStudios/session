@@ -12,6 +12,10 @@
 //! markers: Map   guid → Map { at, name, color }
 //! regions: Map   guid → Map { start, end, name, color }
 //! chart  : Text  the keyflow chart
+//! take_markers: Map "<source>#<id>" → Map { source, id, at, name, color,
+//!                hit, hit.piece, hit.origin, hit.run, hit.peak_db,
+//!                hit.confidence, hit.from_trigger, hit.from_mic,
+//!                hit.ghost, hit.bleed, hit.flam_with, hit.note }
 //! fx     : Map   fx id → Map { track, index, plugin, name, enabled,
 //!                offline, state }  (state: a blob's name in the store)
 //! sends  : Map   "<track>#<n>" → Map { track, index, dest, mode, volume,
@@ -26,6 +30,10 @@
 //! flat number lists). An FX, a send, an envelope is each its own map, so
 //! one person bypassing a plugin while another automates a fader both
 //! land.
+//!
+//! Schema 3 adds `take_markers`: a recording's markers, drum hits among
+//! them, each its own map — one person approving a hit while another
+//! moves the next both land.
 //!
 //! Every field is its own map entry, so two people changing different
 //! things about the same item — one moves it, one turns it down — both
@@ -49,12 +57,13 @@ use loro::{
 };
 
 use crate::model::{
-    EnvelopePointState, EnvelopeState, FxState, ItemState, LaneState, MarkerState, NoteState,
-    RegionState, SendState, SessionModel, StretchPoint, TakeState, TempoPoint, TrackState,
+    EnvelopePointState, EnvelopeState, FxState, HitState, ItemState, LaneState, MarkerState,
+    NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint, TakeMarkerState,
+    TakeState, TempoPoint, TrackState,
 };
 
 /// The schema version written into `meta.schema`.
-pub const SCHEMA: i64 = 2;
+pub const SCHEMA: i64 = 3;
 
 const META: &str = "meta";
 const TRACKS: &str = "tracks";
@@ -65,6 +74,7 @@ const CHART: &str = "chart";
 const FX: &str = "fx";
 const SENDS: &str = "sends";
 const ENVELOPES: &str = "envelopes";
+const TAKE_MARKERS: &str = "take_markers";
 
 /// Origin tag for commits made from the local engine.
 pub const ORIGIN_LOCAL: &str = "local";
@@ -158,6 +168,11 @@ impl SessionDoc {
         write_entities(&self.doc.get_map(SENDS), &sends, send_fields)?;
         write_entities(&self.doc.get_map(ENVELOPES), &envelopes, envelope_fields)?;
         write_text(&self.doc.get_text(CHART), &model.chart)?;
+        write_entities(
+            &self.doc.get_map(TAKE_MARKERS),
+            &model.take_markers,
+            take_marker_fields,
+        )?;
         self.doc.set_next_commit_origin(origin);
         self.doc.commit();
         Ok(())
@@ -212,6 +227,12 @@ impl SessionDoc {
         if before.chart != model.chart {
             write_text(&self.doc.get_text(CHART), &model.chart)?;
         }
+        write_changed(
+            &self.doc.get_map(TAKE_MARKERS),
+            &before.take_markers,
+            &model.take_markers,
+            take_marker_fields,
+        )?;
         self.doc.set_next_commit_origin(origin);
         if !label.is_empty() {
             self.doc.set_next_commit_message(label);
@@ -269,6 +290,7 @@ impl SessionDoc {
             regions: read_entities(&self.doc.get_map(REGIONS), read_region),
             tempo,
             chart: self.doc.get_text(CHART).to_string(),
+            take_markers: read_entities(&self.doc.get_map(TAKE_MARKERS), read_take_marker),
         }
     }
 
@@ -333,6 +355,12 @@ impl SessionDoc {
             &touched.regions,
             &mut model.regions,
             read_region,
+        );
+        reread(
+            &self.doc.get_map(TAKE_MARKERS),
+            &touched.take_markers,
+            &mut model.take_markers,
+            read_take_marker,
         );
         if touched.parts.meta {
             model.tempo = map_value(&self.doc.get_map(META).get_deep_value())
@@ -523,6 +551,7 @@ pub struct Touched {
     pub items: std::collections::BTreeSet<String>,
     pub markers: std::collections::BTreeSet<String>,
     pub regions: std::collections::BTreeSet<String>,
+    pub take_markers: std::collections::BTreeSet<String>,
 }
 
 /// What [`SessionDoc::watch`] notes into, while it is kept.
@@ -593,6 +622,7 @@ impl Touched {
             Some(ITEMS) if !keys.is_empty() => self.items.extend(keys),
             Some(MARKERS) if !keys.is_empty() => self.markers.extend(keys),
             Some(REGIONS) if !keys.is_empty() => self.regions.extend(keys),
+            Some(TAKE_MARKERS) if !keys.is_empty() => self.take_markers.extend(keys),
             _ => self.everything = true,
         }
     }
@@ -1224,6 +1254,60 @@ fn read_marker(fields: &HashMap<String, LoroValue>) -> MarkerState {
         name: g.string("name"),
         color: g.color("color"),
         lane: g.color("lane"),
+    }
+}
+
+fn take_marker_fields(m: &TakeMarkerState) -> Fields {
+    let mut fields = vec![
+        ("source", LoroValue::from(m.source.as_str())),
+        ("id", LoroValue::from(m.id.as_str())),
+        ("at", LoroValue::Double(m.at)),
+        ("name", LoroValue::from(m.name.as_str())),
+        ("color", color(m.color)),
+        ("hit", LoroValue::Bool(m.hit.is_some())),
+    ];
+    // A plain marker writes its hit fields as their defaults, so a hit
+    // turned back into a plain marker leaves nothing of itself behind.
+    let h = m.hit.clone().unwrap_or_default();
+    fields.extend([
+        ("hit.piece", LoroValue::from(h.piece.as_str())),
+        ("hit.origin", LoroValue::from(h.origin.as_str())),
+        ("hit.run", LoroValue::from(h.run.as_str())),
+        ("hit.peak_db", LoroValue::Double(h.peak_db)),
+        ("hit.confidence", LoroValue::Double(h.confidence)),
+        ("hit.from_trigger", LoroValue::Bool(h.heard.trigger)),
+        ("hit.from_mic", LoroValue::Bool(h.heard.mic)),
+        ("hit.ghost", LoroValue::Bool(h.ghost)),
+        ("hit.bleed", LoroValue::Bool(h.bleed)),
+        ("hit.flam_with", opt_str(h.flam_with.as_deref())),
+        ("hit.note", LoroValue::from(h.note.as_str())),
+    ]);
+    fields
+}
+
+fn read_take_marker(fields: &HashMap<String, LoroValue>) -> TakeMarkerState {
+    let g = Get(fields);
+    TakeMarkerState {
+        source: g.string("source"),
+        id: g.string("id"),
+        at: g.f64("at", 0.0),
+        name: g.string("name"),
+        color: g.color("color"),
+        hit: g.bool("hit", false).then(|| HitState {
+            piece: g.string("hit.piece"),
+            origin: g.string("hit.origin"),
+            run: g.string("hit.run"),
+            peak_db: g.f64("hit.peak_db", 0.0),
+            confidence: g.f64("hit.confidence", 0.0),
+            heard: Sources {
+                trigger: g.bool("hit.from_trigger", false),
+                mic: g.bool("hit.from_mic", false),
+            },
+            ghost: g.bool("hit.ghost", false),
+            bleed: g.bool("hit.bleed", false),
+            flam_with: g.opt_string("hit.flam_with"),
+            note: g.string("hit.note"),
+        }),
     }
 }
 

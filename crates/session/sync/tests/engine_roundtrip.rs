@@ -1,7 +1,8 @@
 //! A project through the doc and back: built in daw-standalone with
 //! everything schema 2 keeps — an FX with state, a send from its 3/4,
 //! automation of a fader and of the FX, fixed lanes, a group, a slice
-//! with stretch markers, a MIDI take — hosted into the doc, and rebuilt
+//! with stretch markers and drum-hit take markers on its recording, a
+//! MIDI take — hosted into the doc, and rebuilt
 //! from it in an empty second project, which must read back the same.
 
 #![cfg(feature = "engine")]
@@ -190,6 +191,44 @@ async fn round_trip(
             slope: 0.0,
         }])
         .await?;
+    // The slice's recording carries two hits: a detector's, and one put
+    // there by hand after it.
+    let recording = std::env::temp_dir().join("Kick In-take1.wav");
+    slice
+        .active_take()
+        .set_source_file(&recording.to_string_lossy())
+        .await?;
+    slice
+        .active_take()
+        .set_markers(vec![
+            daw_proto::TakeMarker {
+                id: "h1".into(),
+                source_position_seconds: 2.5,
+                hit: Some(daw_proto::HitMark {
+                    piece: "Kick".into(),
+                    run: "run-1".into(),
+                    peak_db: -9.5,
+                    confidence: 0.95,
+                    from_trigger: true,
+                    from_mic: true,
+                    ..daw_proto::HitMark::default()
+                }),
+                ..daw_proto::TakeMarker::default()
+            },
+            daw_proto::TakeMarker {
+                id: "h2".into(),
+                source_position_seconds: 2.75,
+                hit: Some(daw_proto::HitMark {
+                    piece: "Kick".into(),
+                    origin: daw_proto::MarkOrigin::Manual,
+                    ghost: true,
+                    note: "a ghost the trigger missed".into(),
+                    ..daw_proto::HitMark::default()
+                }),
+                ..daw_proto::TakeMarker::default()
+            },
+        ])
+        .await?;
     let groove = oh
         .items()
         .create_midi_item_with_notes(4.0, 6.0, Vec::new())
@@ -261,6 +300,19 @@ async fn round_trip(
     assert_eq!(
         built.items, rebuilt.items,
         "items rebuilt the same (direct: {direct})"
+    );
+    assert_eq!(built.take_markers.len(), 2, "the hits were read");
+    let manual = built
+        .take_markers
+        .values()
+        .find(|m| m.id == "h2")
+        .and_then(|m| m.hit.as_ref())
+        .expect("the hand-placed hit");
+    assert_eq!(manual.origin, "manual");
+    assert!(manual.ghost);
+    assert_eq!(
+        built.take_markers, rebuilt.take_markers,
+        "hits rebuilt the same (direct: {direct})"
     );
     Ok(())
 }
