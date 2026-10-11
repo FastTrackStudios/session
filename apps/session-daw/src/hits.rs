@@ -1159,6 +1159,47 @@ fn edit_hits(
     n
 }
 
+/// When what `piece` plays at `now` (project seconds, after any edit)
+/// was recorded: the slice of its first mic playing then, read back to
+/// its recording.
+#[must_use]
+pub fn recorded_at(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    piece: &str,
+    now: f64,
+) -> Option<f64> {
+    let (pieces, _) = kit(daw, project);
+    let mic = pieces
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(piece))?
+        .mics
+        .first()?
+        .clone();
+    let track = Tracks::get(daw, project.clone(), TrackRef::Guid(mic.clone()))?;
+    let item = daw
+        .get_items(project.clone(), TrackRef::Guid(mic.clone()))
+        .into_iter()
+        .filter(|i| !i.muted && crate::drum_edit::is_edited(&track, i))
+        .find(|i| {
+            let at = i.position.as_seconds();
+            now >= at && now < at + i.length.as_seconds()
+        })?;
+    let take = daw.get_active_take(project.clone(), ItemRef::Guid(item.guid.clone()))?;
+    let path = take.source_file_path?;
+    let rate = if take.play_rate > 0.0 {
+        take.play_rate
+    } else {
+        1.0
+    };
+    let source = (now - item.position.as_seconds()).mul_add(rate, take.start_offset.as_seconds());
+    let origin = recordings(daw, project, &mic)
+        .into_iter()
+        .find(|r| r.path == path)?
+        .origin;
+    Some(origin + source / rate)
+}
+
 /// Place a hit of `piece` by hand at `time` (project seconds, as
 /// recorded), on every recording of the piece that covers it — snapped
 /// to the attack start on its first mic when `snap`. Its id.
@@ -1438,6 +1479,7 @@ pub fn overlay(
                 });
             let auto = p.mark.origin == MarkOrigin::Auto;
             Mark {
+                id: p.id.clone(),
                 piece,
                 time: p.time,
                 who: match p.mark.origin {
@@ -2008,7 +2050,7 @@ static ADD: ActionMeta = meta(
     "HITS_ADD",
     "hits_add",
     "Place a drum hit",
-    "Place a hit of `piece` by hand at `time` (project seconds, as recorded) on every recording of the piece — snapped to the attack start on its first mic unless `snap` is false. Hand-placed hits are never replaced by a detection run. Says its id.",
+    "Place a hit of `piece` by hand at `time` (project seconds, as recorded; with `now`, where it plays now — after any edit) on every recording of the piece — snapped to the attack start on its first mic unless `snap` is false. Hand-placed hits are never replaced by a detection run. Says its id.",
     "Drums",
     "",
 );
@@ -2141,6 +2183,9 @@ struct ExplainArg {
 struct AddArg {
     piece: String,
     time: f64,
+    /// `time` is where it plays now, after any edit (as a click on the
+    /// arrangement says it), not as recorded.
+    now: Option<bool>,
     snap: Option<bool>,
     note: Option<String>,
 }
@@ -2331,11 +2376,17 @@ fn register_zones(list: &ActionList) {
 fn register_edits(list: &ActionList) {
     list.register(&ADD, Effect::Mutating, |a: AddArg| {
         let (daw, project) = song()?;
+        let time = if a.now.unwrap_or(false) {
+            recorded_at(daw, &project, &a.piece, a.time)
+                .ok_or_else(|| format!("nothing of {} plays at {:.3} s", a.piece, a.time))?
+        } else {
+            a.time
+        };
         add_hit(
             daw,
             &project,
             &a.piece,
-            a.time,
+            time,
             (a.snap.unwrap_or(true), a.note.unwrap_or_default()),
         )
     });

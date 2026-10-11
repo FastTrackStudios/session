@@ -2155,6 +2155,29 @@ pub fn hits_overlay(
     }
 }
 
+/// A hit marker's flag being dragged: where it will go, a line in the
+/// accent from the ruler down.
+pub fn hit_drag_overlay(painter: &mut impl PaintScene, palette: &Palette, view: Viewport, x: f64) {
+    if x < view.panel_w || x > view.width {
+        return;
+    }
+    let top = crate::ruler::ruler_h();
+    let x = x.round() + 0.5;
+    painter.stroke(
+        &vello::kurbo::Stroke::new(1.5),
+        Affine::IDENTITY,
+        palette.accent,
+        None,
+        &vello::kurbo::Line::new((x, top), (x, view.height)),
+    );
+    let mut flag = vello::kurbo::BezPath::new();
+    flag.move_to((x - 4.0, top));
+    flag.line_to((x + 4.0, top));
+    flag.line_to((x, top + 6.0));
+    flag.close_path();
+    painter.fill(Fill::NonZero, Affine::IDENTITY, palette.accent, None, &flag);
+}
+
 /// An item body's strength: faint when items are drawn outlined
 /// ([`crate::options::OUTLINED`]), so the waveform carries the colour.
 fn body_alpha() -> f32 {

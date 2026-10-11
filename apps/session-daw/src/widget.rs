@@ -241,6 +241,47 @@ pub(crate) fn mods(from: Modifiers) -> crate::mousemap::Mods {
     }
 }
 
+/// How tall the strip at the top of a piece's row is where its hits are
+/// taken by hand — their flags — px.
+const FLAG_STRIP: f64 = 10.0;
+/// How near a flag a press must land to take it, px.
+const FLAG_REACH: f64 = 5.0;
+/// How far a flag must be dragged to move its hit, px: under it, a click.
+const FLAG_SLOP: f64 = 2.0;
+
+/// A hit marker being dragged by its flag.
+struct HitDrag {
+    id: String,
+    from_x: f64,
+    x: f64,
+}
+
+/// What is under the pointer in a piece row's flag strip.
+struct FlagSpot {
+    /// The hit whose flag it is on, if any.
+    mark: Option<String>,
+    /// The pieces the row shows.
+    pieces: Vec<String>,
+    /// Where it is, project seconds as the song plays now.
+    time: f64,
+}
+
+/// Run a hit edit made by hand on the Action List, off the window's
+/// thread — the same action a model runs — and draw the markers again.
+fn run_hit_action(id: &'static str, args: String) {
+    #[cfg(feature = "native")]
+    if let Some(runtime) = crate::open::runtime() {
+        runtime.spawn_blocking(move || {
+            if let Err(e) = crate::actions::list().run_json(id, args.as_bytes()) {
+                tracing::warn!(hits.action = id, hits.error = %e, "a hit edit by hand was refused");
+            }
+            crate::hit_overlay::refresh();
+        });
+    }
+    #[cfg(not(feature = "native"))]
+    let _ = (id, args);
+}
+
 /// A knob under the pointer, mid-turn.
 struct ItemTurn {
     index: usize,
@@ -476,6 +517,12 @@ pub struct ArrangementWidget {
     /// When and where the last click on a NAME landed, so the next one
     /// can tell whether it is the second half of a double.
     last_name: Option<(usize, web_time::Instant)>,
+    /// A hit marker taken by its flag (Edit mode), mid-drag.
+    hit_drag: Option<HitDrag>,
+    /// Where and when a piece row's flag strip was last clicked with no
+    /// flag under it: the first half of the double-click that places a
+    /// hit.
+    last_strip: Option<(f64, web_time::Instant)>,
     /// A knob being turned: where the press landed, and the track as it
     /// was at that moment.
     ///
@@ -628,6 +675,8 @@ impl ArrangementWidget {
             staged: std::sync::Arc::default(),
             scene_before: None,
             last_name: None,
+            hit_drag: None,
+            last_strip: None,
             turning: None,
             item_turn: None,
             edits: Rc::new(RefCell::new(Vec::new())),
@@ -803,6 +852,139 @@ impl ArrangementWidget {
             .take_while(|(_, depth)| *depth > 0)
             .count();
         Some(first..first.saturating_add(len).saturating_add(1))
+    }
+
+    /// What is under `(x, y)` in a piece row's flag strip, in Edit mode
+    /// with the hit markers drawn: the flag it is on, if any.
+    fn flag_at(&self, x: f64, y: f64) -> Option<FlagSpot> {
+        if !self.editing.get() {
+            return None;
+        }
+        let hits = crate::hit_overlay::current()?;
+        let kit = self.kit_rows()?;
+        let view = self.viewport(self.size.0, self.size.1);
+        if x < view.panel_w {
+            return None;
+        }
+        let (ox, oy) = (
+            self.scene.tcp.width() - view.scroll_x,
+            ruler::ruler_h() - view.scroll_y,
+        );
+        let pps = view.pps.max(f64::EPSILON);
+        let time = (x - ox) / pps;
+        let rows = self.piece_rows(kit, &hits);
+        let (row, _) = rows.iter().find(|(row, _)| {
+            self.scene.row_box(*row).is_some_and(|(top, _)| {
+                let y0 = top.mul_add(view.zoom_y, oy);
+                y >= y0 && y <= y0 + FLAG_STRIP
+            })
+        })?;
+        let pieces: Vec<usize> = rows
+            .iter()
+            .filter(|(r, _)| r == row)
+            .map(|(_, p)| *p)
+            .collect();
+        let reach = FLAG_REACH / pps;
+        let mark = hits
+            .between(time - reach, time + reach)
+            .iter()
+            .filter(|m| pieces.contains(&m.piece))
+            .min_by(|a, b| (a.time - time).abs().total_cmp(&(b.time - time).abs()))
+            .map(|m| m.id.clone());
+        Some(FlagSpot {
+            mark,
+            pieces: pieces
+                .iter()
+                .filter_map(|p| hits.pieces.get(*p).cloned())
+                .collect(),
+            time,
+        })
+    }
+
+    /// A hit taken by hand on its flag, in Edit mode: dragged, it moves
+    /// (`HITS_MOVE`, by as much as it was dragged — the slice it is in
+    /// moves whole, so a drag is the same anywhere); Alt-clicked, it is
+    /// removed; Shift-clicked, checked (`HITS_MARK`); a double-click on
+    /// the strip with no flag under it places one there for the row's
+    /// piece, snapped to the attack (`HITS_ADD`). Every gesture is the
+    /// action a model runs, so a hand and a model edit the same hits.
+    /// Whether the event was the hit's.
+    fn hit_gesture(&mut self, event: &UiEvent) -> bool {
+        match event {
+            UiEvent::PointerDown(e)
+                if e.button == MouseEventButton::Main && !self.pointing.borrow().tool_active() =>
+            {
+                let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+                let Some(spot) = self.flag_at(x, y) else {
+                    return false;
+                };
+                let held = mods(e.mods);
+                match spot.mark {
+                    Some(id) if held.alt => {
+                        run_hit_action("HITS_REMOVE", format!(r#"{{"ids":["{id}"]}}"#));
+                        true
+                    }
+                    Some(id) if held.shift => {
+                        run_hit_action(
+                            "HITS_MARK",
+                            format!(r#"{{"ids":["{id}"],"approve":true}}"#),
+                        );
+                        true
+                    }
+                    Some(id) => {
+                        self.hit_drag = Some(HitDrag { id, from_x: x, x });
+                        true
+                    }
+                    None => {
+                        let now = web_time::Instant::now();
+                        let again = self.last_strip.is_some_and(|(at, when)| {
+                            (at - x).abs() < FLAG_REACH
+                                && now.saturating_duration_since(when) <= crate::gesture::DOUBLE
+                        });
+                        if again && let [piece] = spot.pieces.as_slice() {
+                            self.last_strip = None;
+                            run_hit_action(
+                                "HITS_ADD",
+                                format!(r#"{{"piece":"{piece}","time":{},"now":true}}"#, spot.time),
+                            );
+                            return true;
+                        }
+                        self.last_strip = Some((x, now));
+                        false
+                    }
+                }
+            }
+            UiEvent::PointerMove(e) => {
+                let Some(drag) = self.hit_drag.as_mut() else {
+                    return false;
+                };
+                drag.x = f64::from(e.coords.client_x);
+                true
+            }
+            UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) => {
+                let Some(drag) = self.hit_drag.take() else {
+                    return false;
+                };
+                let x = if matches!(event, UiEvent::PointerUp(_)) {
+                    f64::from(e.coords.client_x)
+                } else {
+                    drag.from_x
+                };
+                if (x - drag.from_x).abs() >= FLAG_SLOP {
+                    let pps = self
+                        .viewport(self.size.0, self.size.1)
+                        .pps
+                        .max(f64::EPSILON);
+                    let ms = (x - drag.from_x) / pps * 1_000.0;
+                    run_hit_action(
+                        "HITS_MOVE",
+                        format!(r#"{{"id":"{}","by_ms":{ms}}}"#, drag.id),
+                    );
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The kit's rows and the pieces each shows (`rows`' index, the
@@ -2378,6 +2560,12 @@ impl ArrangementWidget {
         // The zoom the event is read at: what tells a razor area's edge
         // from its body (`arrange_edit::Editor::pps`).
         self.editor.pps = self.viewport(self.size.0, self.size.1).pps;
+        // A hit marker's flag, in Edit mode, before the mouse map: a hand
+        // on a hit is the hit's, not the item's under it.
+        if self.hit_gesture(event) {
+            self.dirty.set(true);
+            return;
+        }
         // What a press here would do, asked BEFORE the press is taken: a
         // razor starts as an area under the pointer, which would then
         // answer as the area rather than as the razor being drawn.
@@ -3232,6 +3420,9 @@ impl ArrangementWidget {
                 // Not read yet since the window opened.
                 None => crate::hit_overlay::refresh(),
             }
+            if let Some(drag) = &self.hit_drag {
+                crate::arrangement::hit_drag_overlay(&mut out, &self.palette, view, drag.x);
+            }
         }
         // The razor's rectangles over the items they cut, and under
         // nothing: they are the thing being aimed, so they go last of
@@ -3648,6 +3839,119 @@ mod tests {
         );
         widget.size = (1600.0, 900.0);
         widget
+    }
+
+    /// A kit — Drums, its Kick folder, the kick's In — in Edit mode, with
+    /// one kick hit marked at 2 s.
+    fn kit_widget() -> ArrangementWidget {
+        let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = crate::text::Font::embedded().expect("the embedded font");
+        let track = |guid: &str, name: &str, parent: Option<&str>, folder: bool| daw_proto::Track {
+            guid: guid.into(),
+            name: name.into(),
+            parent_guid: parent.map(Into::into),
+            is_folder: folder,
+            height: Some(90),
+            ..daw_proto::Track::default()
+        };
+        let tracks = vec![
+            track("d", "Drums", None, true),
+            track("k", "Kick", Some("d"), true),
+            track("ki", "In", Some("k"), false),
+        ];
+        let rows: Vec<(daw_proto::Track, u32)> = tracks.iter().cloned().zip([0, 1, 2]).collect();
+        let refs = daw_ui::studio::RowsRef(std::sync::Arc::new(rows.clone()));
+        let project =
+            daw_ui::studio::ProjectRef(std::sync::Arc::new(daw_ui::studio::Project::default()));
+        let layout = crate::layout::Layout::default();
+        let scene = crate::arrangement::Arrangement::build(
+            &palette,
+            &font,
+            &project,
+            &refs,
+            layout,
+            &crate::midi::Previews::default(),
+            crate::tcp::Tcp::FULL,
+        );
+        let view: Shared = std::rc::Rc::new(std::cell::RefCell::new(View {
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            zoom_x: 1.0,
+            zoom_y: 1.0,
+            play_at: 0.0,
+        }));
+        let mut widget = ArrangementWidget::new(
+            scene,
+            palette,
+            font,
+            120.0,
+            100.0,
+            rows,
+            layout,
+            daw_ui::studio::project::Project {
+                tracks,
+                ..daw_ui::studio::project::Project::default()
+            },
+            crate::midi::Previews::default(),
+            view,
+            false,
+        );
+        widget.size = (1600.0, 900.0);
+        widget.editing.set(true);
+        crate::hit_overlay::publish(crate::hit_overlay::Overlay {
+            pieces: vec!["Kick".into()],
+            tracks: vec![vec!["ki".into()]],
+            marks: vec![crate::hit_overlay::Mark {
+                id: "h1".into(),
+                piece: 0,
+                time: 2.0,
+                who: crate::hit_overlay::Who::Auto,
+                ghost: false,
+                doubt: false,
+            }],
+            zones: Vec::new(),
+        });
+        widget
+    }
+
+    /// Where `time` is on `row`'s flag strip.
+    fn flag(widget: &ArrangementWidget, row: usize, time: f64) -> (f64, f64) {
+        let view = widget.viewport(widget.size.0, widget.size.1);
+        let (top, _) = widget.scene.row_box(row).expect("a row");
+        (
+            time.mul_add(view.pps, widget.scene.tcp.width() - view.scroll_x),
+            top.mul_add(view.zoom_y, crate::ruler::ruler_h() - view.scroll_y) + 3.0,
+        )
+    }
+
+    /// A hit's flag, on the kick's rows, is the hit's: pressed, it is
+    /// taken, dragged and let go; under the strip, or with no flag there,
+    /// a press is the arrangement's as ever.
+    #[test]
+    fn a_hit_is_taken_by_its_flag() {
+        let mut widget = kit_widget();
+        let (x, y) = flag(&widget, 2, 2.0);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        assert_eq!(widget.hit_drag.as_ref().map(|d| d.id.as_str()), Some("h1"));
+        widget.handle_event(&UiEvent::PointerMove(pointer(x + 30.0, y)));
+        assert_eq!(widget.hit_drag.as_ref().map(|d| d.x), Some(x + 30.0));
+        widget.handle_event(&UiEvent::PointerUp(pointer(x + 30.0, y)));
+        assert!(widget.hit_drag.is_none(), "let go");
+        // The kick's folder row shows it too.
+        let (fx, fy) = flag(&widget, 1, 2.0);
+        assert_eq!(
+            widget.flag_at(fx, fy).and_then(|s| s.mark).as_deref(),
+            Some("h1")
+        );
+        // Below the strip, and away from any flag, it is not the hit's.
+        assert!(widget.flag_at(x, y + 30.0).is_none(), "below the strip");
+        let away = widget.flag_at(x + 200.0, y).expect("still the strip");
+        assert!(away.mark.is_none());
+        assert_eq!(away.pieces, ["Kick"]);
+        // Out of Edit mode, no hit is taken.
+        widget.editing.set(false);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        assert!(widget.hit_drag.is_none(), "not in Edit mode");
     }
 
     /// Where a control is, in the widget's own coordinates — which is

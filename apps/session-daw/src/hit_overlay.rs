@@ -25,8 +25,10 @@ pub enum Who {
 }
 
 /// One hit, where it plays now.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Mark {
+    /// Its marker's id: what a hand on it edits.
+    pub id: String,
     /// Its piece: an index into [`Overlay::pieces`].
     pub piece: usize,
     /// Project seconds.
@@ -163,6 +165,7 @@ mod tests {
 
     fn mark(piece: usize, time: f64) -> Mark {
         Mark {
+            id: String::new(),
             piece,
             time,
             who: Who::Auto,
