@@ -19,7 +19,7 @@ use rayon::prelude::*;
 
 use crate::bleed::{Other, confident, without_trigger};
 use crate::calibrate::{Calibration, TOLERANCE, agree, calibrate};
-use crate::fuse::{Hit, fuse};
+use crate::fuse::{Hit, corroborate, fuse};
 use crate::gate::{Gate, Scan, gate};
 use crate::trigger::{Health, health, spikes};
 
@@ -148,7 +148,9 @@ fn with_trigger(piece: &Piece<'_>, rate: f64, settings: &Settings) -> RoundOne {
         Health::Working => {
             let mic_hits =
                 calibration.map_or_else(Vec::new, |c| gate_on(&scan, piece.mic, &c.gate));
-            Some(fuse(piece.mic, rate, &truth, &mic_hits))
+            let mut hits = fuse(piece.mic, rate, &truth, &mic_hits);
+            corroborate(&mut hits, trigger, rate);
+            Some(hits)
         }
         Health::MicSilent(_) => Some(fuse(piece.mic, rate, &truth, &[])),
         Health::Dead(_) => None,

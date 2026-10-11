@@ -1199,7 +1199,7 @@ static EDIT_LANES: ActionMeta = meta(
     "DRUMS_EDIT_LANES",
     "drums_edit_lanes",
     "Comp and edit lanes",
-    "Set the kit up to be edited, every drum track alike: its comping lane (the comp that plays) named COMP, and a new lane EDIT holding a copy of it, playing — so edits land on EDIT and COMP stays the comp they were made from (DRUMS_PLAY_LANE to hear either). The takes and their comp areas are untouched: EDIT is added after the last lane. A track already set up is left. `dry_run` says what it would do.",
+    "Set the kit up to be edited, every drum track alike: its comping lane (the comp that plays) named COMP, and a new lane EDIT holding a copy of it, playing — so edits land on EDIT and COMP stays the comp they were made from (DRUMS_PLAY_LANE to hear either). The takes and their comp areas are untouched: EDIT is added after the last lane. A track already set up is left — unless `reset`, which starts the edit over: each EDIT lane's slices dropped and its COMP copied onto it again (one undo step). `dry_run` says what it would do.",
     "Drums",
     "",
 );
@@ -1216,6 +1216,9 @@ static PLAY_LANE: ActionMeta = meta(
 #[derive(Facet)]
 struct LanesArg {
     dry_run: Option<bool>,
+    /// Start the edit over: each EDIT lane's slices dropped and its COMP
+    /// copied onto it again.
+    reset: Option<bool>,
 }
 
 /// What setting the lanes up did, track by track.
@@ -2098,7 +2101,11 @@ fn register_lanes(list: &ActionList) {
     list.register(&EDIT_LANES, Effect::Mutating, |a: LanesArg| {
         let (daw, project) = song()?;
         let dry = a.dry_run.unwrap_or(false);
-        let tracks = crate::drum_lanes::set_up(daw, &project, dry)?;
+        let tracks = if a.reset == Some(true) {
+            crate::drum_lanes::reset_edit(daw, &project, dry)?
+        } else {
+            crate::drum_lanes::set_up(daw, &project, dry)?
+        };
         Ok(LanesOut {
             tracks,
             applied: !dry,
@@ -2895,6 +2902,53 @@ fn targets(
         .collect())
 }
 
+/// Moments nearer than this are one gesture, moved as one, seconds:
+/// under a 1/32 at 160 bpm (47 ms), so a double kick's 16ths and a
+/// drummer's 32nds stay their own.
+const GESTURE: f64 = 0.040;
+
+/// Each gesture — moments nearer together than [`GESTURE`]: a kick into
+/// a snare, a drag, a flam across pieces — moved by one shift, its
+/// loudest targeted moment's, so the gesture keeps its own timing; none
+/// when no moment of it has a target.
+///
+/// Moved apart, a slice moved later reaches back into its own source to
+/// close the gap, and with the hit before it nearer than that reach, it
+/// plays that hit's attack again: a kick 19 ms before a snare, the snare
+/// sent 18.8 ms later on its own, was heard twice on Unbreakable.
+fn hold_gestures(pairs: &[(f64, Option<f64>)], loudness: &[f64]) -> Vec<(f64, Option<f64>)> {
+    let mut out: Vec<(f64, Option<f64>)> = Vec::with_capacity(pairs.len());
+    let mut start = 0_usize;
+    while start < pairs.len() {
+        let mut end = start.saturating_add(1);
+        while let (Some(prev), Some(next)) = (pairs.get(end.saturating_sub(1)), pairs.get(end)) {
+            if next.0 - prev.0 >= GESTURE {
+                break;
+            }
+            end = end.saturating_add(1);
+        }
+        let group = pairs.get(start..end).unwrap_or_default();
+        let shift = group
+            .iter()
+            .enumerate()
+            .filter_map(|(k, (h, t))| {
+                let t = (*t)?;
+                Some((
+                    loudness
+                        .get(start.saturating_add(k))
+                        .copied()
+                        .unwrap_or(0.0),
+                    t - h,
+                ))
+            })
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, shift)| shift);
+        out.extend(group.iter().map(|(h, _)| (*h, shift.map(|s| h + s))));
+        start = end;
+    }
+    out
+}
+
 /// What the settings make of the kit: its pieces, its moments (with
 /// their targets), its fills.
 struct Detected {
@@ -2918,7 +2972,8 @@ fn detect(
         .map_or(f64::INFINITY, |ms| ms / 1_000.0);
     let moments = moments(&kit, settings.grid_scan.then_some((by_line, tolerance)));
     let times: Vec<f64> = moments.iter().map(|m| m.time).collect();
-    let targets = targets(daw, project, settings, &kit, &times)?;
+    let loudness: Vec<f64> = moments.iter().map(|m| m.relative_db).collect();
+    let targets = hold_gestures(&targets(daw, project, settings, &kit, &times)?, &loudness);
     let fills = find_fills(daw, project, &kit, span);
     Ok(Detected {
         kit,
@@ -3061,6 +3116,35 @@ fn wait_for_slip(
     }
 }
 
+#[cfg(test)]
+mod gesture_tests {
+    use super::hold_gestures;
+
+    #[test]
+    fn a_kick_into_a_snare_moves_with_it() {
+        // Kick unmatched, snare 19 ms after it sent 18.8 ms later.
+        let pairs = [(1.000, None), (1.019, Some(1.0378)), (1.500, Some(1.500))];
+        let got = hold_gestures(&pairs, &[-6.0, 0.0, 0.0]);
+        let shift = |k: usize| got[k].1.map(|t| t - got[k].0);
+        assert!((shift(0).unwrap() - 0.0188).abs() < 1e-9, "{got:?}");
+        assert!((shift(1).unwrap() - 0.0188).abs() < 1e-9);
+        assert_eq!(got[2], (1.5, Some(1.5)), "a moment apart keeps its own");
+    }
+
+    #[test]
+    fn a_gesture_with_no_target_stays() {
+        let got = hold_gestures(&[(1.0, None), (1.02, None)], &[0.0, 0.0]);
+        assert_eq!(got, vec![(1.0, None), (1.02, None)]);
+    }
+
+    #[test]
+    fn the_louder_targeted_moment_decides() {
+        let got = hold_gestures(&[(1.0, Some(1.01)), (1.03, Some(1.02))], &[-12.0, 0.0]);
+        assert!((got[0].1.unwrap() - 0.99).abs() < 1e-9, "{got:?}");
+        assert!((got[1].1.unwrap() - 1.02).abs() < 1e-9);
+    }
+}
+
 fn register_quantize(list: &ActionList) {
     list.register(&QUANTIZE, Effect::Mutating, |a: QuantizeArg| {
         let (daw, project) = song()?;
@@ -3078,7 +3162,11 @@ fn register_quantize(list: &ActionList) {
                 if zones.is_empty() {
                     in_a_fill(daw, &project, &found.fills, h)
                 } else {
-                    crate::hits::zone_holds(&zones, h)
+                    crate::hits::zone_holds(
+                        &zones,
+                        h,
+                        60.0 / daw.get_tempo_at(project.clone(), h).max(1.0),
+                    )
                 }
             };
             let pairs: Vec<(f64, Option<f64>)> = found
@@ -3164,7 +3252,11 @@ fn register_slip(list: &ActionList) {
                 let held = if zones.is_empty() {
                     in_a_fill(daw, &project, &fills, *h)
                 } else {
-                    crate::hits::zone_holds(&zones, *h)
+                    crate::hits::zone_holds(
+                        &zones,
+                        *h,
+                        60.0 / daw.get_tempo_at(project.clone(), *h).max(1.0),
+                    )
                 };
                 let keep = match settings.fills {
                     crate::drum_settings::Fills::Skip => !held,

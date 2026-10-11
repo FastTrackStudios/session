@@ -128,6 +128,77 @@ pub fn set_up(
     Ok(said)
 }
 
+/// Start the edit over, from the comp.
+///
+/// On every drum track with an `EDIT` lane, its slices thrown away and
+/// the `COMP` lane copied onto it again. One undo step; the old edit is
+/// in the song's history (and any checkpoint made before it).
+///
+/// # Errors
+///
+/// The engine refusing one of the writes, named by the track's path.
+pub fn reset_edit(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    dry: bool,
+) -> Result<Vec<String>, String> {
+    let all = Tracks::all(daw, project.clone());
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        all.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let mut said = Vec::new();
+    if !dry {
+        daw::service::Projects::begin_undo_block(daw, project.clone(), "Start the drum edit over");
+    }
+    for track in kit_tracks(daw, project) {
+        let path = crate::gain_stage::path_of(&track, &by_guid).join("/");
+        let (Some(comp), Some(edit)) = (lane_named(&track, COMP), lane_named(&track, EDIT)) else {
+            continue;
+        };
+        let at = TrackRef::Guid(track.guid.clone());
+        let items = daw.get_items(project.clone(), at);
+        let on = |lane: u32| {
+            items
+                .iter()
+                .filter(move |i| i.fixed_lane.unwrap_or(0) == lane)
+                .collect::<Vec<_>>()
+        };
+        let (old, fresh) = (on(edit), on(comp));
+        said.push(format!(
+            "{path}: {} slices on {EDIT} dropped, {} items of {COMP} copied onto it",
+            old.len(),
+            fresh.len()
+        ));
+        if dry {
+            continue;
+        }
+        let fail = |e: daw_proto::DawError| format!("{path}: {e}");
+        for item in old {
+            daw.delete_item(project.clone(), ItemRef::Guid(item.guid.clone()))
+                .map_err(fail)?;
+        }
+        for item in fresh {
+            let copy = daw
+                .duplicate_item(project.clone(), ItemRef::Guid(item.guid.clone()))
+                .ok_or_else(|| format!("{path}: an item would not copy"))?;
+            daw.set_fixed_lane(project.clone(), ItemRef::Guid(copy), edit)
+                .map_err(fail)?;
+        }
+    }
+    if !dry {
+        daw::service::Projects::end_undo_block(
+            daw,
+            project.clone(),
+            "Start the drum edit over",
+            None,
+        );
+        if !said.is_empty() {
+            crate::studio::request_resync();
+            crate::actions::list().changed("drums.lanes", "the kit's edit was started over");
+        }
+    }
+    Ok(said)
+}
+
 /// Play the lane named `name` on every drum track that has one; how many
 /// do.
 ///

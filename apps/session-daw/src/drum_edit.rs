@@ -247,7 +247,7 @@ pub struct Beat {
 
 /// Where in a beat a hit can be: twelve places, so sixteenths and
 /// triplets each have their own.
-const SLOTS: f64 = 12.0;
+pub(crate) const SLOTS: f64 = 12.0;
 
 /// How many bars either side the groove is learned from.
 const AROUND_BARS: usize = 8;

@@ -993,6 +993,11 @@ pub struct HitRow {
     pub piece: String,
     /// When it was played, project seconds, as recorded.
     pub time: f64,
+    /// Where the song plays it now (an edit has moved it), project
+    /// seconds; none when no slice plays it.
+    pub now: Option<f64>,
+    /// Bar and beat where it plays now (as recorded when it plays
+    /// nowhere).
     pub bar: i32,
     pub beat: f64,
     pub peak_db: f64,
@@ -1015,6 +1020,10 @@ pub fn hits(
     only: &[String],
 ) -> Vec<HitRow> {
     let (pieces, _) = kit(daw, project);
+    let now: HashMap<String, f64> = playback(daw, project)
+        .into_iter()
+        .map(|p| (p.id, p.time))
+        .collect();
     let mut rows: BTreeMap<String, HitRow> = BTreeMap::new();
     for piece in pieces
         .iter()
@@ -1034,7 +1043,9 @@ pub fn hits(
                     continue;
                 }
                 let time = r.origin + m.source_position_seconds;
-                let (bar, beat, frac) = crate::song_bars::musical(daw, project, time);
+                let plays = now.get(&m.id).copied();
+                let (bar, beat, frac) =
+                    crate::song_bars::musical(daw, project, plays.unwrap_or(time));
                 let mut flags = Vec::new();
                 for (yes, flag) in [
                     (h.ghost, "ghost"),
@@ -1055,6 +1066,7 @@ pub fn hits(
                         id: m.id,
                         piece: h.piece,
                         time,
+                        now: plays,
                         bar,
                         beat: f64::from(beat) + frac,
                         peak_db: h.peak_db,
@@ -1075,8 +1087,16 @@ pub fn hits(
         }
     }
     let mut out: Vec<HitRow> = rows.into_values().collect();
-    out.sort_by(|a, b| a.time.total_cmp(&b.time));
+    out.sort_by(|a, b| a.at().total_cmp(&b.at()));
     out
+}
+
+impl HitRow {
+    /// Where it is now: where the song plays it, else as recorded.
+    #[must_use]
+    pub fn at(&self) -> f64 {
+        self.now.unwrap_or(self.time)
+    }
 }
 
 const fn origin_name(o: MarkOrigin) -> &'static str {
@@ -1457,8 +1477,11 @@ pub fn playback(daw: &daw::standalone::Standalone, project: &ProjectContext) -> 
 /// loudest. `None` when the song has no hit markers (the slip then
 /// detects, as before).
 ///
-/// A detected hit flagged as bleed and not approved is left out: it is
-/// not a stroke to cut on until someone says it is.
+/// Left out: a detected hit flagged as bleed and not approved — not a
+/// stroke to cut on until someone says it is — the quieter stroke of a
+/// flam, which moves with the louder, and an unchecked ghost note, which
+/// rides with the groove around it rather than being put on a line of
+/// its own (a ghost a hand placed or approved is cut on).
 #[must_use]
 pub fn kit_from_markers(
     daw: &daw::standalone::Standalone,
@@ -1468,11 +1491,23 @@ pub fn kit_from_markers(
     if played.is_empty() {
         return None;
     }
+    // The quieter stroke of a flam is no cut of its own: it rides in its
+    // main stroke's slice. Cut on, it is quantized on its own and the
+    // flam's spacing goes — a grace note 33 ms after the stroke pulled
+    // to the next 1/32, 47 ms after it.
+    let peaks: HashMap<&str, f64> = played.iter().map(|p| (p.id.as_str(), p.peak_db)).collect();
+    let grace = |p: &Played| {
+        p.mark
+            .flam_with
+            .as_deref()
+            .and_then(|other| peaks.get(other))
+            .is_some_and(|other| *other > p.peak_db)
+    };
     let mut by_piece: BTreeMap<String, Vec<&Played>> = BTreeMap::new();
-    for p in played
-        .iter()
-        .filter(|p| !(p.mark.bleed && p.mark.origin == MarkOrigin::Auto))
-    {
+    for p in played.iter().filter(|p| {
+        let checked = p.mark.origin != MarkOrigin::Auto;
+        !(grace(p) || (!checked && (p.mark.bleed || p.mark.ghost)))
+    }) {
         by_piece.entry(p.piece.clone()).or_default().push(p);
     }
     Some(
@@ -1575,6 +1610,72 @@ pub fn check(
     out
 }
 
+/// One piece's hits under the edit as it stands.
+#[derive(Facet, Clone, Debug, Default)]
+pub struct AuditPiece {
+    pub piece: String,
+    pub hits: u32,
+    /// Played exactly once.
+    pub playing: u32,
+    /// Played nowhere: cut away by the edit.
+    pub lost: u32,
+    /// Of them, strokes (not ghosts, not bleed): what a listener misses.
+    pub lost_strokes: u32,
+    /// Played twice: a double attack at a seam.
+    pub doubled: u32,
+    /// The lost strokes and the doubled hits, where (first 40).
+    pub problems: Vec<String>,
+}
+
+/// How the edit as it stands plays every hit, in `span` (as recorded).
+#[must_use]
+pub fn audit(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    span: (f64, f64),
+) -> Vec<AuditPiece> {
+    let rows = hits(daw, project, &[]);
+    let mut plays: HashMap<String, usize> = HashMap::new();
+    for p in playback(daw, project) {
+        let n = plays.entry(p.id).or_default();
+        *n = n.saturating_add(1);
+    }
+    let mut out: BTreeMap<String, AuditPiece> = BTreeMap::new();
+    for h in rows.iter().filter(|h| h.time >= span.0 && h.time <= span.1) {
+        let line = out.entry(h.piece.clone()).or_insert_with(|| AuditPiece {
+            piece: h.piece.clone(),
+            ..AuditPiece::default()
+        });
+        line.hits = line.hits.saturating_add(1);
+        let flagged = h.flags.iter().any(|f| f == "ghost" || f == "bleed");
+        match plays.get(&h.id).copied().unwrap_or(0) {
+            0 => {
+                line.lost = line.lost.saturating_add(1);
+                if !flagged {
+                    line.lost_strokes = line.lost_strokes.saturating_add(1);
+                    if line.problems.len() < 40 {
+                        line.problems.push(format!(
+                            "lost: {} at {:.3} s (bar {} beat {:.2}), {:.1} dBFS",
+                            h.id, h.time, h.bar, h.beat, h.peak_db
+                        ));
+                    }
+                }
+            }
+            1 => line.playing = line.playing.saturating_add(1),
+            n => {
+                line.doubled = line.doubled.saturating_add(1);
+                if line.problems.len() < 40 {
+                    line.problems.push(format!(
+                        "plays {n} times: {} recorded at {:.3} s (bar {} beat {:.2})",
+                        h.id, h.time, h.bar, h.beat
+                    ));
+                }
+            }
+        }
+    }
+    out.into_values().collect()
+}
+
 // ── zones ─────────────────────────────────────────────────────────────
 
 /// The ruler lane zones are kept on: the Drums lane, where the song's
@@ -1618,8 +1719,9 @@ pub struct Zone {
     pub note: String,
 }
 
-/// A zone's name on the ruler: `Fill`, `Fill (auto)`, `No quantize
-/// (rejected)` — what it is, then who, then anything said about it.
+/// A zone's name on the ruler: `Fill`, `Fill (auto)`, `Fill (approved)`,
+/// `No quantize (rejected)` — what it is, then who (nothing: placed by
+/// hand), then anything said about it.
 fn zone_name(kind: ZoneKind, origin: ZoneOrigin, note: &str) -> String {
     let what = match kind {
         ZoneKind::Fill => "Fill",
@@ -1628,7 +1730,8 @@ fn zone_name(kind: ZoneKind, origin: ZoneOrigin, note: &str) -> String {
     let who = match origin {
         ZoneOrigin::Auto => " (auto)",
         ZoneOrigin::Rejected => " (rejected)",
-        ZoneOrigin::Manual | ZoneOrigin::Approved => "",
+        ZoneOrigin::Approved => " (approved)",
+        ZoneOrigin::Manual => "",
     };
     if note.is_empty() {
         format!("{what}{who}")
@@ -1650,6 +1753,7 @@ fn parse_zone(name: &str) -> Option<(ZoneKind, ZoneOrigin, String)> {
     let origin = match rest.trim() {
         "(auto)" => ZoneOrigin::Auto,
         "(rejected)" => ZoneOrigin::Rejected,
+        "(approved)" => ZoneOrigin::Approved,
         _ => ZoneOrigin::Manual,
     };
     Some((kind, origin, note.to_owned()))
@@ -1678,12 +1782,17 @@ pub fn zones(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec
 }
 
 /// Whether a zone that holds hits (anything but a rejected one) holds
-/// `time`.
+/// `time`, a beat being `beat_length` seconds there.
+///
+/// As a found fill counts its hits: each belongs to the slot it is
+/// nearest the start of, so a landing pushed a little early is still the
+/// next bar's — quantized — and not the fill's.
 #[must_use]
-pub fn zone_holds(zones: &[Zone], time: f64) -> bool {
-    zones
-        .iter()
-        .any(|z| z.origin != ZoneOrigin::Rejected && time >= z.start && time < z.end)
+pub fn zone_holds(zones: &[Zone], time: f64, beat_length: f64) -> bool {
+    let shift = beat_length / crate::drum_edit::SLOTS / 2.0;
+    zones.iter().any(|z| {
+        z.origin != ZoneOrigin::Rejected && time >= z.start - shift && time < z.end - shift
+    })
 }
 
 /// Put a zone on the ruler. Its region's id.
@@ -1791,7 +1900,7 @@ static LIST: ActionMeta = meta(
     "HITS_LIST",
     "hits_list",
     "Drum hits found",
-    "The hit markers: each hit's id, piece, time (project seconds, as recorded), bar and beat, peak (dBFS), confidence, what heard it (both, trigger, mic), flags (ghost, flam, bleed, unsure) and who placed it (auto, manual, approved). `pieces`, `from`/`to`, `flag` (only hits with it), `origin` narrow it; paged by `offset`/`limit`.",
+    "The hit markers: each hit's id, piece, `time` (project seconds, as recorded), `now` (where the song plays it now, after any edit; none when no slice plays it), bar and beat (where it plays now), peak (dBFS), confidence, what heard it (both, trigger, mic), flags (ghost, flam, bleed, unsure) and who placed it (auto, manual, approved). `pieces`, `from`/`to` (where it plays now), `flag` (only hits with it), `origin`, `heard` (both, trigger, mic) narrow it; paged by `offset`/`limit`.",
     "Drums",
     "",
 );
@@ -1799,7 +1908,7 @@ static EXPLAIN: ActionMeta = meta(
     "HITS_EXPLAIN",
     "hits_explain",
     "Look at a drum hit",
-    "What the detector saw around `time` (project seconds) for `piece`: the peaks (dBFS, `points` of them, 120 unless asked) of the piece's mics, its trigger and every other close mic of the take, `window_ms` either side (40), lined up; the attack start nearest `time`; and the piece's hits there. For deciding whether a hit is real, bleed, a ghost or misplaced.",
+    "What the detector saw around a hit — `id`, or `time` as recorded (a hit's `time`, not its `now`) with `piece`: the peaks (dBFS, `points` of them, 120 unless asked) of the piece's mics, its trigger and every other close mic of the take, `window_ms` either side (40), lined up; the attack start nearest `time`; and the piece's hits there. For deciding whether a hit is real, bleed, a ghost or misplaced.",
     "Drums",
     "",
 );
@@ -1836,6 +1945,14 @@ static MARK: ActionMeta = meta(
     "",
 );
 
+static AUDIT: ActionMeta = meta(
+    "HITS_AUDIT",
+    "hits_audit",
+    "Audit the drum edit",
+    "How the drum edit as it stands plays every hit (in `from`/`to`, as recorded): per piece, how many play once, how many play nowhere (cut away by the edit — and of them the strokes, not ghosts or bleed: what a listener misses), how many play twice (a double attack at a seam), and where. Read-only; run it after any edit.",
+    "Drums",
+    "",
+);
 static ZONES_LIST: ActionMeta = meta(
     "ZONES_LIST",
     "zones_list",
@@ -1860,6 +1977,12 @@ static ZONES_EDIT: ActionMeta = meta(
     "Drums",
     "",
 );
+
+#[derive(Facet, Default)]
+struct SpanOnly {
+    from: Option<f64>,
+    to: Option<f64>,
+}
 
 #[derive(Facet)]
 struct ZoneAddArg {
@@ -1900,6 +2023,8 @@ struct ListArg {
     to: Option<f64>,
     flag: Option<String>,
     origin: Option<String>,
+    /// Only hits heard so: `both`, `trigger` or `mic`.
+    heard: Option<String>,
     offset: Option<u32>,
     limit: Option<u32>,
 }
@@ -1913,8 +2038,9 @@ struct ListPage {
 
 #[derive(Facet)]
 struct ExplainArg {
-    piece: String,
-    time: f64,
+    id: Option<String>,
+    piece: Option<String>,
+    time: Option<f64>,
     window_ms: Option<f64>,
     points: Option<u32>,
 }
@@ -1983,7 +2109,7 @@ fn register_reads(list: &ActionList) {
         );
         let all: Vec<HitRow> = hits(daw, &project, &a.pieces)
             .into_iter()
-            .filter(|h| h.time >= from && h.time <= to)
+            .filter(|h| h.at() >= from && h.at() <= to)
             .filter(|h| {
                 a.flag
                     .as_ref()
@@ -1993,6 +2119,11 @@ fn register_reads(list: &ActionList) {
                 a.origin
                     .as_ref()
                     .is_none_or(|o| h.origin.eq_ignore_ascii_case(o))
+            })
+            .filter(|h| {
+                a.heard
+                    .as_ref()
+                    .is_none_or(|w| h.heard.eq_ignore_ascii_case(w))
             })
             .collect();
         let offset = a.offset.unwrap_or(0);
@@ -2009,11 +2140,20 @@ fn register_reads(list: &ActionList) {
     });
     list.register(&EXPLAIN, Effect::ReadOnly, |a: ExplainArg| {
         let (daw, project) = song()?;
+        let (piece, time) = match (&a.id, &a.piece, a.time) {
+            (Some(id), _, _) => hits(daw, &project, &[])
+                .into_iter()
+                .find(|h| &h.id == id)
+                .map(|h| (h.piece, h.time))
+                .ok_or_else(|| format!("no hit {id}"))?,
+            (None, Some(piece), Some(time)) => (piece.clone(), time),
+            _ => return Err("give a hit's `id`, or `piece` and `time`".to_owned()),
+        };
         explain(
             daw,
             &project,
-            &a.piece,
-            a.time,
+            &piece,
+            time,
             (
                 a.window_ms.unwrap_or(40.0) / 1_000.0,
                 usize::try_from(a.points.unwrap_or(120)).unwrap_or(120),
@@ -2024,6 +2164,17 @@ fn register_reads(list: &ActionList) {
 
 /// The song's edit zones.
 fn register_zones(list: &ActionList) {
+    list.register(&AUDIT, Effect::ReadOnly, |a: SpanOnly| {
+        let (daw, project) = song()?;
+        Ok(audit(
+            daw,
+            &project,
+            (
+                a.from.unwrap_or(f64::NEG_INFINITY),
+                a.to.unwrap_or(f64::INFINITY),
+            ),
+        ))
+    });
     list.register(&ZONES_LIST, Effect::ReadOnly, |(): ()| {
         let (daw, project) = song()?;
         Ok(zones(daw, &project))

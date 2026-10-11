@@ -96,6 +96,49 @@ pub fn fuse(mic: &[f32], rate: f64, trigger: &[usize], mic_hits: &[usize]) -> Ve
     settle(out, rate)
 }
 
+/// How far a trigger must rise over what it held just before for a
+/// mic-only hit to count as heard by it too, dB.
+pub const RISE_DB: f64 = 12.0;
+/// What such a hit is trusted to.
+pub const CORROBORATED: f64 = 0.85;
+
+/// The loudest sample of `samples` from `from` to `to` (seconds around
+/// `at`), linear.
+fn peak_around(samples: &[f32], rate: f64, at: usize, (from, to): (f64, f64)) -> f64 {
+    let lo = if from < 0.0 {
+        at.saturating_sub(crate::samples(-from, rate))
+    } else {
+        at.saturating_add(crate::samples(from, rate))
+    };
+    let hi = at
+        .saturating_add(crate::samples(to, rate))
+        .min(samples.len());
+    samples.get(lo.min(hi)..hi).map_or(0.0, |s| {
+        f64::from(s.iter().fold(0.0_f32, |m, x| m.max(x.abs())))
+    })
+}
+
+/// A mic-only hit the trigger rose at too — under its spike threshold, a
+/// soft stroke, but plainly there — counted as heard by both.
+///
+/// A trigger spike is a hit only within `under_db` of the trigger's
+/// loudest, so a soft stroke in a fill reaches the mic and not the
+/// spike list: on Unbreakable a snare stroke whose trigger jumped 19 dB,
+/// to 2 dB under the cut, was left as "mic only, unsure". What tells it
+/// from bleed is the trigger itself: bleed barely moves a contact mic.
+pub fn corroborate(hits: &mut [Hit], trigger: &[f32], rate: f64) {
+    let loudest = f64::from(trigger.iter().fold(0.0_f32, |m, x| m.max(x.abs())));
+    let audible = loudest * crate::gain(-45.0);
+    for h in hits.iter_mut().filter(|h| h.from_mic && !h.from_trigger) {
+        let now = peak_around(trigger, rate, h.at, (-0.001, 0.008));
+        let before = peak_around(trigger, rate, h.at, (-0.030, -0.005));
+        if now >= audible && now >= before * crate::gain(RISE_DB) {
+            h.from_trigger = true;
+            h.confidence = h.confidence.max(CORROBORATED);
+        }
+    }
+}
+
 /// Sort, merge strokes found twice, mark the ghosts and the flams.
 #[must_use]
 pub fn settle(mut hits: Vec<Hit>, rate: f64) -> Vec<Hit> {
@@ -176,6 +219,36 @@ mod tests {
         );
         assert!(hits[0].at.abs_diff(4_800) < 30, "{:?}", hits[0]);
         assert!((hits[0].confidence - BOTH).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_soft_stroke_the_trigger_rose_at_is_heard_by_both() {
+        let rate = 48_000.0;
+        let mut mic = vec![0.0_f32; 48_000];
+        click(&mut mic, 4_800, 0.5);
+        click(&mut mic, 24_000, 0.2);
+        // The trigger: a spike for the first, a small rise for the second.
+        let mut trigger = vec![0.0001_f32; 48_000];
+        click(&mut trigger, 4_800, 0.9);
+        click(&mut trigger, 24_000, 0.02);
+        let mut hits = fuse(&mic, rate, &[4_800], &[4_800, 24_000]);
+        assert!(!hits[1].from_trigger);
+        corroborate(&mut hits, &trigger, rate);
+        assert!(hits[1].from_trigger, "{:?}", hits[1]);
+        assert!((hits[1].confidence - CORROBORATED).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_trigger_that_did_not_move_corroborates_nothing() {
+        let rate = 48_000.0;
+        let mut mic = vec![0.0_f32; 48_000];
+        click(&mut mic, 4_800, 0.5);
+        click(&mut mic, 24_000, 0.2);
+        let mut trigger = vec![0.0001_f32; 48_000];
+        click(&mut trigger, 4_800, 0.9);
+        let mut hits = fuse(&mic, rate, &[4_800], &[4_800, 24_000]);
+        corroborate(&mut hits, &trigger, rate);
+        assert!(!hits[1].from_trigger);
     }
 
     #[test]
