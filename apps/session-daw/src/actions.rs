@@ -292,9 +292,9 @@ static QUANTIZE_DRUMS: ActionMeta = meta(
     "SESSION_QUANTIZE_DRUMS",
     "quantize_drums",
     "Quantize drums",
-    "QUANTIZE over the span of the selected folded rows: the whole kit edited from its hit markers with the sticky settings (DRUMS_EDIT_SETTINGS), fills left as played; the window says how the check came out.",
+    "QUANTIZE over the span of the selected folded rows, or the time selection: the whole kit edited from its hit markers with the settings the Quantize panel last applied (else the sticky ones, DRUMS_EDIT_SETTINGS); the window says how the check came out.",
     "Drums",
-    "",
+    "Q",
 );
 static GAIN_STAGE: ActionMeta = meta(
     "SESSION_GAIN_STAGE",
@@ -390,7 +390,7 @@ static QUANTIZE_PANEL: ActionMeta = meta(
     "Quantize panel",
     "Show or hide the Quantize panel over the arrangement: a section, its groove, the quantize's settings, Preview and Apply — QUANTIZE and DRUMS_GROOVE by hand.",
     "View",
-    "",
+    "Shift+Q",
 );
 static TOGGLE_EDITOR: ActionMeta = meta(
     "SESSION_TOGGLE_EDITOR",

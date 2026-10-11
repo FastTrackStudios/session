@@ -443,8 +443,8 @@ const BUILTIN: &str = r#"{
       "s": "40757",
       "d": "40006",
       "e": "FTS_EXPRESSION_EDITOR_OPEN",
-      "q": "FTS_QUANTIZE_PANEL",
-      "Shift+q": "FTS_QUANTIZE_DRUMS",
+      "q": "FTS_QUANTIZE_DRUMS",
+      "Shift+q": "FTS_QUANTIZE_PANEL",
       "Delete": "40697",
       "Backspace": "40697",
       "Escape": "40020",
@@ -599,7 +599,7 @@ mod tests {
             vec![Action::SelectAllItems]
         );
         assert_eq!(
-            keys.press(KeyCode::Character("q".into()), shift()),
+            keys.press(KeyCode::Character("q".into()), Modifiers::NONE),
             vec![Action::QuantizeDrums]
         );
         assert_eq!(
@@ -636,9 +636,9 @@ mod tests {
         );
     }
 
-    /// The profile the app ships opens the Quantize panel on `q` (bound,
-    /// it is the binding's, not a macro's) and quantizes the selected kit
-    /// rows on Shift+Q.
+    /// The profile the app ships quantizes on `q` (bound, it is the
+    /// binding's, not a macro's) as the panel last did, and opens the
+    /// Quantize panel on Shift+Q.
     #[test]
     fn the_shipped_profile_quantizes_on_q() {
         let profile = input_keybinds::embedded::fasttrackstudio().expect("the embedded profile");
@@ -650,11 +650,11 @@ mod tests {
             pending: Vec::new(),
         };
         assert_eq!(
-            keys.press(KeyCode::Character("q".into()), shift()),
+            keys.press(KeyCode::Character("q".into()), Modifiers::NONE),
             vec![Action::QuantizeDrums]
         );
         assert_eq!(
-            keys.press(KeyCode::Character("q".into()), Modifiers::NONE),
+            keys.press(KeyCode::Character("q".into()), shift()),
             vec![Action::QuantizePanel]
         );
     }

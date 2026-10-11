@@ -8,6 +8,10 @@
 //! run that says what would move, and **Apply**, which edits the kit and
 //! says how its check came out. Every press is the `QUANTIZE` a model
 //! runs, so the panel and a model can never quantize two ways.
+//!
+//! What Apply used is kept: `q` quantizes the kit rows selected with it
+//! ([`again_over`]), and the sticky settings take it too, so it outlives
+//! a restart — all but a locked kick, which is this run's alone.
 
 use dioxus::prelude::*;
 use serde_json::Value;
@@ -72,6 +76,81 @@ pub fn quantize_args(choices: &Choices, dry_run: bool) -> Option<String> {
     args.insert("dry_run".into(), Value::from(dry_run));
     args.insert("brief".into(), Value::from(true));
     Some(Value::Object(args).to_string())
+}
+
+/// The choices Apply last used: what `q` quantizes with.
+static LAST: std::sync::Mutex<Option<Choices>> = std::sync::Mutex::new(None);
+
+/// What Apply last used, if it has been pressed since the app started.
+#[must_use]
+pub fn last() -> Option<Choices> {
+    LAST.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+fn remember(choices: &Choices) {
+    *LAST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(choices.clone());
+}
+
+/// The `QUANTIZE` arguments for `q` over `from`..`to` seconds: with the
+/// choices Apply last used, else the sticky settings as they stand.
+#[must_use]
+pub fn again_over(last: Option<&Choices>, (from, to): (f64, f64)) -> String {
+    last.and_then(|c| {
+        quantize_args(
+            &Choices {
+                section: None,
+                selection: Some((from, to)),
+                ..c.clone()
+            },
+            false,
+        )
+    })
+    .unwrap_or_else(|| serde_json::json!({ "from": from, "to": to, "brief": true }).to_string())
+}
+
+/// The `DRUMS_EDIT_SET` arguments that make `choices` the sticky
+/// settings (a locked kick is not one).
+#[must_use]
+pub fn sticky_args(choices: &Choices) -> String {
+    serde_json::json!({
+        "grid": choices.grid,
+        "target": choices.target,
+        "strength": f64::from(choices.strength.min(100)) / 100.0,
+        "fills": choices.fills,
+    })
+    .to_string()
+}
+
+/// `choices` with the sticky settings `settings` (a `DRUMS_EDIT_SETTINGS`
+/// answer) put in: those the panel offers, others left as they were.
+#[must_use]
+pub fn from_sticky(mut choices: Choices, settings: &Value) -> Choices {
+    if let Some(grid) = settings
+        .get("grid")
+        .and_then(Value::as_u64)
+        .and_then(|g| u32::try_from(g).ok())
+    {
+        choices.grid = grid;
+    }
+    let pick = |key: &str, from: &[&'static str]| {
+        let given = settings.get(key).and_then(Value::as_str)?;
+        from.iter().copied().find(|v| *v == given)
+    };
+    if let Some(target) = pick("target", &["Pattern", "Guided", "Grid"]) {
+        choices.target = target;
+    }
+    if let Some(fills) = pick("fills", &["Skip", "Include", "Only"]) {
+        choices.fills = fills;
+    }
+    if let Some(strength) = settings.get("strength").and_then(Value::as_f64) {
+        let percent = (strength.clamp(0.0, 1.0) * 100.0).round();
+        choices.strength = num_traits::ToPrimitive::to_u32(&percent).unwrap_or(100);
+    }
+    choices
 }
 
 /// What a `QUANTIZE` answer says, a line a span: how many hits move,
@@ -227,14 +306,20 @@ fn chip(on: bool) -> String {
 /// The panel. No props: the song is the open one.
 #[component]
 pub fn QuantizePanel() -> Element {
-    let mut choices = use_signal(Choices::default);
+    let mut choices = use_signal(|| last().unwrap_or_default());
     let mut sections = use_signal(Vec::<String>::new);
     let mut said = use_signal(Vec::<String>::new);
     let mut groove = use_signal(Vec::<String>::new);
     let mut busy = use_signal(|| false);
 
-    // The song's sections, and the one under the edit cursor to start.
+    // The song's sections, and the one under the edit cursor to start;
+    // the settings `q` would use, when Apply has not been pressed yet.
     use_future(move || async move {
+        if last().is_none() {
+            if let Ok(settings) = run("DRUMS_EDIT_SETTINGS", "{}".into()).await {
+                choices.with_mut(|c| *c = from_sticky(c.clone(), &settings));
+            }
+        }
         let Ok(found) = run("SESSION_SECTIONS", "{}".into()).await else {
             return;
         };
@@ -285,6 +370,7 @@ pub fn QuantizePanel() -> Element {
             return;
         };
         busy.set(true);
+        let keep = (!dry).then(|| choices.read().clone());
         said.set(vec![
             if dry {
                 "Previewing…"
@@ -294,6 +380,12 @@ pub fn QuantizePanel() -> Element {
             .into(),
         ]);
         spawn(async move {
+            if let Some(kept) = keep {
+                remember(&kept);
+                if let Err(why) = run("DRUMS_EDIT_SET", sticky_args(&kept)).await {
+                    tracing::warn!(quantize.sticky_error = %why, "drums: the panel's settings were not kept");
+                }
+            }
             said.set(match run("QUANTIZE", args).await {
                 Ok(answer) => summary(&answer),
                 Err(why) => vec![why],
@@ -461,6 +553,71 @@ mod tests {
         assert!(
             quantize_args(&Choices::default(), true).is_none(),
             "nowhere to quantize"
+        );
+    }
+
+    #[test]
+    fn q_quantizes_as_apply_last_did() {
+        let applied = Choices {
+            section: Some("VS 1".into()),
+            grid: 8,
+            target: "Grid",
+            strength: 75,
+            fills: "Include",
+            ..Choices::default()
+        };
+        let args: Value =
+            serde_json::from_str(&again_over(Some(&applied), (4.0, 9.5))).expect("json");
+        assert!(args.get("sections").is_none(), "the span, not the section");
+        assert_eq!(args["from"], 4.0);
+        assert_eq!(args["to"], 9.5);
+        assert_eq!(args["grid"], 8);
+        assert_eq!(args["target"], "Grid");
+        assert_eq!(args["fills"], "Include");
+        assert_eq!(args["dry_run"], false);
+        let locked = Choices {
+            lock_kick: true,
+            ..applied
+        };
+        let args: Value =
+            serde_json::from_str(&again_over(Some(&locked), (4.0, 9.5))).expect("json");
+        assert_eq!(args["lock"], "Kick");
+
+        let fresh: Value = serde_json::from_str(&again_over(None, (1.0, 2.0))).expect("json");
+        assert!(
+            fresh.get("grid").is_none() && fresh.get("target").is_none(),
+            "no Apply yet: the sticky settings decide"
+        );
+        assert_eq!(fresh["to"], 2.0);
+    }
+
+    #[test]
+    fn apply_keeps_its_settings_sticky_and_the_panel_reads_them_back() {
+        let applied = Choices {
+            grid: 24,
+            target: "Guided",
+            strength: 90,
+            fills: "Only",
+            lock_kick: true,
+            ..Choices::default()
+        };
+        let sticky: Value = serde_json::from_str(&sticky_args(&applied)).expect("json");
+        assert_eq!(sticky["grid"], 24);
+        assert_eq!(sticky["target"], "Guided");
+        assert!(sticky.get("lock").is_none(), "a lock is not a setting");
+        let back = from_sticky(Choices::default(), &sticky);
+        assert_eq!(
+            back,
+            Choices {
+                lock_kick: false,
+                ..applied
+            }
+        );
+        let other = serde_json::json!({"target": "Reference", "grid": 16});
+        assert_eq!(
+            from_sticky(Choices::default(), &other).target,
+            "Pattern",
+            "a target the panel does not offer leaves its own"
         );
     }
 

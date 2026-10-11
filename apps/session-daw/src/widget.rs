@@ -1066,12 +1066,13 @@ impl ArrangementWidget {
     /// Lay the rows out as `slug` (an overview); pressed again, or the
     /// other overview's key pressed in this one's, go back to the scene
     /// before. `false` with no planner.
-    /// Shift+Q: QUANTIZE the kit over the selected folded rows' span — from
-    /// its hit markers, with the sticky settings, fills left as played —
-    /// off the frame; the slip it queues is applied here like any, and
-    /// [`Self::settle_stage`] says how its check came out. False when no
-    /// folded row is selected, and in a page (no engine of its own to
-    /// read the markers from).
+    /// `q`: QUANTIZE the kit over the selected folded rows' span, or the
+    /// time selection — from its hit markers, with the settings the
+    /// Quantize panel last applied (else the sticky ones) — off the
+    /// frame; the slip it queues is applied here like any, and
+    /// [`Self::settle_stage`] says how its check came out. With nothing
+    /// to quantize over it says so. False in a page (no engine of its own
+    /// to read the markers from).
     fn quantize_drums(&self) -> bool {
         let span = self.editor.selected_folds(&self.project).iter().fold(
             None,
@@ -1079,8 +1080,20 @@ impl ArrangementWidget {
                 Some(span.map_or((*a, *b), |(f, t)| (f.min(*a), t.max(*b))))
             },
         );
+        let span = span.or_else(|| {
+            self.editor
+                .cursor
+                .selection
+                .filter(|s| s.is_meaningful())
+                .map(|s| (s.start, s.end))
+        });
         let Some((from, to)) = span else {
-            return false;
+            *self
+                .staged
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some("select the kit's folded rows, or a stretch of time, to quantize");
+            return true;
         };
         #[cfg(feature = "native")]
         {
@@ -1088,8 +1101,9 @@ impl ArrangementWidget {
                 return false;
             };
             let said = std::sync::Arc::clone(&self.staged);
+            let last = crate::quantize_panel::last();
             runtime.spawn_blocking(move || {
-                let args = format!(r#"{{"from":{from},"to":{to}}}"#);
+                let args = crate::quantize_panel::again_over(last.as_ref(), (from, to));
                 let out = crate::actions::list().run_json("QUANTIZE", args.as_bytes());
                 let text = match &out {
                     Ok(json) if String::from_utf8_lossy(json).contains(r#""ok":false"#) => {
