@@ -1165,6 +1165,219 @@ fn register_reference(list: &ActionList) {
     register_reference_map(list);
     register_reference_notes(list);
     register_compare(list);
+    register_restore_midi(list);
+    register_review(list);
+}
+
+static REVIEW: ActionMeta = meta(
+    "DRUMS_REVIEW",
+    "drums_review",
+    "Review the drum edit against the MIDI",
+    "Every hit where it plays now, held up to the drum MIDI, section by section (`sections` by name, or `from`/`to`; the whole song when left out): each hit on its own piece's note (within 5 ms), on a note of another piece (a fill played with the pieces swapped), off its note (how far, ms, and on which line it is instead — a hit edited a sixteenth from where the chart has it), or unwritten (no note of the kit within a sixteenth: the drummer's own); and any gap an edited kit track's slices leave, where the drums cut out. Says the counts and lists the hits off their notes, worst first (`limit`, 40); `fills` true lists those in fill zones too. Read-only: what to check by ear, and where QUANTIZE and the chart disagree.",
+    "Drums",
+    "",
+);
+
+/// What to review.
+#[derive(Facet)]
+struct ReviewArg {
+    #[facet(default)]
+    sections: Vec<String>,
+    from: Option<f64>,
+    to: Option<f64>,
+    limit: Option<usize>,
+    fills: Option<bool>,
+}
+
+/// One hit off its note.
+#[derive(Facet)]
+struct OffNote {
+    piece: String,
+    /// Where it plays now, counted (`42.3a`), and its time.
+    now: String,
+    time: f64,
+    /// Its note, counted.
+    written: String,
+    /// How far from its note it plays, ms (late positive).
+    off_ms: f64,
+    in_fill: bool,
+}
+
+/// A span reviewed.
+#[derive(Facet)]
+struct Reviewed {
+    name: String,
+    hits: u32,
+    /// On their own piece's note.
+    on_note: u32,
+    /// On a note of another piece of the kit.
+    on_other: u32,
+    /// Near a note of theirs, off it.
+    off_note: u32,
+    /// No note of the kit near: the drummer's own.
+    unwritten: u32,
+    off: Vec<OffNote>,
+    /// Where an edited kit track plays nothing between two slices: the
+    /// drums cutting out (the first 20).
+    gaps: Vec<String>,
+}
+
+/// How near its note a hit is on it, seconds.
+const ON_NOTE_REVIEW: f64 = 0.005;
+
+/// The times of `notes` the `map` gives piece `name` — or any piece of
+/// the kit, `None` — by time.
+fn piece_notes(
+    notes: &[crate::drum_reference::RefNote],
+    map: &[crate::drum_reference::Mapped],
+    name: Option<&str>,
+) -> Vec<f64> {
+    let mut t: Vec<f64> = notes
+        .iter()
+        .filter(|n| {
+            map.iter().any(|m| {
+                m.pitch == n.pitch
+                    && name.map_or_else(
+                        || m.piece.is_some(),
+                        |name| m.piece.as_deref() == Some(name),
+                    )
+            })
+        })
+        .map(|n| n.time)
+        .collect();
+    t.sort_by(f64::total_cmp);
+    t
+}
+
+/// The time in `list` (by time) nearest `t`.
+fn nearest_of(list: &[f64], t: f64) -> Option<f64> {
+    let at = list.partition_point(|l| *l < t);
+    [at.checked_sub(1), Some(at)]
+        .into_iter()
+        .flatten()
+        .filter_map(|i| list.get(i).copied())
+        .min_by(|x, y| (x - t).abs().total_cmp(&(y - t).abs()))
+}
+
+fn register_review(list: &ActionList) {
+    list.register(&REVIEW, Effect::ReadOnly, |a: ReviewArg| {
+        let (daw, project) = song()?;
+        let kit = kit(daw, &project);
+        if kit.is_empty() {
+            return Err("no hit markers: find the hits first (HITS_DETECT)".to_owned());
+        }
+        let midi = crate::drum_reference::find_track(daw, &project).ok_or("no drum MIDI track")?;
+        let notes = crate::drum_reference::notes(daw, &project, &midi);
+        let named: Vec<(String, Vec<f64>)> = kit
+            .iter()
+            .map(|(n, _, h)| (n.clone(), h.iter().map(|h| h.time).collect()))
+            .collect();
+        let map = crate::drum_reference::learn_map(&notes, &named, NOTE_WINDOW);
+        let of_piece = |name: &str| piece_notes(&notes, &map, Some(name));
+        let all = piece_notes(&notes, &map, None);
+        let nearest = nearest_of;
+        let zones = crate::hits::zones(daw, &project);
+        let limit = a.limit.unwrap_or(40);
+        let counted_at = |t: f64| {
+            let (bar, _) = in_bar(daw, &project, t + 1e-6);
+            format!("{bar}.{}", counted(daw, &project, t))
+        };
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        spans(daw, &project, &a.sections, (a.from, a.to))?
+            .into_iter()
+            .map(|(name, from, to)| {
+                let (lo, hi) = (
+                    from - edge(daw, &project, from),
+                    to - edge(daw, &project, to),
+                );
+                let (mut on, mut other, mut unwritten, mut off) =
+                    (0_usize, 0_usize, 0_usize, Vec::new());
+                let mut hits = 0_usize;
+                for (piece, _, played) in &kit {
+                    let own = of_piece(piece);
+                    for h in played
+                        .iter()
+                        .map(|h| h.time)
+                        .filter(|t| *t >= lo && *t < hi)
+                    {
+                        hits = hits.saturating_add(1);
+                        let step = 4.0 * edge(daw, &project, h);
+                        let mine = nearest(&own, h).filter(|n| (n - h).abs() <= step + 0.01);
+                        let any = nearest(&all, h).filter(|n| (n - h).abs() <= ON_NOTE_REVIEW);
+                        match (mine, any) {
+                            (Some(n), _) if (n - h).abs() <= ON_NOTE_REVIEW => {
+                                on = on.saturating_add(1_usize);
+                            }
+                            (_, Some(_)) => other = other.saturating_add(1_usize),
+                            (Some(n), None) => off.push(OffNote {
+                                piece: piece.clone(),
+                                now: counted_at(h),
+                                time: h,
+                                written: counted_at(n),
+                                off_ms: ((h - n) * 10_000.0).round() / 10.0,
+                                in_fill: crate::hits::zone_holds(&zones, h, step * 4.0),
+                            }),
+                            (None, None) => unwritten = unwritten.saturating_add(1_usize),
+                        }
+                    }
+                }
+                let off_count = off.len();
+                if !a.fills.unwrap_or(false) {
+                    off.retain(|o| !o.in_fill);
+                }
+                off.sort_by(|x, y| y.off_ms.abs().total_cmp(&x.off_ms.abs()));
+                off.truncate(limit);
+                let gaps = crate::hits::gaps(daw, &project, (lo, hi))
+                    .into_iter()
+                    .take(20)
+                    .map(|(track, a, b)| {
+                        format!(
+                            "{track} {}: {:.1} ms silent",
+                            counted_at(a),
+                            (b - a) * 1_000.0
+                        )
+                    })
+                    .collect();
+                Reviewed {
+                    name,
+                    gaps,
+                    hits: count(hits),
+                    on_note: count(on),
+                    on_other: count(other),
+                    off_note: count(off_count),
+                    unwritten: count(unwritten),
+                    off,
+                }
+            })
+            .map(Ok)
+            .collect::<Result<Vec<Reviewed>, String>>()
+    });
+}
+
+static RESTORE_MIDI: ActionMeta = meta(
+    "TRACK_RESTORE_MIDI",
+    "track_restore_midi",
+    "Restore a MIDI track",
+    "Put a MIDI track's items back as a project file has them (`from`: the song's `.RPP`, or a `.session`): every item on its lane, at its place, offset and mute, with its notes, in place of the ones the song has now — for a part an edit damaged, like the drum MIDI a split cut short. One undo step. Says how many items and notes came back.",
+    "Edit",
+    "",
+);
+
+/// Which MIDI track, from which file.
+#[derive(Facet)]
+struct RestoreMidiArg {
+    track: String,
+    from: String,
+}
+
+fn register_restore_midi(list: &ActionList) {
+    list.register(&RESTORE_MIDI, Effect::Mutating, |a: RestoreMidiArg| {
+        let (daw, project) = song()?;
+        let guid = resolve(daw, &project, &a.track)?;
+        let (items, notes) =
+            crate::drum_reference::restore(daw, &project, &guid, std::path::Path::new(&a.from))?;
+        Ok(format!("{items} items, {notes} notes restored"))
+    });
 }
 
 static EDIT_LANES: ActionMeta = meta(
@@ -2574,19 +2787,66 @@ fn grid_line(
     (h / step).round() * step
 }
 
-/// Each moment's target, `None` when none is near enough to be sure of.
+/// How far a written note may be from a thirty-second or a sixteenth
+/// triplet and still be on it, seconds.
+const ON_ITS_LINE: f64 = 0.006;
+
+/// The share of a fill's hits the drum MIDI must account for to be
+/// edited to it: a fill written in the chart — the same tom figure every
+/// pre-chorus — is part of the song, not the drummer's own.
+const WRITTEN_FILL: f64 = 0.8;
+
+/// How far past a sixteenth from where it was played a hit may be sent,
+/// seconds: a drummer a full sixteenth and more off a written line is
+/// playing another line.
+const FURTHEST_PAST: f64 = 0.010;
+
+/// How near a line the chart writes something on a hit with no note of
+/// its own piece must be, its feel taken out, to be that line's —
+/// sixteenths.
+const NEAR_WRITTEN: f64 = 0.4;
+
+/// What placed a moment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Placed {
+    /// Its piece's note in the drum MIDI ([`crate::written::align`]).
+    Written,
+    /// The grid: the nearest line, the section's feel taken out.
+    Line,
+    /// Nothing near enough to be sure of.
+    Nothing,
+}
+
+/// Half a sixteenth at `t`, seconds: how far before a section's downbeat
+/// a hit still belongs to it — a downbeat pushed early is the section's
+/// first hit, not the last of the one before.
+fn edge(daw: &daw::standalone::Standalone, project: &ProjectContext, t: f64) -> f64 {
+    7.5 / daw.get_tempo_at(project.clone(), t).max(1.0)
+}
+
+/// Each moment's target and what placed it. With `target: Guided` or
+/// `Pattern` the drum MIDI places what it can: in `span`, each piece's
+/// hits matched one to one with its own notes, the section's feel taken
+/// out first (`r[quantize.written]`); the rest go to the nearest line —
+/// again with the feel out — when within `sure_ms` of it.
 fn targets(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     settings: &crate::drum_settings::Settings,
-    kit: &[KitPiece],
-    moments: &[f64],
-) -> Result<Vec<(f64, Option<f64>)>, String> {
+    (kit, moments): (&[KitPiece], &[Moment]),
+    span: (f64, f64),
+) -> Result<Vec<(f64, Option<f64>, Placed)>, String> {
     use crate::drum_settings::Target;
     if settings.target == Target::Grid {
         return Ok(moments
             .iter()
-            .map(|&h| (h, Some(grid_line(daw, project, h, settings.grid))))
+            .map(|m| {
+                (
+                    m.time,
+                    Some(grid_line(daw, project, m.time, settings.grid)),
+                    Placed::Line,
+                )
+            })
             .collect());
     }
     // The drum MIDI, and which of its notes are which piece — learned
@@ -2599,35 +2859,120 @@ fn targets(
         .map(|(n, _, h)| (n.clone(), h.iter().map(|h| h.time).collect()))
         .collect();
     let map = crate::drum_reference::learn_map(&notes, &named, NOTE_WINDOW);
-    let mapped: Vec<u8> = map
+    let step = 4.0 * edge(daw, project, span.0);
+    let (lo, hi) = (span.0 - edge(daw, project, span.0), span.1);
+    // Each piece's hits in the span and the note each is.
+    let mut written: Vec<(&str, f64, f64)> = Vec::new();
+    let mut feels: Vec<f64> = Vec::new();
+    // Every line the chart writes anything on — a piece of the kit, or a
+    // note the map cannot name (a tom with no trigger, a cymbal on the
+    // kick) — each on its line.
+    let mut lines: Vec<f64> = notes
         .iter()
-        .filter(|m| m.piece.is_some())
-        .map(|m| m.pitch)
+        .filter(|n| n.time >= lo - step && n.time < hi + step)
+        .filter_map(|n| {
+            [32, 24]
+                .into_iter()
+                .map(|division| grid_line(daw, project, n.time, division))
+                .min_by(|a, b| (a - n.time).abs().total_cmp(&(b - n.time).abs()))
+                .filter(|line| (line - n.time).abs() <= ON_ITS_LINE)
+        })
         .collect();
-    let mut written: Vec<f64> = notes
-        .iter()
-        .filter(|n| mapped.contains(&n.pitch))
-        .map(|n| n.time)
-        .collect();
-    written.sort_by(f64::total_cmp);
-    written.dedup_by(|x, y| (*x - *y).abs() < 0.002);
-    let window = settings.window_ms / 1_000.0;
+    for (name, _, hits) in kit {
+        let pitches: Vec<u8> = map
+            .iter()
+            .filter(|m| m.piece.as_deref() == Some(name.as_str()))
+            .map(|m| m.pitch)
+            .collect();
+        // A note is the line it was written on — a thirty-second or a
+        // sixteenth triplet; one on neither, played in by hand, is no line
+        // to send a hit to.
+        let mut its: Vec<f64> = notes
+            .iter()
+            .filter(|n| pitches.contains(&n.pitch) && n.time >= lo - step && n.time < hi + step)
+            .filter_map(|n| {
+                [32, 24]
+                    .into_iter()
+                    .map(|division| grid_line(daw, project, n.time, division))
+                    .min_by(|a, b| (a - n.time).abs().total_cmp(&(b - n.time).abs()))
+                    .filter(|line| (line - n.time).abs() <= ON_ITS_LINE)
+            })
+            .collect();
+        its.sort_by(f64::total_cmp);
+        its.dedup_by(|x, y| (*x - *y).abs() < 0.002);
+        let played: Vec<f64> = hits
+            .iter()
+            .map(|h| h.time)
+            .filter(|t| *t >= lo && *t < hi)
+            .collect();
+        if played.is_empty() || its.is_empty() {
+            continue;
+        }
+        let aligned = crate::written::align(&played, &its, step);
+        if aligned.notes.iter().flatten().count() >= 4 {
+            feels.push(aligned.feel);
+        }
+        written.extend(
+            played
+                .iter()
+                .zip(&aligned.notes)
+                .filter_map(|(h, n)| n.map(|n| (name.as_str(), *h, n))),
+        );
+    }
+    feels.sort_by(f64::total_cmp);
+    let feel = feels.get(feels.len() / 2).copied().unwrap_or(0.0);
+    lines.sort_by(f64::total_cmp);
+    lines.dedup_by(|x, y| (*x - *y).abs() < 0.002);
+    let nearest_written = |t: f64| nearest_of(&lines, t);
     let sure = settings.sure_ms / 1_000.0;
     Ok(moments
         .iter()
-        .map(|&h| {
-            let note = nearest(&written, h, window);
-            let to = match settings.target {
-                // The MIDI is quantized: its note IS the grid line it was
-                // written on — straight or a triplet — which is all it is
-                // asked here.
-                Target::Guided | Target::Pattern => note.or_else(|| {
-                    Some(grid_line(daw, project, h, settings.grid))
-                        .filter(|g| (g - h).abs() <= sure)
-                }),
-                _ => note,
-            };
-            (h, to)
+        .map(|m| {
+            // Its pieces' notes; where they disagree, the one most of
+            // them say.
+            let mut said: Vec<f64> = written
+                .iter()
+                .filter(|(name, h, _)| {
+                    m.pieces.iter().any(|p| p == name)
+                        && *h >= m.time - 1e-9
+                        && *h <= m.time + KIT_MERGE
+                })
+                .map(|(_, _, n)| *n)
+                .collect();
+            said.sort_by(f64::total_cmp);
+            let note = said
+                .iter()
+                .max_by_key(|n| said.iter().filter(|o| (*o - **n).abs() < 0.002).count())
+                .copied();
+            let inside = m.time >= lo && m.time < hi;
+            let felt = if inside { m.time + feel } else { m.time };
+            let within = |t: f64| (t - m.time).abs() <= step + FURTHEST_PAST;
+            if let Some(note) = note {
+                // A fill plays a written figure with the pieces swapped —
+                // a kick where the chart has a snare. Nearer another
+                // written line than its own piece's note, the hit is that
+                // line's.
+                let line = nearest_written(felt)
+                    .filter(|w| (w - felt).abs() < (note - felt).abs())
+                    .unwrap_or(note);
+                if within(line) {
+                    return (m.time, Some(line), Placed::Written);
+                }
+            }
+            // No note of its own: a line the chart writes something on,
+            // near.
+            if inside
+                && let Some(line) = nearest_written(felt)
+                    .filter(|w| (w - felt).abs() <= NEAR_WRITTEN * step && within(*w))
+            {
+                return (m.time, Some(line), Placed::Written);
+            }
+            let line = grid_line(daw, project, felt, settings.grid);
+            if (line - felt).abs() <= sure {
+                (m.time, Some(line), Placed::Line)
+            } else {
+                (m.time, None, Placed::Nothing)
+            }
         })
         .collect())
 }
@@ -2906,6 +3251,11 @@ struct Detected {
     /// The moments the groove sent to a line other than the nearest:
     /// `(time, its line, the nearest)`.
     by_groove: Vec<(f64, f64, f64)>,
+    /// The moments the drum MIDI sent to a line other than the nearest:
+    /// `(time, its note, the nearest)`.
+    by_written: Vec<(f64, f64, f64)>,
+    /// What placed each moment, in the moments' order.
+    placed_by: Vec<Placed>,
 }
 
 fn detect(
@@ -2921,16 +3271,32 @@ fn detect(
         .grid_tolerance_ms
         .map_or(f64::INFINITY, |ms| ms / 1_000.0);
     let moments = moments(&kit, settings.grid_scan.then_some((by_line, tolerance)));
-    let times: Vec<f64> = moments.iter().map(|m| m.time).collect();
     let loudness: Vec<f64> = moments.iter().map(|m| m.relative_db).collect();
-    let mut placed = targets(daw, project, settings, &kit, &times)?;
+    let by = targets(daw, project, settings, (&kit, &moments), span)?;
+    let mut placed: Vec<(f64, Option<f64>)> = by.iter().map(|(h, t, _)| (*h, *t)).collect();
     let mut by_groove = Vec::new();
+    let mut by_written = Vec::new();
+    for (h, t, b) in &by {
+        if let (Placed::Written, Some(note)) = (b, t) {
+            let nearest = grid_line(daw, project, *h, settings.grid);
+            if (note - nearest).abs() > 0.002 {
+                by_written.push((*h, *note, nearest));
+            }
+        }
+    }
+    let lo = span.0 - edge(daw, project, span.0);
+    let hi = span.1 - edge(daw, project, span.1);
     if settings.target == crate::drum_settings::Target::Pattern
         && let Some(groove) = groove_of(daw, project, (&kit, settings.grid.is_multiple_of(3)), span)
     {
-        for (moment, (h, to)) in moments.iter().zip(placed.iter_mut()) {
-            if *h >= span.0
-                && *h < span.1
+        for ((moment, (h, to)), (_, _, b)) in moments.iter().zip(placed.iter_mut()).zip(&by) {
+            // What the drum MIDI places, it places: the groove is for
+            // the hits it has no note for.
+            if *b == Placed::Written {
+                continue;
+            }
+            if *h >= lo
+                && *h < hi
                 && let Some(line) = groove
                     .target(
                         daw,
@@ -2941,6 +3307,9 @@ fn detect(
                     // Never out of the span: the next section's first hit
                     // is where its own edit starts.
                     .filter(|line| *line >= span.0 && *line < span.1 - SEAM_ROOM)
+                    .filter(|line| {
+                        (line - *h).abs() <= 4.0f64.mul_add(edge(daw, project, *h), FURTHEST_PAST)
+                    })
             {
                 let nearest = grid_line(daw, project, *h, settings.grid);
                 if (line - nearest).abs() > 0.002 {
@@ -2948,6 +3317,13 @@ fn detect(
                 }
                 *to = Some(line);
             }
+        }
+    }
+    // A target past the span's end is the next section's line: this one
+    // leaves it as played rather than run its edit into that one.
+    for (h, to) in &mut placed {
+        if *h >= lo && *h < hi && to.is_some_and(|t| t >= span.1 - SEAM_ROOM) {
+            *to = None;
         }
     }
     let targets = hold_gestures(&placed, &loudness);
@@ -2958,6 +3334,8 @@ fn detect(
         targets,
         fills,
         by_groove,
+        by_written,
+        placed_by: by.iter().map(|(_, _, b)| *b).collect(),
     })
 }
 
@@ -3262,6 +3640,24 @@ struct QuantizeArg {
     /// Leave out each span's lists of moves and hits to check: the
     /// counts, the groove's calls and the check stay.
     brief: Option<bool>,
+    /// Several spans, each with settings of its own over the call's —
+    /// the verses on eighths, a fill on triplets, a double kick locked —
+    /// edited as one slip, every seam closed with its neighbours.
+    #[facet(default)]
+    plan: Vec<PlanStep>,
+}
+
+/// One step of a quantize's plan.
+#[derive(Facet)]
+struct PlanStep {
+    /// Settings for this step alone, over the call's.
+    #[facet(flatten, default)]
+    with: crate::drum_settings::Patch,
+    #[facet(default)]
+    sections: Vec<String>,
+    from: Option<f64>,
+    to: Option<f64>,
+    lock: Option<String>,
 }
 
 /// What a quantize did over one stretch.
@@ -3277,6 +3673,10 @@ struct QuantizeSpan {
     /// groove's (counted as a drummer counts) and `nearest` the line it
     /// was nearest. The decisions to listen to.
     by_groove: Vec<GrooveCall>,
+    /// The hits the drum MIDI sent to a line other than the nearest: its
+    /// piece's note there, the feel taken out — a hit pushed past the
+    /// line before its own.
+    by_written: Vec<GrooveCall>,
     /// How the edit left the hits (none for a dry run).
     check: Option<crate::hits::Check>,
 }
@@ -3319,11 +3719,10 @@ fn checked(
 fn groove_calls(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
-    found: &Detected,
+    calls: &[(f64, f64, f64)],
     (from, to): (f64, f64),
 ) -> Vec<GrooveCall> {
-    found
-        .by_groove
+    calls
         .iter()
         .filter(|(h, _, _)| *h >= from && *h < to)
         .map(|&(h, line, nearest)| {
@@ -3696,86 +4095,208 @@ mod lock_tests {
 // r[impl flow.drums.editing.quantize]
 // r[impl quantize.reads-markers]
 // r[impl quantize.check]
+/// One step of a quantize: its settings, its spans (`(name, from, to)`)
+/// and the piece it locks, if any.
+type PlanOf<'a> = (
+    crate::drum_settings::Settings,
+    Vec<(String, f64, f64)>,
+    Option<&'a str>,
+);
+
+/// What one span's quantize would move.
+struct Planned {
+    /// `(hit, shift)`, microseconds: its moves, and the hits cut in place.
+    cuts: Vec<(i64, i64)>,
+    /// Each hit and where it is sent, strength applied in the check.
+    sent: Vec<(f64, Option<f64>)>,
+}
+
+/// One span of a quantize: its targets, by `settings` — or `lock`ed, a
+/// double kick — what it would move, and what it says; carried out with
+/// the rest of the call's spans in one slip.
+fn quantize_span(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    settings: &crate::drum_settings::Settings,
+    (name, from, to): (&str, f64, f64),
+    (lock, dry): (Option<&str>, bool),
+) -> Result<(QuantizeSpan, Planned), String> {
+    let zones = crate::hits::zones(daw, project);
+    let found = detect(daw, project, settings, (from, to))?;
+    // A hit half a sixteenth before the downbeat is this section's pushed
+    // first hit; one that close before the end is the next's.
+    let (lo, hi) = (from - edge(daw, project, from), to - edge(daw, project, to));
+    let inside = |h: f64| h >= lo && h < hi;
+    let in_fill = |h: f64| {
+        if zones.is_empty() {
+            in_a_fill(daw, project, &found.fills, h)
+        } else {
+            crate::hits::zone_holds(
+                &zones,
+                h,
+                60.0 / daw.get_tempo_at(project.clone(), h).max(1.0),
+            )
+        }
+    };
+    // What stays as played: the fills, unless they are asked for (a fill
+    // that keeps a grid — a run of 16ths, a triplet fill — is edited on
+    // its own grid); with only the fills asked for, everything else.
+    // A fill the drum MIDI writes — most of its hits its notes — is
+    // edited to them like the rest of the section: only what the chart
+    // does not have is the drummer's own, and left as played.
+    let written_fills: Vec<&crate::hits::Zone> = zones
+        .iter()
+        .filter(|z| {
+            z.kind == crate::hits::ZoneKind::Fill && z.origin != crate::hits::ZoneOrigin::Rejected
+        })
+        .filter(|z| {
+            let shift = edge(daw, project, z.start);
+            let (inside, written) = found
+                .moments
+                .iter()
+                .zip(&found.placed_by)
+                .filter(|(m, _)| m.time >= z.start - shift && m.time < z.end - shift)
+                .fold((0_usize, 0_usize), |(n, w), (_, by)| {
+                    (
+                        n.saturating_add(1),
+                        w.saturating_add(usize::from(*by == Placed::Written)),
+                    )
+                });
+            inside >= 3 && crate::drum_reference::share(written, inside) >= WRITTEN_FILL
+        })
+        .collect();
+    let in_written_fill = |h: f64| {
+        written_fills.iter().any(|z| {
+            h >= z.start - edge(daw, project, z.start) && h < z.end - edge(daw, project, z.end)
+        })
+    };
+    let held = |h: f64| match settings.fills {
+        crate::drum_settings::Fills::Skip => in_fill(h) && !in_written_fill(h),
+        crate::drum_settings::Fills::Include => false,
+        crate::drum_settings::Fills::Only => !in_fill(h),
+    };
+    let mut targets = match lock {
+        Some(piece) => locked_targets(daw, project, settings, &found, (piece, (from, to)))?,
+        None => found.targets.clone(),
+    };
+    // In a written fill, a hit the chart does not have stays as played.
+    if settings.fills == crate::drum_settings::Fills::Skip {
+        for ((h, to), by) in targets.iter_mut().zip(&found.placed_by) {
+            if *by != Placed::Written && in_written_fill(*h) {
+                *to = None;
+            }
+        }
+    }
+    let pairs: Vec<(f64, Option<f64>)> = targets
+        .iter()
+        .filter(|(h, _)| inside(*h) && !held(*h))
+        .copied()
+        .collect();
+    let mut left_out: Vec<f64> = found
+        .targets
+        .iter()
+        .filter(|(h, _)| inside(*h) && held(*h))
+        .map(|(h, _)| *h)
+        .collect();
+    let in_fills = u32::try_from(left_out.len()).unwrap_or(u32::MAX);
+    // r[impl quantize.stays-in-span]
+    // The first hit after the span cut where it is: else the slice holding
+    // the span's last moved hit runs on to the take's end, and the rest of
+    // the song moves with it.
+    if let Some(after) = found.targets.iter().map(|(h, _)| *h).find(|h| *h >= hi) {
+        left_out.push(after);
+    }
+    let (mut result, cuts) = judge(daw, project, settings, (&pairs, &left_out), dry);
+    if settings.fills == crate::drum_settings::Fills::Skip {
+        result.in_fills = in_fills;
+    }
+    Ok((
+        QuantizeSpan {
+            name: name.to_owned(),
+            from,
+            to,
+            result,
+            by_groove: groove_calls(daw, project, &found.by_groove, (lo, hi)),
+            by_written: groove_calls(
+                daw,
+                project,
+                &found
+                    .by_written
+                    .iter()
+                    .filter(|(h, _, _)| !held(*h))
+                    .copied()
+                    .collect::<Vec<_>>(),
+                (lo, hi),
+            ),
+            check: None,
+        },
+        Planned { cuts, sent: pairs },
+    ))
+}
+
 fn register_quantize(list: &ActionList) {
     list.register(&QUANTIZE, Effect::Mutating, |a: QuantizeArg| {
         let (daw, project) = song()?;
         if crate::hits::kit_from_markers(daw, &project).is_none() {
             return Err("no hit markers: find the hits first (HITS_DETECT)".to_owned());
         }
-        let settings = crate::drum_settings::current().with(&a.with);
+        let base = crate::drum_settings::current().with(&a.with);
         let dry = a.dry_run.unwrap_or(false);
-        let zones = crate::hits::zones(daw, &project);
+        // The steps: the plan's, each with its own settings over the
+        // call's, or the call itself as one.
+        let steps: Vec<PlanOf<'_>> = if a.plan.is_empty() {
+            vec![(
+                base.clone(),
+                quantize_spans(daw, &project, &a)?,
+                a.lock.as_deref(),
+            )]
+        } else {
+            a.plan
+                .iter()
+                .map(|step| {
+                    Ok((
+                        base.with(&step.with),
+                        spans(daw, &project, &step.sections, (step.from, step.to))?,
+                        step.lock.as_deref(),
+                    ))
+                })
+                .collect::<Result<_, String>>()?
+        };
+        let before = crate::hits::playback(daw, &project);
         let mut out: Vec<QuantizeSpan> = Vec::new();
-        for (name, from, to) in quantize_spans(daw, &project, &a)? {
-            let found = detect(daw, &project, &settings, (from, to))?;
-            let inside = |h: f64| h >= from && h < to;
-            let in_fill = |h: f64| {
-                if zones.is_empty() {
-                    in_a_fill(daw, &project, &found.fills, h)
-                } else {
-                    crate::hits::zone_holds(
-                        &zones,
-                        h,
-                        60.0 / daw.get_tempo_at(project.clone(), h).max(1.0),
-                    )
+        let mut cuts: Vec<(i64, i64)> = Vec::new();
+        let mut sent: Vec<(f64, Option<f64>)> = Vec::new();
+        let mut whole = (f64::INFINITY, f64::NEG_INFINITY);
+        for (settings, spans, lock) in &steps {
+            for (name, from, to) in spans {
+                let (span, planned) =
+                    quantize_span(daw, &project, settings, (name, *from, *to), (*lock, dry))?;
+                if !dry {
+                    cuts.extend(planned.cuts);
+                    sent.extend(planned.sent);
                 }
-            };
-            // What stays as played: the fills, unless they are asked for
-            // (a fill that keeps a grid — a run of 16ths, a triplet fill —
-            // is edited on its own grid); with only the fills asked for,
-            // everything else.
-            let held = |h: f64| match settings.fills {
-                crate::drum_settings::Fills::Skip => in_fill(h),
-                crate::drum_settings::Fills::Include => false,
-                crate::drum_settings::Fills::Only => !in_fill(h),
-            };
-            let targets = match &a.lock {
-                Some(piece) => {
-                    locked_targets(daw, &project, &settings, &found, (piece, (from, to)))?
-                }
-                None => found.targets.clone(),
-            };
-            let pairs: Vec<(f64, Option<f64>)> = targets
-                .iter()
-                .filter(|(h, _)| inside(*h) && !held(*h))
-                .copied()
-                .collect();
-            let mut left_out: Vec<f64> = found
-                .targets
-                .iter()
-                .filter(|(h, _)| inside(*h) && held(*h))
-                .map(|(h, _)| *h)
-                .collect();
-            let in_fills = u32::try_from(left_out.len()).unwrap_or(u32::MAX);
-            // r[impl quantize.stays-in-span]
-            // The first hit after the span cut where it is: else the slice
-            // holding the span's last moved hit runs on to the take's end,
-            // and the rest of the song moves with it.
-            if let Some(after) = found.targets.iter().map(|(h, _)| *h).find(|h| *h >= to) {
-                left_out.push(after);
+                whole = (whole.0.min(span.from), whole.1.max(span.to));
+                out.push(span);
             }
-            let before = crate::hits::playback(daw, &project);
-            let mut result = judge(daw, &project, &settings, (&pairs, &left_out), dry);
-            if settings.fills == crate::drum_settings::Fills::Skip {
-                result.in_fills = in_fills;
+        }
+        if !dry && cuts.iter().any(|c| c.1 != 0) {
+            slip_now(daw, &project, &base, cuts);
+            wait_for_slip(daw, &project, &before);
+            // One edit, one check: every hit sent, held up to where it
+            // was sent; none outside the edit moved.
+            let check = checked(daw, &project, (&base, &sent), &before, whole);
+            if let Some(last) = out.last_mut() {
+                last.check = Some(check);
             }
-            let check = result.applied.then(|| {
-                wait_for_slip(daw, &project, &before);
-                checked(daw, &project, (&settings, &pairs), &before, (from, to))
-            });
-            let by_groove = groove_calls(daw, &project, &found, (from, to));
-            if a.brief.unwrap_or(false) {
-                result.biggest.clear();
-                result.to_check.clear();
+            for span in &mut out {
+                span.result.applied = true;
             }
-            out.push(QuantizeSpan {
-                name,
-                from,
-                to,
-                result,
-                by_groove,
-                check,
-            });
+        }
+        if a.brief.unwrap_or(false) {
+            for span in &mut out {
+                span.result.biggest.clear();
+                span.result.to_check.clear();
+            }
         }
         Ok(out)
     });
@@ -3848,7 +4369,7 @@ fn judge(
     settings: &crate::drum_settings::Settings,
     (pairs, left_out): (&[(f64, Option<f64>)], &[f64]),
     dry: bool,
-) -> SlipResult {
+) -> (SlipResult, Vec<(i64, i64)>) {
     let tolerance = settings.tolerance_ms / 1_000.0;
     let strength = settings.strength;
     let at = |hit: f64, off: f64, shift: f64| {
@@ -3880,54 +4401,23 @@ fn judge(
     offs.sort_by(|x, y| x.abs().total_cmp(&y.abs()));
     let mut biggest: Vec<&(f64, f64, f64)> = moves.iter().collect();
     biggest.sort_by(|x, y| y.1.abs().total_cmp(&x.1.abs()));
-    if !dry && !moves.is_empty() {
-        let us = |s: f64| num_traits::ToPrimitive::to_i64(&(s * 1_000_000.0).round()).unwrap_or(0);
-        // Every hit not moved is cut where it is, unmoved: a hit left in a
-        // slice rides with it, and the slice before it moving would take
-        // it along — off its mark by that hit's shift.
-        let mut cuts: Vec<(i64, i64)> = moves
-            .iter()
-            .map(|(h, _, shift)| (us(*h), us(*shift)))
-            .chain(
-                pairs
-                    .iter()
-                    .filter(|(h, t)| t.is_none_or(|t| (t - h).abs() <= tolerance))
-                    .map(|(h, _)| (us(*h), 0))
-                    .chain(left_out.iter().map(|h| (us(*h), 0))),
-            )
-            .collect();
-        cuts.sort_unstable();
-        // The samples first, so they and the recording move in the one
-        // step the slip makes: each hit where its slice is going.
-        #[cfg(feature = "signal")]
-        {
-            let lead = settings.lead_ms / 1_000.0;
-            let slices: Vec<(f64, f64)> = moves
+    let us = |s: f64| num_traits::ToPrimitive::to_i64(&(s * 1_000_000.0).round()).unwrap_or(0);
+    // Every hit not moved is cut where it is, unmoved: a hit left in a
+    // slice rides with it, and the slice before it moving would take it
+    // along — off its mark by that hit's shift.
+    let cuts: Vec<(i64, i64)> = moves
+        .iter()
+        .map(|(h, _, shift)| (us(*h), us(*shift)))
+        .chain(
+            pairs
                 .iter()
-                .map(|(h, _, shift)| (*h - lead, *shift))
-                .chain(cuts.iter().filter(|c| c.1 == 0).map(|c| {
-                    (
-                        num_traits::ToPrimitive::to_f64(&c.0).unwrap_or(0.0) / 1_000_000.0 - lead,
-                        0.0,
-                    )
-                }))
-                .collect();
-            let goes_to = |t: f64| t + shift_at(&slices, t);
-            match crate::drum_samples::follow(daw, project, goes_to) {
-                Ok(0) => {}
-                Ok(n) => tracing::info!(samples.tracks = n, "drums: the samples follow the slip"),
-                Err(why) => tracing::warn!(why, "drums: the samples could not follow the slip"),
-            }
-        }
-        queue(Action::SlipDrums {
-            moves: cuts,
-            pre_roll_us: us(settings.lead_ms / 1_000.0),
-            crossfade_us: us(settings.xfade_ms / 1_000.0),
-            stretch_over_us: settings.stretch_gaps_ms.map_or(0, |ms| us(ms / 1_000.0)),
-        });
-    }
+                .filter(|(h, t)| t.is_none_or(|t| (t - h).abs() <= tolerance))
+                .map(|(h, _)| (us(*h), 0))
+                .chain(left_out.iter().map(|h| (us(*h), 0))),
+        )
+        .collect();
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    SlipResult {
+    let result = SlipResult {
         hits: count(pairs.len()),
         moved: count(moves.len()),
         in_place,
@@ -3942,7 +4432,55 @@ fn judge(
             .map(|(hit, off, shift)| at(*hit, *off, *shift))
             .collect(),
         to_check,
+    };
+    (result, cuts)
+}
+
+/// Carry out `cuts` (`(hit, shift)`, microseconds, by hit): the window
+/// slips the kit by them, as one step, the drum samples following.
+fn slip_now(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    settings: &crate::drum_settings::Settings,
+    mut cuts: Vec<(i64, i64)>,
+) {
+    let us = |s: f64| num_traits::ToPrimitive::to_i64(&(s * 1_000_000.0).round()).unwrap_or(0);
+    cuts.sort_unstable();
+    // A hit two spans both cut is moved where either moves it.
+    cuts.dedup_by(|later, earlier| {
+        if later.0 != earlier.0 {
+            return false;
+        }
+        if earlier.1 == 0 {
+            earlier.1 = later.1;
+        }
+        true
+    });
+    // The samples first, so they and the recording move in the one step
+    // the slip makes: each hit where its slice is going.
+    #[cfg(feature = "signal")]
+    {
+        let lead = settings.lead_ms / 1_000.0;
+        let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1_000_000.0;
+        let slices: Vec<(f64, f64)> = cuts
+            .iter()
+            .map(|c| (seconds(c.0) - lead, seconds(c.1)))
+            .collect();
+        let goes_to = |t: f64| t + shift_at(&slices, t);
+        match crate::drum_samples::follow(daw, project, goes_to) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(samples.tracks = n, "drums: the samples follow the slip"),
+            Err(why) => tracing::warn!(why, "drums: the samples could not follow the slip"),
+        }
     }
+    #[cfg(not(feature = "signal"))]
+    let _ = (daw, project);
+    queue(Action::SlipDrums {
+        moves: cuts,
+        pre_roll_us: us(settings.lead_ms / 1_000.0),
+        crossfade_us: us(settings.xfade_ms / 1_000.0),
+        stretch_over_us: settings.stretch_gaps_ms.map_or(0, |ms| us(ms / 1_000.0)),
+    });
 }
 
 #[cfg(any(test, feature = "signal"))]

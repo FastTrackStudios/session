@@ -1910,12 +1910,19 @@ fn slip_takes(
                 // right half plays on from where the left stopped.
                 right.start_offset =
                     Duration::from_seconds(last.start_offset.as_seconds() + (at - left_start));
+                // Its hit is the lead into it: where the next edit's
+                // seams know not to reach back past.
+                right.snap_offset = Duration::from_seconds(cut.pre_roll);
                 last.length = Duration::from_seconds(at - left_start);
                 last.fade_out_length = Duration::from_seconds(0.0);
                 effects.push(Effect::Send(Edit::SplitItem(
                     last.guid.clone(),
                     at,
                     right.guid.clone(),
+                )));
+                effects.push(Effect::Send(Edit::SetSnapOffset(
+                    right.guid.clone(),
+                    cut.pre_roll,
                 )));
                 pieces.push(std::mem::replace(&mut last, right));
             }
@@ -1949,10 +1956,22 @@ fn slip_takes(
             effects.push(Effect::Send(Edit::MoveItem(item.guid.clone(), landing)));
         }
     }
-    for mic in mics {
-        close_seams(project, mic, (start, end), cut, effects);
+    // Every seam the moves touched, a slice either side of each.
+    let touched = cuts
+        .iter()
+        .filter(|c| c.1.abs() >= 1e-4)
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), c| {
+            (lo.min(c.0), hi.max(c.0))
+        });
+    if touched.0.is_finite() {
+        let window = (touched.0 - SEAM_WINDOW, touched.1 + SEAM_WINDOW);
+        close_seams(project, &mic_set, window, cut, effects);
     }
 }
+
+/// How far either side of an edit's moves its seams are closed, seconds:
+/// past the slice before the first and the one after the last.
+const SEAM_WINDOW: f64 = 1.0;
 
 /// The comp lane of a track with fixed lanes: the first named `C…` (REAPER
 /// 7's `C1`), else the first lane that plays. `None` for a track without
@@ -2154,45 +2173,82 @@ fn piece_of(guid: &str, mic: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with("-split@"))
 }
 
-/// The second half of a quantize, on one mic: the seams between its
-/// slices closed, with a short crossfade across each while auto-crossfade
-/// is on. Where a slice moved earlier it runs over the one before, which
-/// is trimmed to meet it. Where it moved later it left a gap, which it
-/// fills itself — its start pulled back into its own source, the ring of
-/// the hit before — rather than the slice before running on into it:
-/// that one would play on past its cut into this hit's attack, a flam.
+/// Whether `guid` is one of `mics` or a piece a cut made of one — at any
+/// depth (`{mic}-split@{t}`, `{mic}-split@{t}-split@{u}`).
+fn of_mics(guid: &str, mics: &HashSet<&str>) -> bool {
+    mics.contains(guid)
+        || guid
+            .match_indices("-split@")
+            .any(|(at, _)| guid.get(..at).is_some_and(|base| mics.contains(base)))
+}
+
+/// Where a slice's hit is in its source, seconds: its snap offset into
+/// it, which a cut sets to the lead before the hit — a slice cut before
+/// snap offsets were kept is taken to have the lead.
+fn attack_of(piece: &daw_proto::Item, lead: f64) -> f64 {
+    let snap = piece.snap_offset.as_seconds();
+    let into = if snap > 0.0 {
+        snap
+    } else if piece.guid.contains("-split@") {
+        lead
+    } else {
+        0.0
+    };
+    piece.start_offset.as_seconds() + into
+}
+
+/// How far apart two slices' sources may be at their seam and still be
+/// one recording, seconds: more than any shift a quantize makes.
+const SAME_TAKE: f64 = 0.25;
+
+/// The second half of a quantize: the seams between the kit's slices
+/// closed, track by track, from `from` to `to` — every slice there,
+/// whichever edit cut it — with a short crossfade across each while
+/// auto-crossfade is on. Where a slice moved earlier it runs over the one
+/// before, which is trimmed to meet it. Where it moved later it left a
+/// gap, which it fills itself — its start pulled back into its own
+/// source, the ring of the hit before — rather than the slice before
+/// running on into it: that one would play on past its cut into this
+/// hit's attack, a flam. Never back past the hit before (its snap
+/// offset says where): what is left, the slice before covers up to this
+/// hit's attack.
 fn close_seams(
     project: &mut Project,
-    mic: &str,
+    mics: &HashSet<&str>,
     (from, to): (f64, f64),
     cut: SlipCut,
     effects: &mut Vec<Effect>,
 ) {
-    use daw_proto::primitives::{Duration, PositionInSeconds};
     let fade = if crate::options::AUTO_CROSSFADE.get() {
         cut.crossfade
     } else {
         0.0
     };
-    let Some(lane) = project
-        .items
-        .values_mut()
-        .find(|lane| lane.iter().any(|i| piece_of(&i.guid, mic)))
-    else {
-        return;
-    };
-    let mut pieces: Vec<&mut daw_proto::Item> = lane
-        .iter_mut()
-        .filter(|i| {
-            let at = i.position.as_seconds();
-            // This take's pieces only: a next take that abuts it is
-            // not a seam this quantize made.
-            piece_of(&i.guid, mic) && at >= from - 1e-6 && at < to
-        })
-        .collect();
-    pieces.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
-    // Where each slice started in its source before any reached back: a
-    // slice's hit is its lead after that.
+    for lane in project.items.values_mut() {
+        let mut by_lane: std::collections::BTreeMap<Option<u32>, Vec<&mut daw_proto::Item>> =
+            std::collections::BTreeMap::new();
+        for item in lane.iter_mut() {
+            let at = item.position.as_seconds();
+            let end = at + item.length.as_seconds();
+            if of_mics(&item.guid, mics) && end > from && at < to {
+                by_lane.entry(item.fixed_lane).or_default().push(item);
+            }
+        }
+        for pieces in by_lane.values_mut() {
+            pieces.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
+            seams(pieces, (cut, fade), effects);
+        }
+    }
+}
+
+/// [`close_seams`] on one lane's slices, by position.
+fn seams(
+    pieces: &mut [&mut daw_proto::Item],
+    (cut, fade): (SlipCut, f64),
+    effects: &mut Vec<Effect>,
+) {
+    use daw_proto::primitives::{Duration, PositionInSeconds};
+    // Where each slice started in its source before any reached back.
     let cut_at: Vec<f64> = pieces.iter().map(|p| p.start_offset.as_seconds()).collect();
     let mut prev_end: Option<f64> = None;
     for k in 0..pieces.len() {
@@ -2218,28 +2274,66 @@ fn close_seams(
             )));
             prev_end = Some(prev.position.as_seconds() + prev.length.as_seconds());
         }
+        // The slice before, when it is the same recording running on.
+        let was_cut = cut_at.get(k).copied().unwrap_or_default();
+        let joined = before.last().is_some_and(|prev| {
+            (prev.start_offset.as_seconds() + prev.length.as_seconds() - was_cut).abs() <= SAME_TAKE
+        });
+        // Every seam overlaps by the crossfade: two slices that only meet
+        // — let alone leave a gap — fade one out to nothing as the other
+        // fades in from it, and the kit drops out at the seam.
         if let Some(ends) = prev_end
-            && ends + fade < start
+            && start > ends - fade + 1e-9
         {
             // A gap: this slice reaches back to meet the one before — but
             // never into the hit before it. That one's attack is a lead
             // into the slice before; reached past, it plays twice (a
-            // snare 64 ms before a kick sent 58 ms later did). What is
-            // left of the gap the seam's fade covers.
-            let floor = (k > 0)
-                .then(|| cut_at.get(k.saturating_sub(1)))
-                .flatten()
-                .map(|c| c + cut.pre_roll + SEAM_GUARD)
+            // snare 64 ms before a kick sent 58 ms later did).
+            let floor = before
+                .last()
+                .filter(|_| joined)
+                .map(|prev| attack_of(prev, cut.pre_roll) + SEAM_GUARD)
                 .filter(|f| *f < piece.start_offset.as_seconds());
-            let room = floor.map_or(f64::INFINITY, |f| piece.start_offset.as_seconds() - f);
+            let room = if joined {
+                floor.map_or(0.0, |f| piece.start_offset.as_seconds() - f)
+            } else {
+                0.0
+            };
             let reach = (start - ends + fade).min(room).max(0.0);
-            let (at, length) = (start - reach, piece.length.as_seconds() + reach);
-            let offset = (piece.start_offset.as_seconds() - reach).max(0.0);
-            piece.position = PositionInSeconds::from_seconds(at);
-            piece.length = Duration::from_seconds(length);
-            piece.start_offset = Duration::from_seconds(offset);
-            effects.push(Effect::Send(Edit::TrimItem(piece.guid.clone(), at, length)));
-            effects.push(Effect::Send(Edit::SlipItem(piece.guid.clone(), offset)));
+            if reach > 0.0 {
+                let (at, length) = (start - reach, piece.length.as_seconds() + reach);
+                let offset = (piece.start_offset.as_seconds() - reach).max(0.0);
+                let snap = attack_of(piece, cut.pre_roll) - offset;
+                piece.position = PositionInSeconds::from_seconds(at);
+                piece.length = Duration::from_seconds(length);
+                piece.start_offset = Duration::from_seconds(offset);
+                piece.snap_offset = Duration::from_seconds(snap);
+                effects.push(Effect::Send(Edit::TrimItem(piece.guid.clone(), at, length)));
+                effects.push(Effect::Send(Edit::SlipItem(piece.guid.clone(), offset)));
+                effects.push(Effect::Send(Edit::SetSnapOffset(piece.guid.clone(), snap)));
+            }
+            // What reaching back could not cover — a hit too soon after
+            // the one before — the slice before covers, running on into
+            // this hit's lead-in: its source goes on where this slice's
+            // was cut, and it stops short of the attack.
+            let left = piece.position.as_seconds() - (ends - fade);
+            if left > 1e-6
+                && joined
+                && let Some(prev) = before.last_mut()
+            {
+                let source_end = prev.start_offset.as_seconds() + prev.length.as_seconds();
+                let attack = was_cut + cut.pre_roll;
+                let more = left.min(attack - SEAM_GUARD - source_end).max(0.0);
+                if more > 0.0 {
+                    let length = prev.length.as_seconds() + more;
+                    prev.length = Duration::from_seconds(length);
+                    effects.push(Effect::Send(Edit::TrimItem(
+                        prev.guid.clone(),
+                        prev.position.as_seconds(),
+                        length,
+                    )));
+                }
+            }
         }
         if k > 0 && fade > 0.0 {
             piece.fade_in_length = Duration::from_seconds(fade);
@@ -2251,8 +2345,14 @@ fn close_seams(
         }
         prev_end = Some(piece.position.as_seconds() + piece.length.as_seconds());
     }
-    // Overlaps, from the end back: each slice that runs past the next
-    // one's start (plus the crossfade) stops there.
+    trim_overlaps(pieces, fade, effects);
+}
+
+/// The overlaps of `pieces` (by position), from the end back: each slice
+/// that runs past the next one's start plus the crossfade stops there,
+/// and fades out across it.
+fn trim_overlaps(pieces: &mut [&mut daw_proto::Item], fade: f64, effects: &mut Vec<Effect>) {
+    use daw_proto::primitives::Duration;
     let mut next_start: Option<f64> = None;
     for piece in pieces.iter_mut().rev() {
         let start = piece.position.as_seconds();
@@ -2853,6 +2953,64 @@ mod tests {
     use daw_ui::studio::{ProjectRef, RowsRef};
 
     const PPS: f64 = 100.0;
+
+    /// A slice of one recording: `at` on the timeline, `from` in the
+    /// source, `length` long, its hit `lead` in.
+    fn slice(guid: &str, at: f64, from: f64, length: f64, lead: f64) -> daw_proto::Item {
+        daw_proto::Item {
+            guid: guid.to_owned(),
+            position: PositionInSeconds::from_seconds(at),
+            length: Duration::from_seconds(length),
+            start_offset: Duration::from_seconds(from),
+            snap_offset: Duration::from_seconds(lead),
+            ..daw_proto::Item::default()
+        }
+    }
+
+    /// The seams of slices that only meet, or are a hair apart, or apart
+    /// by more than the crossfade, all overlap by the crossfade after —
+    /// no slice reaching back past the hit before its own.
+    #[test]
+    fn every_seam_overlaps_by_the_crossfade() {
+        let (lead, fade) = (0.005, 0.005);
+        let cut = SlipCut {
+            pre_roll: lead,
+            crossfade: fade,
+            stretch_over: None,
+        };
+        // Four slices of one take, cut 5 ms before hits at 1.0, 1.5, 2.0
+        // and 2.04: the second left where it was, the third moved 2 ms
+        // later, the fourth (a hit 40 ms after the third) 30 ms later.
+        let mut a = slice("t", 0.0, 0.0, 0.995, 0.0);
+        let mut b = slice("t-split@0.995", 0.995, 0.995, 0.5, lead);
+        let mut c = slice("t-split@1.495", 1.497, 1.495, 0.5, lead);
+        let mut d = slice("t-split@1.995", 2.025, 1.995, 0.5, lead);
+        // The slices' ends as cut: each runs to the next one's cut.
+        b.length = Duration::from_seconds(0.5);
+        c.length = Duration::from_seconds(0.5);
+        let mut pieces = vec![&mut a, &mut b, &mut c, &mut d];
+        let mut effects = Vec::new();
+        seams(&mut pieces, (cut, fade), &mut effects);
+        for pair in pieces.windows(2) {
+            let [prev, next] = pair else { continue };
+            let ends = prev.position.as_seconds() + prev.length.as_seconds();
+            let starts = next.position.as_seconds();
+            assert!(
+                starts <= ends - fade + 1e-9,
+                "{} starts at {starts:.4}, {} ends at {ends:.4}: no crossfade",
+                next.guid,
+                prev.guid
+            );
+            // The previous hit's attack, in this slice's source, is never
+            // played again.
+            let attack = prev.start_offset.as_seconds() + prev.snap_offset.as_seconds();
+            assert!(
+                next.start_offset.as_seconds() > attack,
+                "{} reaches back over the hit before",
+                next.guid
+            );
+        }
+    }
 
     /// Two tracks, three items: a project small enough to reason about
     /// and big enough to split, move and select across.

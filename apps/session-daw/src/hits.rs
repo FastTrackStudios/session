@@ -1655,7 +1655,11 @@ pub struct Check {
     /// Hits outside the span that play somewhere else now: the edit
     /// reached past its span.
     pub strayed: u32,
-    /// None lost, none doubled, none off target, nothing outside the span moved.
+    /// Silences an edited kit track's slices leave between them: the
+    /// drums cut out.
+    pub gaps: u32,
+    /// None lost, none doubled, none off target, nothing outside the span
+    /// moved, no gap.
     pub ok: bool,
     /// The first few problems: what and where (project seconds).
     pub problems: Vec<String>,
@@ -1734,9 +1738,66 @@ pub fn check(
             }
         }
     }
+    for (track, from, to) in gaps(daw, project, span) {
+        out.gaps = out.gaps.saturating_add(1);
+        if out.problems.len() < 20 {
+            out.problems.push(format!(
+                "{track}: silent from {from:.4} to {to:.4} ({:.1} ms)",
+                (to - from) * 1_000.0
+            ));
+        }
+    }
     out.off_median_ms = offs.get(offs.len() / 2).copied();
     out.off_worst_ms = offs.last().copied();
-    out.ok = out.lost == 0 && out.doubled == 0 && out.off_target == 0 && out.strayed == 0;
+    out.ok = out.lost == 0
+        && out.doubled == 0
+        && out.off_target == 0
+        && out.strayed == 0
+        && out.gaps == 0;
+    out
+}
+
+/// The shortest silence between two slices that counts as a gap,
+/// seconds: under it is a seam's rounding.
+const GAP: f64 = 0.000_5;
+
+/// Where an edited kit track — one with an EDIT lane — plays nothing
+/// between two of its slices in `span`: `(track, from, to)`.
+#[must_use]
+pub fn gaps(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    span: (f64, f64),
+) -> Vec<(String, f64, f64)> {
+    use daw::service::{Items as _, TrackRef, Tracks};
+    let mut out = Vec::new();
+    for track in Tracks::all(daw, project.clone()) {
+        if !track
+            .lane_names
+            .iter()
+            .any(|n| n == crate::drum_lanes::EDIT)
+        {
+            continue;
+        }
+        let mut slices: Vec<(f64, f64)> = daw
+            .get_items(project.clone(), TrackRef::Guid(track.guid.clone()))
+            .iter()
+            .filter(|i| !i.muted && daw_ui::studio::project::on_playing_lane(&track, i))
+            .map(|i| {
+                let at = i.position.as_seconds();
+                (at, at + i.length.as_seconds())
+            })
+            .filter(|(at, end)| *end > span.0 && *at < span.1)
+            .collect();
+        slices.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut covered = f64::NEG_INFINITY;
+        for (at, end) in slices {
+            if covered.is_finite() && at - covered > GAP {
+                out.push((track.name.clone(), covered, at));
+            }
+            covered = covered.max(end);
+        }
+    }
     out
 }
 

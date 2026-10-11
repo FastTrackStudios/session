@@ -16,8 +16,8 @@
 #![cfg(feature = "native")]
 
 use daw::service::{
-    ItemRef, Items as _, Midi as _, MidiTakeLocation, ProjectContext, TakeRef, TempoMap as _,
-    TrackRef, Tracks,
+    ItemRef, Items as _, Midi as _, MidiNoteCreate, MidiTakeLocation, ProjectContext, TakeRef,
+    Takes as _, TempoMap as _, TrackRef, Tracks,
 };
 
 /// One written note, in project time.
@@ -91,9 +91,13 @@ pub fn seconds_after(start: f64, qn: f64, tempos: &[(f64, f64)], default_bpm: f6
     }
 }
 
-/// Every note on `track` the song plays (its playing lane, unmuted
-/// items), in project time, by time; a note doubled by overlapping
-/// items counted once.
+/// Every note on `track` as written, in project time, by time.
+///
+/// A note doubled by overlapping items is counted once. A comped track is
+/// read through its active comp — each stretch from the lane its comp
+/// area takes it from — since a drum part pieced together from takes is
+/// the part, whichever lane happens to be playing; otherwise its playing
+/// lane, unmuted items.
 #[must_use]
 pub fn notes(
     daw: &daw::standalone::Standalone,
@@ -109,13 +113,24 @@ pub fn notes(
         .filter_map(|p| Some((p.position.time?.as_seconds(), p.bpm)))
         .collect();
     let default_bpm = daw.get_default_tempo(project.clone());
+    let areas = comp_areas(daw, project, track);
     let mut out: Vec<RefNote> = Vec::new();
     for item in daw.get_items(project.clone(), TrackRef::Guid(track.to_owned())) {
-        if item.muted || !daw_ui::studio::project::on_playing_lane(&t, &item) {
+        let heard = if areas.is_empty() {
+            daw_ui::studio::project::on_playing_lane(&t, &item)
+        } else {
+            item.fixed_lane
+                .is_some_and(|lane| areas.iter().any(|a| a.2 == lane))
+        };
+        if item.muted || !heard {
             continue;
         }
         let start = item.position.as_seconds();
         let end = start + item.length.as_seconds();
+        // Its source begins `start_offset` before the item does: the
+        // right half of a split plays on from the cut, not from its
+        // first note.
+        let source_start = start - item.start_offset.as_seconds();
         let location = MidiTakeLocation::new(
             project.clone(),
             ItemRef::Guid(item.guid.clone()),
@@ -127,8 +142,12 @@ pub fn notes(
             }
             // The engine's `start_ppq` is already quarter notes from the
             // item's start (its loader divides REAPER's ticks out).
-            let time = seconds_after(start, note.start_ppq, &tempos, default_bpm);
-            if time < end {
+            let time = seconds_after(source_start, note.start_ppq, &tempos, default_bpm);
+            let in_comp = areas.is_empty()
+                || areas.iter().any(|&(from, to, lane)| {
+                    Some(lane) == item.fixed_lane && time >= from && time < to
+                });
+            if time >= start - 1e-6 && time < end && in_comp {
                 out.push(RefNote {
                     time,
                     pitch: note.pitch,
@@ -140,6 +159,27 @@ pub fn notes(
     out.sort_by(|a, b| a.time.total_cmp(&b.time).then(a.pitch.cmp(&b.pitch)));
     out.dedup_by(|a, b| a.pitch == b.pitch && (a.time - b.time).abs() < 0.002);
     out
+}
+
+/// The active comp's areas on `track` — `(start, end, source lane)`,
+/// seconds — or none when it is not comped.
+fn comp_areas(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+) -> Vec<(f64, f64, u32)> {
+    let Ok(comping) = daw.comping(project.clone(), TrackRef::Guid(track.to_owned())) else {
+        return Vec::new();
+    };
+    let Some(comp) = comping.comp_lane else {
+        return Vec::new();
+    };
+    comping
+        .areas
+        .iter()
+        .filter(|a| a.comp_lane == comp && a.source_lane != comp)
+        .map(|a| (a.start.as_seconds(), a.end.as_seconds(), a.source_lane))
+        .collect()
 }
 
 /// The drum MIDI track: one named for drum MIDI, else none.
@@ -170,27 +210,50 @@ pub struct Mapped {
 /// that piece's note.
 pub const MAP_AGREEMENT: f64 = 0.5;
 
+/// A piece whose hits are near this share of notes slid off their times
+/// is near any note at all — a dead trigger's noise — and maps nothing.
+const HOPELESS: f64 = 0.9;
+
 /// Each note number mapped to the piece whose hits most of its notes
 /// land on (within `window` seconds) — `pieces` are each piece's name
 /// and its hits' times, by time.
 ///
 /// What counts is how much more often than chance: a piece hit all the
 /// time — a dead trigger reading its own noise — has every note near one
-/// of its "hits", and would take every pitch. `agreement` is the share
-/// over what that piece's hit density would give by chance, scaled back
-/// to 0..1.
+/// of its "hits", and would take every pitch. Chance is measured, not
+/// assumed: the same notes slid off their times by a sweep of offsets
+/// (a quarter second to a second and a quarter, either way) land near
+/// the piece's hits this often. Notes and hits both sit on a grid, so a
+/// busy kick is near a slid note far more often than its density says —
+/// and a crash written on every kick lands on the kick as often slid as
+/// not. `agreement` is the share over that chance, scaled back to 0..1.
 #[must_use]
 pub fn learn_map(notes: &[RefNote], pieces: &[(String, Vec<f64>)], window: f64) -> Vec<Mapped> {
-    let span = notes
-        .iter()
-        .map(|n| n.time)
-        .chain(pieces.iter().flat_map(|(_, h)| h.iter().copied()))
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
-            (lo.min(t), hi.max(t))
-        });
-    let length = (span.1 - span.0).max(window);
-    let chance = |hits: &[f64]| {
-        (f64::from(u32::try_from(hits.len()).unwrap_or(u32::MAX)) * 2.0 * window / length).min(1.0)
+    // Off-grid offsets, both ways: 41 steps from 0.25 s to 1.25 s.
+    let slides: Vec<f64> = (0..41_u32)
+        .map(|i| f64::from(i).mul_add(0.025, 0.25))
+        .flat_map(|s| [s, -s])
+        .collect();
+    // Only where the piece plays at all: a note slid off the end of the
+    // song lands on nothing, by no chance of the piece's.
+    let chance = |times: &[f64], hits: &[f64]| {
+        let (Some(first), Some(last)) = (hits.first(), hits.last()) else {
+            return 0.0;
+        };
+        let (mut landed, mut tried) = (0_usize, 0_usize);
+        for s in &slides {
+            for t in times
+                .iter()
+                .map(|t| t + s)
+                .filter(|t| t >= first && t <= last)
+            {
+                tried = tried.saturating_add(1);
+                if near(hits, t, window) {
+                    landed = landed.saturating_add(1);
+                }
+            }
+        }
+        ratio(landed, tried)
     };
     let mut pitches: Vec<u8> = notes.iter().map(|n| n.pitch).collect();
     pitches.sort_unstable();
@@ -207,8 +270,10 @@ pub fn learn_map(notes: &[RefNote], pieces: &[(String, Vec<f64>)], window: f64) 
                 .iter()
                 .map(|(name, hits)| {
                     let on = times.iter().filter(|t| near(hits, **t, window)).count();
-                    let by_chance = chance(hits);
-                    let over = if by_chance >= 1.0 {
+                    let by_chance = chance(&times, hits);
+                    // A piece near nine slid notes in ten is near
+                    // everything: what it is near says nothing.
+                    let over = if by_chance >= HOPELESS {
                         0.0
                     } else {
                         ((ratio(on, times.len()) - by_chance) / (1.0 - by_chance)).max(0.0)
@@ -229,6 +294,12 @@ pub fn learn_map(notes: &[RefNote], pieces: &[(String, Vec<f64>)], window: f64) 
             }
         })
         .collect()
+}
+
+/// `part` of `whole`, 0..1 (0 of nothing).
+#[must_use]
+pub fn share(part: usize, whole: usize) -> f64 {
+    ratio(part, whole)
 }
 
 fn ratio(part: usize, whole: usize) -> f64 {
@@ -430,4 +501,86 @@ mod tests {
         assert_eq!(c.missing, vec![2.0]);
         assert_eq!(c.extra, vec![1.02, 5.0]);
     }
+}
+
+/// Put a MIDI track's items back as `from` (an `.RPP` or a `.session`)
+/// has them.
+///
+/// Each item on its lane, at its place, its offset and mute, with its
+/// notes — in place of the ones the song has now, as one undo step. For a
+/// part a bad edit damaged: what is put back is the notes, not CCs.
+/// `track` is the track's GUID, the same in both. Says how many items and
+/// notes came back.
+///
+/// # Errors
+///
+/// `from` will not open, has no such track, or it has no MIDI.
+pub fn restore(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    from: &std::path::Path,
+) -> Result<(usize, usize), String> {
+    let opened = crate::open_core::load_into_with(daw, from, crate::open_core::Media::Deferred)
+        .map_err(|e| format!("{} would not open: {e}", from.display()))?;
+    let other = ProjectContext::Project(opened.project_guid.clone());
+    let read = || -> Result<Vec<(daw::service::Item, Vec<daw::service::MidiNote>)>, String> {
+        let at = TrackRef::Guid(track.to_owned());
+        Tracks::get(daw, other.clone(), at.clone()).ok_or("no such track in that file")?;
+        let items: Vec<_> = daw
+            .get_items(other.clone(), at)
+            .into_iter()
+            .map(|item| {
+                let notes = daw.notes(MidiTakeLocation::new(
+                    other.clone(),
+                    ItemRef::Guid(item.guid.clone()),
+                    TakeRef::Active,
+                ));
+                (item, notes)
+            })
+            .filter(|(_, notes)| !notes.is_empty())
+            .collect();
+        if items.is_empty() {
+            return Err("the track has no MIDI in that file".into());
+        }
+        Ok(items)
+    };
+    let saved = read();
+    let _ = daw::service::Projects::close(daw, &opened.project_guid);
+    let saved = saved?;
+
+    let label = "Restore the MIDI";
+    daw::service::Projects::begin_undo_block(daw, project.clone(), label);
+    let at = TrackRef::Guid(track.to_owned());
+    for item in daw.get_items(project.clone(), at.clone()) {
+        let _ = daw.delete_item(project.clone(), ItemRef::Guid(item.guid));
+    }
+    let mut notes_back = 0_usize;
+    for (item, notes) in &saved {
+        let start = item.position.as_seconds();
+        let Some(made) = daw.create_midi_item(
+            project.clone(),
+            at.clone(),
+            start,
+            start + item.length.as_seconds(),
+        ) else {
+            continue;
+        };
+        let guid = made.item.clone();
+        if let Some(lane) = item.fixed_lane {
+            let _ = daw.set_fixed_lane(project.clone(), guid.clone(), lane);
+        }
+        let _ = daw::service::Items::set_muted(daw, project.clone(), guid.clone(), item.muted);
+        let _ = daw.set_start_offset(project.clone(), guid, TakeRef::Active, item.start_offset);
+        let back: Vec<MidiNoteCreate> = notes
+            .iter()
+            .map(|n| MidiNoteCreate {
+                channel: n.channel,
+                ..MidiNoteCreate::new(n.pitch, n.velocity, n.start_ppq, n.length_ppq)
+            })
+            .collect();
+        notes_back = notes_back.saturating_add(daw.add_notes_ppq(made, back).len());
+    }
+    daw::service::Projects::end_undo_block(daw, project.clone(), label, None);
+    Ok((saved.len(), notes_back))
 }

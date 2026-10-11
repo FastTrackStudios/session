@@ -252,6 +252,10 @@ pub enum Edit {
     /// An item's active take's stretch markers, `(take time, source
     /// time)` each — a slice's decay drawn out over the gap a slip left.
     SetStretchMarkers(String, Vec<(f64, f64)>),
+    /// Where an item's hit is, seconds from its start: a drum slice's
+    /// snap offset, which the next edit reads to know where the attack
+    /// it must not play twice is.
+    SetSnapOffset(String, f64),
     DeleteItem(String),
 }
 
@@ -313,6 +317,7 @@ impl Edit {
             | Self::SetItemLane(g, _)
             | Self::SetItemVolume(g, _)
             | Self::SetStretchMarkers(g, _)
+            | Self::SetSnapOffset(g, _)
             | Self::SlipItem(g, _)
             | Self::DeleteItem(g) => g,
         }
@@ -354,6 +359,7 @@ impl Edit {
                 | Self::SetItemLane(..)
                 | Self::SetItemVolume(..)
                 | Self::SetStretchMarkers(..)
+                | Self::SetSnapOffset(..)
                 | Self::SlipItem(..)
                 | Self::DeleteItem(_)
         )
@@ -1331,6 +1337,7 @@ fn apply_locally(edit: &Edit) -> bool {
                     stretch(&guid, markers);
                     Ok(())
                 }
+                Edit::SetSnapOffset(_, s) => daw.set_snap_offset(project, item, secs(*s)),
                 Edit::DeleteItem(_) => daw.delete_item(project, item),
                 _ => return false,
             }
@@ -1604,6 +1611,7 @@ async fn apply(edit: &Edit) {
         | Edit::SetItemLane(..)
         | Edit::SetItemVolume(..)
         | Edit::SetStretchMarkers(..)
+        | Edit::SetSnapOffset(..)
         | Edit::SlipItem(..)
         | Edit::DeleteItem(_)
         // Already handled above, where they did not need a track.

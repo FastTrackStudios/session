@@ -234,4 +234,5 @@ pub mod web_host;
 pub mod which_key;
 pub mod widget;
 pub mod window_cursor;
+pub mod written;
 pub mod zoom;
