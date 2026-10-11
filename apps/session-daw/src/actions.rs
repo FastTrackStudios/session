@@ -2236,7 +2236,7 @@ fn register_track_set(list: &ActionList) {
 }
 
 /// The engine and the open song.
-pub(crate) fn song() -> Result<(&'static daw::standalone::Standalone, ProjectContext), String> {
+pub fn song() -> Result<(&'static daw::standalone::Standalone, ProjectContext), String> {
     let daw = crate::open::local_engine().ok_or("no song open in this window's engine")?;
     let guid = crate::open::current_song().ok_or("no song open")?;
     Ok((daw, ProjectContext::Project(guid)))
@@ -3680,6 +3680,9 @@ mod lock_tests {
     }
 }
 
+// r[impl flow.drums.editing.quantize]
+// r[impl quantize.reads-markers]
+// r[impl quantize.check]
 fn register_quantize(list: &ActionList) {
     list.register(&QUANTIZE, Effect::Mutating, |a: QuantizeArg| {
         let (daw, project) = song()?;
@@ -3731,6 +3734,7 @@ fn register_quantize(list: &ActionList) {
                 .map(|(h, _)| *h)
                 .collect();
             let in_fills = u32::try_from(left_out.len()).unwrap_or(u32::MAX);
+            // r[impl quantize.stays-in-span]
             // The first hit after the span cut where it is: else the slice
             // holding the span's last moved hit runs on to the take's end,
             // and the rest of the song moves with it.

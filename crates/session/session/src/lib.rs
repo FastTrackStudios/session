@@ -39,7 +39,6 @@ pub use session_proto::{offset_map, ruler_lanes, services, track_structure};
 // the SynchronizationEngine is REAPER-linked).
 pub mod comping;
 pub mod count_in;
-pub mod hits;
 pub mod reference;
 pub mod review;
 pub mod section_kinds;
@@ -69,8 +68,6 @@ pub mod mix_phases;
 pub mod mode_phases;
 pub mod modes;
 pub mod playback;
-pub mod quantize;
-pub mod trigger;
 // Growing a guitar part over the daw facade. Native-only for the same
 // reason as `track_manager`: it drives `dynamic-template`.
 #[cfg(not(target_arch = "wasm32"))]

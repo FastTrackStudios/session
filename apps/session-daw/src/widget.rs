@@ -932,45 +932,7 @@ impl ArrangementWidget {
     /// folded or open here, never its Process — or, `only` named, those
     /// tracks of it.
     fn kit_items(&self, only: &[String]) -> Vec<String> {
-        let Some(drums) = self
-            .project
-            .tracks
-            .iter()
-            .find(|t| {
-                t.parent_guid.is_none()
-                    && t.is_folder
-                    && t.name.trim().eq_ignore_ascii_case("drums")
-            })
-            .map(|t| t.guid.clone())
-        else {
-            return Vec::new();
-        };
-        let mut inside: std::collections::HashSet<String> =
-            std::collections::HashSet::from([drums]);
-        let mut kit: Vec<&daw_proto::Track> = Vec::new();
-        for track in &self.project.tracks {
-            let Some(parent) = track.parent_guid.as_deref() else {
-                continue;
-            };
-            if !inside.contains(parent) || track.name.trim().eq_ignore_ascii_case("process") {
-                continue;
-            }
-            inside.insert(track.guid.clone());
-            if !track.is_folder && (only.is_empty() || only.contains(&track.guid)) {
-                kit.push(track);
-            }
-        }
-        kit.iter()
-            .flat_map(|track| {
-                self.project
-                    .items
-                    .get(&track.guid)
-                    .into_iter()
-                    .flatten()
-                    .filter(|item| crate::drum_edit::is_edited(track, item))
-                    .map(|item| item.guid.clone())
-            })
-            .collect()
+        crate::arrange_edit::kit_items(&self.project, only)
     }
 
     /// Take `from..to` out of the kit's edited takes — `tracks` of it, or
@@ -1008,11 +970,7 @@ impl ArrangementWidget {
         if items.is_empty() {
             return false;
         }
-        let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1_000_000.0;
-        let moves: Vec<(f64, f64)> = moves
-            .iter()
-            .map(|&(hit, shift)| (seconds(hit), seconds(shift)))
-            .collect();
+        let moves = crate::arrange_edit::seconds_of(moves);
         let started = std::time::Instant::now();
         // Where in its source each take started, before it is cut: every
         // slice of it shows its own part of the take's waveform.

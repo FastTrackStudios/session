@@ -2278,6 +2278,59 @@ fn close_seams(
     }
 }
 
+/// The kit's takes an edit works on ([`crate::drum_edit::is_edited`]):
+/// every audio track under the top-level Drums folder — never its Process
+/// — or, `only` named, those tracks of it.
+#[must_use]
+pub fn kit_items(project: &Project, only: &[String]) -> Vec<String> {
+    let Some(drums) = project
+        .tracks
+        .iter()
+        .find(|t| {
+            t.parent_guid.is_none() && t.is_folder && t.name.trim().eq_ignore_ascii_case("drums")
+        })
+        .map(|t| t.guid.clone())
+    else {
+        return Vec::new();
+    };
+    let mut inside: std::collections::HashSet<String> = std::collections::HashSet::from([drums]);
+    let mut kit: Vec<&daw_proto::Track> = Vec::new();
+    for track in &project.tracks {
+        let Some(parent) = track.parent_guid.as_deref() else {
+            continue;
+        };
+        if !inside.contains(parent) || track.name.trim().eq_ignore_ascii_case("process") {
+            continue;
+        }
+        inside.insert(track.guid.clone());
+        if !track.is_folder && (only.is_empty() || only.contains(&track.guid)) {
+            kit.push(track);
+        }
+    }
+    kit.iter()
+        .flat_map(|track| {
+            project
+                .items
+                .get(&track.guid)
+                .into_iter()
+                .flatten()
+                .filter(|item| crate::drum_edit::is_edited(track, item))
+                .map(|item| item.guid.clone())
+        })
+        .collect()
+}
+
+/// A slip's moves as the Action List queues them (`(hit, shift)`, µs) in
+/// seconds.
+#[must_use]
+pub fn seconds_of(moves: &[(i64, i64)]) -> Vec<(f64, f64)> {
+    let seconds = |us: i64| num_traits::ToPrimitive::to_f64(&us).unwrap_or(0.0) / 1_000_000.0;
+    moves
+        .iter()
+        .map(|&(hit, shift)| (seconds(hit), seconds(shift)))
+        .collect()
+}
+
 /// How much of a slice's start a stretch leaves as it was, seconds: its
 /// attack — the part of a hit an ear times it by.
 pub const STRETCH_KEEP: f64 = 0.030;
