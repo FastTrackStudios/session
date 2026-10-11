@@ -1,7 +1,7 @@
 //! The FTS processors as the session engine's built-in FX.
 //!
 //! Every FTS plugin (EQ, Comp, Saturate, Reverb, Delay, Gate, Limiter,
-//! Level, Meter, Modulation) is a nice-plug plugin, built for CLAP and
+//! Level, Meter, Modulation, Mic) is a nice-plug plugin, built for CLAP and
 //! VST3. Here the same plugin runs **in-process**: [`Embedded`] hosts any
 //! nice-plug [`Plugin`] behind the engine's [`PluginInstance`] — its
 //! parameters (names, normalized ranges, the plugin's own text), its
@@ -592,6 +592,10 @@ const ENTRIES: &[Entry] = &[
         name: <unison_plugin::FtsUnison as Plugin>::NAME,
         make: make::<unison_plugin::FtsUnison>,
     },
+    Entry {
+        name: <mic_plugin::FtsMic as Plugin>::NAME,
+        make: make::<mic_plugin::FtsMic>,
+    },
 ];
 
 /// The name a plugin goes by, however it is written: `FTS EQ`, `CLAP: FTS
@@ -821,6 +825,44 @@ mod tests {
         let (default, loud) = (rms(None), rms(Some(0.95)));
         assert!(default > 0.0, "the tone passes");
         assert!(loud > default * 1.5, "turned up: {loud} against {default}");
+    }
+
+    /// FTS Mic takes a dual-capsule recording — front on the left, rear
+    /// on the right, two different signals — and gives back the modelled
+    /// mic: one signal, the same on both sides.
+    #[test]
+    fn the_mic_turns_a_capsule_pair_into_one_mic() {
+        let mut mic = BuiltinFx
+            .create("FTS Mic", 48_000.0)
+            .expect("FTS Mic is built in");
+        let block = 512;
+        let mut seed = 0x2545_f491_u32;
+        let mut noise = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            f32::from(u16::try_from(seed >> 16).unwrap_or(0)) / 32_768.0 - 1.0
+        };
+        let (mut l, mut r) = (vec![0.0; block], vec![0.0; block]);
+        // The models load off the audio thread: a second or two of blocks.
+        for _ in 0..400 {
+            let front: Vec<f32> = (0..block).map(|_| noise() * 0.5).collect();
+            let rear: Vec<f32> = (0..block).map(|_| noise() * 0.2).collect();
+            assert!(front != rear, "two capsules, two signals");
+            mic.process_block(&front, &rear, &mut l, &mut r, &PluginEvents::EMPTY)
+                .expect("block");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let rms = |x: &[f32]| {
+            (x.iter().map(|v| v * v).sum::<f32>() / x.len().to_f32().unwrap_or(1.0)).sqrt()
+        };
+        assert!(rms(&l) > 1e-3, "the mic plays: {}", rms(&l));
+        let apart = l
+            .iter()
+            .zip(&r)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(apart < 1e-6, "one mic on both sides: {apart}");
     }
 
     /// A parameter set through the engine's path is what the plugin

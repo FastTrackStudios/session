@@ -19,6 +19,10 @@
 //!   band-pass and saturation, bypassed.
 //! - The instrument folders and the folders directly in them get the
 //!   bus chain, bypassed, as the golden mix's do.
+//! - A vocal recorded on two channels is a dual-capsule mic's front and
+//!   rear capsules (a Sphere-style mic, left front, right rear): FTS Mic
+//!   goes first on it, on, making the pair the modelled mic again — one
+//!   signal, mono — before its Tone chain.
 //!
 //! A track that already has FX keeps them and gets nothing added.
 
@@ -26,11 +30,14 @@
 
 use daw::service::{
     Effects, FxChainContext, FxRef, FxTarget, Items as _, ProjectContext, SetParameterRequest,
-    Tracks,
+    Takes as _, Tracks,
 };
 
 /// The Tone chain, in order.
 const TONE: &[&str] = &["FTS EQ", "FTS Comp", "FTS Saturate"];
+
+/// What a dual-capsule recording is made one mic by.
+const MIC: &str = "FTS Mic";
 
 /// A bus's chain.
 const BUS: &[&str] = &["FTS EQ", "FTS Comp"];
@@ -563,6 +570,8 @@ pub struct Chains {
     pub one_notes: Vec<(String, String, Option<f64>)>,
     /// Settings a plugin did not know (`fx param=text`), said, not fatal.
     pub unknown: Vec<String>,
+    /// Vocals recorded as a capsule pair, FTS Mic first on each.
+    pub mics: Vec<String>,
 }
 
 /// Put the mix's chains on `project` (see the module docs).
@@ -723,6 +732,11 @@ pub fn add(
         } else {
             continue;
         };
+        if names == TONE && lower.iter().any(|p| p == "vocals") && capsule_pair(daw, project, track)
+        {
+            set_up(daw, project, &chain, MIC, &[], &mut done.unknown)?;
+            done.mics.push(name.to_owned());
+        }
         bypassed(daw, project, &chain, names)?;
         if bus || group {
             done.buses += 1;
@@ -739,6 +753,61 @@ pub fn add(
             .map(|l| l.trim().to_owned()),
     );
     Ok(done)
+}
+
+/// Whether `track` was recorded on a dual-capsule mic: every recording
+/// it plays from has two channels (front and rear).
+fn capsule_pair(
+    daw: &daw_standalone::sync::Standalone,
+    project: &ProjectContext,
+    track: &daw_proto::Track,
+) -> bool {
+    let paths: std::collections::BTreeSet<String> = daw
+        .get_items(
+            project.clone(),
+            daw::service::TrackRef::Guid(track.guid.clone()),
+        )
+        .iter()
+        .filter_map(|i| {
+            daw.get_active_take(project.clone(), daw::service::ItemRef::Guid(i.guid.clone()))
+        })
+        .filter_map(|t| t.source_file_path)
+        .collect();
+    !paths.is_empty() && paths.iter().all(|p| wav_channels(p) == Some(2))
+}
+
+/// A WAV file's channel count, read off its `fmt ` chunk.
+fn wav_channels(path: &str) -> Option<u16> {
+    use std::io::Read as _;
+    let mut head = vec![0_u8; 4_096];
+    let n = std::fs::File::open(path).ok()?.read(&mut head).ok()?;
+    channels_in(head.get(..n)?)
+}
+
+/// The channel count in the head of a RIFF / RF64 WAVE file.
+fn channels_in(head: &[u8]) -> Option<u16> {
+    let riff = head.get(..4)?;
+    if (riff != b"RIFF" && riff != b"RF64") || head.get(8..12)? != b"WAVE" {
+        return None;
+    }
+    let mut at = 12_usize;
+    let field = |at: usize, from: usize, len: usize| {
+        let from = at.checked_add(from)?;
+        head.get(from..from.checked_add(len)?)
+    };
+    while let Some(id) = head.get(at..at.checked_add(4)?) {
+        let size = u32::from_le_bytes(field(at, 4, 4)?.try_into().ok()?);
+        if id == b"fmt " {
+            return Some(u16::from_le_bytes(field(at, 10, 2)?.try_into().ok()?));
+        }
+        // Chunks are padded to an even size.
+        let size = usize::try_from(size).ok()?;
+        at = at
+            .checked_add(8)?
+            .checked_add(size)?
+            .checked_add(size % 2)?;
+    }
+    None
 }
 
 /// `names` on `chain`, each added bypassed: ready, costing nothing.
@@ -1067,6 +1136,21 @@ fn one_note(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A WAV's channels are read off its `fmt ` chunk, past any chunk
+    /// before it; anything else is no WAV.
+    #[test]
+    fn a_wav_says_its_channels() {
+        let mut head = b"RIFF\0\0\0\0WAVE".to_vec();
+        // A chunk before the format, odd-sized, padded.
+        head.extend_from_slice(b"bext\x03\0\0\0abc\0");
+        head.extend_from_slice(b"fmt \x10\0\0\0\x01\0\x02\0");
+        head.extend_from_slice(&[0; 12]);
+        assert_eq!(super::channels_in(&head), Some(2));
+        head[22 + 12] = 1;
+        assert_eq!(super::channels_in(&head), Some(1));
+        assert_eq!(super::channels_in(b"OggS not a wave"), None);
+    }
 
     /// Every return's settings are ones its plugin knows — the reverbs'
     /// times, the delays' note values, the numbered post-EQ bands.

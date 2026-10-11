@@ -327,6 +327,7 @@ saturate-plugin = { git = "https://github.com/FastTrackStudios/processor", tag =
 pitch-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
 tune-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
 unison-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+mic-plugin = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
 builtin-fx = { path = "features/builtin-fx" }
 # signal's rigs in the session engine: the bass rig, the kit's voices.
 signal-fx = { path = "features/signal-fx" }
@@ -1387,6 +1388,7 @@ saturate-plugin = { path = "../processor/apps/plugins/saturate" }
 pitch-plugin = { path = "../processor/apps/plugins/pitch" }
 tune-plugin = { path = "../processor/apps/plugins/tune" }
 unison-plugin = { path = "../processor/apps/plugins/unison" }
+mic-plugin = { path = "../processor/apps/plugins/mic" }
 
 
 

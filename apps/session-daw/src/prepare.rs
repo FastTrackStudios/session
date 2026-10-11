@@ -757,6 +757,7 @@ pub fn steps(
                 gates = ?chains.gates,
                 one_notes = ?chains.one_notes,
                 returns = chains.returns,
+                mics = ?chains.mics,
                 unknown = ?chains.unknown,
                 "prepare: mix chains"
             );

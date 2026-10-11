@@ -84,13 +84,49 @@ const SONG: &str = r#"<REAPER_PROJECT 0.1 "7.75/linux-x86_64" 1790015830 0
   <TRACK {A0000000-0000-0000-0000-000000000010}
     NAME "Lead Vocal"
     ISBUS 2 -1
+    <ITEM
+      POSITION 0
+      LENGTH 0.1
+      <SOURCE WAVE
+        FILE "PAIR_WAV"
+      >
+    >
   >
   <TRACK {A0000000-0000-0000-0000-000000000013}
     NAME Scream
     ISBUS 2 -1
+    <ITEM
+      POSITION 0
+      LENGTH 0.1
+      <SOURCE WAVE
+        FILE "MONO_WAV"
+      >
+    >
   >
 >
 "#;
+
+/// A tenth of a second of silence on `channels` channels, as a WAV at
+/// `path`.
+fn wav(path: &std::path::Path, channels: u16) {
+    let frames: u32 = 4_800;
+    let data = frames * u32::from(channels) * 2;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&channels.to_le_bytes());
+    bytes.extend_from_slice(&48_000_u32.to_le_bytes());
+    bytes.extend_from_slice(&(48_000 * u32::from(channels) * 2).to_le_bytes());
+    bytes.extend_from_slice(&(channels * 2).to_le_bytes());
+    bytes.extend_from_slice(&16_u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data.to_le_bytes());
+    bytes.resize(bytes.len() + usize::try_from(data).unwrap_or(0), 0);
+    std::fs::write(path, bytes).expect("a wav");
+}
 
 /// The names of `parent`'s children, in order.
 fn children(tracks: &[daw_proto::Track], parent: &daw_proto::Track) -> Vec<String> {
@@ -131,8 +167,18 @@ fn fed_by(
 fn prepare_builds_the_golden_template() {
     let daw = daw::standalone::Standalone::new();
     daw.set_fx_factory(Arc::new(builtin_fx::BuiltinFx));
+    // The lead sung into a dual-capsule mic (front and rear, two
+    // channels), the scream into an ordinary one.
+    let dir = std::env::temp_dir().join(format!("golden-mix-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a folder");
+    let (pair, mono) = (dir.join("pair.wav"), dir.join("mono.wav"));
+    wav(&pair, 2);
+    wav(&mono, 1);
+    let song = SONG
+        .replace("PAIR_WAV", &pair.to_string_lossy())
+        .replace("MONO_WAV", &mono.to_string_lossy());
     let loaded =
-        daw::standalone::project_loader::load_rpp_text(&daw, "song", "/tmp/song.RPP", SONG)
+        daw::standalone::project_loader::load_rpp_text(&daw, "song", "/tmp/song.RPP", &song)
             .expect("the song");
     let project = ProjectContext::Project(loaded.project_guid);
     let mut target = dynamic_template::apply::DawTarget::on(daw.clone(), project.clone());
@@ -318,6 +364,19 @@ fn prepare_builds_the_golden_template() {
         fed_by(&daw, &project, &sub.guid, &kick_sum.guid),
         "the Sub, fed by the kick's Sum"
     );
+    // A vocal on a capsule pair: FTS Mic first, on, making it one mic,
+    // then its Tone chain; a vocal on one capsule, its Tone chain alone.
+    let lead = find(&tracks, "Main", "Lead Vocal");
+    let names: Vec<String> = fx(lead).into_iter().map(|f| f.plugin_name).collect();
+    assert_eq!(names, ["FTS Mic", "FTS EQ", "FTS Comp", "FTS Saturate"]);
+    assert_eq!(first(lead), Some(("FTS Mic".to_owned(), true)));
+    assert_eq!(
+        first(find(&tracks, "Vocals", "Scream"))
+            .map(|f| f.0)
+            .as_deref(),
+        Some("FTS EQ")
+    );
+    assert_eq!(chains.mics, ["Lead Vocal"]);
     assert!(fx(t1_trig).is_empty(), "a trigger is a key, not a channel");
     assert!(fx(vox_fx).is_empty(), "a returns folder is no bus");
     assert!(chains.unknown.is_empty(), "{:?}", chains.unknown);

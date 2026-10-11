@@ -55,6 +55,15 @@ static ENABLE: ActionMeta = meta(
     "",
 );
 
+static ADD: ActionMeta = meta(
+    "FX_ADD",
+    "fx_add",
+    "Add an FX",
+    "Put one of the FTS processors (`fx`: `FTS Mic`, `FTS EQ`, `FTS Comp`, …) on `track`, at place `at` in its chain (1 is first; the end when not given) — on, or bypassed with `on: false` — and `set` its parameters as FX_SET does, in the plugin's own words. Says its place and what each setting now reads. One undo step.",
+    "FX",
+    "",
+);
+
 static AUTOMATION: ActionMeta = meta(
     "FX_AUTOMATION",
     "fx_automation",
@@ -101,6 +110,17 @@ struct ParamsArg {
 struct SetArg {
     track: String,
     fx: String,
+    set: std::collections::HashMap<String, String>,
+}
+
+/// An FX to put on a track.
+#[derive(Facet)]
+struct AddArg {
+    track: String,
+    fx: String,
+    at: Option<u32>,
+    on: Option<bool>,
+    #[facet(default)]
     set: std::collections::HashMap<String, String>,
 }
 
@@ -621,6 +641,43 @@ fn unautomate(a: &UnautomateArg) -> Result<String, String> {
     ))
 }
 
+/// `set` (parameter → the plugin's words) on the FX `target` (named
+/// `name`), in name order: what each now reads, or why not.
+fn settle(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    (target, name): (&FxTarget, &str),
+    set: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    let params = Effects::parameters(daw, project.clone(), target.clone());
+    let mut settings: Vec<(&String, &String)> = set.iter().collect();
+    settings.sort();
+    settings
+        .into_iter()
+        .map(|(which, text)| {
+            param_of(&params, which)
+                .and_then(|param| {
+                    let value = value_of(name, param, text)?;
+                    Effects::set_parameter(
+                        daw,
+                        project.clone(),
+                        daw_proto::fx::SetParameterRequest {
+                            target: target.clone(),
+                            index: param.index,
+                            value,
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let now = Effects::parameter(daw, project.clone(), target.clone(), param.index)
+                        .map_or_else(String::new, |p| p.formatted);
+                    // As asked: `Post Freq 6`, not the name all six share.
+                    Ok(format!("{} = {now}", which.trim()))
+                })
+                .unwrap_or_else(|e| format!("{which}: {e}"))
+        })
+        .collect()
+}
+
 pub(crate) fn register(list: &ActionList) {
     list.register(&LIST, Effect::ReadOnly, |a: TrackArg| {
         let (daw, project) = song()?;
@@ -671,32 +728,65 @@ pub(crate) fn register(list: &ActionList) {
     list.register(&SET, Effect::Mutating, |a: SetArg| {
         let (daw, project) = song()?;
         let (target, fx) = target(daw, &project, &a.track, &a.fx)?;
-        let params = Effects::parameters(daw, project.clone(), target.clone());
-        let mut said = Vec::new();
-        let mut settings: Vec<(&String, &String)> = a.set.iter().collect();
-        settings.sort();
-        for (which, text) in settings {
-            let outcome = param_of(&params, which).and_then(|param| {
-                let value = value_of(&fx.name, param, text)?;
-                Effects::set_parameter(
-                    daw,
-                    project.clone(),
-                    daw_proto::fx::SetParameterRequest {
-                        target: target.clone(),
-                        index: param.index,
-                        value,
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-                let now = Effects::parameter(daw, project.clone(), target.clone(), param.index)
-                    .map_or_else(String::new, |p| p.formatted);
-                // As asked: `Post Freq 6`, not the name all six share.
-                Ok(format!("{} = {now}", which.trim()))
-            });
-            said.push(outcome.unwrap_or_else(|e| format!("{which}: {e}")));
-        }
+        let said = settle(daw, &project, (&target, &fx.name), &a.set);
         crate::actions::list().changed("fx", &fx.guid);
         Ok(said)
+    });
+    list.register(&ADD, Effect::Mutating, |a: AddArg| {
+        let (daw, project) = song()?;
+        if !daw_standalone::plugin::FxFactory::provides(&builtin_fx::BuiltinFx, &a.fx) {
+            return Err(format!(
+                "{} is not one of the FTS processors (FTS Mic, FTS EQ, FTS Comp, …)",
+                a.fx
+            ));
+        }
+        let guid = resolve(daw, &project, &a.track)?;
+        let context = FxChainContext::Track(guid);
+        let index = a.at.unwrap_or(u32::MAX).saturating_sub(1);
+        let label = format!("Add {}", a.fx);
+        daw::service::Projects::begin_undo_block(daw, project.clone(), &label);
+        let added = Effects::add_at(
+            daw,
+            project.clone(),
+            daw_proto::fx::AddFxAtRequest {
+                context: context.clone(),
+                name: a.fx.clone(),
+                index,
+            },
+        );
+        let out = added
+            .ok_or_else(|| format!("{} could not be added", a.fx))
+            .and_then(|fx_guid| {
+                let target = FxTarget {
+                    context: context.clone(),
+                    fx: FxRef::Guid(fx_guid.clone()),
+                };
+                if !a.on.unwrap_or(true) {
+                    Effects::set_enabled(daw, project.clone(), target.clone(), false)
+                        .map_err(|e| e.to_string())?;
+                }
+                let mut said = settle(daw, &project, (&target, &a.fx), &a.set);
+                let place = Effects::list(daw, project.clone(), context.clone())
+                    .iter()
+                    .position(|f| f.guid == fx_guid)
+                    .map_or(0, |i| i.saturating_add(1));
+                said.insert(
+                    0,
+                    format!(
+                        "{} at #{place}{}",
+                        a.fx,
+                        if a.on.unwrap_or(true) {
+                            ""
+                        } else {
+                            ", bypassed"
+                        }
+                    ),
+                );
+                crate::actions::list().changed("fx", &fx_guid);
+                Ok(said)
+            });
+        daw::service::Projects::end_undo_block(daw, project, &label, None);
+        out
     });
     list.register(&AUTOMATION, Effect::ReadOnly, |a: AutomationArg| {
         automation(&a)

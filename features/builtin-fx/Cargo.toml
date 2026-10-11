@@ -29,6 +29,7 @@ saturate-plugin = { workspace = true }
 pitch-plugin = { workspace = true }
 tune-plugin = { workspace = true }
 unison-plugin = { workspace = true }
+mic-plugin = { workspace = true }
 
 [dev-dependencies]
 # A song to put them in, as the app opens one.
