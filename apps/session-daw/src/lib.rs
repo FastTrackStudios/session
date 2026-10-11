@@ -88,6 +88,8 @@ pub mod task_set;
 #[cfg(feature = "native")]
 pub mod versions;
 #[cfg(feature = "native")]
+pub mod vocal_level;
+#[cfg(feature = "native")]
 pub mod wave_pool;
 /// On the web there is no in-process tokio runtime: the engine clients
 /// (`engine::Transport`, `Applier`, `Meters`, …) find none and run

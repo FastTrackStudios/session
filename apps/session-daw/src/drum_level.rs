@@ -261,7 +261,7 @@ pub fn level(
 /// Write `curve` (dB, seconds from the item's start) as the item's take
 /// volume envelope, in place of what was there — derived, so never merged
 /// with an earlier pass. False with no take.
-fn write_curve(
+pub(crate) fn write_curve(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     item: &daw_proto::Item,
