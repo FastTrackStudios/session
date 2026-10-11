@@ -266,6 +266,15 @@ struct FlagSpot {
     time: f64,
 }
 
+/// The Quantize panel asked for on the Action List: the frame that
+/// shows it is owed.
+fn quantize_asked() -> bool {
+    #[cfg(feature = "native")]
+    return crate::quantize_panel::asked();
+    #[cfg(not(feature = "native"))]
+    false
+}
+
 /// Run a hit edit made by hand on the Action List, off the window's
 /// thread — the same action a model runs — and draw the markers again.
 fn run_hit_action(id: &'static str, args: String) {
@@ -2489,6 +2498,7 @@ impl Widget for ArrangementWidget {
         self.dirty.get()
             || window_queued()
             || crate::hit_overlay::version() != self.detection_seen.get()
+            || quantize_asked()
             // Edits made and not yet sent: the panel sends them at the
             // top of a frame, and this one is owed.
             || !self.edits.borrow().is_empty()

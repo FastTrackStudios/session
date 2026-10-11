@@ -334,6 +334,7 @@ pub fn DawPanels(
     // on the next panicked — "unable to retrieve the hook".
     let pins = try_use_context::<crate::shell::Pins>();
     let inspecting = !mixer_only && !docked && pins.is_some_and(|pins| (pins.inspector)());
+    let quantizing = !mixer_only && pins.is_some_and(|pins| (pins.quantize)());
     let strips = use_context_provider(|| InspectorStrips(Signal::new(1)));
     // A phone on its side with the camera housing on the right: the strip
     // moves left of it, its column still reaching the edge.
@@ -353,6 +354,9 @@ pub fn DawPanels(
             div {
                                 style: "position:absolute; top:0; left:0; right:{column_w}px; bottom:{arrange_bottom};",
                 crate::studio::Arrangement {}
+                if quantizing {
+                    crate::quantize_panel::QuantizePanel {}
+                }
             }
         }
         if inspecting {

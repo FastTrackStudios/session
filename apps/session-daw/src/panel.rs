@@ -193,6 +193,9 @@ pub struct ArrangementPanel {
     input: Rc<RefCell<Input>>,
     engine: Engine,
     mixer: Option<crate::mixer_panel::Links>,
+    /// The shell's pins, when there is a shell: what a quantize panel
+    /// asked for from the Action List turns.
+    pins: Option<crate::shell::Pins>,
     /// The panel's shape, toggled by the toolbar and read by the widget.
     pub compact: Rc<Cell<bool>>,
     /// Whether the window is in Record mode (from its mode, each render).
@@ -299,6 +302,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     let session: StudioSession = use_context();
     // The docked mixer's, when the view has one beside this panel.
     let mixer: Option<crate::mixer_panel::Links> = try_use_context();
+    let pins: Option<crate::shell::Pins> = try_use_context();
     // The rows' height at zoom 1: showing or hiding tracks (the visibility
     // manager) changes it, and the widget reports the new one here.
     let content_h = use_hook(|| {
@@ -449,6 +453,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         input,
         engine,
         mixer,
+        pins,
         compact,
         recording,
         shape,
@@ -885,6 +890,15 @@ impl ArrangementPanel {
         let mut which_shown = self.which_shown;
         if *which_shown.peek() != wanted {
             which_shown.set(wanted);
+        }
+        // The Quantize panel, asked for on the Action List.
+        #[cfg(feature = "native")]
+        if crate::quantize_panel::take_asked()
+            && let Some(pins) = self.pins
+        {
+            let mut shown = pins.quantize;
+            let was = *shown.peek();
+            shown.set(!was);
         }
         if let Some(links) = &self.mixer {
             // `x`, from either widget.

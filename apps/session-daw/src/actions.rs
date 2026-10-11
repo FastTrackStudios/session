@@ -383,6 +383,14 @@ static TOGGLE_MIXER: ActionMeta = meta(
     "View",
     "",
 );
+static QUANTIZE_PANEL: ActionMeta = meta(
+    "SESSION_QUANTIZE_PANEL",
+    "quantize_panel",
+    "Quantize panel",
+    "Show or hide the Quantize panel over the arrangement: a section, its groove, the quantize's settings, Preview and Apply — QUANTIZE and DRUMS_GROOVE by hand.",
+    "View",
+    "",
+);
 static TOGGLE_EDITOR: ActionMeta = meta(
     "SESSION_TOGGLE_EDITOR",
     "toggle_editor",
@@ -509,6 +517,10 @@ enum Zoom {
 const SCENES: &[&str] = &["overview", "overview-top"];
 
 fn register_window(list: &ActionList) {
+    list.register(&QUANTIZE_PANEL, Effect::Mutating, |(): ()| {
+        crate::quantize_panel::ask();
+        Ok("the Quantize panel shown, or hidden if it was".to_owned())
+    });
     let plain: [(&'static ActionMeta, Effect, Action); 16] = [
         (&PLAY_STOP, Effect::Mutating, Action::PlayStop),
         (&PLAY_PAUSE, Effect::Mutating, Action::PlayPause),

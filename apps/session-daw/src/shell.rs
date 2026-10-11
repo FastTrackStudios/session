@@ -183,6 +183,9 @@ pub struct Pins {
     pub inspector: Signal<bool>,
     /// The navigator down the window's left ([`NavigatorColumn`]).
     pub navigator: Signal<bool>,
+    /// The Quantize panel over the arrangement's right
+    /// (`crate::quantize_panel`).
+    pub quantize: Signal<bool>,
 }
 
 /// A pane that is either a view of its own or pinned under others — the
@@ -354,6 +357,7 @@ impl Pins {
             lock: Signal::new(!cfg!(test) && crate::touch::detected()),
             inspector: Signal::new(true),
             navigator: Signal::new(false),
+            quantize: Signal::new(false),
         }
     }
 }
@@ -821,6 +825,16 @@ fn Context(view: View, transport: Option<Element>) -> Element {
                     },
                     lucide_dioxus::PanelRight { size: 19, color: ink((pins.inspector)()) }
                     span { style: LABEL, "Inspect" }
+                }
+                button {
+                    title: "Quantize the drums: a section on its grid, by its groove, previewed first",
+                    style: bottom_button((pins.quantize)(), true),
+                    onclick: move |_| {
+                        let mut on = pins.quantize;
+                        on.toggle();
+                    },
+                    lucide_dioxus::Drum { size: 19, color: ink((pins.quantize)()) }
+                    span { style: LABEL, "Quantize" }
                 }
                 LockButton { lock: pins.lock }
             }
