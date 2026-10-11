@@ -1376,6 +1376,399 @@ pub fn explain(
     })
 }
 
+// ── where the hits are heard now ──────────────────────────────────────
+
+/// One hit where the song plays it now: on its piece's first mic, on the
+/// lane an edit works on (`EDIT`, else the playing lane).
+#[derive(Clone, Debug)]
+pub struct Played {
+    pub id: String,
+    pub piece: String,
+    /// Project seconds, as it plays now.
+    pub time: f64,
+    pub peak_db: f64,
+    pub mark: HitMark,
+}
+
+/// Every hit of the kit where it plays now — a hit cut into two slices
+/// that both play it is here twice, one cut away is not here at all.
+#[must_use]
+pub fn playback(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec<Played> {
+    let (pieces, _) = kit(daw, project);
+    let mut out = Vec::new();
+    for piece in &pieces {
+        let Some(mic) = piece.mics.first() else {
+            continue;
+        };
+        let Some(track) = Tracks::get(daw, project.clone(), TrackRef::Guid(mic.clone())) else {
+            continue;
+        };
+        let mut by_source: HashMap<String, Vec<TakeMarker>> = HashMap::new();
+        for item in daw.get_items(project.clone(), TrackRef::Guid(mic.clone())) {
+            if item.muted || !crate::drum_edit::is_edited(&track, &item) {
+                continue;
+            }
+            let Some(take) = daw.get_active_take(project.clone(), ItemRef::Guid(item.guid.clone()))
+            else {
+                continue;
+            };
+            let Some(path) = take.source_file_path.clone() else {
+                continue;
+            };
+            let rate = if take.play_rate > 0.0 {
+                take.play_rate
+            } else {
+                1.0
+            };
+            let from = take.start_offset.as_seconds();
+            let to = item.length.as_seconds().mul_add(rate, from);
+            let markers = by_source.entry(path).or_insert_with(|| {
+                daw.get_take_markers(
+                    project.clone(),
+                    ItemRef::Guid(item.guid.clone()),
+                    TakeRef::Active,
+                )
+            });
+            for m in markers.iter() {
+                let Some(h) = &m.hit else { continue };
+                if h.piece != piece.name
+                    || m.source_position_seconds < from
+                    || m.source_position_seconds >= to
+                {
+                    continue;
+                }
+                out.push(Played {
+                    id: m.id.clone(),
+                    piece: h.piece.clone(),
+                    time: item.position.as_seconds() + (m.source_position_seconds - from) / rate,
+                    peak_db: h.peak_db,
+                    mark: h.clone(),
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.time.total_cmp(&b.time));
+    out
+}
+
+/// The kit as the slip edit reads it, from the hit markers.
+///
+/// Each piece's hits where they play now, each against its piece's
+/// loudest. `None` when the song has no hit markers (the slip then
+/// detects, as before).
+///
+/// A detected hit flagged as bleed and not approved is left out: it is
+/// not a stroke to cut on until someone says it is.
+#[must_use]
+pub fn kit_from_markers(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+) -> Option<Vec<crate::actions::KitPiece>> {
+    let played = playback(daw, project);
+    if played.is_empty() {
+        return None;
+    }
+    let mut by_piece: BTreeMap<String, Vec<&Played>> = BTreeMap::new();
+    for p in played
+        .iter()
+        .filter(|p| !(p.mark.bleed && p.mark.origin == MarkOrigin::Auto))
+    {
+        by_piece.entry(p.piece.clone()).or_default().push(p);
+    }
+    Some(
+        by_piece
+            .into_iter()
+            .map(|(name, hits)| {
+                let loudest = hits
+                    .iter()
+                    .map(|h| h.peak_db)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let hits = hits
+                    .into_iter()
+                    .map(|h| crate::drum_edit::KitHit {
+                        time: h.time,
+                        relative_db: h.peak_db - loudest,
+                    })
+                    .collect();
+                (name.clone(), crate::drum_edit::Piece::of(&name), hits)
+            })
+            .collect(),
+    )
+}
+
+/// How an edit left the hits, told from the markers: what a listener
+/// would catch, counted.
+#[derive(Facet, Clone, Debug, Default)]
+pub struct Check {
+    /// Hits in the span after the edit.
+    pub hits: u32,
+    /// Hits that played before and play nowhere now: cut away.
+    pub lost: u32,
+    /// Hits that play twice now: a double attack at a seam.
+    pub doubled: u32,
+    /// How far the moved hits now are from their targets, ms.
+    pub off_median_ms: Option<f64>,
+    pub off_worst_ms: Option<f64>,
+    /// Moved hits more than 2 ms from their target.
+    pub off_target: u32,
+    /// None lost, none doubled, none off target.
+    pub ok: bool,
+    /// The first few problems: what and where (project seconds).
+    pub problems: Vec<String>,
+}
+
+/// Judge an edit of `span` by its hits: `before` is [`playback`] taken
+/// before it, `targets` where its moved hits were sent.
+#[must_use]
+pub fn check(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    before: &[Played],
+    targets: &[f64],
+    span: (f64, f64),
+) -> Check {
+    let after = playback(daw, project);
+    let inside = |t: f64| t >= span.0 && t <= span.1;
+    let mut count: HashMap<&str, Vec<f64>> = HashMap::new();
+    for p in &after {
+        count.entry(p.id.as_str()).or_default().push(p.time);
+    }
+    let mut out = Check {
+        hits: u32::try_from(after.iter().filter(|p| inside(p.time)).count()).unwrap_or(u32::MAX),
+        ..Check::default()
+    };
+    for (id, times) in &count {
+        if times.len() > 1 && times.iter().any(|t| inside(*t)) {
+            out.doubled = out.doubled.saturating_add(1);
+            if out.problems.len() < 20 {
+                out.problems.push(format!("{id} plays twice: {times:.3?}"));
+            }
+        }
+    }
+    for b in before.iter().filter(|b| inside(b.time)) {
+        if !count.contains_key(b.id.as_str()) {
+            out.lost = out.lost.saturating_add(1);
+            if out.problems.len() < 20 {
+                out.problems.push(format!(
+                    "{} ({}) at {:.3} plays nowhere now",
+                    b.id, b.piece, b.time
+                ));
+            }
+        }
+    }
+    let mut offs: Vec<f64> = targets
+        .iter()
+        .filter_map(|t| {
+            after
+                .iter()
+                .map(|p| (p.time - t).abs())
+                .filter(|d| *d < 0.010)
+                .min_by(f64::total_cmp)
+        })
+        .map(|d| d * 1_000.0)
+        .collect();
+    offs.sort_by(f64::total_cmp);
+    out.off_target = u32::try_from(offs.iter().filter(|d| **d > 2.0).count()).unwrap_or(u32::MAX);
+    out.off_median_ms = offs.get(offs.len() / 2).copied();
+    out.off_worst_ms = offs.last().copied();
+    out.ok = out.lost == 0 && out.doubled == 0 && out.off_target == 0;
+    out
+}
+
+// ── zones ─────────────────────────────────────────────────────────────
+
+/// The ruler lane zones are kept on: the Drums lane, where the song's
+/// drum notes go.
+pub const ZONE_LANE: u32 = session::ruler_lanes::InstrumentLane::Drums.lane_index();
+/// What that lane is called.
+pub const ZONE_LANE_NAME: &str = session::ruler_lanes::InstrumentLane::Drums.display_name();
+
+/// What a zone does.
+#[derive(Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ZoneKind {
+    /// The drummer leaves the groove: left as played unless asked.
+    Fill,
+    /// Not to be quantized, for any reason.
+    Exception,
+}
+
+/// Who put a zone there, or what was decided about it.
+#[derive(Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ZoneOrigin {
+    /// Found, not yet looked at.
+    Auto,
+    Manual,
+    Approved,
+    /// Found and turned down: kept, so finding again does not bring it
+    /// back, and holding nothing.
+    Rejected,
+}
+
+/// A zone, as the list gives it.
+#[derive(Facet, Clone, Debug)]
+pub struct Zone {
+    pub guid: String,
+    pub start: f64,
+    pub end: f64,
+    pub kind: ZoneKind,
+    pub origin: ZoneOrigin,
+    /// Why it was found, or anything said about it.
+    pub note: String,
+}
+
+/// A zone's name on the ruler: `Fill`, `Fill (auto)`, `No quantize
+/// (rejected)` — what it is, then who, then anything said about it.
+fn zone_name(kind: ZoneKind, origin: ZoneOrigin, note: &str) -> String {
+    let what = match kind {
+        ZoneKind::Fill => "Fill",
+        ZoneKind::Exception => "No quantize",
+    };
+    let who = match origin {
+        ZoneOrigin::Auto => " (auto)",
+        ZoneOrigin::Rejected => " (rejected)",
+        ZoneOrigin::Manual | ZoneOrigin::Approved => "",
+    };
+    if note.is_empty() {
+        format!("{what}{who}")
+    } else {
+        format!("{what}{who}: {note}")
+    }
+}
+
+/// A region's name read back as a zone's kind, origin and note.
+fn parse_zone(name: &str) -> Option<(ZoneKind, ZoneOrigin, String)> {
+    let (head, note) = name.split_once(": ").unwrap_or((name, ""));
+    let (kind, rest) = if let Some(r) = head.strip_prefix("Fill") {
+        (ZoneKind::Fill, r)
+    } else if let Some(r) = head.strip_prefix("No quantize") {
+        (ZoneKind::Exception, r)
+    } else {
+        return None;
+    };
+    let origin = match rest.trim() {
+        "(auto)" => ZoneOrigin::Auto,
+        "(rejected)" => ZoneOrigin::Rejected,
+        _ => ZoneOrigin::Manual,
+    };
+    Some((kind, origin, note.to_owned()))
+}
+
+/// The song's zones, in time order.
+#[must_use]
+pub fn zones(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec<Zone> {
+    let mut out: Vec<Zone> = daw::service::Regions::all(daw, project.clone())
+        .into_iter()
+        .filter(|r| r.lane == Some(ZONE_LANE))
+        .filter_map(|r| {
+            let (kind, origin, note) = parse_zone(&r.name)?;
+            Some(Zone {
+                guid: r.guid.clone().unwrap_or_default(),
+                start: r.time_range.start_seconds(),
+                end: r.time_range.end_seconds(),
+                kind,
+                origin,
+                note,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.start.total_cmp(&b.start));
+    out
+}
+
+/// Whether a zone that holds hits (anything but a rejected one) holds
+/// `time`.
+#[must_use]
+pub fn zone_holds(zones: &[Zone], time: f64) -> bool {
+    zones
+        .iter()
+        .any(|z| z.origin != ZoneOrigin::Rejected && time >= z.start && time < z.end)
+}
+
+/// Put a zone on the ruler. Its region's id.
+fn add_zone(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    (start, end): (f64, f64),
+    (kind, origin, note): (ZoneKind, ZoneOrigin, &str),
+) -> Result<u32, String> {
+    let id = daw::service::Regions::add(
+        daw,
+        project.clone(),
+        start,
+        end,
+        &zone_name(kind, origin, note),
+    )
+    .map_err(|e| e.to_string())?;
+    daw::service::Regions::set_lane(daw, project.clone(), id, Some(ZONE_LANE))
+        .map_err(|e| e.to_string())?;
+    let color = match (kind, origin) {
+        (_, ZoneOrigin::Rejected) => 0x0055_5555,
+        (ZoneKind::Fill, ZoneOrigin::Auto) => 0x00B0_8030,
+        (ZoneKind::Fill, _) => 0x00E0_A030,
+        (ZoneKind::Exception, _) => 0x00C0_4040,
+    };
+    daw::service::Regions::set_color(daw, project.clone(), id, color).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// The region id of the zone `guid`.
+fn zone_region(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    guid: &str,
+) -> Option<u32> {
+    daw::service::Regions::all(daw, project.clone())
+        .into_iter()
+        .find(|r| r.guid.as_deref() == Some(guid))
+        .and_then(|r| r.id)
+}
+
+/// Propose the fills the hits show as `auto` zones, in `span`: the auto
+/// ones there replaced, none laid over a zone already decided (manual,
+/// approved, rejected). How many were proposed.
+///
+/// # Errors
+/// A region would not be written.
+pub fn find_zones(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    fills: &[crate::drum_edit::Fill],
+    span: (f64, f64),
+) -> Result<u32, String> {
+    let now = zones(daw, project);
+    Projects::begin_undo_block(daw, project.clone(), "Find the fills");
+    daw::service::Projects::set_ruler_lane_name(daw, project.clone(), ZONE_LANE, ZONE_LANE_NAME);
+    for z in now
+        .iter()
+        .filter(|z| z.origin == ZoneOrigin::Auto && z.start < span.1 && z.end > span.0)
+    {
+        if let Some(id) = zone_region(daw, project, &z.guid) {
+            daw::service::Regions::remove(daw, project.clone(), id).map_err(|e| e.to_string())?;
+        }
+    }
+    let decided: Vec<&Zone> = now
+        .iter()
+        .filter(|z| z.origin != ZoneOrigin::Auto)
+        .collect();
+    let mut n = 0_u32;
+    for f in fills.iter().filter(|f| f.from < span.1 && f.to > span.0) {
+        if decided.iter().any(|z| z.start < f.to && z.end > f.from) {
+            continue;
+        }
+        add_zone(
+            daw,
+            project,
+            (f.from, f.to),
+            (ZoneKind::Fill, ZoneOrigin::Auto, &f.why.join(", ")),
+        )?;
+        n = n.saturating_add(1);
+    }
+    Projects::end_undo_block(daw, project.clone(), "Find the fills", None);
+    Ok(n)
+}
+
 // ── the actions ───────────────────────────────────────────────────────
 
 static DETECT: ActionMeta = meta(
@@ -1442,6 +1835,50 @@ static MARK: ActionMeta = meta(
     "Drums",
     "",
 );
+
+static ZONES_LIST: ActionMeta = meta(
+    "ZONES_LIST",
+    "zones_list",
+    "Edit zones",
+    "The song's edit zones, on the ruler's Drums lane: fills (left as played by a quantize unless asked) and no-quantize exceptions — each one's guid, start and end (project seconds), kind, and who put it there (Auto: found, not yet looked at; Manual; Approved; Rejected: found and turned down, holding nothing).",
+    "Drums",
+    "",
+);
+static ZONES_ADD: ActionMeta = meta(
+    "ZONES_ADD",
+    "zones_add",
+    "Add an edit zone",
+    "Put a zone from `start` to `end` (project seconds): `kind` Fill or Exception (no quantize), with an optional `note`. Placed by hand, so finding fills again never replaces it.",
+    "Drums",
+    "",
+);
+static ZONES_EDIT: ActionMeta = meta(
+    "ZONES_EDIT",
+    "zones_edit",
+    "Edit an edit zone",
+    "Change the zone `guid`: `origin` (Approved to keep a found one, Rejected to turn it down — kept so finding again does not bring it back), `kind`, `start`/`end`, `note`; or `remove` it.",
+    "Drums",
+    "",
+);
+
+#[derive(Facet)]
+struct ZoneAddArg {
+    start: f64,
+    end: f64,
+    kind: ZoneKind,
+    note: Option<String>,
+}
+
+#[derive(Facet)]
+struct ZoneEditArg {
+    guid: String,
+    origin: Option<ZoneOrigin>,
+    kind: Option<ZoneKind>,
+    start: Option<f64>,
+    end: Option<f64>,
+    note: Option<String>,
+    remove: Option<bool>,
+}
 
 #[derive(Facet, Default)]
 struct DetectArg {
@@ -1515,6 +1952,7 @@ struct MarkArg {
 pub fn register(list: &ActionList) {
     register_reads(list);
     register_edits(list);
+    register_zones(list);
 }
 
 /// Detecting, and reading what was found.
@@ -1581,6 +2019,68 @@ fn register_reads(list: &ActionList) {
                 usize::try_from(a.points.unwrap_or(120)).unwrap_or(120),
             ),
         )
+    });
+}
+
+/// The song's edit zones.
+fn register_zones(list: &ActionList) {
+    list.register(&ZONES_LIST, Effect::ReadOnly, |(): ()| {
+        let (daw, project) = song()?;
+        Ok(zones(daw, &project))
+    });
+    list.register(&ZONES_ADD, Effect::Mutating, |a: ZoneAddArg| {
+        let (daw, project) = song()?;
+        if a.end <= a.start {
+            return Err("a zone ends after it starts".to_owned());
+        }
+        Projects::begin_undo_block(daw, project.clone(), "Add an edit zone");
+        daw::service::Projects::set_ruler_lane_name(
+            daw,
+            project.clone(),
+            ZONE_LANE,
+            ZONE_LANE_NAME,
+        );
+        let added = add_zone(
+            daw,
+            &project,
+            (a.start, a.end),
+            (
+                a.kind,
+                ZoneOrigin::Manual,
+                a.note.as_deref().unwrap_or_default(),
+            ),
+        );
+        Projects::end_undo_block(daw, project.clone(), "Add an edit zone", None);
+        added?;
+        Ok(zones(daw, &project)
+            .into_iter()
+            .find(|z| (z.start - a.start).abs() < 1e-6 && (z.end - a.end).abs() < 1e-6))
+    });
+    list.register(&ZONES_EDIT, Effect::Mutating, |a: ZoneEditArg| {
+        let (daw, project) = song()?;
+        let zone = zones(daw, &project)
+            .into_iter()
+            .find(|z| z.guid == a.guid)
+            .ok_or_else(|| format!("no zone {}", a.guid))?;
+        let id =
+            zone_region(daw, &project, &a.guid).ok_or_else(|| format!("no zone {}", a.guid))?;
+        let failed = |e: daw_proto::DawError| e.to_string();
+        if a.remove == Some(true) {
+            daw::service::Regions::remove(daw, project, id).map_err(failed)?;
+            return Ok(None);
+        }
+        let (start, end) = (a.start.unwrap_or(zone.start), a.end.unwrap_or(zone.end));
+        if (start, end) != (zone.start, zone.end) {
+            daw::service::Regions::set_bounds(daw, project.clone(), id, start, end)
+                .map_err(failed)?;
+        }
+        let name = zone_name(
+            a.kind.unwrap_or(zone.kind),
+            a.origin.unwrap_or(zone.origin),
+            a.note.as_deref().unwrap_or(&zone.note),
+        );
+        daw::service::Regions::rename(daw, project.clone(), id, &name).map_err(failed)?;
+        Ok(zones(daw, &project).into_iter().find(|z| z.guid == a.guid))
     });
 }
 

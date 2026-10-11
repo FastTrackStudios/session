@@ -842,6 +842,12 @@ pub(crate) fn sections(
     let mut all: Vec<SectionOut> =
         <daw::standalone::Standalone as daw::service::region::Regions>::all(daw, project.clone())
             .into_iter()
+            // The sections lane's (a region on no lane is on it): not the
+            // song's own region, nor an edit zone on the Drums lane.
+            .filter(|r| {
+                r.lane
+                    .is_none_or(|l| l == session::ruler_lanes::CoreLane::Sections.lane_index())
+            })
             .map(|r| {
                 let (start, end) = (r.time_range.start_seconds(), r.time_range.end_seconds());
                 SectionOut {
@@ -2645,6 +2651,12 @@ pub(crate) fn kit(
     project: &ProjectContext,
     settings: &crate::drum_settings::Settings,
 ) -> Vec<KitPiece> {
+    // The hit markers, when the song has them: found once (HITS_DETECT),
+    // corrected by hand, never detected again here
+    // (`r[quantize.reads-markers]`).
+    if let Some(kit) = crate::hits::kit_from_markers(daw, project) {
+        return kit;
+    }
     let rate = crate::fundamental::DETECT_RATE;
     let offset = settings.offset_ms / 1_000.0;
     crate::drum_reference::pieces(daw, project)
@@ -2927,7 +2939,200 @@ fn in_a_fill(
     fills.iter().any(|f| f.holds(h, beat))
 }
 
+static QUANTIZE: ActionMeta = meta(
+    "QUANTIZE",
+    "quantize",
+    "Quantize the drums",
+    "Quantize the kit from its hit markers (HITS_DETECT first): every drum track cut `lead_ms` before each hit and moved together so the HIT lands on its target — the item starts before the beat, the attack is on it — the seams crossfaded (`xfade_ms`). Over `sections` (by name, from the SECTIONS lane: `Verse 1`, `Chorus`) or `from`/`to` (seconds), each with these settings — so a verse and a chorus can each be quantized their own way. The edit zones (ZONES_LIST) are left as played; the drum-edit settings (grid, strength, target, tolerance, lead, crossfade…) can be given for this call alone. `dry_run` says what it would do. After an edit, a check from the markers: hits lost, hits doubled (a double attack), and how far the moved hits landed from where they were sent.",
+    "Drums",
+    "",
+);
+static ZONES_FIND: ActionMeta = meta(
+    "ZONES_FIND",
+    "zones_find",
+    "Find the fills",
+    "Find where the drummer leaves the groove, from the hit markers, and propose each fill as an `auto` zone on the ruler's Drums lane, in `from`/`to` (seconds; the whole song when left out): the auto zones there replaced, none laid over one already decided. Approve or reject them with ZONES_EDIT.",
+    "Drums",
+    "",
+);
+
+#[derive(Facet)]
+struct QuantizeArg {
+    /// Settings for this quantize alone.
+    #[facet(flatten, default)]
+    with: crate::drum_settings::Patch,
+    #[facet(default)]
+    sections: Vec<String>,
+    from: Option<f64>,
+    to: Option<f64>,
+    dry_run: Option<bool>,
+}
+
+/// What a quantize did over one stretch.
+#[derive(Facet)]
+struct QuantizeSpan {
+    /// The section's name, or `from`–`to`.
+    name: String,
+    from: f64,
+    to: f64,
+    result: SlipResult,
+    /// How the edit left the hits (none for a dry run).
+    check: Option<crate::hits::Check>,
+}
+
+/// The stretches a quantize covers: each named section (as the SECTIONS
+/// lane has it), or the span given.
+fn quantize_spans(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    a: &QuantizeArg,
+) -> Result<Vec<(String, f64, f64)>, String> {
+    if a.sections.is_empty() {
+        let (from, to) = (a.from.unwrap_or(0.0), a.to.unwrap_or(f64::INFINITY));
+        return Ok(vec![(format!("{from:.2}–{to:.2}"), from, to)]);
+    }
+    let sections: Vec<daw_proto::Region> = daw::service::Regions::all(daw, project.clone())
+        .into_iter()
+        .filter(|r| {
+            r.lane
+                .is_none_or(|l| l == session::ruler_lanes::CoreLane::Sections.lane_index())
+        })
+        .collect();
+    a.sections
+        .iter()
+        .map(|want| {
+            sections
+                .iter()
+                .find(|r| r.name.trim().eq_ignore_ascii_case(want.trim()))
+                .map(|r| {
+                    (
+                        r.name.clone(),
+                        r.time_range.start_seconds(),
+                        r.time_range.end_seconds(),
+                    )
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "no section {want}: one of {:?}",
+                        sections.iter().map(|r| &r.name).collect::<Vec<_>>()
+                    )
+                })
+        })
+        .collect()
+}
+
+/// Wait for a queued slip to reach the engine: until the kit's hits play
+/// somewhere other than `before`, then a moment more for the rest of its
+/// steps. At most a few seconds.
+fn wait_for_slip(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    before: &[crate::hits::Played],
+) {
+    let print = |p: &[crate::hits::Played]| -> Vec<(String, i64)> {
+        p.iter()
+            .map(|h| {
+                (
+                    h.id.clone(),
+                    num_traits::ToPrimitive::to_i64(&(h.time * 1e6).round()).unwrap_or(0),
+                )
+            })
+            .collect()
+    };
+    let was = print(before);
+    let started = std::time::Instant::now();
+    let mut last = was.clone();
+    let mut steady_since: Option<std::time::Instant> = None;
+    while started.elapsed() < std::time::Duration::from_secs(8) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let now = print(&crate::hits::playback(daw, project));
+        if now == was {
+            continue;
+        }
+        if now == last {
+            if steady_since.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(300)) {
+                return;
+            }
+            steady_since.get_or_insert_with(std::time::Instant::now);
+        } else {
+            steady_since = None;
+            last = now;
+        }
+    }
+}
+
+fn register_quantize(list: &ActionList) {
+    list.register(&QUANTIZE, Effect::Mutating, |a: QuantizeArg| {
+        let (daw, project) = song()?;
+        if crate::hits::kit_from_markers(daw, &project).is_none() {
+            return Err("no hit markers: find the hits first (HITS_DETECT)".to_owned());
+        }
+        let settings = crate::drum_settings::current().with(&a.with);
+        let dry = a.dry_run.unwrap_or(false);
+        let zones = crate::hits::zones(daw, &project);
+        let mut out: Vec<QuantizeSpan> = Vec::new();
+        for (name, from, to) in quantize_spans(daw, &project, &a)? {
+            let found = detect(daw, &project, &settings, (from, to))?;
+            let inside = |h: f64| h >= from && h < to;
+            let held = |h: f64| {
+                if zones.is_empty() {
+                    in_a_fill(daw, &project, &found.fills, h)
+                } else {
+                    crate::hits::zone_holds(&zones, h)
+                }
+            };
+            let pairs: Vec<(f64, Option<f64>)> = found
+                .targets
+                .iter()
+                .filter(|(h, _)| inside(*h) && !held(*h))
+                .copied()
+                .collect();
+            let left_out: Vec<f64> = found
+                .targets
+                .iter()
+                .filter(|(h, _)| inside(*h) && held(*h))
+                .map(|(h, _)| *h)
+                .collect();
+            let before = crate::hits::playback(daw, &project);
+            let mut result = judge(daw, &project, &settings, (&pairs, &left_out), dry);
+            result.in_fills = u32::try_from(left_out.len()).unwrap_or(u32::MAX);
+            let check = result.applied.then(|| {
+                wait_for_slip(daw, &project, &before);
+                // Where each moved hit was sent: its target, or as far
+                // toward it as the strength takes it.
+                let tolerance = settings.tolerance_ms / 1_000.0;
+                let sent: Vec<f64> = pairs
+                    .iter()
+                    .filter_map(|(h, t)| {
+                        let t = (*t)?;
+                        ((t - h).abs() > tolerance).then(|| (t - h).mul_add(settings.strength, *h))
+                    })
+                    .collect();
+                crate::hits::check(daw, &project, &before, &sent, (from, to))
+            });
+            out.push(QuantizeSpan {
+                name,
+                from,
+                to,
+                result,
+                check,
+            });
+        }
+        Ok(out)
+    });
+    list.register(&ZONES_FIND, Effect::Mutating, |a: SpanArg| {
+        let (daw, project) = song()?;
+        let settings = crate::drum_settings::current().with(&a.with);
+        let kit = kit(daw, &project, &settings);
+        let span = a.span();
+        let fills = find_fills(daw, &project, &kit, span);
+        let proposed = crate::hits::find_zones(daw, &project, &fills, span)?;
+        Ok(proposed)
+    });
+}
+
 fn register_slip(list: &ActionList) {
+    register_quantize(list);
     list.register(&SLIP, Effect::Mutating, |a: SlipArg| {
         let (daw, project) = song()?;
         let settings = crate::drum_settings::current().with(&a.with);
@@ -2950,11 +3155,17 @@ fn register_slip(list: &ActionList) {
         // where they are, so the slice before them moving does not drag
         // them with it.
         let mut left_out: Vec<f64> = Vec::new();
+        // The song's edit zones decide what a fill is, once it has any.
+        let zones = crate::hits::zones(daw, &project);
         let pairs: Vec<(f64, Option<f64>)> = pairs
             .into_iter()
             .filter(|(h, _)| *h >= span.0 && *h <= span.1)
             .filter(|(h, _)| {
-                let held = in_a_fill(daw, &project, &fills, *h);
+                let held = if zones.is_empty() {
+                    in_a_fill(daw, &project, &fills, *h)
+                } else {
+                    crate::hits::zone_holds(&zones, *h)
+                };
                 let keep = match settings.fills {
                     crate::drum_settings::Fills::Skip => !held,
                     crate::drum_settings::Fills::Include => true,
