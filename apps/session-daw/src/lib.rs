@@ -160,7 +160,6 @@ pub mod actions;
 pub mod bass_rig;
 #[cfg(feature = "signal")]
 pub mod close_mic;
-pub mod detect_overlay;
 pub mod device_audio;
 pub mod drum_edit;
 #[cfg(feature = "native")]
@@ -171,6 +170,7 @@ pub mod drum_samples;
 pub mod drum_settings;
 pub mod fundamental;
 pub mod gain_stage;
+pub mod hit_overlay;
 #[cfg(feature = "native")]
 pub mod hits;
 #[cfg(test)]

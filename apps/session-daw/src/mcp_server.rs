@@ -25,16 +25,19 @@ song they have open. Its tracks are read with SESSION_TRACKS: each has a GUID an
 of the path (`Kick/Sum/Trig`). The kit follows the golden template: each piece (Kick, Snare, \
 Tom 1…) has its close mics, its `Trig` (what says the drum was hit — a recorded trigger or the \
 kit's notes; it keys the piece's gate and is never heard) and its `Sample` (what plays from the \
-trigger), with a `Fund` (or the kick's `Sub`) band-pass beside them. DRUMS_HITS lists a drum's \
-hits — run it on the piece's Trig — with times, bars and beats and levels, paged. SESSION_* \
+trigger), with a `Fund` (or the kick's `Sub`) band-pass beside them. SESSION_* \
 actions are the window's own: what its keys do (SESSION_MODE Edit and SESSION_PHASE edit put the \
-window where every cut shows). TRACK_SET changes a track's fader, pan, mute or solo. Drum editing: \
-the settings are sticky (DRUMS_EDIT_SETTINGS); tune them with DRUMS_EDIT_SET, which answers at once \
-with what they detect, look closer with DRUMS_DETECT over a span, find the fills with DRUMS_FILLS \
-(left as played by a slip unless asked), then DRUMS_SLIP — a dry run first; DRUMS_EDIT_LANES first puts the \
-edits on an EDIT lane beside the COMP they are made from (DRUMS_PLAY_LANE to hear either). \
-SESSION_VIEW frames bars, a section or seconds, and tracks, down to the samples; DRUMS_DETECT draws \
-what it finds over the kit in Edit mode. The drum MIDI is a guide, \
+window where every cut shows). TRACK_SET changes a track's fader, pan, mute or solo. Drum editing \
+works from hit markers: HITS_DETECT finds every hit of the kit once (triggers and mics together, \
+under a second) and writes them as markers on the recordings, which edits move with; HITS_LIST, \
+HITS_EXPLAIN and AUDIO_PEAKS look at them, HITS_ADD/MOVE/REMOVE/MARK correct them. Fills are \
+zones on the Drums ruler lane (ZONES_FIND proposes, ZONES_EDIT approves or rejects). \
+DRUMS_EDIT_LANES puts the edits on an EDIT lane beside the COMP they are made from \
+(DRUMS_PLAY_LANE to hear either); QUANTIZE then edits the whole kit as one, a section at a time \
+(its settings sticky in DRUMS_EDIT_SETTINGS, any given for one call), a dry run first, with a \
+check after; HITS_AUDIT checks the whole song. In Edit mode the window draws each piece's markers \
+on its own rows and shades the zones. SESSION_VIEW frames bars, a section or seconds, and tracks, \
+down to the samples. The drum MIDI is a guide, \
 not the truth: a live drummer plays other fills.";
 
 /// Where it is being served, and the token to reach it, if it wants one.

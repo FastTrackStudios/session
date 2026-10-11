@@ -175,7 +175,7 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
             };
             (ZOOM.id, format!(r#"{{"zoom":"{zoom}"}}"#))
         }
-        // Already the list's own answer (`DRUMS_SLIP`), or a binding the
+        // Already the list's own answer (`QUANTIZE`), or a binding the
         // window does not do: straight to the window.
         Action::Unbound(_)
         | Action::SlipDrums { .. }
@@ -291,7 +291,7 @@ static QUANTIZE_DRUMS: ActionMeta = meta(
     "SESSION_QUANTIZE_DRUMS",
     "quantize_drums",
     "Quantize drums",
-    "Quantize the kit under the selected folded rows: every mic cut before each hit, the slices moved onto the grid together.",
+    "QUANTIZE over the span of the selected folded rows: the whole kit edited from its hit markers with the sticky settings (DRUMS_EDIT_SETTINGS), fills left as played; the window says how the check came out.",
     "Drums",
     "",
 );
@@ -620,14 +620,6 @@ static TRACKS: ActionMeta = ActionMeta {
         "",
     )
 };
-static DRUM_HITS: ActionMeta = meta(
-    "DRUMS_HITS",
-    "drum_hits",
-    "Drum hits",
-    "Every hit on a track — a drum's trigger, ideally, one spike a hit — with its time (seconds), bar and beat, and peak (dBFS). `under_db` is how far under the loudest a hit still counts (24: ghost notes too). Paged: `offset`, `limit`; `from`/`to` (seconds) narrow it.",
-    "Drums",
-    "",
-);
 static DRUM_FUNDAMENTAL: ActionMeta = meta(
     "DRUMS_FUNDAMENTAL",
     "drum_fundamental",
@@ -706,38 +698,6 @@ fn lane_rows(track: &daw_proto::Track, items: &[daw_proto::Item]) -> Vec<LaneRow
             })
         })
         .collect()
-}
-
-/// Which hits.
-#[derive(Facet)]
-struct HitsArg {
-    /// The track: its GUID, its path (`Kick/Sum/Trig`) or its name.
-    track: String,
-    under_db: Option<f64>,
-    from: Option<f64>,
-    to: Option<f64>,
-    offset: Option<u32>,
-    limit: Option<u32>,
-}
-
-/// One hit.
-#[derive(Facet)]
-struct HitRow {
-    time: f64,
-    /// 1-based, as the ruler counts.
-    bar: i32,
-    /// 1-based, fractional.
-    beat: f64,
-    level_db: f64,
-}
-
-/// A page of hits.
-#[derive(Facet)]
-struct HitsPage {
-    /// How many there are in all (in `from`..`to`).
-    total: u32,
-    offset: u32,
-    hits: Vec<HitRow>,
 }
 
 /// Which drum.
@@ -999,7 +959,6 @@ fn register_data(list: &ActionList) {
     register_phase(list);
     register_view(list);
     register_tracks(list);
-    register_hits(list);
     register_fundamental(list);
     crate::hits::register(list);
     register_track_set(list);
@@ -1188,7 +1147,7 @@ fn register_reference(list: &ActionList) {
     #[cfg(feature = "native")]
     register_undo(list);
     register_style(list);
-    register_slip(list);
+    register_drum_settings(list);
     register_peaks(list);
     register_reference_map(list);
     register_reference_notes(list);
@@ -1922,99 +1881,7 @@ fn register_bass_rig(list: &ActionList) {
 }
 
 #[cfg(feature = "signal")]
-static CLOSE_MIC_CHECK: ActionMeta = meta(
-    "DRUMS_CLOSE_MIC_CHECK",
-    "drums_close_mic_check",
-    "How a close mic stands in for its trigger",
-    "For a piece with a working trigger (`piece`: `Tom 1`), find its hits from its close mic alone — as DRUMS_SAMPLES does for a piece whose trigger is dead — and hold them up to the trigger's: how many each has, how many the mic found that the trigger has (within 15 ms), missed, and found that are not there. What the close-mic hits of a dead trigger's piece can be trusted to. Read-only.",
-    "Drums",
-    "",
-);
-
-/// The piece to check.
-#[cfg(feature = "signal")]
-#[derive(Facet)]
-struct CloseMicArg {
-    piece: String,
-}
-
-#[cfg(feature = "signal")]
 fn register_samples(list: &ActionList) {
-    list.register(&CLOSE_MIC_CHECK, Effect::ReadOnly, |a: CloseMicArg| {
-        const WITHIN: f64 = 0.015;
-        let (daw, project) = song()?;
-        let settings = crate::drum_settings::current();
-        let trigger = crate::drum_reference::pieces(daw, &project)
-            .into_iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(a.piece.trim()))
-            .map(|(_, t)| t)
-            .ok_or_else(|| format!("no piece {:?}", a.piece))?;
-        let pieces = kit(daw, &project, &settings);
-        let found: Vec<f64> = crate::close_mic::hits(daw, &project, &trigger, &settings)
-            .into_iter()
-            .map(|h| h.time)
-            .collect();
-        let near = |t: f64, among: &[f64]| among.iter().any(|x| (x - t).abs() <= WITHIN);
-        let Some(truth) = pieces
-            .iter()
-            .find(|(n, _, _)| n.eq_ignore_ascii_case(a.piece.trim()))
-            .map(|(_, _, hits)| hits.iter().map(|h| h.time).collect::<Vec<f64>>())
-        else {
-            // Its trigger is dead: nothing to hold the mic up to. What it
-            // found, and how much of it falls with another piece's hits —
-            // a bleed would fall with the piece it is the bleed of.
-            let with: Vec<String> = pieces
-                .iter()
-                .map(|(name, _, hits)| {
-                    let times: Vec<f64> = hits.iter().map(|h| h.time).collect();
-                    let same = found.iter().filter(|t| near(**t, &times)).count();
-                    format!("{same} with {name}")
-                })
-                .collect();
-            let alone = found
-                .iter()
-                .filter(|t| pieces.iter().all(|(_, _, hits)| !hits.iter().any(|h| (h.time - **t).abs() <= WITHIN)))
-                .count();
-            // Where it fell with each piece, by bar and beat: a part
-            // (beats 2 and 4 through a section) or a scatter.
-            let at: Vec<String> = pieces
-                .iter()
-                .filter_map(|(name, _, hits)| {
-                    let times: Vec<f64> = hits.iter().map(|h| h.time).collect();
-                    let beats: Vec<String> = found
-                        .iter()
-                        .filter(|t| near(**t, &times))
-                        .take(24)
-                        .map(|t| {
-                            let (bar, beat, _) = crate::song_bars::musical(daw, &project, *t + 1e-6);
-                            format!("{bar}.{beat:.1}")
-                        })
-                        .collect();
-                    (!beats.is_empty()).then(|| format!("with {name} at {}", beats.join(" ")))
-                })
-                .collect();
-            return Ok(format!(
-                "{}: its trigger is dead; its close mic found {} hits — {alone} alone, {}. {}",
-                a.piece.trim(),
-                found.len(),
-                with.join(", "),
-                at.join("; ")
-            ));
-        };
-        let matched = found.iter().filter(|t| near(**t, &truth)).count();
-        let missed: Vec<f64> = truth.iter().copied().filter(|t| !near(*t, &found)).collect();
-        let extra: Vec<f64> = found.iter().copied().filter(|t| !near(*t, &truth)).collect();
-        Ok(format!(
-            "{}: trigger {} hits, close mic {} — {matched} the same, {} missed (first at {:?}), {} not the trigger's (first at {:?})",
-            a.piece.trim(),
-            truth.len(),
-            found.len(),
-            missed.len(),
-            missed.iter().take(5).map(|t| (t * 100.0).round() / 100.0).collect::<Vec<_>>(),
-            extra.len(),
-            extra.iter().take(5).map(|t| (t * 100.0).round() / 100.0).collect::<Vec<_>>(),
-        ))
-    });
     list.register(&SAMPLES, Effect::Mutating, |a: SamplesArg| {
         let (daw, project) = song()?;
         let preset = std::path::PathBuf::from(a.preset.as_deref().unwrap_or(DEFAULT_KIT));
@@ -2324,41 +2191,6 @@ fn register_tracks(list: &ActionList) {
     });
 }
 
-fn register_hits(list: &ActionList) {
-    list.register(&DRUM_HITS, Effect::ReadOnly, |a: HitsArg| {
-        let (daw, project) = song()?;
-        let guid = resolve(daw, &project, &a.track)?;
-        let from = a.from.unwrap_or(f64::NEG_INFINITY);
-        let to = a.to.unwrap_or(f64::INFINITY);
-        let all: Vec<_> =
-            crate::fundamental::hits_of(daw, &project, &guid, a.under_db.unwrap_or(24.0))
-                .into_iter()
-                .filter(|h| h.time >= from && h.time <= to)
-                .collect();
-        let offset = a.offset.unwrap_or(0);
-        let limit = a.limit.unwrap_or(PAGE);
-        let hits = all
-            .iter()
-            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
-            .take(usize::try_from(limit).unwrap_or(usize::MAX))
-            .map(|h| {
-                let (bar, beat, frac) = crate::song_bars::musical(daw, &project, h.time);
-                HitRow {
-                    time: h.time,
-                    bar,
-                    beat: f64::from(beat) + frac,
-                    level_db: h.level_db,
-                }
-            })
-            .collect();
-        Ok(HitsPage {
-            total: u32::try_from(all.len()).unwrap_or(u32::MAX),
-            offset,
-            hits,
-        })
-    });
-}
-
 fn register_fundamental(list: &ActionList) {
     list.register(&DRUM_FUNDAMENTAL, Effect::ReadOnly, |a: FundamentalArg| {
         let (daw, project) = song()?;
@@ -2530,27 +2362,11 @@ mod tests {
     }
 }
 
-static SLIP: ActionMeta = meta(
-    "DRUMS_SLIP",
-    "drums_slip",
-    "Slip-edit the drums",
-    "Slip-edit the whole kit as one: every drum track cut `lead_ms` before each hit and the slices moved together, the seams crossfaded (`xfade_ms`), a gap filled from the slice's own source — no stretching. Runs on the drum-edit settings (DRUMS_EDIT_SETTINGS; tune them with DRUMS_EDIT_SET, watching DRUMS_DETECT), any of which a call may give for itself alone. The hits are the live triggers' (a flam across pieces one moment); each moves toward its target (Guided: the grid line its drum-MIDI note is written on, or the nearest when plainly near; else left and listed in `to_check`). Fills are left as played unless `fills` says otherwise — with `from`/`to` around one and `fills: Only`, a fill is edited with its own settings. Explicit `moves` (`[hit, to]`, seconds) skip detection. `dry_run` says what it would do and does nothing.",
-    "Drums",
-    "",
-);
-static FILLS: ActionMeta = meta(
-    "DRUMS_FILLS",
-    "drums_fills",
-    "Find the fills",
-    "Where the drummer leaves the groove: beats that, against the groove at that place in the bar in the eight bars before AND the eight after, add toms (`toms`), add three or more hits (`busier`), or play the hands another way where the groove is steady (`different`). Beats in a row are one fill. Fills are played against the grid on purpose, so DRUMS_SLIP leaves them alone unless asked. Uses the drum-edit settings' detector; `from`/`to` narrow it.",
-    "Drums",
-    "",
-);
 static EDIT_SETTINGS: ActionMeta = meta(
     "DRUMS_EDIT_SETTINGS",
     "drums_edit_settings",
     "Drum edit settings",
-    "The drum-edit settings as they stand — sticky: what every detection, fill search and slip uses until changed, kept across restarts. detector (Level: within `under_db` of a trigger's loudest; Transient: Perfect Timing!'s — the attack outrunning the signal by `sensitivity_db` over `threshold_db`), `retrig_ms`, `offset_ms`, `grid` (a whole note's division), `grid_scan` (one hit per grid line, the loudest within `grid_tolerance_ms`), `target` (Guided, Reference, Grid), `window_ms`, `sure_ms`, `tolerance_ms`, `strength`, `lead_ms`, `xfade_ms`, `fills` (Skip, Include, Only).",
+    "The quantize settings as they stand — sticky: what QUANTIZE uses when a call gives none, kept across restarts. `grid` (a whole note's division: 16, 12 for 8th triplets, 24 for 16th triplets), `grid_scan` (one hit per grid line, the loudest within `grid_tolerance_ms`), `target` (Guided: the drum MIDI says which line, else the nearest when within `sure_ms`; Reference; Grid), `window_ms`, `sure_ms`, `tolerance_ms`, `strength`, `lead_ms`, `xfade_ms`, `stretch_gaps_ms`, `fills` (Skip, Include, Only). How the hits are found is HITS_SETTINGS'.",
     "Drums",
     "",
 );
@@ -2558,15 +2374,7 @@ static EDIT_SET: ActionMeta = meta(
     "DRUMS_EDIT_SET",
     "drums_edit_set",
     "Set drum edit settings",
-    "Change any drum-edit settings (the ones given; `reset` first goes back to the defaults) — they stay changed — and get back at once what is detected with them (as DRUMS_DETECT, over `from`/`to`): tune, look, tune again. Giving `threshold_db` or `sensitivity_db` chooses the Transient detector.",
-    "Drums",
-    "",
-);
-static DETECT: ActionMeta = meta(
-    "DRUMS_DETECT",
-    "drums_detect",
-    "Detect the drum hits",
-    "What the drum-edit settings detect, from `from` to `to` (seconds): each piece's hit count, the kit's moments (a flam across pieces one; with `grid_scan`, one per grid line), the fills, and each moment — time, bar and beat, which pieces, how loud against its piece's loudest, its target and how far off, and what a slip would do with it (`move`, `stay`, `check`: no target near, `fill`: left in a fill). Paged by `offset`/`limit` (100, 300 at most). Settings given here are for this look alone. Fast after the first: the audio is read once and kept until its items change.",
+    "Change any quantize settings (the ones given, as DRUMS_EDIT_SETTINGS names them; `reset` first goes back to the defaults) — they stay changed. Returns them.",
     "Drums",
     "",
 );
@@ -2578,19 +2386,6 @@ static PEAKS: ActionMeta = meta(
     "Data",
     "",
 );
-/// A slip edit.
-#[derive(Facet)]
-struct SlipArg {
-    /// Settings for this slip alone.
-    #[facet(flatten, default)]
-    with: crate::drum_settings::Patch,
-    /// Explicit moves, `[hit, to]` in seconds: no detection, no target.
-    moves: Option<Vec<Vec<f64>>>,
-    from: Option<f64>,
-    to: Option<f64>,
-    dry_run: Option<bool>,
-}
-
 /// One hit's move.
 #[derive(Facet)]
 struct SlipMove {
@@ -2602,17 +2397,6 @@ struct SlipMove {
     off_ms: f64,
     /// How far it is moved, ms.
     shift_ms: f64,
-}
-
-/// A fill, as a model reads it.
-#[derive(Facet)]
-struct FillOut {
-    from: f64,
-    to: f64,
-    bar: i32,
-    beat: f64,
-    beats: u32,
-    why: Vec<String>,
 }
 
 /// What a slip edit did, or would.
@@ -2635,8 +2419,6 @@ struct SlipResult {
     /// Left as played, with no target near enough to be sure of: to be
     /// listened to (the first 50).
     to_check: Vec<SlipMove>,
-    /// The fills found in the span.
-    fills: Vec<FillOut>,
 }
 
 /// The kit's hits: every live trigger's, merged — hits within this of
@@ -2650,61 +2432,12 @@ pub(crate) type KitPiece = (
     Vec<crate::drum_edit::KitHit>,
 );
 
-/// The kit's live pieces and their hits by the settings' detector, each
-/// hit's loudness against its piece's loudest. The audio is read once
-/// and kept, so this is quick the second time.
-pub(crate) fn kit(
-    daw: &daw::standalone::Standalone,
-    project: &ProjectContext,
-    settings: &crate::drum_settings::Settings,
-) -> Vec<KitPiece> {
-    // The hit markers, when the song has them: found once (HITS_DETECT),
-    // corrected by hand, never detected again here
-    // (`r[quantize.reads-markers]`).
-    if let Some(kit) = crate::hits::kit_from_markers(daw, project) {
-        return kit;
-    }
-    let rate = crate::fundamental::DETECT_RATE;
-    let offset = settings.offset_ms / 1_000.0;
-    crate::drum_reference::pieces(daw, project)
-        .into_iter()
-        .filter_map(|(name, trigger)| {
-            let audio = crate::fundamental::detect_audio(daw, project, &trigger);
-            let found: Vec<crate::drum_edit::Transient> = match settings.detector {
-                crate::drum_settings::Detector::Level => crate::drum_edit::levels(
-                    &audio,
-                    rate,
-                    settings.under_db,
-                    settings.retrig_ms / 1_000.0,
-                ),
-                crate::drum_settings::Detector::Transient => {
-                    let detect = settings.detect();
-                    audio
-                        .iter()
-                        .flat_map(|(start, samples)| {
-                            crate::drum_edit::transients(samples, rate, *start, &detect)
-                        })
-                        .collect()
-                }
-            };
-            let loudest = found
-                .iter()
-                .map(|h| h.peak_db)
-                .fold(f64::NEG_INFINITY, f64::max);
-            // A trigger whose loudest is under the floor is dead — crosstalk
-            // on a piezo nobody hit.
-            (loudest >= DEAD_TRIGGER_DB).then(|| {
-                let hits = found
-                    .into_iter()
-                    .map(|h| crate::drum_edit::KitHit {
-                        time: h.time + offset,
-                        relative_db: h.peak_db - loudest,
-                    })
-                    .collect();
-                (name.clone(), crate::drum_edit::Piece::of(&name), hits)
-            })
-        })
-        .collect()
+/// The kit's live pieces and their hits, from the hit markers — each
+/// hit's loudness against its piece's loudest; none before `HITS_DETECT`.
+pub(crate) fn kit(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec<KitPiece> {
+    // Found once (HITS_DETECT), corrected by hand, never detected again
+    // here (`r[quantize.reads-markers]`).
+    crate::hits::kit_from_markers(daw, project).unwrap_or_default()
 }
 
 /// Every beat from the bar holding `from` to the one holding `to`.
@@ -2758,22 +2491,6 @@ fn find_fills(
 }
 
 /// A fill for a model: where, in bars and beats, and why.
-fn fill_out(
-    daw: &daw::standalone::Standalone,
-    project: &ProjectContext,
-    fill: &crate::drum_edit::Fill,
-) -> FillOut {
-    let (bar, beat, frac) = crate::song_bars::musical(daw, &project, fill.from + 1e-6);
-    FillOut {
-        from: fill.from,
-        to: fill.to,
-        bar,
-        beat: f64::from(beat) + frac,
-        beats: fill.beats,
-        why: fill.why.iter().map(|w| (*w).to_owned()).collect(),
-    }
-}
-
 /// One moment of the kit: when, which pieces, how loud the loudest of
 /// them against its own.
 #[derive(Clone, Debug)]
@@ -3172,7 +2889,7 @@ fn detect(
     settings: &crate::drum_settings::Settings,
     span: (f64, f64),
 ) -> Result<Detected, String> {
-    let kit = kit(daw, project, settings);
+    let kit = kit(daw, project);
     let line_of = |h: f64| grid_line(daw, project, h, settings.grid);
     let by_line: &dyn Fn(f64) -> f64 = &line_of;
     let tolerance = settings
@@ -3503,7 +3220,9 @@ mod lock_tests {
         // 16ths 93.75 ms apart played 97.8 ms apart: by the 16th kick the
         // player is 60 ms behind, nearer the next line than its own.
         let step = 0.09375;
-        let hits: Vec<f64> = (0..17).map(|k| 0.02 + f64::from(k) * 0.0978).collect();
+        let hits: Vec<f64> = (0..17)
+            .map(|k| f64::from(k).mul_add(0.0978, 0.02))
+            .collect();
         let line = |h: f64| (h / step).round() * step;
         let got = lock_in_order(&hits, step, line);
         for (k, (_, t)) in got.iter().enumerate() {
@@ -3632,8 +3351,7 @@ fn register_quantize(list: &ActionList) {
     });
     list.register(&ZONES_FIND, Effect::Mutating, |a: SpanArg| {
         let (daw, project) = song()?;
-        let settings = crate::drum_settings::current().with(&a.with);
-        let kit = kit(daw, &project, &settings);
+        let kit = kit(daw, &project);
         let span = a.span();
         let fills = find_fills(daw, &project, &kit, span);
         let proposed = crate::hits::find_zones(daw, &project, &fills, span)?;
@@ -3641,84 +3359,8 @@ fn register_quantize(list: &ActionList) {
     });
 }
 
-fn register_slip(list: &ActionList) {
+fn register_drum_settings(list: &ActionList) {
     register_quantize(list);
-    list.register(&SLIP, Effect::Mutating, |a: SlipArg| {
-        let (daw, project) = song()?;
-        let settings = crate::drum_settings::current().with(&a.with);
-        let span = (
-            a.from.unwrap_or(f64::NEG_INFINITY),
-            a.to.unwrap_or(f64::INFINITY),
-        );
-        let (pairs, fills) = if let Some(moves) = &a.moves {
-            let pairs = moves
-                .iter()
-                .filter_map(|m| Some((*m.first()?, Some(*m.get(1)?))))
-                .collect();
-            (pairs, Vec::new())
-        } else {
-            let found = detect(daw, &project, &settings, span)?;
-            (found.targets, found.fills)
-        };
-        let mut in_fills = 0_u32;
-        // The hits left out (a fill's, while fills are skipped): still cut
-        // where they are, so the slice before them moving does not drag
-        // them with it.
-        let mut left_out: Vec<f64> = Vec::new();
-        // The song's edit zones decide what a fill is, once it has any.
-        let zones = crate::hits::zones(daw, &project);
-        let pairs: Vec<(f64, Option<f64>)> = pairs
-            .into_iter()
-            .filter(|(h, _)| *h >= span.0 && *h <= span.1)
-            .filter(|(h, _)| {
-                let held = if zones.is_empty() {
-                    in_a_fill(daw, &project, &fills, *h)
-                } else {
-                    crate::hits::zone_holds(
-                        &zones,
-                        *h,
-                        60.0 / daw.get_tempo_at(project.clone(), *h).max(1.0),
-                    )
-                };
-                let keep = match settings.fills {
-                    crate::drum_settings::Fills::Skip => !held,
-                    crate::drum_settings::Fills::Include => true,
-                    crate::drum_settings::Fills::Only => held,
-                };
-                if held && !keep {
-                    in_fills = in_fills.saturating_add(1);
-                }
-                if !keep {
-                    left_out.push(*h);
-                }
-                keep
-            })
-            .collect();
-        let anchors = if a.moves.is_some() {
-            Vec::new()
-        } else {
-            left_out
-        };
-        let mut result = judge(
-            daw,
-            &project,
-            &settings,
-            (&pairs, &anchors),
-            a.dry_run.unwrap_or(false),
-        );
-        result.in_fills = in_fills;
-        result.fills = fills.iter().map(|f| fill_out(daw, &project, f)).collect();
-        Ok(result)
-    });
-    list.register(&FILLS, Effect::ReadOnly, |a: SpanArg| {
-        let (daw, project) = song()?;
-        let settings = crate::drum_settings::current().with(&a.with);
-        let kit = kit(daw, &project, &settings);
-        Ok(find_fills(daw, &project, &kit, a.span())
-            .iter()
-            .map(|f| fill_out(daw, &project, f))
-            .collect::<Vec<FillOut>>())
-    });
     list.register(&EDIT_SETTINGS, Effect::ReadOnly, |(): ()| {
         Ok(crate::drum_settings::current())
     });
@@ -3728,32 +3370,13 @@ fn register_slip(list: &ActionList) {
         }
         let settings = crate::drum_settings::set(&a.with);
         crate::actions::list().changed("drums.settings", "the drum edit settings changed");
-        let (daw, project) = song()?;
-        let detected = detected_out(daw, &project, &settings, &a.look)?;
-        Ok(SetResult { settings, detected })
-    });
-    list.register(&DETECT, Effect::ReadOnly, |a: DetectArg| {
-        let (daw, project) = song()?;
-        let settings = crate::drum_settings::current().with(&a.with);
-        detected_out(daw, &project, &settings, &a.look)
+        Ok(settings)
     });
 }
 
-/// Where to look.
-#[derive(Facet, Default)]
-struct Look {
-    from: Option<f64>,
-    to: Option<f64>,
-    /// The first moment shown, and how many (100).
-    offset: Option<u32>,
-    limit: Option<u32>,
-}
-
-/// Where, with settings for this look alone.
+/// Where.
 #[derive(Facet)]
 struct SpanArg {
-    #[facet(flatten, default)]
-    with: crate::drum_settings::Patch,
     from: Option<f64>,
     to: Option<f64>,
 }
@@ -3767,158 +3390,13 @@ impl SpanArg {
     }
 }
 
-/// A look at the detection, with settings for it alone.
-#[derive(Facet)]
-struct DetectArg {
-    #[facet(flatten, default)]
-    with: crate::drum_settings::Patch,
-    #[facet(flatten, default)]
-    look: Look,
-}
-
-/// Settings to keep, and where to look with them.
+/// Settings to keep.
 #[derive(Facet)]
 struct SetArg {
     #[facet(flatten, default)]
     with: crate::drum_settings::Patch,
     /// Back to the defaults first.
     reset: Option<bool>,
-    #[facet(flatten, default)]
-    look: Look,
-}
-
-/// The settings now, and what they detect.
-#[derive(Facet)]
-struct SetResult {
-    settings: crate::drum_settings::Settings,
-    detected: DetectedOut,
-}
-
-/// One piece's count.
-#[derive(Facet)]
-struct PieceCount {
-    piece: String,
-    hits: u32,
-}
-
-/// One moment, as a slip would see it.
-#[derive(Facet)]
-struct MomentOut {
-    time: f64,
-    bar: i32,
-    beat: f64,
-    pieces: Vec<String>,
-    /// Against its piece's loudest, dB.
-    level_db: f64,
-    target: Option<f64>,
-    /// Its target, ms from it.
-    off_ms: Option<f64>,
-    /// `move`, `stay`, `check` or `fill`.
-    slip: String,
-}
-
-/// What the settings detect, in a span.
-#[derive(Facet)]
-struct DetectedOut {
-    pieces: Vec<PieceCount>,
-    moments: u32,
-    would_move: u32,
-    would_stay: u32,
-    to_check: u32,
-    in_fills: u32,
-    fills: Vec<FillOut>,
-    /// A page of them.
-    shown: Vec<MomentOut>,
-    /// How long it took, ms.
-    took_ms: u32,
-}
-
-fn detected_out(
-    daw: &daw::standalone::Standalone,
-    project: &ProjectContext,
-    settings: &crate::drum_settings::Settings,
-    look: &Look,
-) -> Result<DetectedOut, String> {
-    let started = std::time::Instant::now();
-    let span = (
-        look.from.unwrap_or(f64::NEG_INFINITY),
-        look.to.unwrap_or(f64::INFINITY),
-    );
-    // The whole song, so the arrangement can draw all of it; the answer
-    // is the span's.
-    let found = detect(daw, project, settings, (f64::NEG_INFINITY, f64::INFINITY))?;
-    let inside = |t: f64| t >= span.0 && t <= span.1;
-    let tolerance = settings.tolerance_ms / 1_000.0;
-    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    let mut all: Vec<MomentOut> = Vec::new();
-    let mut drawn = crate::detect_overlay::Overlay {
-        lines: Vec::with_capacity(found.moments.len()),
-        fills: found.fills.iter().map(|f| (f.from, f.to)).collect(),
-    };
-    for (moment, (_, target)) in found.moments.iter().zip(&found.targets) {
-        use crate::detect_overlay::Mark;
-        let held = in_a_fill(daw, project, &found.fills, moment.time);
-        let mark = match (target, settings.fills) {
-            (_, crate::drum_settings::Fills::Skip) if held => Mark::Fill,
-            (_, crate::drum_settings::Fills::Only) if !held => Mark::Fill,
-            (None, _) => Mark::Check,
-            (Some(t), _) if (t - moment.time).abs() <= tolerance => Mark::Stay,
-            (Some(_), _) => Mark::Move,
-        };
-        drawn.lines.push(crate::detect_overlay::Line {
-            time: moment.time,
-            target: *target,
-            mark,
-        });
-        if !inside(moment.time) {
-            continue;
-        }
-        let slip = match mark {
-            Mark::Fill => "fill",
-            Mark::Check => "check",
-            Mark::Stay => "stay",
-            Mark::Move => "move",
-        };
-        let (bar, beat, frac) = crate::song_bars::musical(daw, &project, moment.time);
-        all.push(MomentOut {
-            time: moment.time,
-            bar,
-            beat: f64::from(beat) + frac,
-            pieces: moment.pieces.clone(),
-            level_db: (moment.relative_db * 10.0).round() / 10.0,
-            target: *target,
-            off_ms: target.map(|t| ((t - moment.time) * 10_000.0).round() / 10.0),
-            slip: slip.to_owned(),
-        });
-    }
-    crate::detect_overlay::publish(drawn);
-    let tally = |what: &str| count(all.iter().filter(|m| m.slip == what).count());
-    let offset = usize::try_from(look.offset.unwrap_or(0)).unwrap_or(0);
-    // A page fits in one reply (the MCP's text cap): 300 at most.
-    let limit = usize::try_from(look.limit.unwrap_or(100).min(300)).unwrap_or(100);
-    Ok(DetectedOut {
-        pieces: found
-            .kit
-            .iter()
-            .map(|(name, _, hits)| PieceCount {
-                piece: name.clone(),
-                hits: count(hits.iter().filter(|h| inside(h.time)).count()),
-            })
-            .collect(),
-        moments: count(all.len()),
-        would_move: tally("move"),
-        would_stay: tally("stay"),
-        to_check: tally("check"),
-        in_fills: tally("fill"),
-        fills: found
-            .fills
-            .iter()
-            .filter(|f| f.to >= span.0 && f.from <= span.1)
-            .map(|f| fill_out(daw, project, f))
-            .collect(),
-        shown: all.into_iter().skip(offset).take(limit).collect(),
-        took_ms: u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX),
-    })
 }
 
 /// The moves `pairs` (hit, target) make, and — unless a dry run — the
@@ -4001,7 +3479,6 @@ fn judge(
             .map(|(hit, off, shift)| at(*hit, *off, *shift))
             .collect(),
         to_check,
-        fills: Vec::new(),
     }
 }
 

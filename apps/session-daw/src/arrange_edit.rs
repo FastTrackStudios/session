@@ -1658,41 +1658,6 @@ impl Editor {
             .collect()
     }
 
-    /// Quantize the kit under each of `rows` (a folded row and its hits): cut every mic a
-    /// moment before each of `hits`, then move each slice so its hit
-    /// lands `strength` of the way to the nearest `step` (seconds) —
-    /// Beat Detective's two passes, on every mic at once, so the kit
-    /// stays in phase with itself. One undo step.
-    ///
-    /// The slice before the first hit stays put; a slice moved later
-    /// leaves a gap behind it and one moved earlier overlaps, as any
-    /// item move does.
-    pub fn quantize(
-        project: &mut Project,
-        rows: &[(String, Vec<f64>)],
-        step: f64,
-        strength: f64,
-        effects: &mut Vec<Effect>,
-    ) {
-        if step <= 0.0 {
-            return;
-        }
-        let moves: Vec<(String, Vec<(f64, f64)>)> = rows
-            .iter()
-            .map(|(row, hits)| {
-                let moves = hits
-                    .iter()
-                    .map(|&hit| {
-                        let to = (hit / step).round() * step;
-                        (hit, (to - hit) * strength.clamp(0.0, 1.0))
-                    })
-                    .collect();
-                (row.clone(), moves)
-            })
-            .collect();
-        Self::slip(project, &moves, "Quantize drums", effects);
-    }
-
     /// Slip-edit the kit under each of `rows` (a folded row and its
     /// moves, `(hit, shift)` in seconds): every mic cut a moment before
     /// each hit, then each slice moved by its hit's shift — on every mic
@@ -4079,8 +4044,8 @@ mod tests {
     }
 
     #[test]
-    fn quantizing_a_folded_row_moves_every_mic_together() {
-        let mut project = folded_project();
+    fn a_selected_folded_row_names_its_kit_and_span() {
+        let project = folded_project();
         let row = project.folds.values().next().expect("the fold").items[0]
             .guid
             .clone();
@@ -4091,83 +4056,6 @@ mod tests {
         assert_eq!(folds.len(), 1);
         assert_eq!((folds[0].2, folds[0].3), (2.0, 6.0));
         assert_eq!(folds[0].1, project.tracks[0].guid);
-        let mut effects = Vec::new();
-        Editor::quantize(
-            &mut project,
-            &[(row, vec![3.02, 4.49])],
-            0.5,
-            1.0,
-            &mut effects,
-        );
-        let sent = sends(&effects);
-        assert!(matches!(sent.first(), Some(Edit::BeginUndo(l)) if l == "Quantize drums"));
-        assert!(matches!(sent.last(), Some(Edit::EndUndo(_))));
-        let splits = sent
-            .iter()
-            .filter(|e| matches!(e, Edit::SplitItem(..)))
-            .count();
-        assert_eq!(splits, 4, "two mics, two cuts: {sent:?}");
-        let mut moved: Vec<(String, f64)> = sent
-            .iter()
-            .filter_map(|e| match e {
-                Edit::MoveItem(g, at) => Some((g.clone(), (at * 1000.0).round() / 1000.0)),
-                _ => None,
-            })
-            .collect();
-        moved.sort_by(|a, b| a.0.cmp(&b.0));
-        assert_eq!(
-            moved,
-            vec![
-                // Each piece named after its take and where it was cut,
-                // never after the piece before it.
-                ("in1-split@3.015".to_owned(), 2.995),
-                ("in1-split@4.485".to_owned(), 4.495),
-                ("out1-split@3.015".to_owned(), 2.995),
-                ("out1-split@4.485".to_owned(), 4.495),
-            ]
-        );
-        // The slice plays on from where the one before it was cut.
-        let slice = project.items["in"]
-            .iter()
-            .find(|i| i.guid == "in1-split@3.015")
-            .expect("the slice");
-        assert!((slice.start_offset.as_seconds() - 1.015).abs() < 1e-9);
-        // The seams closed: the slice before each moved one meets it,
-        // a 5 ms crossfade over (auto-crossfade is on by default).
-        let trims: Vec<(String, f64)> = sent
-            .iter()
-            .filter_map(|e| match e {
-                Edit::TrimItem(g, _, len) if g.starts_with("in1") => {
-                    Some((g.clone(), (len * 1000.0).round() / 1000.0))
-                }
-                _ => None,
-            })
-            .collect();
-        // The slice moved earlier runs over the one before, trimmed to
-        // meet it; the slice moved later reaches back over its gap.
-        assert!(trims.contains(&("in1".to_owned(), 1.0)), "{trims:?}");
-        assert!(
-            trims.contains(&("in1-split@4.485".to_owned(), 1.55)),
-            "{trims:?}"
-        );
-        assert!(
-            sent.iter().any(|e| matches!(e, Edit::SlipItem(g, off)
-                if g == "in1-split@4.485" && (off - 2.45).abs() < 1e-9)),
-            "and plays from as far back in its source"
-        );
-        let fades_in = sent
-            .iter()
-            .filter(|e| matches!(e, Edit::SetFadeIn(g, ..) if g.starts_with("in1")))
-            .count();
-        assert_eq!(fades_in, 2, "both later slices fade in");
-        // A mic's pieces are its own, not a mic whose name runs on.
-        assert!(super::piece_of("in1-split@3.015-split@4.485", "in1"));
-        assert!(!super::piece_of("in10", "in1"));
-        // The second take was not selected and did not move.
-        assert!(
-            sent.iter()
-                .all(|e| !e.guid().starts_with("in2") && !e.guid().starts_with("out2"))
-        );
     }
 
     #[test]

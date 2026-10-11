@@ -38,12 +38,12 @@ pub enum Action {
     /// Split the selected items at the edit cursor — or, with nothing
     /// selected, every item under it.
     SplitAtCursor,
-    /// Quantize the kit under the selected folded rows: cut every mic
-    /// before each hit and move the slices onto the grid together.
+    /// QUANTIZE over the selected folded rows' span: the kit edited
+    /// from its hit markers.
     QuantizeDrums,
     /// Slip-edit the whole kit — every folded row of the drums folder —
     /// by these moves: `(hit, shift)`, microseconds (whole numbers, so
-    /// an action compares). What `DRUMS_SLIP` on the Action List works
+    /// an action compares). What `QUANTIZE` on the Action List works
     /// out and hands the window, which carries it out where it is seen.
     /// Fill the lanes with a span of time (µs from the start) and/or
     /// these tracks (by GUID): a model looking at a fill, a section, the

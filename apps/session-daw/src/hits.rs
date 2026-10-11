@@ -1410,6 +1410,63 @@ pub struct Played {
     pub mark: HitMark,
 }
 
+/// What the arrangement draws over the kit in Edit mode: every hit where
+/// it plays now, by piece and who placed it, and the zones that are not
+/// turned down.
+#[must_use]
+pub fn overlay(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+) -> crate::hit_overlay::Overlay {
+    use crate::hit_overlay::{Mark, Shade, Who};
+    let (kit, _) = kit(daw, project);
+    let mut pieces: Vec<String> = kit.iter().map(|p| p.name.clone()).collect();
+    let mut tracks: Vec<Vec<String>> = kit
+        .iter()
+        .map(|p| p.tracks().filter(|t| !t.is_empty()).cloned().collect())
+        .collect();
+    let marks = playback(daw, project)
+        .into_iter()
+        .map(|p| {
+            let piece = pieces
+                .iter()
+                .position(|n| *n == p.piece)
+                .unwrap_or_else(|| {
+                    pieces.push(p.piece.clone());
+                    tracks.push(Vec::new());
+                    pieces.len().saturating_sub(1)
+                });
+            let auto = p.mark.origin == MarkOrigin::Auto;
+            Mark {
+                piece,
+                time: p.time,
+                who: match p.mark.origin {
+                    MarkOrigin::Auto => Who::Auto,
+                    MarkOrigin::Manual => Who::Manual,
+                    MarkOrigin::Approved => Who::Approved,
+                },
+                ghost: p.mark.ghost,
+                doubt: auto && (p.mark.bleed || p.mark.confidence < UNSURE),
+            }
+        })
+        .collect();
+    let zones = zones(daw, project)
+        .into_iter()
+        .filter(|z| z.origin != ZoneOrigin::Rejected)
+        .map(|z| Shade {
+            start: z.start,
+            end: z.end,
+            found: z.origin == ZoneOrigin::Auto,
+        })
+        .collect();
+    crate::hit_overlay::Overlay {
+        pieces,
+        tracks,
+        marks,
+        zones,
+    }
+}
+
 /// Every hit of the kit where it plays now — a hit cut into two slices
 /// that both play it is here twice, one cut away is not here at all.
 #[must_use]

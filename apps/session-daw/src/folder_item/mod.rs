@@ -26,7 +26,6 @@
 pub mod cache;
 pub mod draw;
 pub mod fold;
-pub mod hits;
 pub mod load;
 pub mod preview;
 

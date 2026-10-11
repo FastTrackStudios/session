@@ -283,10 +283,6 @@ pub struct Drawn {
 }
 
 /// The arrangement, as a widget.
-/// A quantize's hits on their way back from the engine: `(row, hits)`
-/// per folded row, `None` until they arrive.
-type QuantizeHits = std::sync::Arc<std::sync::Mutex<Option<Vec<(String, Vec<f64>)>>>>;
-
 pub struct ArrangementWidget {
     /// The tool the panel holds and the pointer's shape — see
     /// [`crate::tool`].
@@ -470,9 +466,6 @@ pub struct ArrangementWidget {
     /// asking about. A queue would show you the reply to a drag you had
     /// already given up on.
     notice: Option<crate::notice::Notice>,
-    /// A quantize's hits, read off the kit's peaks away from the frame
-    /// and applied on the next one: `(row, hits)` per folded row.
-    quantized: QuantizeHits,
     /// A gain staging run (Shift+G) or clear (Alt+G) that has finished
     /// off the frame: what to say about it. The next frame reads the
     /// session back — the item volumes the waveforms are drawn through.
@@ -632,7 +625,6 @@ impl ArrangementWidget {
             renaming: None,
             keys: crate::keys::Keys::load(),
             notice: None,
-            quantized: std::sync::Arc::default(),
             staged: std::sync::Arc::default(),
             scene_before: None,
             last_name: None,
@@ -813,6 +805,31 @@ impl ArrangementWidget {
         Some(first..first.saturating_add(len).saturating_add(1))
     }
 
+    /// The kit's rows and the pieces each shows (`rows`' index, the
+    /// piece's in `hits`), a row once per piece: a piece's folder, Sum,
+    /// mics and trigger show that piece; a folder shut over several (the
+    /// toms, the whole kit) shows them all; the cymbals and rooms none.
+    fn piece_rows(
+        &self,
+        kit: std::ops::Range<usize>,
+        hits: &crate::hit_overlay::Overlay,
+    ) -> Vec<(usize, usize)> {
+        let parents: std::collections::HashMap<&str, &str> = self
+            .project
+            .tracks
+            .iter()
+            .filter_map(|t| Some((t.guid.as_str(), t.parent_guid.as_deref()?)))
+            .collect();
+        let parent_of = |t: &str| parents.get(t).copied();
+        kit.filter_map(|row| Some((row, &self.rows.get(row)?.0.guid)))
+            .flat_map(|(row, guid)| {
+                hits.pieces_under(guid, parent_of)
+                    .into_iter()
+                    .map(move |piece| (row, piece))
+            })
+            .collect()
+    }
+
     /// Share the panel's Record-mode flag: the arm only while recording.
     #[must_use]
     pub fn with_recording(mut self, recording: Rc<Cell<bool>>) -> Self {
@@ -858,59 +875,52 @@ impl ArrangementWidget {
     /// Lay the rows out as `slug` (an overview); pressed again, or the
     /// other overview's key pressed in this one's, go back to the scene
     /// before. `false` with no planner.
-    /// Shift+Q: read the selected folded rows' hits off their kits' peaks,
-    /// off the frame; [`Self::settle_quantize`] cuts and moves them when
-    /// they arrive. False when no folded row is selected.
+    /// Shift+Q: QUANTIZE the kit over the selected folded rows' span — from
+    /// its hit markers, with the sticky settings, fills left as played —
+    /// off the frame; the slip it queues is applied here like any, and
+    /// [`Self::settle_stage`] says how its check came out. False when no
+    /// folded row is selected, and in a page (no engine of its own to
+    /// read the markers from).
     fn quantize_drums(&self) -> bool {
-        let rows = self.editor.selected_folds(&self.project);
-        if rows.is_empty() {
+        let span = self.editor.selected_folds(&self.project).iter().fold(
+            None,
+            |span: Option<(f64, f64)>, (_, _, a, b)| {
+                Some(span.map_or((*a, *b), |(f, t)| (f.min(*a), t.max(*b))))
+            },
+        );
+        let Some((from, to)) = span else {
             return false;
-        }
-        let snapshot = self.project.clone();
-        let out = std::sync::Arc::clone(&self.quantized);
-        let fallback = self.palette.text_faint;
-        let work = async move {
-            let Some(daw) = daw::rpc::Daw::try_get() else {
-                return;
-            };
-            let Ok(project) = daw.current_project().await else {
-                return;
-            };
-            let wanted: Vec<(String, crate::folder_item::GroupBy)> = rows
-                .iter()
-                .map(|(_, folder, ..)| (folder.clone(), crate::folder_item::GroupBy::Role))
-                .collect();
-            let (folders, _) = crate::folder_item::load::load_at(
-                &project,
-                &snapshot,
-                &wanted,
-                fallback,
-                crate::folder_item::load::DETECT_BLOCK_SIZE,
-            )
-            .await;
-            let found: Vec<(String, Vec<f64>)> = rows
-                .iter()
-                .filter_map(|(row, folder, from, to)| {
-                    let kit = folders.iter().find(|f| f.guid == *folder)?;
-                    Some((
-                        row.clone(),
-                        crate::folder_item::hits::hits(kit, 0, *from, *to),
-                    ))
-                })
-                .collect();
-            *out.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(found);
         };
         #[cfg(feature = "native")]
         {
             let Some(runtime) = crate::open::runtime() else {
                 return false;
             };
-            runtime.spawn(work);
+            let said = std::sync::Arc::clone(&self.staged);
+            runtime.spawn_blocking(move || {
+                let args = format!(r#"{{"from":{from},"to":{to}}}"#);
+                let out = crate::actions::list().run_json("QUANTIZE", args.as_bytes());
+                let text = match &out {
+                    Ok(json) if String::from_utf8_lossy(json).contains(r#""ok":false"#) => {
+                        "drums quantized — the check found hits lost or doubled (HITS_AUDIT)"
+                    }
+                    Ok(_) => "drums quantized — the check is clean",
+                    Err(e) => {
+                        tracing::warn!(quantize.error = %e, "drums: the quantize was refused");
+                        "the drums could not be quantized — find the hits first"
+                    }
+                };
+                *said
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(text);
+            });
+            true
         }
         #[cfg(not(feature = "native"))]
-        wasm_bindgen_futures::spawn_local(work);
-        true
+        {
+            let _ = (from, to);
+            false
+        }
     }
 
     /// Slip-edit the kit by `moves` (`(hit, shift)`, microseconds): the
@@ -987,7 +997,7 @@ impl ArrangementWidget {
         );
         self.settle(effects);
         self.replan_rows();
-        crate::detect_overlay::clear();
+        crate::hit_overlay::refresh();
         self.dirty.set(true);
         true
     }
@@ -1064,27 +1074,9 @@ impl ArrangementWidget {
         // it (in Edit mode; elsewhere the seams are joined).
         self.replan_rows();
         // The hits have moved: what was detected is not where they are.
-        crate::detect_overlay::clear();
+        crate::hit_overlay::refresh();
         self.dirty.set(true);
         true
-    }
-
-    /// A quantize whose hits have arrived, carried out: every mic cut
-    /// before each hit and the slices moved onto the sixteenths.
-    fn settle_quantize(&mut self) {
-        let Some(rows) = self
-            .quantized
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        else {
-            return;
-        };
-        let step = 60.0 / self.scene.bpm.max(1.0) / 4.0;
-        let mut effects = Vec::new();
-        crate::arrange_edit::Editor::quantize(&mut self.project, &rows, step, 1.0, &mut effects);
-        self.settle(effects);
-        self.dirty.set(true);
     }
 
     /// Shift+G: gain stage the session ([`crate::gain_stage::stage_live`]);
@@ -1170,14 +1162,6 @@ impl ArrangementWidget {
         self.resync();
         self.notice = Some(crate::notice::Notice::new(said, None));
         self.dirty.set(true);
-    }
-
-    /// Whether a quantize's hits are waiting to be applied.
-    fn quantize_ready(&self) -> bool {
-        self.quantized
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
     }
 
     fn toggle_scene(&mut self, slug: &'static str) -> bool {
@@ -1323,6 +1307,8 @@ impl ArrangementWidget {
         *raw.borrow_mut() = fresh;
         let (project, rows) = planner.plan(&raw.borrow());
         self.restructure((*project.0).clone(), rows.as_slice().to_vec());
+        // The engine changed the session: a slice moved is a hit moved.
+        crate::hit_overlay::refresh();
     }
 
     /// The rows planned again from the tracks they are planned from — a
@@ -2362,13 +2348,12 @@ impl Widget for ArrangementWidget {
         // engine asked for.
         self.dirty.get()
             || window_queued()
-            || crate::detect_overlay::version() != self.detection_seen.get()
+            || crate::hit_overlay::version() != self.detection_seen.get()
             // Edits made and not yet sent: the panel sends them at the
             // top of a frame, and this one is owed.
             || !self.edits.borrow().is_empty()
             || crate::wave_detail::generation() != self.detail_seen.get()
             || self.view_drawn.get() != Self::framing(&self.view.borrow())
-            || self.quantize_ready()
             || self.stage_ready()
             || crate::studio::resync_pending()
             || self
@@ -2477,7 +2462,6 @@ impl ArrangementWidget {
             }
             let _ = self.apply_actions(crate::actions::take_window());
         }
-        self.settle_quantize();
         self.settle_stage();
         self.dirty.set(false);
         let generation = self.previews.generation();
@@ -3269,21 +3253,27 @@ impl ArrangementWidget {
                 &self.project,
             );
         }
-        // In Edit mode, what the drum detection found, over the kit.
-        self.detection_seen.set(crate::detect_overlay::version());
+        // In Edit mode, the kit's hit markers, each on its own piece.
+        self.detection_seen.set(crate::hit_overlay::version());
         if self.editing.get()
-            && let Some(found) = crate::detect_overlay::current()
             && let Some(kit) = self.kit_rows()
         {
-            crate::arrangement::detection_overlay(
-                &mut out,
-                &self.palette,
-                &self.scene,
-                view,
-                lanes_at,
-                kit,
-                &found,
-            );
+            match crate::hit_overlay::current() {
+                Some(hits) => {
+                    let rows = self.piece_rows(kit.clone(), &hits);
+                    crate::arrangement::hits_overlay(
+                        &mut out,
+                        &self.palette,
+                        &self.scene,
+                        view,
+                        lanes_at,
+                        (kit, &rows),
+                        &hits,
+                    );
+                }
+                // Not read yet since the window opened.
+                None => crate::hit_overlay::refresh(),
+            }
         }
         // The razor's rectangles over the items they cut, and under
         // nothing: they are the thing being aimed, so they go last of

@@ -2042,86 +2042,115 @@ pub fn marquee_overlay(
     );
 }
 
-/// What the drum detection found ([`crate::detect_overlay`]), over the
-/// rows `rows` (the kit).
+/// The kit's hit markers ([`crate::hit_overlay`]), each on its own piece.
 ///
-/// A line at each moment in the colour of what a slip would do with it — the meters' danger to move, safe to stay,
-/// warn to listen to — and, from a hit to be moved, a bar along the top
-/// to where it goes. The fills shaded under them.
-pub fn detection_overlay(
+/// The fill zones are shaded over the kit's rows `kit`, and each hit is a
+/// line on its own piece's rows — `rows` pairs a row with the piece it is
+/// ([`Overlay::pieces`] index) — so the kick's hits are on the kick and
+/// nowhere else.
+///
+/// A line in the colour of who placed it — the text's for found and
+/// unchecked, the accent for placed by hand, the meters' safe for found
+/// and checked — or the meters' warn for one to look at (bleed, or found
+/// unsure); a ghost note drawn to half the row. A flag at its head, where
+/// the hits are far enough apart to read.
+///
+/// [`Overlay::pieces`]: crate::hit_overlay::Overlay::pieces
+pub fn hits_overlay(
     painter: &mut impl PaintScene,
     palette: &Palette,
     scene: &Arrangement,
     view: Viewport,
     origin: (f64, f64),
-    rows: std::ops::Range<usize>,
-    overlay: &crate::detect_overlay::Overlay,
+    (kit, rows): (std::ops::Range<usize>, &[(usize, usize)]),
+    overlay: &crate::hit_overlay::Overlay,
 ) {
-    use crate::detect_overlay::Mark;
+    use crate::hit_overlay::Who;
+    /// Hits nearer than this many pixels draw no flag, and fainter.
+    const CLEAR: f64 = 6.0;
     let (ox, oy) = origin;
-    let (Some((top, _)), Some((last_top, last_h))) = (
-        scene.row_box(rows.start),
-        scene.row_box(rows.end.saturating_sub(1)),
-    ) else {
-        return;
+    let top = crate::ruler::ruler_h();
+    let y_span = |row: usize| {
+        let (y, h) = scene.row_box(row)?;
+        let y0 = y.mul_add(view.zoom_y, oy).max(top);
+        let y1 = (y + h).mul_add(view.zoom_y, oy).min(view.height);
+        (y1 > y0).then_some((y0, y1))
     };
-    let y0 = top.mul_add(view.zoom_y, oy).max(crate::ruler::ruler_h());
-    let y1 = (last_top + last_h)
-        .mul_add(view.zoom_y, oy)
-        .min(view.height);
-    if y1 <= y0 {
-        return;
-    }
     let x_of = |t: f64| t.mul_add(view.pps, ox);
     let pps = view.pps.max(f64::EPSILON);
     let (from, to) = ((view.panel_w - ox) / pps, (view.width - ox) / pps);
-    for &(a, b) in &overlay.fills {
-        if b < from || a > to {
-            continue;
-        }
-        let r = Rect::new(x_of(a).max(view.panel_w), y0, x_of(b).min(view.width), y1);
-        painter.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            palette.accent.multiply_alpha(0.12),
-            None,
-            &r,
-        );
-    }
-    let thin = vello::kurbo::Stroke::new(1.0);
-    for line in overlay.between(from, to) {
-        let colour = match line.mark {
-            Mark::Move => palette.meter_danger,
-            Mark::Stay => palette.meter_safe,
-            Mark::Check => palette.meter_warn,
-            Mark::Fill => palette.text_faint,
-        };
-        let x = x_of(line.time);
-        painter.stroke(
-            &thin,
-            Affine::IDENTITY,
-            colour.multiply_alpha(0.8),
-            None,
-            &vello::kurbo::Line::new((x, y0), (x, y1)),
-        );
-        if line.mark == Mark::Move
-            && let Some(target) = line.target
-        {
-            let tx = x_of(target);
+    if let (Some((y0, _)), Some((_, y1))) =
+        (kit.clone().find_map(y_span), kit.rev().find_map(y_span))
+    {
+        for zone in &overlay.zones {
+            if zone.end < from || zone.start > to {
+                continue;
+            }
+            let tint = if zone.found {
+                palette.meter_warn
+            } else {
+                palette.accent
+            };
+            let r = Rect::new(
+                x_of(zone.start).max(view.panel_w),
+                y0,
+                x_of(zone.end).min(view.width),
+                y1,
+            );
             painter.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
-                colour,
+                tint.multiply_alpha(0.10),
                 None,
-                &Rect::new(x.min(tx), y0, x.max(tx), y0 + 3.0),
+                &r,
             );
+        }
+    }
+    let marks = overlay.between(from, to);
+    let thin = vello::kurbo::Stroke::new(1.0);
+    for &(row, piece) in rows {
+        let Some((y0, y1)) = y_span(row) else {
+            continue;
+        };
+        let mine: Vec<&crate::hit_overlay::Mark> =
+            marks.iter().filter(|m| m.piece == piece).collect();
+        let spaced = |k: usize| {
+            let x = mine.get(k).map_or(0.0, |m| x_of(m.time));
+            let gap = |j: Option<usize>| {
+                j.and_then(|j| mine.get(j))
+                    .map_or(f64::INFINITY, |m| (x_of(m.time) - x).abs())
+            };
+            gap(k.checked_sub(1)).min(gap(k.checked_add(1))) >= CLEAR
+        };
+        for (k, m) in mine.iter().enumerate() {
+            let colour = if m.doubt {
+                palette.meter_warn
+            } else {
+                match m.who {
+                    Who::Auto => palette.text,
+                    Who::Manual => palette.accent,
+                    Who::Approved => palette.meter_safe,
+                }
+            };
+            let clear = spaced(k);
+            let colour = colour.multiply_alpha(if clear { 0.85 } else { 0.45 });
+            let x = x_of(m.time).round() + 0.5;
+            let foot = if m.ghost { f64::midpoint(y0, y1) } else { y1 };
             painter.stroke(
                 &thin,
                 Affine::IDENTITY,
                 colour,
                 None,
-                &vello::kurbo::Line::new((tx, y0), (tx, y0 + 8.0)),
+                &vello::kurbo::Line::new((x, y0), (x, foot)),
             );
+            if clear && y1 - y0 > 10.0 {
+                let mut flag = vello::kurbo::BezPath::new();
+                flag.move_to((x - 3.5, y0));
+                flag.line_to((x + 3.5, y0));
+                flag.line_to((x, y0 + 5.0));
+                flag.close_path();
+                painter.fill(Fill::NonZero, Affine::IDENTITY, colour, None, &flag);
+            }
         }
     }
 }
