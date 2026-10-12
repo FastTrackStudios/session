@@ -13,7 +13,9 @@
 //! ([`use_cursor_sink`]) makes the queued ones on the next event — the
 //! very next pointer move — and puts the glyph up. Made once, kept.
 
+#[cfg(feature = "native")]
 use std::cell::RefCell;
+#[cfg(feature = "native")]
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -212,6 +214,7 @@ fn fade(scene: &mut Scene, rising: bool) {
 pub type Sink = Rc<dyn Fn(Shape)>;
 
 /// The window's cursors: made, and wanted.
+#[cfg(feature = "native")]
 #[derive(Default)]
 struct Cursors {
     made: HashMap<Glyph, winit::cursor::CustomCursor>,

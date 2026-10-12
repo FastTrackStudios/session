@@ -179,8 +179,15 @@ pub fn reset() -> Settings {
 }
 
 /// Where they are kept.
+#[cfg(feature = "native")]
 fn path() -> Option<std::path::PathBuf> {
     dirs::config_dir().map(|d| d.join("fts").join("drum-edit.json"))
+}
+
+/// A page keeps them for the visit: it has no config folder.
+#[cfg(not(feature = "native"))]
+const fn path() -> Option<std::path::PathBuf> {
+    None
 }
 
 fn load() -> Option<Settings> {

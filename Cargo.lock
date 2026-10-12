@@ -13492,7 +13492,6 @@ dependencies = [
  "skrifa 0.26.6",
  "svg",
  "taffy 0.7.7",
- "tokio",
  "vello 0.10.0",
  "winit 0.30.13",
 ]

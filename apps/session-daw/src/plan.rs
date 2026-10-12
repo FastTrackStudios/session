@@ -95,6 +95,7 @@ impl Kinds {
     /// `path`'s text.
     #[must_use]
     pub fn current(path: &std::path::Path) -> Self {
+        #[cfg(feature = "native")]
         let engine = crate::open::local_engine()
             .and_then(|daw| {
                 use daw::service::Projects as _;
@@ -102,6 +103,9 @@ impl Kinds {
                 Some(Self::from_engine(daw, &song))
             })
             .unwrap_or_default();
+        // A page has no engine of its own to read the kinds from.
+        #[cfg(not(feature = "native"))]
+        let engine = Self::default();
         if engine.is_empty() {
             Self::read(path)
         } else {

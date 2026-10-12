@@ -442,10 +442,17 @@ pub fn fetch() -> Option<daw_ui::studio::project::Project> {
     Some(project)
 }
 
+/// No engine in a page's process to write a chart from.
+#[cfg(not(feature = "native"))]
+const fn chart_of_song(_project: Option<&str>) -> Option<Arc<keyflow::Chart>> {
+    None
+}
+
 /// A chart for the song `project` (the current one when `None`) written
 /// from its sections ([`crate::song_chart`]), when it is in this
 /// process's engine and has sections: what the chart view shows for a
 /// song with no chart of its own.
+#[cfg(feature = "native")]
 fn chart_of_song(project: Option<&str>) -> Option<Arc<keyflow::Chart>> {
     use daw::service::Projects as _;
     let daw = crate::open::local_engine()?;
