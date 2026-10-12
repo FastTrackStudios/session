@@ -39,6 +39,23 @@ step. The track panel's automation button lists what the track can
 automate (its volume, pan, width and mute, each plugin's parameters, and
 a leveled vocal's leveler lanes) and shows or hides each.
 
+r[automation.write]
+A fader or pan knob moved while the song plays writes its automation,
+as the envelope's mode — or, for an envelope that has none of its own
+yet, its track's — says: Touch while it is held, Latch from the first
+touch until the song stops, Write always. A pass replaces the points it
+rides over. In Read and the writing modes the envelope is the volume
+(or pan) itself; in Trim/Read the fader trims it.
+
+r[automation.items]
+Automation items are made by hand (Shift and a drag in a lane, over the
+span, their curve what played there), resized by their edges, moved by
+their name bar, copied into their pool with Ctrl (onto another track's
+lane too) and deleted with Alt. A pool is the project's: every instance
+of it, on any envelope, plays one curve, and an edit to one is an edit
+to all. An item's take volume curve can be shown on it and its points
+dragged there.
+
 r[automation.by-section]
 A move by section sets an envelope section by section. A section is
 picked by its name, its kind (its name up to its number), or by what is

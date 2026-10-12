@@ -195,6 +195,7 @@ pub fn press(hit: &Hit, y: f64, keys: Keys) -> (Option<LaneDrag>, Vec<Edit>) {
     }
 }
 
+// r[impl automation.items]
 /// A press on automation item `item`'s name bar at `t` seconds: Alt
 /// deletes it, Ctrl starts a pooled copy, a plain press a move.
 fn bar_press(

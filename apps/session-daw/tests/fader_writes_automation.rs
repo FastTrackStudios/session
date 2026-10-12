@@ -100,6 +100,7 @@ fn drag(track: &str) {
     )));
 }
 
+// r[verify automation.write]
 #[test]
 fn a_fader_moved_in_latch_writes_its_moves() {
     let _opened = session_daw::open::open_silent(&template()).expect("the template opens");

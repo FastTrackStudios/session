@@ -1848,6 +1848,7 @@ async fn apply(edit: &Edit) {
         Edit::ToggleArm(_) => track.toggle_arm().await,
         Edit::Select(_) => track.select_exclusive().await,
         Edit::AddToSelection(_) => track.select().await,
+        // r[impl automation.write]
         // Through the automation writer: it sets the fader, and records a
         // point where the envelope's mode (or the track's) says to —
         // Touch while held, Latch from the first touch, Write always —

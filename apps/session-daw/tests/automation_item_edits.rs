@@ -72,6 +72,7 @@ fn point(t: f64, value: f64) -> EnvelopePoint {
     }
 }
 
+// r[verify automation.items]
 #[test]
 fn an_item_is_made_pooled_across_tracks_resized_and_deleted() {
     let _opened = session_daw::open::open_silent(&template()).expect("the template opens");
