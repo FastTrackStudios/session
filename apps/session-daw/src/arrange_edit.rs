@@ -2008,16 +2008,18 @@ fn slip_takes(
 const SEAM_WINDOW: f64 = 1.0;
 
 /// The comp lane of a track with fixed lanes: the first named `C…` (REAPER
-/// 7's `C1`), else the first lane that plays. `None` for a track without
-/// lanes.
+/// 7's `C1`) or `COMP` (the kit's, `drum_lanes::COMP`), else the first
+/// lane that plays. `None` for a track without lanes.
 #[must_use]
 pub fn comp_lane(track: &daw_proto::Track) -> Option<u32> {
     if track.lane_count == 0 {
         return None;
     }
     let named = track.lane_names.iter().position(|name| {
-        name.strip_prefix('C')
-            .is_some_and(|rest| rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit()))
+        name.trim().eq_ignore_ascii_case("COMP")
+            || name
+                .strip_prefix('C')
+                .is_some_and(|rest| rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit()))
     });
     named.and_then(|lane| u32::try_from(lane).ok()).or_else(|| {
         (0..track.lane_count.min(64)).find(|lane| track.lane_play_mask & (1_u64 << lane) != 0)
@@ -5297,6 +5299,8 @@ mod comp_tests {
         assert_eq!(comp_lane(&track), Some(1));
         track.lane_names = vec!["A".into(), "B".into(), "C".into()];
         assert_eq!(comp_lane(&track), Some(2), "C alone counts: C1's family");
+        track.lane_names = vec!["1".into(), "COMP".into(), "EDIT".into()];
+        assert_eq!(comp_lane(&track), Some(1), "the kit's comp, EDIT playing");
         track.lane_names.clear();
         assert_eq!(comp_lane(&track), Some(2), "the playing lane");
         assert_eq!(comp_lane(&daw_proto::Track::default()), None);

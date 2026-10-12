@@ -295,6 +295,23 @@ fn run_hit_action(id: &'static str, args: String) {
     let _ = (id, args);
 }
 
+/// Run a swipe's comp (`TRACK_COMP_FROM_LANE`) on the Action List, off the
+/// window's thread — the same action a model runs, which asks for the song
+/// to be read back once it is done.
+fn run_comp(args: String) {
+    #[cfg(feature = "native")]
+    if let Some(runtime) = crate::open::runtime() {
+        runtime.spawn_blocking(move || {
+            let id = crate::comp::SWIPE_COMP.id;
+            if let Err(e) = crate::actions::list().run_json(id, args.as_bytes()) {
+                tracing::warn!(comp.action = id, comp.error = %e, "a swipe comp was refused");
+            }
+        });
+    }
+    #[cfg(not(feature = "native"))]
+    let _ = args;
+}
+
 /// A knob under the pointer, mid-turn.
 /// The undo step a take volume curve gesture makes.
 const TAKE_LABEL: &str = "Edit item volume";
@@ -547,6 +564,9 @@ pub struct ArrangementWidget {
     last_name: Option<(usize, web_time::Instant)>,
     /// A hit marker taken by its flag (Edit mode), mid-drag.
     hit_drag: Option<HitDrag>,
+    /// A swipe along a take's lane, on a row showing its lanes: the
+    /// stretch comped onto the comp lane when let go ([`crate::swipe`]).
+    swipe: Option<crate::swipe::Swipe>,
     /// Where and when a piece row's flag strip was last clicked with no
     /// flag under it: the first half of the double-click that places a
     /// hit.
@@ -715,6 +735,7 @@ impl ArrangementWidget {
             scene_before: None,
             last_name: None,
             hit_drag: None,
+            swipe: None,
             last_strip: None,
             turning: None,
             item_turn: None,
@@ -922,6 +943,7 @@ impl ArrangementWidget {
         let pps = view.pps.max(f64::EPSILON);
         let time = (x - ox) / pps;
         let rows = self.piece_rows(kit, &hits);
+        let mut in_strip = false;
         let (row, _) = rows.iter().find(|(row, _)| {
             self.scene.row_box(*row).is_some_and(|(top, height)| {
                 let y0 = top.mul_add(view.zoom_y, oy);
@@ -941,10 +963,12 @@ impl ArrangementWidget {
             .filter(|m| pieces.contains(&m.piece))
             .min_by(|a, b| (a.time - time).abs().total_cmp(&(b.time - time).abs()))
             .map(|m| m.id.clone());
+        if mark.is_none() && !in_strip {
+            return None;
+        }
         Some(FlagSpot {
             mark,
             pieces: pieces
-        let mut in_strip = false;
                 .iter()
                 .filter_map(|p| hits.pieces.get(*p).cloned())
                 .collect(),
@@ -963,9 +987,6 @@ impl ArrangementWidget {
     fn hit_gesture(&mut self, event: &UiEvent) -> bool {
         match event {
             UiEvent::PointerDown(e)
-        if mark.is_none() && !in_strip {
-            return None;
-        }
                 if e.button == MouseEventButton::Main && !self.pointing.borrow().tool_active() =>
             {
                 let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
@@ -1046,6 +1067,100 @@ impl ArrangementWidget {
             }
             _ => false,
         }
+    }
+
+    /// A swipe comp ([`crate::swipe`]): a press with no modifier on a lane
+    /// that is not the comp, on a row showing its lanes, followed; let go,
+    /// the stretch comped onto the comp lane (`TRACK_COMP_FROM_LANE`) —
+    /// on a shut folder's row every track under it with lanes — behind the
+    /// window, as a model's comp is, the song read back after. A modifier
+    /// leaves the press to the editor (select, move), as on any row.
+    fn swipe_gesture(&mut self, event: &UiEvent) -> bool {
+        match event {
+            UiEvent::PointerDown(e)
+                if e.button == MouseEventButton::Main && !self.pointing.borrow().tool_active() =>
+            {
+                // A finger on the lanes scrolls them.
+                let held = mods(e.mods);
+                if held.shift || held.ctrl || held.alt || e.is_finger() {
+                    return false;
+                }
+                let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+                self.swipe = self.swipe_at(x, y);
+                self.swipe.is_some()
+            }
+            UiEvent::PointerMove(e) => {
+                if self.swipe.is_none() {
+                    return false;
+                }
+                let view = self.viewport(self.size.0, self.size.1);
+                let at = self.seconds_at(f64::from(e.coords.client_x), view);
+                if let Some(swipe) = self.swipe.as_mut() {
+                    swipe.to = at;
+                }
+                true
+            }
+            UiEvent::PointerUp(e) => {
+                let Some(mut swipe) = self.swipe.take() else {
+                    return false;
+                };
+                let view = self.viewport(self.size.0, self.size.1);
+                swipe.to = self.seconds_at(f64::from(e.coords.client_x), view);
+                if let Some(args) = swipe.comp_args(view.pps) {
+                    run_comp(args);
+                }
+                true
+            }
+            UiEvent::PointerCancel(_) => self.swipe.take().is_some(),
+            _ => false,
+        }
+    }
+
+    /// The swipe a press at a point starts: on a lane of a row showing its
+    /// lanes, not its comp, with nothing else there first — a panel
+    /// control, an automation lane, an item's edge, fade or volume dial.
+    fn swipe_at(&self, x: f64, y: f64) -> Option<crate::swipe::Swipe> {
+        if self.spot_at(x, y).is_some() || self.lane_hit(x, y).is_some() {
+            return None;
+        }
+        let (crate::hit::Target::Item {
+            row,
+            zone: crate::arrangement::ItemZone::Body,
+            ..
+        }
+        | crate::hit::Target::Lane { row, .. }) = self.hit(x, y)?.target
+        else {
+            return None;
+        };
+        let (track, _) = self.rows.get(row)?;
+        // The lanes as drawn: what the row shows is what is swiped on.
+        let laned = self.scene.lanes_shown(row)?;
+        let view = self.viewport(self.size.0, self.size.1);
+        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        let content_y = (y - ruler::ruler_h() + view.scroll_y) / zoom;
+        let (top, height) = self.scene.row_box(row)?;
+        let lane = crate::swipe::lane_at(top, height, laned.lane_count, content_y)?;
+        if !crate::swipe::starts_on(laned, lane) {
+            return None;
+        }
+        let at = self.seconds_at(x, view);
+        // A track's media-edit group swiped with it; a folder's tracks are
+        // the comp's own to find.
+        let with = if track.is_folder {
+            Vec::new()
+        } else {
+            crate::lanes::grouped_tracks(&self.project.tracks, &track.guid)
+        };
+        Some(crate::swipe::Swipe {
+            row,
+            track: track.guid.clone(),
+            with,
+            lane,
+            lanes: laned.lane_count,
+            called: crate::lanes::called(laned, lane),
+            from: at,
+            to: at,
+        })
     }
 
     /// The kit's rows and the pieces each shows (`rows`' index, the
@@ -2083,20 +2198,25 @@ impl ArrangementWidget {
             C::Solo => Edit::ToggleSolo(guid),
             C::RecArm => Edit::ToggleArm(guid),
             C::Phase => Edit::SetPhase(guid, !track.phase_inverted),
-            C::LaneName => {
-                let shown: Vec<String> = crate::lanes::shown_on(&self.tracks, track)
-                    .into_iter()
-                    .map(|t| t.guid.clone())
-                    .collect();
-                crate::lanes::toggle_expanded(&shown);
+            // The `+`, or the lane's name: every lane shown, to hear and comp
+            // from — on a folder its own row's and every track's under it —
+            // or only the one that plays again.
+            C::LaneShow | C::LaneName => {
+                let open = !crate::lanes::opened(track);
+                let under =
+                    crate::lanes::speaks_for(&self.tracks, track, self.scene.lane_tracks(spot.row));
+                let _ =
+                    crate::lanes::set_expanded(&crate::lanes::opened_by(track, &under), Some(open));
                 return;
             }
             C::LanePrev | C::LaneNext => {
-                // What the line speaks for: the track, or a folder's tracks.
-                let shown: Vec<daw_proto::Track> = crate::lanes::shown_on(&self.tracks, track)
-                    .into_iter()
-                    .cloned()
-                    .collect();
+                // What the line speaks for: the track, or a folder's tracks
+                // (shut, the ones the scene recorded under it).
+                let shown: Vec<daw_proto::Track> =
+                    crate::lanes::speaks_for(&self.tracks, track, self.scene.lane_tracks(spot.row))
+                        .into_iter()
+                        .cloned()
+                        .collect();
                 let Some(first) = shown.first() else { return };
                 let Some(mask) = crate::lanes::stepped(
                     first,
@@ -2130,7 +2250,7 @@ impl ArrangementWidget {
                     }
                 }
                 for g in targets {
-                    let Some(t) = self.tracks.iter().find(|t| t.guid == g) else {
+                    let Some(t) = self.tracks.iter().chain(&shown).find(|t| t.guid == g) else {
                         continue;
                     };
                     let Some(own) = crate::lanes::mask_named(t, &lane) else {
@@ -2918,6 +3038,12 @@ impl ArrangementWidget {
             self.dirty.set(true);
             return;
         }
+        // A swipe along a take's lane, on a row showing its lanes: its own
+        // gesture, before the editor's select and move.
+        if self.swipe_gesture(event) {
+            self.dirty.set(true);
+            return;
+        }
         // What a press here would do, asked BEFORE the press is taken: a
         // razor starts as an area under the pointer, which would then
         // answer as the area rather than as the razor being drawn.
@@ -3110,6 +3236,12 @@ impl ArrangementWidget {
             // A knob mid-turn keeps its shape off the knob, as it keeps
             // the pointer.
             crate::tool::Over::Knob
+        } else if self.hit_drag.is_some()
+            || self.flag_at(x, y).is_some_and(|spot| spot.mark.is_some())
+        {
+            // A hit marker is taken before the item under it, so it says
+            // so before it is pressed.
+            crate::tool::Over::Hit
         } else if let Some(spot) = self.spot_at(x, y) {
             if spot.control.is_continuous() {
                 crate::tool::Over::Knob
@@ -3236,12 +3368,6 @@ impl ArrangementWidget {
                         hit.target,
                         crate::hit::Target::Lane { .. }
                             | crate::hit::Target::Ruler { .. }
-        } else if self.hit_drag.is_some()
-            || self.flag_at(x, y).is_some_and(|spot| spot.mark.is_some())
-        {
-            // A hit marker is taken before the item under it, so it says
-            // so before it is pressed.
-            crate::tool::Over::Hit
                             | crate::hit::Target::Track { .. }
                             | crate::hit::Target::Empty
                     ) || (locked && matches!(hit.target, crate::hit::Target::Item { .. }))
@@ -3831,6 +3957,8 @@ impl ArrangementWidget {
             below,
             self.take_lit,
         );
+        // A leveled vocal's leveler, summed, over each of its items.
+        crate::automation_draw::leveler_lines(&mut out, &self.palette, &self.scene, view, below);
         // The automation lanes under their tracks, over the items' rows.
         let lanes_placed =
             crate::automation_draw::on_screen(&self.scene, &self.tracks, view, below);
@@ -3897,6 +4025,12 @@ impl ArrangementWidget {
                 crate::arrangement::hit_drag_overlay(&mut out, &self.palette, view, drag.x);
             }
         }
+        // The lanes' names on the rows showing them, and a swipe being made
+        // along a take's lane: the stretch to comp.
+        crate::swipe::labels(&mut out, &self.palette, &self.font, &self.scene, view);
+        if let Some(swipe) = &self.swipe {
+            crate::swipe::overlay(&mut out, &self.palette, &self.scene, view, lanes_at, swipe);
+        }
         // The razor's rectangles over the items they cut, and under
         // nothing: they are the thing being aimed, so they go last of
         // the lane passes.
@@ -3957,8 +4091,6 @@ impl ArrangementWidget {
             self.scene.tempo(),
         );
         // The song's own shape over the timeline: the section bands and
-        // A leveled vocal's leveler, summed, over each of its items.
-        crate::automation_draw::leveler_lines(&mut out, &self.palette, &self.scene, view, below);
         // the marker flags, and the lines they drop through the lanes.
         ruler::lanes(
             &mut out,
@@ -5220,6 +5352,95 @@ mod tests {
         // And the widget shows it without waiting for the engine.
         assert!(widget.rows[1].0.muted, "the row it drew from");
         assert!(widget.tracks[1].muted, "the track the controls read");
+    }
+
+    /// A track of three lanes — C1, takes 1 and 2 — its `+` open: a drag
+    /// along take 2 is a swipe, followed and let go; pressed on the comp it
+    /// is not, and with the lanes shut nor anywhere.
+    #[test]
+    fn a_drag_along_a_take_lane_is_a_swipe_and_on_the_comp_is_not() {
+        let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = crate::text::Font::embedded().expect("the embedded font");
+        let track = daw_proto::Track {
+            guid: "vox".to_owned(),
+            name: "Vox".to_owned(),
+            height: Some(90),
+            lane_count: 3,
+            lane_play_mask: 0b1,
+            lane_names: vec!["C1".to_owned(), "1".to_owned(), "2".to_owned()],
+            ..daw_proto::Track::default()
+        };
+        let _ = crate::lanes::set_expanded(&["vox".to_owned()], Some(true));
+        let rows = vec![(track.clone(), 0)];
+        let refs = daw_ui::studio::RowsRef(std::sync::Arc::new(rows.clone()));
+        let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(daw_ui::studio::Project {
+            tracks: vec![track],
+            length_secs: 60.0,
+            ..daw_ui::studio::Project::default()
+        }));
+        let layout = crate::layout::Layout::default();
+        let scene = crate::arrangement::Arrangement::build(
+            &palette,
+            &font,
+            &project,
+            &refs,
+            layout,
+            &crate::midi::Previews::default(),
+            crate::tcp::Tcp::FULL,
+        );
+        let view: Shared = std::rc::Rc::new(std::cell::RefCell::new(View {
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            zoom_x: 1.0,
+            zoom_y: 1.0,
+            play_at: 0.0,
+        }));
+        let mut widget = ArrangementWidget::new(
+            scene,
+            palette,
+            font,
+            120.0,
+            100.0,
+            rows,
+            layout,
+            daw_ui::studio::project::Project::default(),
+            crate::midi::Previews::default(),
+            view,
+            false,
+        );
+        widget.size = (1600.0, 900.0);
+        // The middle of lane `lane`'s strip, `seconds` along.
+        let place = |widget: &ArrangementWidget, lane: f64, seconds: f64| {
+            let view = widget.viewport(widget.size.0, widget.size.1);
+            let (top, height) = widget.scene.row_box(0).expect("the row");
+            let y = (lane + 0.5).mul_add(height / 3.0, top);
+            (
+                seconds.mul_add(view.pps, view.panel_w - view.scroll_x),
+                y.mul_add(view.zoom_y, crate::ruler::ruler_h() - view.scroll_y),
+            )
+        };
+        let (from, y) = place(&widget, 2.0, 4.0);
+        let (to, _) = place(&widget, 2.0, 6.0);
+        widget.handle_event(&UiEvent::PointerDown(pointer(from, y)));
+        let swipe = widget.swipe.clone().expect("a swipe along take 2");
+        assert_eq!((swipe.row, swipe.lane, swipe.lanes), (0, 2, 3));
+        assert_eq!((swipe.track.as_str(), swipe.called.as_str()), ("vox", "2"));
+        widget.handle_event(&UiEvent::PointerMove(pointer(to, y)));
+        let (a, b) = widget.swipe.as_ref().expect("followed").span();
+        assert!((a - 4.0).abs() < 0.05 && (b - 6.0).abs() < 0.05, "{a}..{b}");
+        widget.handle_event(&UiEvent::PointerUp(pointer(to, y)));
+        assert!(widget.swipe.is_none(), "let go");
+
+        let (x, y) = place(&widget, 0.0, 4.0);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        assert!(widget.swipe.is_none(), "the comp is swiped onto, not from");
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
+
+        let _ = crate::lanes::set_expanded(&["vox".to_owned()], Some(false));
+        widget.recut();
+        let (x, y) = place(&widget, 2.0, 4.0);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        assert!(widget.swipe.is_none(), "the lanes shut: the editor's press");
     }
 
     #[test]

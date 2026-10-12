@@ -990,6 +990,8 @@ fn register_data(list: &ActionList) {
     crate::fx_actions::register(list);
     crate::vocal_level::register(list);
     crate::automation_actions::register(list);
+    #[cfg(feature = "native")]
+    crate::comp::register(list);
 }
 
 static REFERENCE_MAP: ActionMeta = meta(
@@ -2980,11 +2982,11 @@ const NEAR_WRITTEN: f64 = 0.4;
 enum Placed {
     /// Its piece's note in the drum MIDI ([`crate::written::align`]).
     Written,
-    /// The grid: the nearest line, the section's feel taken out.
-    Line,
     /// No note of its own: a line the chart writes something on, near —
     /// a stroke the drummer added among written ones.
     Near,
+    /// The grid: the nearest line, the section's feel taken out.
+    Line,
     /// Nothing near enough to be sure of.
     Nothing,
 }
@@ -3170,8 +3172,6 @@ fn targets(
         .collect())
 }
 
-/// Moments nearer than this are one gesture, moved as one, seconds:
-/// under a 1/32 at 160 bpm (47 ms), so a double kick's 16ths and a
 /// One stroke to a line: where moments a gesture apart are sent to the
 /// same line, the one placed by its own note keeps it (else the one
 /// nearer it), and each other is moved between its neighbours — by as
@@ -3264,6 +3264,8 @@ fn one_stroke_a_line(placed: &mut [(f64, Option<f64>)], by: &[Placed]) {
 /// neighbour in the same figure.
 const NEIGHBOUR_REACH: f64 = 0.25;
 
+/// Moments nearer than this are one gesture, moved as one, seconds:
+/// under a 1/32 at 160 bpm (47 ms), so a double kick's 16ths and a
 /// drummer's 32nds stay their own.
 const GESTURE: f64 = 0.040;
 
@@ -3609,10 +3611,10 @@ fn detect(
             *to = None;
         }
     }
-    let targets = hold_gestures(&placed, &loudness);
-    let fills = find_fills(daw, project, &kit, span);
     let by_kind: Vec<Placed> = by.iter().map(|(_, _, b)| *b).collect();
     one_stroke_a_line(&mut placed, &by_kind);
+    let targets = hold_gestures(&placed, &loudness);
+    let fills = find_fills(daw, project, &kit, span);
     Ok(Detected {
         kit,
         moments,

@@ -234,12 +234,32 @@ pub fn parse_guid(guid: &str) -> Option<(&str, usize)> {
 /// the view, and keeping a stale one would draw a take where the session
 /// no longer has one.
 pub fn refold(project: &mut super::project::Project, shown: &[daw_proto::Track], on: bool) {
+    refold_lanes(project, shown, on, &|_, _| false);
+}
+
+/// [`refold`], with the shut folders `laned` names (asked with every
+/// track, and the folder) folded lane by lane: each lane of the tracks
+/// under it that have lanes folded on its own, its items on that lane
+/// (`fixed_lane`) — every take beside the comp, to look at, hear and comp
+/// from, rather than only what plays.
+pub fn refold_lanes(
+    project: &mut super::project::Project,
+    shown: &[daw_proto::Track],
+    on: bool,
+    laned: &dyn Fn(&[daw_proto::Track], &daw_proto::Track) -> bool,
+) {
     project.folds.clear();
     if !on {
         return;
     }
     let tracks = std::mem::take(&mut project.tracks);
     for folder in shut(&tracks, shown) {
+        if laned(&tracks, folder) {
+            if let Some(fold) = fold_lanes(project, &tracks, folder) {
+                project.folds.insert(folder.guid.clone(), fold);
+            }
+            continue;
+        }
         // What each child plays: a take on a lane that does not play is
         // an alternative, not part of the folder's sound.
         let playing: Vec<Vec<Item>> = under(&tracks, &folder.guid)
@@ -264,6 +284,49 @@ pub fn refold(project: &mut super::project::Project, shown: &[daw_proto::Track],
             .insert(folder.guid.clone(), Fold { items, spans });
     }
     project.tracks = tracks;
+}
+
+/// A shut folder folded lane by lane: lane `n` of every track under it
+/// with lanes (more than one) folded into the spans of the folder's lane
+/// `n`. `None` when no lane holds anything.
+fn fold_lanes(
+    project: &super::project::Project,
+    tracks: &[daw_proto::Track],
+    folder: &daw_proto::Track,
+) -> Option<Fold> {
+    let children: Vec<&daw_proto::Track> = under(tracks, &folder.guid)
+        .into_iter()
+        .filter(|t| !t.is_folder && t.lane_count > 1)
+        .collect();
+    let count = children.iter().map(|t| t.lane_count).max()?.min(64);
+    let mut laned: Vec<(u32, Span)> = Vec::new();
+    for at in 0..count {
+        let on_lane: Vec<Vec<Item>> = children
+            .iter()
+            .map(|child| {
+                project
+                    .lane(&child.guid)
+                    .iter()
+                    .filter(|item| item.fixed_lane.unwrap_or(0) == at)
+                    .cloned()
+                    .collect()
+            })
+            .collect();
+        let slices: Vec<&[Item]> = on_lane.iter().map(Vec::as_slice).collect();
+        laned.extend(spans(&slices).into_iter().map(|span| (at, span)));
+    }
+    (!laned.is_empty()).then(|| laned_fold(folder, laned))
+}
+
+/// Spans, each on its lane, as a fold: [`lane`]'s items with their lane
+/// set, so a row showing lanes puts each in its lane's strip.
+fn laned_fold(folder: &daw_proto::Track, laned: Vec<(u32, Span)>) -> Fold {
+    let (lanes, spans): (Vec<u32>, Vec<Span>) = laned.into_iter().unzip();
+    let mut items = lane(folder, &spans);
+    for (item, at) in items.iter_mut().zip(lanes) {
+        item.fixed_lane = Some(at);
+    }
+    Fold { items, spans }
 }
 
 /// `spans` with the seams joined.
@@ -306,6 +369,24 @@ pub fn join_seams(project: &mut super::project::Project) {
         .collect();
     for folder in folders {
         if let Some(fold) = project.folds.get_mut(&folder.guid) {
+            // Folded lane by lane: each lane's seams joined on their own,
+            // a take never run into the comp under it.
+            if fold.items.iter().any(|item| item.fixed_lane.is_some()) {
+                let mut by_lane: std::collections::BTreeMap<u32, Vec<Span>> =
+                    std::collections::BTreeMap::new();
+                for (item, span) in fold.items.iter().zip(&fold.spans) {
+                    by_lane
+                        .entry(item.fixed_lane.unwrap_or(0))
+                        .or_default()
+                        .push(span.clone());
+                }
+                let laned = by_lane
+                    .into_iter()
+                    .flat_map(|(at, spans)| join(&spans).into_iter().map(move |span| (at, span)))
+                    .collect();
+                *fold = laned_fold(&folder, laned);
+                continue;
+            }
             let spans = join(&fold.spans);
             fold.items = lane(&folder, &spans);
             fold.spans = spans;
@@ -774,5 +855,92 @@ mod tests {
         assert!((made[0].length.as_seconds() - 2.0).abs() < 1e-9);
         assert_eq!(parse_guid(&made[0].guid), Some(("kick", 0)));
         assert_eq!(parse_guid("not-folded"), None);
+    }
+}
+
+#[cfg(test)]
+mod lane_fold_tests {
+    use daw_proto::{Duration, Item, PositionInSeconds, Track};
+
+    fn item(guid: &str, track: &str, lane: u32, at: f64, length: f64) -> Item {
+        Item {
+            guid: guid.to_owned(),
+            track_guid: track.to_owned(),
+            position: PositionInSeconds::from_seconds(at),
+            length: Duration::from_seconds(length),
+            fixed_lane: Some(lane),
+            ..Item::default()
+        }
+    }
+
+    /// A shut kit whose lanes are open is folded lane by lane — the comp on
+    /// lane 0, the take on lane 1 — and joining its seams keeps the lanes
+    /// apart; asked for none, it folds what plays, as it always did.
+    #[test]
+    fn a_shut_folder_shows_each_lane_folded_on_its_own() {
+        let mic = |guid: &str| Track {
+            guid: guid.to_owned(),
+            parent_guid: Some("kit".to_owned()),
+            visible_in_tcp: true,
+            lane_count: 2,
+            lane_play_mask: 0b1,
+            ..Track::default()
+        };
+        let folder = Track {
+            guid: "kit".to_owned(),
+            name: "Kit".to_owned(),
+            is_folder: true,
+            ..Track::default()
+        };
+        let mut project = super::super::project::Project {
+            tracks: vec![folder.clone(), mic("in"), mic("out")],
+            ..Default::default()
+        };
+        for mic in ["in", "out"] {
+            project.items.insert(
+                mic.to_owned(),
+                vec![
+                    item(&format!("{mic}-c1"), mic, 0, 0.0, 2.0),
+                    item(&format!("{mic}-c2"), mic, 0, 2.0, 3.0),
+                    item(&format!("{mic}-t"), mic, 1, 0.0, 5.0),
+                ],
+            );
+        }
+        let shown = vec![folder];
+        super::refold_lanes(&mut project, &shown, true, &|_, f| f.guid == "kit");
+        let fold = project.folds.get("kit").expect("folded");
+        let on = |lane: u32| {
+            fold.items
+                .iter()
+                .filter(|i| i.fixed_lane == Some(lane))
+                .count()
+        };
+        assert_eq!((on(0), on(1)), (2, 1), "the comp's two pieces, the take whole");
+        assert_eq!(fold.items.len(), fold.spans.len());
+        let take = fold
+            .items
+            .iter()
+            .zip(&fold.spans)
+            .find(|(i, _)| i.fixed_lane == Some(1))
+            .map(|(_, span)| span.from.clone());
+        assert_eq!(take, Some(vec!["in-t".to_owned(), "out-t".to_owned()]));
+
+        super::join_seams(&mut project);
+        let fold = project.folds.get("kit").expect("still folded");
+        let on = |lane: u32| {
+            fold.items
+                .iter()
+                .filter(|i| i.fixed_lane == Some(lane))
+                .count()
+        };
+        assert_eq!((on(0), on(1)), (1, 1), "the comp's seam joined, the take its own");
+
+        super::refold(&mut project, &shown, true);
+        let fold = project.folds.get("kit").expect("folded again");
+        assert!(
+            fold.items.iter().all(|i| i.fixed_lane.is_none()),
+            "only what plays, as one row"
+        );
+        assert_eq!(fold.items.len(), 2);
     }
 }

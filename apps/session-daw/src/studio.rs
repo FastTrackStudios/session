@@ -524,7 +524,14 @@ pub fn plan_rows_with(
     {
         let shown: Vec<daw_proto::Track> = planned.iter().map(|(t, _)| t.clone()).collect();
         let folded = Arc::make_mut(&mut project.0);
-        daw_ui::studio::folded::refold(folded, &shown, settings.folded_takes);
+        // A shut folder whose `+` is open shows every lane under it, lane
+        // by lane (`crate::lanes::folder_view`).
+        daw_ui::studio::folded::refold_lanes(
+            folded,
+            &shown,
+            settings.folded_takes,
+            &|tracks, folder| crate::lanes::folder_view(tracks, folder).is_some(),
+        );
         if !crate::folds::cuts_shown() {
             daw_ui::studio::folded::join_seams(folded);
         }

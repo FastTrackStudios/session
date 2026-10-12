@@ -40,6 +40,9 @@ pub enum Control {
     /// The playing lane's name, between them: shows all the lanes, or only
     /// the one that plays again.
     LaneName,
+    /// The `+` beside the lane line: every lane shown, stacked, to hear and
+    /// comp from — or only the one that plays again.
+    LaneShow,
     /// The automation button, at the head of row two: what the track can
     /// automate, to show in lanes ([`crate::automation_menu`]).
     Automation,
@@ -213,6 +216,17 @@ impl Row {
         })
     }
 
+    /// The `+` beside the lane line, at its left: the tint's last pixels
+    /// before the gutter, clear of the record-input combo an armed row
+    /// draws there.
+    fn lane_show(&self) -> Option<Rect> {
+        /// Its width.
+        const SHOW_W: f64 = 10.0;
+        let line = self.lane_line()?;
+        let x1 = line.x0 - 1.0;
+        Some(Rect::new(x1 - SHOW_W, line.y0, x1, line.y1))
+    }
+
     /// Where a control is, or `None` if this row does not show it.
     #[must_use]
     pub fn rect(&self, control: Control) -> Option<Rect> {
@@ -230,6 +244,7 @@ impl Row {
         let volume_x = self.tcp.volume_x();
         match control {
             Control::LanePrev | Control::LaneNext => self.lane_step(control == Control::LaneNext),
+            Control::LaneShow => self.lane_show(),
             Control::LaneName => {
                 let (prev, next) = (self.lane_step(false)?, self.lane_step(true)?);
                 Some(Rect::new(prev.x1, prev.y0, next.x0, next.y1))
@@ -356,6 +371,7 @@ impl Row {
         // Small before large, so the arm inside the name field wins
         // over the field and the knobs win over the row.
         [
+            Control::LaneShow,
             Control::LanePrev,
             Control::LaneNext,
             Control::LaneName,
@@ -527,6 +543,29 @@ mod tests {
         );
         assert_eq!(flat.rect(Control::Pan), deep.rect(Control::Pan));
         assert_eq!(flat.rect(Control::Volume), deep.rect(Control::Volume));
+    }
+
+    /// A track with lanes has its `+` beside the lane line, hit where it is
+    /// drawn and clear of the steps; a track without lanes has neither.
+    #[test]
+    fn the_lanes_plus_sits_beside_the_lane_line() {
+        let laned = Row::new(100.0, 70.0, 0, false, Tcp::FULL).with_lanes(true);
+        let line = laned.lane_line().expect("a lane line");
+        let plus = laned.rect(Control::LaneShow).expect("the plus");
+        assert!(plus.x1 <= line.x0, "left of the line: {plus:?} {line:?}");
+        assert!((plus.y0 - line.y0).abs() < 1e-9 && (plus.y1 - line.y1).abs() < 1e-9);
+        assert_eq!(
+            laned.control_at(plus.center().x, plus.center().y),
+            Some(Control::LaneShow)
+        );
+        let prev = laned.rect(Control::LanePrev).expect("the step back");
+        assert_eq!(
+            laned.control_at(prev.center().x, prev.center().y),
+            Some(Control::LanePrev),
+            "the step is still the step's"
+        );
+        let plain = Row::new(100.0, 70.0, 0, false, Tcp::FULL);
+        assert!(plain.rect(Control::LaneShow).is_none());
     }
 
     /// Knobs and faders are dragged; buttons are clicked.

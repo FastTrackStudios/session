@@ -1755,7 +1755,7 @@ fn control_row(
         track.is_folder,
         scene.tcp,
     )
-    .with_lanes(!crate::lanes::shown_on(tracks, live).is_empty());
+    .with_lanes(!crate::lanes::speaks_for(tracks, live, scene.lane_tracks(index)).is_empty());
     if row.density == crate::tcp::Density::Bar {
         return;
     }
@@ -1774,8 +1774,10 @@ fn control_row(
     // between the steps to the one before and after. Over a theme's row
     // as over the built-in one.
     if let Some(band) = row.lane_line() {
-        let label = crate::lanes::label_of(&crate::lanes::shown_on(tracks, live));
+        let under = crate::lanes::speaks_for(tracks, live, scene.lane_tracks(index));
+        let label = crate::lanes::label_of(&under);
         lane_line(out, palette, font, &label, &row, band, &look);
+        lanes_plus(out, palette, &row, crate::lanes::opened(live), &look);
     }
 
     // A theme's row draws its own live part — every value and the
@@ -2200,6 +2202,60 @@ mod panel_tests {
         assert_ne!(
             drawn(&scene, &palette, &font, &rows, &tracks, &a),
             drawn(&scene, &palette, &font, &rows, &tracks, &b)
+        );
+    }
+}
+
+/// The `+` beside the lane line ([`crate::row::Control::LaneShow`]): a
+/// well with a plus while the track shows the lane that plays, a minus
+/// while it shows them all — lit under the pointer, accented open.
+fn lanes_plus(
+    out: &mut anyrender::Scene,
+    palette: &Palette,
+    row: &crate::row::Row,
+    open: bool,
+    look: &dyn Fn(crate::row::Control) -> Interaction,
+) {
+    use crate::row::Control as C;
+    use vello::kurbo::{Rect, RoundedRect};
+    use vello::peniko::Fill;
+    /// Half a stroke's length, and half its weight.
+    const ARM: f64 = 3.0;
+    const HALF: f64 = 0.6;
+    let Some(r) = row.rect(C::LaneShow) else {
+        return;
+    };
+    let well = if open {
+        palette.accent.multiply_alpha(0.35)
+    } else {
+        palette.divider.multiply_alpha(0.5)
+    };
+    out.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        well,
+        None,
+        &RoundedRect::from_rect(r, 3.0),
+    );
+    let ink = match look(C::LaneShow) {
+        Interaction::Normal if !open => palette.text_dim,
+        _ => palette.text,
+    };
+    let (cx, cy) = (r.center().x, r.center().y);
+    out.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        ink,
+        None,
+        &Rect::new(cx - ARM, cy - HALF, cx + ARM, cy + HALF),
+    );
+    if !open {
+        out.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            ink,
+            None,
+            &Rect::new(cx - HALF, cy - ARM, cx + HALF, cy + ARM),
         );
     }
 }

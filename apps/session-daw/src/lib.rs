@@ -31,6 +31,8 @@ pub mod collab;
 pub mod collab_bar;
 #[cfg(feature = "native")]
 pub mod collab_pointers;
+#[cfg(feature = "native")]
+pub mod comp;
 pub mod compact;
 pub mod cursor;
 #[cfg(feature = "native")]
@@ -57,9 +59,9 @@ pub mod jobs;
 pub mod keys;
 pub mod lanes;
 pub mod layout;
+pub mod leveler;
 pub mod live;
 pub mod loading;
-pub mod leveler;
 pub mod lyrics_panel;
 pub mod macros;
 pub mod mcp;
@@ -224,6 +226,7 @@ pub mod song_bars;
 pub mod song_chart;
 pub mod strip;
 pub mod studio;
+pub mod swipe;
 pub mod take_rating;
 pub mod take_window;
 pub mod tcp;

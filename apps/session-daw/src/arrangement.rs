@@ -243,6 +243,13 @@ pub struct Arrangement {
     /// Each row's track, without the automation lanes under it — what its
     /// items and its panel controls sit in. `offsets` spans both.
     track_h: Vec<f64>,
+    /// Each row's tracks its lane line speaks for, as the song had them
+    /// when recorded ([`crate::lanes::shown_on`] over every track, not only
+    /// the rows shown): a shut folder's tracks are under it, off screen.
+    lane_tracks: Vec<Vec<daw_proto::Track>>,
+    /// The lanes each row shows, when it shows them all ([`row_lanes`]):
+    /// what its strips are named by and swiped on.
+    laned: Vec<Option<daw_proto::Track>>,
 }
 
 /// Which commands belong to which row, and how wide each one is.
@@ -684,6 +691,20 @@ impl Arrangement {
         Some((top, (track.min(bottom - top) - DIVIDER).max(0.5)))
     }
 
+    /// The tracks row `row`'s lane line speaks for, as recorded — a shut
+    /// folder's included, which are not rows ([`crate::lanes::speaks_for`]).
+    #[must_use]
+    pub fn lane_tracks(&self, row: usize) -> &[daw_proto::Track] {
+        self.lane_tracks.get(row).map_or(&[], Vec::as_slice)
+    }
+
+    /// The lanes row `row` shows, as recorded, when it shows them all: the
+    /// track's own, or a shut folder's ([`row_lanes`]).
+    #[must_use]
+    pub fn lanes_shown(&self, row: usize) -> Option<&daw_proto::Track> {
+        self.laned.get(row).and_then(Option::as_ref)
+    }
+
     /// Where row `row`'s automation lanes start and how much room they
     /// have together, in session coordinates: under its track, to the
     /// bottom of its slot. `None` for a row with none.
@@ -792,12 +813,14 @@ impl Arrangement {
         let depth = i32::try_from(*depth).unwrap_or(0);
         // The lane steps, drawn over a theme's row as over the built-in
         // one, are hit the same way on both.
-        let row = crate::row::Row::new(top, height, depth, track.is_folder, self.tcp)
-            .with_lanes(!crate::lanes::shown_on(tracks, track).is_empty());
+        let row = crate::row::Row::new(top, height, depth, track.is_folder, self.tcp).with_lanes(
+            !crate::lanes::speaks_for(tracks, track, self.lane_tracks(index)).is_empty(),
+        );
         if let Some(
             step @ (crate::row::Control::LanePrev
             | crate::row::Control::LaneNext
             | crate::row::Control::LaneName
+            | crate::row::Control::LaneShow
             | crate::row::Control::Automation),
         ) = row.control_at(x, y)
         {
@@ -1048,6 +1071,8 @@ impl Arrangement {
         let mut boxes = Vec::with_capacity(project.item_count);
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         let mut track_h = Vec::with_capacity(rows.len());
+        let mut lane_tracks = Vec::with_capacity(rows.len());
+        let mut laned_rows = Vec::with_capacity(rows.len());
         let mut y = 0.0_f64;
         let keys = keys_of(project);
         let roles = kit_roles(project);
@@ -1121,10 +1146,14 @@ impl Arrangement {
             // A track showing its fixed lanes (REAPER 7's, as REAPER draws
             // them): every lane's items, each in its lane's strip, the
             // lanes that do not play dimmed — the takes, the comp and the
-            // edit side by side. A shut folder's row is a summary, and a
-            // track showing one lane shows the lane that plays.
-            let lanes_shown = shows_lanes(track) && !project.folds.contains_key(&track.guid);
-            let lane_count = track.lane_count.max(1);
+            // edit side by side. A shut folder's row is a summary — of
+            // every lane of the tracks under it, lane by lane, once its
+            // `+` has opened them — and a track showing one lane shows the
+            // lane that plays.
+            let opened = row_lanes(project, track);
+            let lanes_shown = opened.is_some();
+            let lane_track = opened.as_ref().unwrap_or(track);
+            let lane_count = lane_track.lane_count.max(1);
             let row_items: Vec<&daw_proto::Item> = if lanes_shown {
                 project.lane(&track.guid).iter().collect()
             } else {
@@ -1155,7 +1184,7 @@ impl Arrangement {
                 } else {
                     (0.0, 1.0)
                 };
-                let plays = !lanes_shown || daw_ui::studio::project::on_playing_lane(track, item);
+                let plays = !lanes_shown || daw_ui::studio::project::on_playing_lane(lane_track, item);
                 let (y, body) = (band.0.mul_add(body, y), (band.1 - band.0) * body);
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
@@ -1307,6 +1336,13 @@ impl Arrangement {
 
             index.lanes.push(lanes_from..command_index(&lanes));
             track_h.push(h);
+            lane_tracks.push(
+                crate::lanes::shown_on(&project.tracks, track)
+                    .into_iter()
+                    .cloned()
+                    .collect(),
+            );
+            laned_rows.push(opened);
             y += h + crate::automation::lanes_height(&track.guid);
         }
         // The bottom of the last row, so every row has a `..end`.
@@ -1333,6 +1369,8 @@ impl Arrangement {
             index,
             offsets,
             track_h,
+            lane_tracks,
+            laned: laned_rows,
             rows: rows.len(),
             length_secs: project.length_secs,
             bpm: project.bpm,
@@ -2385,43 +2423,73 @@ pub fn cuts_overlay(
         let Some((top, h)) = scene.row_box(index) else {
             continue;
         };
-        let y0 = top.mul_add(view.zoom_y, oy).max(crate::ruler::ruler_h());
-        let y1 = (top + h).mul_add(view.zoom_y, oy).min(view.height);
-        if y1 <= y0 {
-            continue;
-        }
-        // Sorted by start, so the stretch on screen is found, not walked.
-        let items = &fold.items;
-        let first =
-            items.partition_point(|i| i.position.as_seconds() + i.length.as_seconds() < from);
-        let mut last_x = f64::NEG_INFINITY;
-        for pair in items
-            .get(first.saturating_sub(1)..)
-            .unwrap_or(&[])
-            .windows(2)
-        {
-            let [before, item] = pair else { continue };
-            let at = item.position.as_seconds();
-            if at > to {
-                break;
-            }
-            let ends = before.position.as_seconds() + before.length.as_seconds();
-            if ends + TOUCH < at {
-                continue; // a gap: the boxes part on their own
-            }
-            let x = at.mul_add(pps, ox);
-            // Zoomed out, one line a pixel.
-            if x - last_x < 1.0 {
+        // A folder showing its lanes: each lane's cuts in its own strip,
+        // between its own items — every lane's are by start, not all of
+        // them together.
+        let lanes = row_lanes(project, track).map_or(1, |t| t.lane_count.max(1));
+        for lane in 0..lanes {
+            let band = if lanes > 1 {
+                lane_band(lane, lanes)
+            } else {
+                (0.0, 1.0)
+            };
+            let y0 = band
+                .0
+                .mul_add(h, top)
+                .mul_add(view.zoom_y, oy)
+                .max(crate::ruler::ruler_h());
+            let y1 = band
+                .1
+                .mul_add(h, top)
+                .mul_add(view.zoom_y, oy)
+                .min(view.height);
+            if y1 <= y0 {
                 continue;
             }
-            last_x = x;
-            painter.stroke(
-                &thin,
-                Affine::IDENTITY,
-                ink,
-                None,
-                &vello::kurbo::Line::new((x, y0), (x, y1)),
-            );
+            let owned: Vec<daw_proto::Item>;
+            let items: &[daw_proto::Item] = if lanes > 1 {
+                owned = fold
+                    .items
+                    .iter()
+                    .filter(|i| i.fixed_lane.unwrap_or(0) == lane)
+                    .cloned()
+                    .collect();
+                &owned
+            } else {
+                &fold.items
+            };
+            // Sorted by start, so the stretch on screen is found, not walked.
+            let first =
+                items.partition_point(|i| i.position.as_seconds() + i.length.as_seconds() < from);
+            let mut last_x = f64::NEG_INFINITY;
+            for pair in items
+                .get(first.saturating_sub(1)..)
+                .unwrap_or(&[])
+                .windows(2)
+            {
+                let [before, item] = pair else { continue };
+                let at = item.position.as_seconds();
+                if at > to {
+                    break;
+                }
+                let ends = before.position.as_seconds() + before.length.as_seconds();
+                if ends + TOUCH < at {
+                    continue; // a gap: the boxes part on their own
+                }
+                let x = at.mul_add(pps, ox);
+                // Zoomed out, one line a pixel.
+                if x - last_x < 1.0 {
+                    continue;
+                }
+                last_x = x;
+                painter.stroke(
+                    &thin,
+                    Affine::IDENTITY,
+                    ink,
+                    None,
+                    &vello::kurbo::Line::new((x, y0), (x, y1)),
+                );
+            }
         }
     }
 }
@@ -4157,12 +4225,36 @@ mod dial_tests {
 }
 
 /// Whether `track`'s row shows its fixed lanes: it has more than one,
-/// and is not set to show only the one that plays.
+/// and the window has opened them (its `+`, [`crate::lanes::expanded`]) —
+/// over REAPER's own lane display, which a song saved showing one lane
+/// would otherwise keep shut against the hand that opened it.
 #[must_use]
 pub fn shows_lanes(track: &daw_proto::Track) -> bool {
-    track.lane_count > 1
-        && track.lane_display != daw_proto::LaneDisplay::One
-        && crate::lanes::expanded(&track.guid)
+    track.lane_count > 1 && crate::lanes::expanded(&track.guid)
+}
+
+/// The lanes `track`'s row shows, when it shows them all.
+///
+/// The track's own ([`shows_lanes`]), or — on a shut folder whose `+` is open — the lanes
+/// of the tracks under it ([`crate::lanes::folder_view`]), each folded on
+/// its own (`folded::refold_lanes`). `None` for a row showing what plays.
+#[must_use]
+pub fn row_lanes(
+    project: &daw_ui::studio::project::Project,
+    track: &daw_proto::Track,
+) -> Option<daw_proto::Track> {
+    project.folds.get(&track.guid).map_or_else(
+        || shows_lanes(track).then(|| track.clone()),
+        // Folded lane by lane only while the folder's lanes were open
+        // when the rows were planned: its items say so.
+        |fold| {
+            if fold.items.iter().any(|item| item.fixed_lane.is_some()) {
+                crate::lanes::folder_view(&project.tracks, track)
+            } else {
+                None
+            }
+        },
+    )
 }
 
 /// Lane `lane` of `count`'s strip of its row, top to bottom, as
