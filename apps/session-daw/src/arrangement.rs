@@ -510,9 +510,11 @@ enum Fine {
 }
 
 /// `lane`'s waveform from `left` to `right` seconds from detail, when
-/// zoomed in past its own points and the detail for every item under it
-/// is here — asked for if not, and `None` meanwhile, the coarse one
-/// drawn instead.
+/// zoomed in past its own points — as fine as has been read, asked for
+/// where it is not: a column no detail reaches yet is drawn from the
+/// lane's own points, so the waveform never drops back whole to the
+/// coarse one while a read is under way. `None` until any detail of it
+/// has been read (the coarse one drawn).
 fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> Option<Fine> {
     if lane.sources.is_empty() || lane.wave.step * pps <= DETAIL_PAST {
         return None;
@@ -533,11 +535,17 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
             None => missing = true,
         }
     }
-    if missing || details.is_empty() {
+    if details.is_empty() {
         return None;
     }
     let coarsest = details.iter().map(|(d, ..)| d.step).fold(0.0, f64::max);
-    if details.iter().all(|(d, ..)| d.samples) && coarsest * pps >= 1.0 {
+    // A line through the samples only once every item under it has them
+    // across the span: a line can have no gaps.
+    let every_sample = !missing
+        && details
+            .iter()
+            .all(|(d, sa, sb)| d.samples && d.from <= *sa && d.to() >= *sb);
+    if every_sample && coarsest * pps >= 1.0 {
         let half = (lane.bottom - lane.top) / 2.0;
         let mid = f64::midpoint(lane.top, lane.bottom);
         let edge = (half - 1.0).max(HAIR);
@@ -564,14 +572,43 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
     }
     let columns = crate::num::index(((b - a) * pps).ceil()).max(1);
     let mut cols: Vec<Option<(f32, f32)>> = vec![None; columns];
+    let column = |t: f64| crate::num::index(((t - a) * pps).floor());
+    // Each point into every column its span covers: a point coarser than a
+    // column (detail read for the zoom before) leaves none of them empty.
+    let take = |cols: &mut Vec<Option<(f32, f32)>>, t: f64, step: f64, (max, min)| {
+        let (from, to) = (t.max(a), (t + step).min(b));
+        if from >= to {
+            return;
+        }
+        let last = column(to - 1e-12).min(columns.saturating_sub(1));
+        for col in cols.iter_mut().take(last.saturating_add(1)).skip(column(from)) {
+            let (mx, mn) = col.unwrap_or((0.0, 0.0));
+            *col = Some((mx.max(max), mn.min(min)));
+        }
+    };
     for (detail, sa, sb) in &details {
-        for (t, (max, min)) in detail.between(*sa, *sb) {
-            if t < a || t >= b {
+        for (t, point) in detail.between(*sa, *sb) {
+            take(&mut cols, t, detail.step, point);
+        }
+    }
+    // Where no detail reaches yet, the lane's own points.
+    if cols.iter().any(Option::is_none) {
+        let wave = &lane.wave;
+        let first = crate::num::index(((a - lane.x0) / wave.step).floor());
+        for (i, point) in wave.points.iter().enumerate().skip(first) {
+            let t = crate::num::coord(i).mul_add(wave.step, lane.x0);
+            if t >= b {
+                break;
+            }
+            let (from, to) = (t.max(a), (t + wave.step).min(b));
+            if from >= to {
                 continue;
             }
-            if let Some(col) = cols.get_mut(crate::num::index(((t - a) * pps).floor())) {
-                let (mx, mn) = col.unwrap_or((0.0, 0.0));
-                *col = Some((mx.max(max), mn.min(min)));
+            let last = column(to - 1e-12).min(columns.saturating_sub(1));
+            for col in cols.iter_mut().take(last.saturating_add(1)).skip(column(from)) {
+                if col.is_none() {
+                    *col = Some(*point);
+                }
             }
         }
     }

@@ -331,11 +331,19 @@ pub fn fold_notes(start: f64, end: f64, children: &[Child<'_>]) -> Option<Vec<No
     (!out.is_empty()).then_some(out)
 }
 
-/// Samples per point a lane asks the engine for: about forty points a
-/// second at 44.1 kHz, finer than the pixels at the zoom a session opens
-/// at and coarse enough to fold from the peaks cache's mipmap rather
-/// than read the audio.
-pub const WAVE_BLOCK: u32 = 1024;
+/// Samples per point a lane asks the engine for: 5 ms at 48 kHz.
+///
+/// About two hundred points a second: a drum hit's attack and decay as
+/// their own shape at the zooms a kit is edited at, drawn from what is
+/// already here rather than read again item by item ([`crate::wave_detail`]
+/// takes over only closer than that). At forty a second a hit was a few
+/// steps of a staircase.
+pub const WAVE_BLOCK: u32 = 256;
+
+/// Samples per point the analyses read (gain staging, the mix chains'
+/// levels): what their thresholds were measured at, and four times fewer
+/// points to go through than the drawing's.
+pub const ANALYSIS_BLOCK: u32 = 1024;
 
 /// How many items' peaks are read at once.
 const WAVE_READS: usize = 16;

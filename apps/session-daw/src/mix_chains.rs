@@ -938,7 +938,7 @@ fn gate_threshold(
                 project.clone(),
                 ItemRef::Guid(item.guid.clone()),
                 TakeRef::Active,
-                crate::midi::WAVE_BLOCK,
+                crate::midi::ANALYSIS_BLOCK,
             );
             if let Some(wave) = crate::midi::Wave::from_peaks(&peaks) {
                 step = wave.step;

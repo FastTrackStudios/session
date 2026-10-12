@@ -8,9 +8,12 @@
 //! point every half pixel; zoomed in further than a pixel a sample, the
 //! samples themselves are kept and drawn as a line through them.
 //!
-//! The reads are off the paint: a frame asks ([`get`]), draws the coarse
-//! waveform while the detail is read, and the window is asked for a
-//! frame when it arrives ([`generation`]). They run in parallel on the
+//! The reads are off the paint: a frame asks ([`get`]) and draws what is
+//! here — the detail read for the last zoom or pan, where it reaches, and
+//! the coarse waveform past it — while the new detail is read; the window
+//! is asked for a frame when it arrives ([`generation`]). What is drawn
+//! only ever gets finer: a pan or a zoom never drops a waveform back to
+//! the coarse one while it waits. They run in parallel on the
 //! waveform pool (`crate::wave_pool`), the newest ask first: a
 //! slip-edited kit is thousands of items, each read on its own, and what
 //! is on screen now matters more than what was a scroll ago. What was read is kept for the
@@ -160,22 +163,28 @@ pub fn generation() -> u64 {
 /// lower rate (the coarse waveform is near enough there anyway).
 const MOST_SAMPLES: f64 = 4_000_000.0;
 
-/// `source`'s audio from `a` to `b` project seconds at `step` seconds a
-/// point or finer, if it has been read.
+/// `source`'s audio from `a` to `b` project seconds, as fine as has been
+/// read: the detail held for it, if any reaches into the span.
 ///
-/// If not, it is asked for (with some to spare either side, so a small
-/// pan does not read again) and this is `None`.
+/// When that is not all of the span at `step` seconds a point or finer, the
+/// rest is asked for (with some to spare either side, so a small pan does
+/// not read again) — and what is held is still given meanwhile, to draw
+/// where it reaches. `None` only when nothing of the item here has been
+/// read, or it has moved since.
 #[must_use]
 pub fn get(source: &Source, a: f64, b: f64, step: f64) -> Option<Arc<Detail>> {
     let mut shared = SHARED.lock().ok()?;
-    if let Some(held) = shared.held.get(&source.guid)
-        && held.key == source.key()
-        && held.detail.from <= a + 1e-9
-        && held.detail.to() >= b - 1e-9
-        && (held.detail.samples || held.detail.step <= step * 1.5)
-    {
-        return Some(Arc::clone(&held.detail));
+    let held = shared
+        .held
+        .get(&source.guid)
+        .filter(|held| held.key == source.key())
+        .map(|held| Arc::clone(&held.detail));
+    if held.as_ref().is_some_and(|d| {
+        d.from <= a + 1e-9 && d.to() >= b - 1e-9 && (d.samples || d.step <= step * 1.5)
+    }) {
+        return held;
     }
+    let held = held.filter(|d| d.from < b && d.to() > a);
     let spare = (b - a) * 0.5;
     let want: Want = (
         source.clone(),
@@ -193,7 +202,7 @@ pub fn get(source: &Source, a: f64, b: f64, step: f64) -> Option<Arc<Detail>> {
         // One read for each ask, of whatever is newest when it runs.
         read_newest();
     }
-    None
+    held
 }
 
 /// Hold `detail` as `source`'s, as a read would.
