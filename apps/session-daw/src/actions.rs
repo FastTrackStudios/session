@@ -992,6 +992,8 @@ fn register_data(list: &ActionList) {
     crate::automation_actions::register(list);
     #[cfg(feature = "native")]
     crate::comp::register(list);
+    #[cfg(feature = "signal")]
+    crate::rig_actions::register(list);
 }
 
 static REFERENCE_MAP: ActionMeta = meta(

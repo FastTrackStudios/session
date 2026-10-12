@@ -91,6 +91,8 @@ pub mod song_modes;
 pub mod song_stream;
 #[cfg(feature = "native")]
 pub mod stream_in;
+#[cfg(feature = "signal")]
+pub mod rig_actions;
 #[cfg(feature = "native")]
 pub mod stream_set;
 #[cfg(feature = "native")]

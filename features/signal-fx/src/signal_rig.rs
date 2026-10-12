@@ -206,6 +206,18 @@ impl Playing {
         self.host.sample_rate()
     }
 
+    /// The profile's patches, as the service says them.
+    #[must_use]
+    pub fn service_patches(&self) -> Vec<signal_guitar::proto::PatchInfo> {
+        self.service.patches()
+    }
+
+    /// Switch to patch `index` now, as a footswitch does; whether it took.
+    #[must_use]
+    pub fn select(&self, index: u32) -> bool {
+        self.service.select_patch(index).ok
+    }
+
     /// The patches, by name, in order: the Patch parameter's choices.
     #[must_use]
     pub fn patch_names(&self) -> Vec<String> {
@@ -370,9 +382,10 @@ impl PluginInstance for SignalRig {
             },
             ..read
         };
-        if self.prepared {
-            self.open();
-        }
+        // Opened now, prepared or not: its service is what the window and
+        // the actions drive, and a song opened silent prepares nothing.
+        // `prepare` opens it again only at another rate.
+        self.open();
         Ok(())
     }
 
