@@ -13,6 +13,7 @@ use crate::engine::{Move, Transport, transport};
 use crate::studio::StudioSession;
 
 const RULE: &str = "#2a2c31";
+const BG: &str = "#17181b";
 const TEXT: &str = "#e5e7eb";
 const DIM: &str = "#8b9099";
 const PLAY: &str = "#34d399";
@@ -85,6 +86,9 @@ fn TransportBarView(reading: crate::engine::Reading, big: bool) -> Element {
     let session: StudioSession = use_context();
     let density = crate::shell::use_density();
     let r = reading;
+    let mut stop_menu = use_signal(|| false);
+    // Open above the bottom bar's buttons, below a small bar's.
+    let menu_side = if big { "bottom:100%;" } else { "top:100%;" };
     // Counted from the song, as the ruler counts.
     let (bar, beat) = crate::ruler::song_bar_beat(
         &session.project.tempo,
@@ -142,9 +146,41 @@ fn TransportBarView(reading: crate::engine::Reading, big: bool) -> Element {
                 Button { title: "Go to start", on: false, color: TEXT, glyph: Glyph::Home, big,
                     onpress: move |()| transport(Move::Home, 0.0) }
             }
-            Button { title: "Play / stop", on: r.playing, color: PLAY, big,
-                glyph: if r.playing { Glyph::Stop } else { Glyph::Play },
-                onpress: move |()| transport(Move::PlayStop, 0.0) }
+            // Right-click: what Stop does with the cursor.
+            div {
+                style: "position:relative; height:100%; flex:none; display:flex; align-items:center;",
+                oncontextmenu: move |e| {
+                    e.prevent_default();
+                    stop_menu.set(true);
+                },
+                Button { title: "Play / stop (right-click: what stop does)", on: r.playing, color: PLAY, big,
+                    glyph: if r.playing { Glyph::Stop } else { Glyph::Play },
+                    onpress: move |()| transport(Move::PlayStop, 0.0) }
+                if stop_menu() {
+                    // A press outside closes it.
+                    div {
+                        style: "{crate::shell::SCRIM} z-index:40;",
+                        onclick: move |_| stop_menu.set(false),
+                    }
+                    div {
+                        style: "position:absolute; left:0; {menu_side} z-index:41; min-width:210px; \
+                                padding:6px; background:{BG}; border:1px solid {RULE}; \
+                                border-radius:10px; display:flex; flex-direction:column; gap:2px; \
+                                box-shadow:0 10px 30px rgba(0,0,0,0.5);",
+                        for each in crate::play_return::Stop::ALL {
+                            button {
+                                key: "{each.slug()}",
+                                style: stop_option(crate::play_return::get() == each),
+                                onclick: move |_| {
+                                    crate::play_return::set(each);
+                                    stop_menu.set(false);
+                                },
+                                "{each.label()}"
+                            }
+                        }
+                    }
+                }
+            }
             Button { title: "Record", on: r.recording, color: REC, glyph: Glyph::Record, big,
                 onpress: move |()| transport(Move::ToggleRecord, 0.0) }
             Button { title: "Loop", on: r.looping, color: LOOP, glyph: Glyph::Loop, big,
@@ -201,6 +237,19 @@ fn TransportBarView(reading: crate::engine::Reading, big: bool) -> Element {
             }
         }
     }
+}
+
+/// One row of the stop menu: ticked when it is the behaviour in force.
+fn stop_option(on: bool) -> String {
+    let (ink, wash) = if on {
+        (PLAY, "#34d3991f")
+    } else {
+        (TEXT, "transparent")
+    };
+    format!(
+        "text-align:left; padding:7px 10px; border:none; border-radius:6px; font-size:12px; \
+         cursor:pointer; color:{ink}; background:{wash};"
+    )
 }
 
 /// A hairline between the big transport's parts.

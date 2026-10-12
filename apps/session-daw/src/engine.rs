@@ -910,20 +910,53 @@ async fn run_transport(command: Move, seconds: f64) {
     };
     let transport = project.transport();
     let outcome = match command {
-        Move::PlayStop => transport.play_stop().await,
+        Move::PlayStop => {
+            let playing = transport.is_playing().await.unwrap_or(false);
+            let at = transport.get_position().await.unwrap_or(0.0);
+            let behaviour = crate::play_return::get();
+            let step = crate::play_return::with_locate(|l| l.press(behaviour, playing, at));
+            run_step(&transport, step.unwrap_or(crate::play_return::Step::Stop)).await
+        }
         Move::Home => transport.goto_start().await,
-        Move::Seek => transport.set_position(seconds.max(0.0)).await,
-        Move::Stop => transport.stop().await,
+        Move::Seek => {
+            let playing = transport.is_playing().await.unwrap_or(false);
+            crate::play_return::with_locate(|l| l.moved(playing, seconds.max(0.0)));
+            transport.set_position(seconds.max(0.0)).await
+        }
+        Move::Stop => {
+            let playing = transport.is_playing().await.unwrap_or(false);
+            let behaviour = crate::play_return::get();
+            let step = crate::play_return::with_locate(|l| l.stop(behaviour, playing));
+            run_step(&transport, step.unwrap_or(crate::play_return::Step::Stop)).await
+        }
         Move::End => transport.goto_end().await,
         Move::ToggleLoop => transport.toggle_loop().await,
         Move::ToggleRecord => transport.toggle_recording().await,
-        Move::PlayFrom => match transport.set_position(seconds.max(0.0)).await {
-            Ok(()) => transport.play().await,
-            Err(error) => Err(error),
-        },
+        Move::PlayFrom => {
+            crate::play_return::with_locate(|l| l.started_from(seconds.max(0.0)));
+            match transport.set_position(seconds.max(0.0)).await {
+                Ok(()) => transport.play().await,
+                Err(error) => Err(error),
+            }
+        }
     };
     if let Err(error) = outcome {
         tracing::warn!(error = %error, command = ?command, "the transport refused");
+    }
+}
+
+/// What [`crate::play_return`] decided a play/stop press does.
+async fn run_step(
+    transport: &daw_control::Transport,
+    step: crate::play_return::Step,
+) -> daw_control::Result<()> {
+    match step {
+        crate::play_return::Step::Play => transport.play().await,
+        crate::play_return::Step::Stop => transport.stop().await,
+        crate::play_return::Step::StopAt(to) => {
+            transport.stop().await?;
+            transport.set_position(to).await
+        }
     }
 }
 

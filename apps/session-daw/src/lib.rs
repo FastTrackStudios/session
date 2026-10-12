@@ -76,6 +76,7 @@ pub mod open_core;
 pub mod options;
 #[cfg(feature = "native")]
 pub mod organize;
+pub mod play_return;
 pub mod plugin_faces;
 pub mod popup;
 #[cfg(feature = "native")]

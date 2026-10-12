@@ -1870,7 +1870,28 @@ struct ItemStyleArg {
     outlined: bool,
 }
 
+static STOP_BEHAVIOUR: ActionMeta = meta(
+    "SESSION_STOP_BEHAVIOUR",
+    "session_stop_behaviour",
+    "Stop behaviour",
+    "What Stop does with the cursor: `behaviour: \"return\"` (the default) puts it back where play started, `\"stay\"` leaves it where it stopped. Any other value, or an empty one, only reads the setting.",
+    "Transport",
+    "",
+);
+
+/// The stop behaviour to set, or nothing to read it.
+#[derive(Facet)]
+struct StopBehaviourArg {
+    behaviour: String,
+}
+
 fn register_style(list: &ActionList) {
+    list.register(&STOP_BEHAVIOUR, Effect::Mutating, |a: StopBehaviourArg| {
+        if let Some(stop) = crate::play_return::Stop::from_slug(&a.behaviour) {
+            crate::play_return::set(stop);
+        }
+        Ok(crate::play_return::get().slug())
+    });
     list.register(&JOBS, Effect::ReadOnly, |(): ()| {
         Ok(crate::jobs::running()
             .into_iter()
