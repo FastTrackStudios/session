@@ -2982,6 +2982,9 @@ enum Placed {
     Written,
     /// The grid: the nearest line, the section's feel taken out.
     Line,
+    /// No note of its own: a line the chart writes something on, near —
+    /// a stroke the drummer added among written ones.
+    Near,
     /// Nothing near enough to be sure of.
     Nothing,
 }
@@ -3155,7 +3158,7 @@ fn targets(
                 && let Some(line) = nearest_written(felt)
                     .filter(|w| (w - felt).abs() <= NEAR_WRITTEN * step && within(*w))
             {
-                return (m.time, Some(line), Placed::Written);
+                return (m.time, Some(line), Placed::Near);
             }
             let line = grid_line(daw, project, felt, settings.grid);
             if (line - felt).abs() <= sure {
@@ -3169,6 +3172,98 @@ fn targets(
 
 /// Moments nearer than this are one gesture, moved as one, seconds:
 /// under a 1/32 at 160 bpm (47 ms), so a double kick's 16ths and a
+/// One stroke to a line: where moments a gesture apart are sent to the
+/// same line, the one placed by its own note keeps it (else the one
+/// nearer it), and each other is moved between its neighbours — by as
+/// much as the moved hits either side of it, in proportion to where it
+/// sits between them.
+///
+/// A double kick with a stroke the chart does not have (seventeen hits in
+/// a bar of sixteenths) sent that stroke to its neighbour's line, and the
+/// two were moved as one gesture by the louder's shift: the extra stroke
+/// landed 23 ms after the one before, in its decay — the markers "in the
+/// middle of the kick" on Unbreakable's outro. Moved between, the roll
+/// stays a roll: evenly spaced where it was evenly played.
+fn one_stroke_a_line(placed: &mut [(f64, Option<f64>)], by: &[Placed]) {
+    let rank = |p: Option<&Placed>| match p {
+        Some(Placed::Written) => 0_u8,
+        Some(Placed::Near) => 1,
+        Some(Placed::Line) => 2,
+        Some(Placed::Nothing) | None => 3,
+    };
+    // Who keeps each shared line, and who is moved between.
+    let mut between: Vec<usize> = Vec::new();
+    let mut start = 0_usize;
+    while start < placed.len() {
+        let Some(&(_, Some(line))) = placed.get(start) else {
+            start = start.saturating_add(1);
+            continue;
+        };
+        // The moments after it sent to the same line, a gesture apart.
+        let mut end = start.saturating_add(1);
+        while let (Some(&(prev, _)), Some(&(next, Some(to)))) =
+            (placed.get(end.saturating_sub(1)), placed.get(end))
+        {
+            if (to - line).abs() >= 0.002 || next - prev < GESTURE {
+                break;
+            }
+            end = end.saturating_add(1);
+        }
+        let keeper = (start..end).min_by(|a, b| {
+            let off = |i: usize| {
+                placed
+                    .get(i)
+                    .map_or(f64::INFINITY, |(h, _)| (h - line).abs())
+            };
+            rank(by.get(*a))
+                .cmp(&rank(by.get(*b)))
+                .then(off(*a).total_cmp(&off(*b)))
+        });
+        between.extend((start..end).filter(|i| Some(*i) != keeper));
+        start = end;
+    }
+    for &i in &between {
+        if let Some(slot) = placed.get_mut(i) {
+            slot.1 = None;
+        }
+    }
+    // Each moved by its neighbours' shifts, interpolated; with a moved
+    // neighbour near on one side only, by that one's; with none near, cut
+    // where it was played.
+    let shifts: Vec<Option<(f64, f64)>> = placed
+        .iter()
+        .map(|(h, to)| to.map(|t| (*h, t - h)))
+        .collect();
+    for &i in &between {
+        let Some(&(h, _)) = placed.get(i) else {
+            continue;
+        };
+        let near = |(at, _): &(f64, f64)| (at - h).abs() <= NEIGHBOUR_REACH;
+        let before = shifts.iter().take(i).rev().find_map(|s| *s).filter(near);
+        let after = shifts
+            .iter()
+            .skip(i.saturating_add(1))
+            .find_map(|s| *s)
+            .filter(near);
+        let shift = match (before, after) {
+            (Some((a, sa)), Some((b, sb))) if b > a => {
+                let along = ((h - a) / (b - a)).clamp(0.0, 1.0);
+                Some((sb - sa).mul_add(along, sa))
+            }
+            (Some((_, s)), _) | (None, Some((_, s))) => Some(s),
+            (None, None) => None,
+        };
+        if let Some(slot) = placed.get_mut(i) {
+            slot.1 = shift.map(|s| h + s);
+        }
+    }
+}
+
+/// How far a moved neighbour may be from a stroke [`one_stroke_a_line`]
+/// moves between, seconds: a sixteenth at 60 bpm. Further, it is not a
+/// neighbour in the same figure.
+const NEIGHBOUR_REACH: f64 = 0.25;
+
 /// drummer's 32nds stay their own.
 const GESTURE: f64 = 0.040;
 
@@ -3516,6 +3611,8 @@ fn detect(
     }
     let targets = hold_gestures(&placed, &loudness);
     let fills = find_fills(daw, project, &kit, span);
+    let by_kind: Vec<Placed> = by.iter().map(|(_, _, b)| *b).collect();
+    one_stroke_a_line(&mut placed, &by_kind);
     Ok(Detected {
         kit,
         moments,
@@ -4073,7 +4170,73 @@ fn wait_for_slip(
 
 #[cfg(test)]
 mod gesture_tests {
-    use super::hold_gestures;
+    use super::{Placed, hold_gestures, one_stroke_a_line};
+
+    /// Unbreakable's outro, bar 175: a double kick on sixteenths (93.75 ms)
+    /// with a stroke the chart does not have. The written strokes either
+    /// side go to their lines; the added one, sent by the chart to the
+    /// next stroke's line, is moved between them instead — never into the
+    /// decay of the one before.
+    #[test]
+    fn an_added_stroke_is_moved_between_its_neighbours() {
+        let mut placed = [
+            (262.9457, Some(262.96875)),
+            (263.0278, Some(263.0625)),
+            (263.0981, Some(263.0625)),
+            (263.1995, Some(263.15625)),
+        ];
+        let by = [
+            Placed::Written,
+            Placed::Near,
+            Placed::Written,
+            Placed::Written,
+        ];
+        one_stroke_a_line(&mut placed, &by);
+        assert_eq!(
+            placed[2].1,
+            Some(263.0625),
+            "the written stroke keeps its line"
+        );
+        let added = placed[1].1.expect("moved between");
+        // Its neighbours move +23.0 ms and -35.6 ms; 54 % of the way from
+        // the first to the second, it moves by -8.6 ms.
+        assert!((added - 263.0192).abs() < 0.001, "{added}");
+        let first = placed[0].1.expect("on its line");
+        assert!(
+            added - first > 0.040,
+            "clear of the stroke before: {}",
+            added - first
+        );
+        assert!(263.0625 - added > 0.040, "and of the one after");
+        // Nothing then gathers them into one gesture.
+        let held = hold_gestures(&placed, &[0.0, -4.0, -3.0, 0.0]);
+        assert_eq!(held, placed.to_vec());
+    }
+
+    /// Two strokes sent to one line with no note of their own: the nearer
+    /// keeps it, the other moves as its moved neighbour does (keeping the
+    /// room between them) — or, with no moved neighbour near, is cut where
+    /// it was played. Strokes a gesture apart (a flam) are left to
+    /// [`hold_gestures`].
+    #[test]
+    fn the_nearer_keeps_a_line_and_a_flam_is_left_whole() {
+        let mut placed = [(1.000, Some(1.031)), (1.050, Some(1.031))];
+        one_stroke_a_line(&mut placed, &[Placed::Line, Placed::Line]);
+        assert_eq!(placed[1], (1.050, Some(1.031)));
+        let moved = placed[0].1.expect("with its neighbour");
+        assert!((moved - 0.981).abs() < 1e-9, "{moved}");
+        let mut lone = [(1.000, Some(1.531)), (1.400, Some(1.531))];
+        one_stroke_a_line(&mut lone, &[Placed::Line, Placed::Line]);
+        assert_eq!(lone[1], (1.400, Some(1.531)));
+        assert_eq!(lone[0], (1.000, None), "no neighbour near: as played");
+        let mut flam = [(1.000, Some(1.031)), (1.020, Some(1.031))];
+        one_stroke_a_line(&mut flam, &[Placed::Written, Placed::Near]);
+        assert_eq!(
+            flam,
+            [(1.000, Some(1.031)), (1.020, Some(1.031))],
+            "a flam is one gesture"
+        );
+    }
 
     #[test]
     fn a_kick_into_a_snare_moves_with_it() {

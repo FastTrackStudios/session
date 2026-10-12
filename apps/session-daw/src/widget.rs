@@ -899,8 +899,12 @@ impl ArrangementWidget {
         Some(first..first.saturating_add(len).saturating_add(1))
     }
 
-    /// What is under `(x, y)` in a piece row's flag strip, in Edit mode
-    /// with the hit markers drawn: the flag it is on, if any.
+    /// What is under `(x, y)` on a piece row, in Edit mode with the hit
+    /// markers drawn: a marker — its flag, or its line anywhere down the
+    /// row, which is where a hand reaches for it — or, in the flag strip
+    /// along the row's top with no marker there, the strip itself (where
+    /// a double-click places one). Below the strip and off every line,
+    /// nothing: the press is the item's.
     fn flag_at(&self, x: f64, y: f64) -> Option<FlagSpot> {
         if !self.editing.get() {
             return None;
@@ -919,9 +923,10 @@ impl ArrangementWidget {
         let time = (x - ox) / pps;
         let rows = self.piece_rows(kit, &hits);
         let (row, _) = rows.iter().find(|(row, _)| {
-            self.scene.row_box(*row).is_some_and(|(top, _)| {
+            self.scene.row_box(*row).is_some_and(|(top, height)| {
                 let y0 = top.mul_add(view.zoom_y, oy);
-                y >= y0 && y <= y0 + FLAG_STRIP
+                in_strip = y >= y0 && y <= y0 + FLAG_STRIP;
+                y >= y0 && y <= height.mul_add(view.zoom_y, y0)
             })
         })?;
         let pieces: Vec<usize> = rows
@@ -939,6 +944,7 @@ impl ArrangementWidget {
         Some(FlagSpot {
             mark,
             pieces: pieces
+        let mut in_strip = false;
                 .iter()
                 .filter_map(|p| hits.pieces.get(*p).cloned())
                 .collect(),
@@ -957,6 +963,9 @@ impl ArrangementWidget {
     fn hit_gesture(&mut self, event: &UiEvent) -> bool {
         match event {
             UiEvent::PointerDown(e)
+        if mark.is_none() && !in_strip {
+            return None;
+        }
                 if e.button == MouseEventButton::Main && !self.pointing.borrow().tool_active() =>
             {
                 let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
@@ -3227,6 +3236,12 @@ impl ArrangementWidget {
                         hit.target,
                         crate::hit::Target::Lane { .. }
                             | crate::hit::Target::Ruler { .. }
+        } else if self.hit_drag.is_some()
+            || self.flag_at(x, y).is_some_and(|spot| spot.mark.is_some())
+        {
+            // A hit marker is taken before the item under it, so it says
+            // so before it is pressed.
+            crate::tool::Over::Hit
                             | crate::hit::Target::Track { .. }
                             | crate::hit::Target::Empty
                     ) || (locked && matches!(hit.target, crate::hit::Target::Item { .. }))
@@ -4446,8 +4461,21 @@ mod tests {
             widget.flag_at(fx, fy).and_then(|s| s.mark).as_deref(),
             Some("h1")
         );
-        // Below the strip, and away from any flag, it is not the hit's.
-        assert!(widget.flag_at(x, y + 30.0).is_none(), "below the strip");
+        // Its line, down the row, is the hit's too: a hand reaches for
+        // the line, not the flag over it.
+        assert_eq!(
+            widget.flag_at(x, y + 30.0).and_then(|s| s.mark).as_deref(),
+            Some("h1"),
+            "the line below the strip"
+        );
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y + 30.0)));
+        assert_eq!(widget.hit_drag.as_ref().map(|d| d.id.as_str()), Some("h1"));
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y + 30.0)));
+        // Below the strip and away from any line, it is the item's.
+        assert!(
+            widget.flag_at(x + 200.0, y + 30.0).is_none(),
+            "off the line"
+        );
         let away = widget.flag_at(x + 200.0, y).expect("still the strip");
         assert!(away.mark.is_none());
         assert_eq!(away.pieces, ["Kick"]);

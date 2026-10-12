@@ -396,7 +396,10 @@ pub async fn stage_live(project: &daw_control::Project) -> eyre::Result<Report> 
         let Ok(Some(handle)) = project.items().by_guid(&item.guid).await else {
             continue;
         };
-        if let Ok(data) = handle.active_take().peaks(crate::midi::ANALYSIS_BLOCK).await
+        if let Ok(data) = handle
+            .active_take()
+            .peaks(crate::midi::ANALYSIS_BLOCK)
+            .await
             && let Some(wave) = crate::midi::Wave::from_peaks(&data)
         {
             waves.insert(item.guid.clone(), wave);

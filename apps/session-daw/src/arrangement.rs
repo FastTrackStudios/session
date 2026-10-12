@@ -581,7 +581,11 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
             return;
         }
         let last = column(to - 1e-12).min(columns.saturating_sub(1));
-        for col in cols.iter_mut().take(last.saturating_add(1)).skip(column(from)) {
+        for col in cols
+            .iter_mut()
+            .take(last.saturating_add(1))
+            .skip(column(from))
+        {
             let (mx, mn) = col.unwrap_or((0.0, 0.0));
             *col = Some((mx.max(max), mn.min(min)));
         }
@@ -605,7 +609,11 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
                 continue;
             }
             let last = column(to - 1e-12).min(columns.saturating_sub(1));
-            for col in cols.iter_mut().take(last.saturating_add(1)).skip(column(from)) {
+            for col in cols
+                .iter_mut()
+                .take(last.saturating_add(1))
+                .skip(column(from))
+            {
                 if col.is_none() {
                     *col = Some(*point);
                 }

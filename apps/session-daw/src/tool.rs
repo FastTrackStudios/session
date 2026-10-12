@@ -87,6 +87,8 @@ pub enum Over {
     /// The lanes or the ruler, in a mouse-map context, and which kind of
     /// item edge (if any) the pointer is on.
     Map(Context, Edge),
+    /// A drum hit's marker (Edit mode): dragged, it moves sideways.
+    Hit,
 }
 
 /// What the context cannot say about an item's edge.
@@ -184,6 +186,7 @@ pub fn icon_for(tool: Tool, gesture: Option<(Action, Edge)>, over: Over, mods: M
     match over {
         Over::Nothing | Over::Button => Shape::Icon(CursorIcon::Default),
         Over::Knob => Shape::Icon(CursorIcon::NsResize),
+        Over::Hit => Shape::Icon(CursorIcon::EwResize),
         Over::Map(context, edge) => {
             hovering(mousemap::resolve(context, Gesture::Drag, mods).action, edge)
         }
