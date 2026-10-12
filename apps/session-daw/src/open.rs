@@ -554,6 +554,10 @@ fn bootstrap(standalone: &Standalone) -> eyre::Result<()> {
     BUNDLE
         .set(bundle)
         .map_err(|_| eyre::eyre!("the daw facade was bootstrapped twice"))?;
+    // Every finished edit step heard, whether or not the song is open from
+    // its project file: what is made from the recording (the kit's
+    // samples) follows each one, and a song open from its file records it.
+    crate::project_file::record_steps();
     Ok(())
 }
 

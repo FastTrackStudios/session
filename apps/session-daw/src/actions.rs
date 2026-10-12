@@ -2012,9 +2012,10 @@ fn register_undo(list: &ActionList) {
             return Ok(said);
         }
         let label = daw::service::Projects::last_undo_label(daw, project.clone());
-        if !daw::service::Projects::undo(daw, project) {
+        if !daw::service::Projects::undo(daw, project.clone()) {
             return Ok("nothing to undo".to_owned());
         }
+        samples_follow(daw, &project);
         crate::studio::request_resync();
         crate::actions::list().changed("items", "undo");
         Ok(format!(
@@ -2028,9 +2029,10 @@ fn register_undo(list: &ActionList) {
             return Ok(said);
         }
         let label = daw::service::Projects::last_redo_label(daw, project.clone());
-        if !daw::service::Projects::redo(daw, project) {
+        if !daw::service::Projects::redo(daw, project.clone()) {
             return Ok("nothing to redo".to_owned());
         }
+        samples_follow(daw, &project);
         crate::studio::request_resync();
         crate::actions::list().changed("items", "redo");
         Ok(format!(
@@ -2038,6 +2040,22 @@ fn register_undo(list: &ActionList) {
             label.unwrap_or_else(|| "a step".to_owned())
         ))
     });
+}
+
+/// The kit's samples brought back onto its hits where they play now —
+/// after an undo, a redo or a stretch taken out, which move the recording
+/// and not the notes made from it. A Sample track already there is left.
+#[cfg(feature = "native")]
+pub(crate) fn samples_follow(
+    daw: &daw::standalone::Standalone,
+    project: &daw::service::ProjectContext,
+) {
+    #[cfg(feature = "signal")]
+    if let Err(e) = crate::drum_samples::resync(daw, project) {
+        tracing::warn!(samples.error = %e, "drums: the samples could not follow");
+    }
+    #[cfg(not(feature = "signal"))]
+    let _ = (daw, project);
 }
 
 /// Undo (`back`) or redo through the song's doc, when it is open from its
@@ -2066,6 +2084,7 @@ fn undo_through_doc(
         Undone::NotOpen => None,
         Undone::Nothing => Some(none.to_owned()),
         Undone::Step(name) => {
+            samples_follow(daw, project);
             crate::studio::request_resync();
             crate::actions::list().changed("items", if back { "undo" } else { "redo" });
             Some(format!("{verb} {name}"))

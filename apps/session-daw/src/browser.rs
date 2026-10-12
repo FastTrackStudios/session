@@ -64,6 +64,7 @@ fn read() -> Option<Shown> {
 }
 
 /// Run action `id` with `args`, off the window's thread.
+#[cfg(feature = "signal")]
 fn run(id: &'static str, args: serde_json::Value) {
     #[cfg(feature = "native")]
     if let Some(runtime) = crate::open::runtime() {
@@ -78,6 +79,7 @@ fn run(id: &'static str, args: serde_json::Value) {
 }
 
 /// Where the cursor is, as an action's `at` (`12.5s`).
+#[cfg(feature = "signal")]
 fn cursor_at() -> String {
     let at = crate::engine::Transport::shared()
         .map_or(0.0, |t| t.reading().at)
@@ -86,6 +88,7 @@ fn cursor_at() -> String {
 }
 
 /// A row of the browser's list.
+#[cfg(feature = "signal")]
 fn row_style(on: bool) -> String {
     let (ink, wash) = if on {
         ("#34d399", "#34d3991f")
@@ -99,6 +102,7 @@ fn row_style(on: bool) -> String {
 }
 
 /// A heading in the browser's list.
+#[cfg(feature = "signal")]
 const HEADING: &str = "padding:10px 10px 4px; font-size:10px; letter-spacing:0.08em; \
      text-transform:uppercase; color:#8b9099;";
 

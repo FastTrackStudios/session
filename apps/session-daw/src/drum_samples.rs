@@ -198,6 +198,20 @@ fn played(
     by_piece
 }
 
+/// Write every Sample track's notes where its piece's hits play now — the
+/// samples brought back onto the recording, whatever moved it. Returns
+/// how many tracks were written.
+///
+/// # Errors
+///
+/// The engine refusing a write.
+pub fn resync(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+) -> Result<usize, String> {
+    follow(daw, project, |t| t)
+}
+
 /// Move the samples with an edit about to be made.
 ///
 /// Every Sample track already set up (holding its notes) is written again
@@ -237,10 +251,34 @@ pub fn follow(
             .map(|&(time, relative_db)| (moved(time), note, velocity(relative_db)))
             .collect();
         notes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Already where they go (an undo that moved nothing of the kit):
+        // left as they are, not written again.
+        if already(daw, project, &sample.guid, &notes) {
+            continue;
+        }
         write_notes(daw, project, &sample.guid, &notes)?;
         written = written.saturating_add(1);
     }
     Ok(written)
+}
+
+/// How near a written note must be to where it goes to be left, seconds:
+/// a MIDI tick at any tempo a kit is played at.
+const SAME_NOTE: f64 = 0.0005;
+
+/// Whether `track` already plays `notes`: as many, each at its time, pitch
+/// and velocity.
+fn already(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    notes: &[(f64, u8, u8)],
+) -> bool {
+    let have = crate::drum_reference::notes(daw, project, track);
+    have.len() == notes.len()
+        && have.iter().zip(notes).all(|(h, &(time, pitch, velocity))| {
+            (h.time - time).abs() < SAME_NOTE && h.pitch == pitch && h.velocity == velocity
+        })
 }
 
 /// The recorded mics' track a sample bus sends into: the first of

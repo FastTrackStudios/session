@@ -329,7 +329,7 @@ fn append(open: &mut Open, label: &str) -> Result<(), String> {
 /// Steps the engine finished that the recorder has not recorded yet.
 static PENDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-fn record_steps() {
+pub(crate) fn record_steps() {
     static LISTENING: std::sync::Once = std::sync::Once::new();
     LISTENING.call_once(|| {
         let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
@@ -355,6 +355,15 @@ fn record_steps() {
                         }
                     }
                     for (project, labels) in steps {
+                        // What is made from the recording follows it first —
+                        // the kit's samples onto where its hits play now — so
+                        // it is in the same commit as the edit that moved it.
+                        if let Some(daw) = crate::open::local_engine() {
+                            crate::actions::samples_follow(
+                                daw,
+                                &daw::service::ProjectContext::Project(project.clone()),
+                            );
+                        }
                         if let Err(why) = record(&project, &labels.join("; ")) {
                             tracing::warn!(project.guid = %project, why, "an edit step was not recorded");
                         }
