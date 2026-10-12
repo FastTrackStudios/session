@@ -1775,6 +1775,22 @@ impl ArrangementWidget {
     ///
     /// The same four numbers `paint` works from, so a hit and a draw
     /// cannot disagree about where anything is.
+    /// The control a turn is on taken hold of (`held`) or let go — for the
+    /// automation that records while it is held.
+    fn touch(&self, turn: &Turn, held: bool) {
+        let which = crate::engine::Touched::of(
+            turn.spot.control == crate::row::Control::Volume,
+            turn.spot.control == crate::row::Control::Pan,
+        );
+        if let Some(which) = which {
+            self.edits.borrow_mut().push(crate::engine::Edit::Touch(
+                turn.was.guid.clone(),
+                which,
+                held,
+            ));
+        }
+    }
+
     /// Open the automation menu under row `row`'s automation button.
     #[cfg(feature = "native")]
     fn open_automation_menu(&mut self, row: usize) {
@@ -3336,6 +3352,26 @@ impl ArrangementWidget {
                 // An automation lane takes its own presses: its header in
                 // the panel's column, its curve under the items.
                 if let Some(hit) = self.lane_hit(x, y) {
+                    // The mode: chosen from a list, not cycled through six.
+                    #[cfg(feature = "native")]
+                    if hit.spot == crate::automation_draw::Spot::Mode
+                        && hit.placed.lane.kind != crate::automation::Kind::Leveler
+                    {
+                        let lane = &hit.placed.lane;
+                        let choices = crate::automation_menu::modes(
+                            &lane.track,
+                            Some(&lane.target),
+                            lane.mode,
+                        );
+                        self.menu = Some(crate::popup::Popup::open(
+                            &self.font,
+                            choices,
+                            (x, y),
+                            self.size,
+                        ));
+                        self.dirty.set(true);
+                        return true;
+                    }
                     let (drag, edits) =
                         crate::automation_edit::press(&hit, y, e.mods.contains(Modifiers::ALT));
                     self.lane_drag = drag;
@@ -3403,6 +3439,10 @@ impl ArrangementWidget {
                             was: was.clone(),
                         })
                     });
+                // Taken hold of: what Touch and Latch automation record by.
+                if let Some(turn) = &self.turning {
+                    self.touch(turn, true);
+                }
                 true
             }
             UiEvent::PointerUp(e) => {
@@ -3422,7 +3462,8 @@ impl ArrangementWidget {
                     self.set_item_volume(turn.index, turn.now);
                     return true;
                 }
-                if self.turning.take().is_some() {
+                if let Some(turn) = self.turning.take() {
+                    self.touch(&turn, false);
                     self.pointer.release();
                     self.pointer.hover(self.spot_at(x, y));
                     return true;

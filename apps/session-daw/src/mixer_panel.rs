@@ -1341,6 +1341,18 @@ impl MixerWidget {
     }
 
     /// Send each drag's latest value on, if it has moved since the last.
+    /// A turn's fader or pan knob taken hold of (`held`) or let go — for
+    /// the automation that records while it is held.
+    fn touch(&self, turn: &Turn, held: bool) {
+        let which = crate::engine::Touched::of(
+            turn.spot.control == Control::Volume,
+            turn.spot.control == Control::Pan,
+        );
+        if let Some(which) = which {
+            self.send(Edit::Touch(turn.was.guid.clone(), which, held));
+        }
+    }
+
     fn flush_drag(&mut self) {
         for (_, edit) in std::mem::take(&mut self.dragged) {
             self.send(edit);
@@ -1859,6 +1871,10 @@ impl MixerWidget {
                     was: track,
                 })
             });
+        // Taken hold of: what Touch and Latch automation record by.
+        if let Some(turn) = &turn {
+            self.touch(turn, true);
+        }
         let hold = match turn {
             Some(turn) => Hold::Turn(turn),
             // A finger on a groove is not a decision about the level.
@@ -1960,7 +1976,10 @@ impl MixerWidget {
         let (_, hold) = self.holds.remove(i);
         let up = self.spot_at(x, y);
         match hold {
-            Hold::Turn(_) => self.flush_drag(),
+            Hold::Turn(turn) => {
+                self.flush_drag();
+                self.touch(&turn, false);
+            }
             // Thrown: the strips carry on the way the finger was going.
             Hold::Pan { speed, .. } => {
                 let (vx, _) = speed.velocity();

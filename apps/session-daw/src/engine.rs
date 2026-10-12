@@ -283,6 +283,30 @@ pub enum Edit {
     ),
     /// An envelope lane's height, in pixels.
     SetLaneHeight(String, daw_proto::automation::EnvelopeRef, u32),
+    /// A track's fader or pan knob taken hold of (`true`) or let go: what
+    /// Touch and Latch automation record by ([`Touched`]).
+    Touch(String, Touched, bool),
+}
+
+/// Which of a track's controls a [`Edit::Touch`] is about.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Touched {
+    Volume,
+    Pan,
+}
+
+impl Touched {
+    /// The control a turn is on, if it is one automation writes.
+    #[must_use]
+    pub const fn of(volume: bool, pan: bool) -> Option<Self> {
+        if volume {
+            Some(Self::Volume)
+        } else if pan {
+            Some(Self::Pan)
+        } else {
+            None
+        }
+    }
 }
 
 impl Edit {
@@ -351,7 +375,8 @@ impl Edit {
             | Self::MoveAutomationItem(g, ..)
             | Self::ShowEnvelope(g, ..)
             | Self::SetEnvelopeMode(g, ..)
-            | Self::SetLaneHeight(g, ..) => g,
+            | Self::SetLaneHeight(g, ..)
+            | Self::Touch(g, ..) => g,
         }
     }
 
@@ -1677,8 +1702,29 @@ async fn apply(edit: &Edit) {
         Edit::ToggleArm(_) => track.toggle_arm().await,
         Edit::Select(_) => track.select_exclusive().await,
         Edit::AddToSelection(_) => track.select().await,
-        Edit::SetVolume(_, v) => track.set_volume(*v).await,
-        Edit::SetPan(_, p) => track.set_pan(*p).await,
+        // Through the automation writer: it sets the fader, and records a
+        // point where the envelope's mode (or the track's) says to —
+        // Touch while held, Latch from the first touch, Write always —
+        // while the song plays.
+        Edit::SetVolume(_, v) => match track.envelopes().volume().write(*v).await {
+            Ok(()) => Ok(()),
+            Err(_) => track.set_volume(*v).await,
+        },
+        Edit::SetPan(_, p) => match track.envelopes().pan().write(p.mul_add(0.5, 0.5)).await {
+            Ok(()) => Ok(()),
+            Err(_) => track.set_pan(*p).await,
+        },
+        Edit::Touch(_, which, held) => {
+            let envelope = match which {
+                Touched::Volume => track.envelopes().volume(),
+                Touched::Pan => track.envelopes().pan(),
+            };
+            if *held {
+                envelope.touch().await
+            } else {
+                envelope.release().await
+            }
+        }
         Edit::Rename(_, name) => track.rename(name).await,
         Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
         Edit::SetLanePlays(_, mask) => track.set_lane_play_mask(*mask).await,

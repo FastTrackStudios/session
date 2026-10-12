@@ -7,6 +7,7 @@
 
 use daw::service::{ProjectContext, TrackRef};
 use daw_proto::automation::{Automation, EnvelopeLocation, EnvelopeRef};
+use daw_proto::primitives::AutomationMode;
 
 use crate::popup::Choice;
 
@@ -26,6 +27,47 @@ pub enum Pick {
     Back { track: String },
     /// Show (or hide) the vocal leveler's lanes.
     Leveler { track: String, show: bool },
+    /// An envelope's automation mode, or (`envelope` `None`) the track's —
+    /// what an envelope not made yet writes by.
+    Mode {
+        track: String,
+        envelope: Option<EnvelopeRef>,
+        mode: AutomationMode,
+    },
+}
+
+/// The modes, as a mixer names them.
+const MODES: [(&str, AutomationMode); 6] = [
+    ("Trim/Read", AutomationMode::TrimRead),
+    ("Read", AutomationMode::Read),
+    ("Touch", AutomationMode::Touch),
+    ("Latch", AutomationMode::Latch),
+    ("Write", AutomationMode::Write),
+    ("Off", AutomationMode::Off),
+];
+
+/// The modes for an envelope (or the track's, `None`), the one it is in
+/// ticked.
+#[must_use]
+pub fn modes(
+    track: &str,
+    envelope: Option<&EnvelopeRef>,
+    now: AutomationMode,
+) -> Vec<Choice<Pick>> {
+    MODES
+        .iter()
+        .map(|(label, mode)| {
+            Choice::new(
+                *label,
+                *mode == now,
+                Pick::Mode {
+                    track: track.to_owned(),
+                    envelope: envelope.cloned(),
+                    mode: *mode,
+                },
+            )
+        })
+        .collect()
 }
 
 /// The envelopes of `track` that are shown, by reference.
@@ -85,6 +127,11 @@ pub fn top(track: &str) -> Vec<Choice<Pick>> {
             },
         ));
     }
+    // The track's mode: how a fader move writes where no envelope is yet.
+    let now = daw::service::Tracks::get(daw, project.clone(), TrackRef::Guid(track.to_owned()))
+        .map_or(AutomationMode::TrimRead, |t| t.automation_mode);
+    out.push(Choice::heading("Track mode"));
+    out.extend(modes(track, None, now));
     let chain = daw_proto::fx::FxChainContext::Track(track.to_owned());
     let fxs = daw_proto::fx::Effects::list(daw, project, chain);
     if !fxs.is_empty() {
@@ -158,6 +205,32 @@ pub fn act(pick: &Pick) -> Option<Vec<Choice<Pick>>> {
     match pick {
         Pick::Fx { track, fx } => Some(params(track, *fx)),
         Pick::Back { track } => Some(top(track)),
+        Pick::Mode {
+            track,
+            envelope,
+            mode,
+        } => {
+            if let Ok((daw, project)) = crate::actions::song() {
+                match envelope {
+                    Some(target) => Automation::set_automation_mode(
+                        daw,
+                        project,
+                        EnvelopeLocation::new(TrackRef::Guid(track.clone()), target.clone()),
+                        *mode,
+                    ),
+                    None => {
+                        let _ = daw::service::Tracks::set_automation_mode(
+                            daw,
+                            project,
+                            TrackRef::Guid(track.clone()),
+                            *mode,
+                        );
+                    }
+                }
+                crate::studio::request_resync();
+            }
+            None
+        }
         Pick::Leveler { track, show } => {
             if let Ok((daw, project)) = crate::actions::song() {
                 crate::vocal_level::show_lane(daw, &project, track, *show);
