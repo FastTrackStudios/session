@@ -1357,8 +1357,11 @@ fn remember(predicted: &str, real: &str) {
         .insert(predicted.to_owned(), real.to_owned());
 }
 
-/// The real guid of an item the window may have named itself.
-fn made(guid: &str) -> String {
+/// The real guid of an item the window may have named itself: the
+/// engine's own name for a piece the window split off and named, until the
+/// song is read back — what anything asking the engine about the window's
+/// items (a waveform's detail) asks it by.
+pub(crate) fn made(guid: &str) -> String {
     MADE.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()

@@ -276,8 +276,12 @@ fn read((source, a, b, step): &Want) -> Option<Detail> {
     use daw_proto::{AudioAccessors as _, GetSamplesRequest};
     let daw = crate::open::local_engine()?;
     let project = ProjectContext::Project(crate::open::current_song()?);
-    let accessor =
-        daw.create_take_accessor(project, ItemRef::Guid(source.guid.clone()), TakeRef::Active)?;
+    // The engine's name for it: a piece the window split off has its own
+    // name in the window until the song is read back, and asked by that
+    // the engine knows no such item — every slice of an edited kit was
+    // drawn coarse for good.
+    let guid = crate::engine::made(&source.guid);
+    let accessor = daw.create_take_accessor(project, ItemRef::Guid(guid), TakeRef::Active)?;
 
     // The source's own rate and channels: a read of none says them.
     let format = daw.get_samples(GetSamplesRequest {
