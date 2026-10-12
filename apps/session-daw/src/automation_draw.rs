@@ -486,38 +486,47 @@ fn points(
 /// de-breath and its de-ess (each eased "ess" a bar along the foot), its
 /// ride with its points, and over them their sum — what the item's volume
 /// plays. `lit` when the pointer is in this lane.
-fn leveler(painter: &mut impl PaintScene, palette: &Palette, p: &Placed, view: Viewport, lit: Option<&Lit>) {
+fn leveler(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    placed: &Placed,
+    view: Viewport,
+    lit: Option<&Lit>,
+) {
     const STEP: f64 = 2.0;
     let x0 = view.panel_w - view.scroll_x;
     let pps = view.pps.max(1e-9);
     let (left, right) = (view.panel_w, view.width);
-    let bottom = p.top + p.height;
-    for (i, item) in p.lane.leveled.iter().enumerate() {
-        let (a, b) = (
+    let bottom = placed.top + placed.height;
+    for (i, item) in placed.lane.leveled.iter().enumerate() {
+        let (from_x, to_x) = (
             item.position.mul_add(pps, x0),
             (item.position + item.length).mul_add(pps, x0),
         );
-        if b < left || a > right {
+        if to_x < left || from_x > right {
             continue;
         }
-        let (a, b) = (a.max(left), b.min(right));
+        let (from_x, to_x) = (from_x.max(left), to_x.min(right));
         let lit_item = lit.is_some_and(|lit| lit.item == Some(i));
         painter.fill(
             Fill::NonZero,
             Affine::IDENTITY,
-            palette.text.multiply_alpha(if lit_item { 0.07 } else { 0.035 }),
+            palette
+                .text
+                .multiply_alpha(if lit_item { 0.07 } else { 0.035 }),
             None,
-            &Rect::new(a, p.top + 1.0, b, bottom - 1.0),
+            &Rect::new(from_x, placed.top + 1.0, to_x, bottom - 1.0),
         );
         // A curve of the item's, sampled across the stretch of it on
         // screen.
         let trace = |points: &[level_dsp::envelope::EnvPoint]| {
             let mut path = BezPath::new();
-            let steps = num_traits::ToPrimitive::to_u32(&((b - a) / STEP).ceil()).unwrap_or(0);
+            let steps =
+                num_traits::ToPrimitive::to_u32(&((to_x - from_x) / STEP).ceil()).unwrap_or(0);
             for k in 0..=steps {
-                let x = f64::from(k).mul_add(STEP, a).min(b);
+                let x = f64::from(k).mul_add(STEP, from_x).min(to_x);
                 let t = item.lane_time((x - x0) / pps);
-                let at = (x, p.y_of(crate::automation::db_at(points, t)));
+                let at = (x, placed.y_of(crate::automation::db_at(points, t)));
                 if k == 0 {
                     path.move_to(at);
                 } else {
@@ -533,7 +542,13 @@ fn leveler(painter: &mut impl PaintScene, palette: &Palette, p: &Placed, view: V
             (&lanes.ride, palette.meter_safe, 1.4),
         ] {
             if !points.is_empty() {
-                painter.stroke(&Stroke::new(width), Affine::IDENTITY, ink.multiply_alpha(0.8), None, &trace(points));
+                painter.stroke(
+                    &Stroke::new(width),
+                    Affine::IDENTITY,
+                    ink.multiply_alpha(0.8),
+                    None,
+                    &trace(points),
+                );
             }
         }
         for span in &lanes.sibilance {
@@ -541,7 +556,7 @@ fn leveler(painter: &mut impl PaintScene, palette: &Palette, p: &Placed, view: V
                 item.at(span.from_s).mul_add(pps, x0),
                 item.at(span.to_s).mul_add(pps, x0),
             );
-            if sb < a || sa > b {
+            if sb < from_x || sa > to_x {
                 continue;
             }
             painter.fill(
@@ -549,18 +564,35 @@ fn leveler(painter: &mut impl PaintScene, palette: &Palette, p: &Placed, view: V
                 Affine::IDENTITY,
                 palette.solo.multiply_alpha(0.7),
                 None,
-                &Rect::new(sa.max(a), bottom - 5.0, sb.min(b).max(sa + 1.0), bottom - 2.0),
+                &Rect::new(
+                    sa.max(from_x),
+                    bottom - 5.0,
+                    sb.min(to_x).max(sa + 1.0),
+                    bottom - 2.0,
+                ),
             );
         }
-        painter.stroke(&Stroke::new(1.8), Affine::IDENTITY, palette.text, None, &trace(&item.composite));
-        // The ride's points: what a hand moves.
+        painter.stroke(
+            &Stroke::new(1.8),
+            Affine::IDENTITY,
+            palette.text,
+            None,
+            &trace(&item.composite),
+        );
+        // The ride's points: what from_x hand moves.
         for (k, point) in lanes.ride.iter().enumerate() {
             let x = item.at(point.t_s).mul_add(pps, x0);
-            if x < a - POINT || x > b + POINT {
+            if x < from_x - POINT || x > to_x + POINT {
                 continue;
             }
             let lit_point = lit_item && lit.is_some_and(|lit| lit.item_point == Some(k));
-            square(painter, (x, p.y_of(point.db)), lit_point, palette.meter_safe, palette);
+            square(
+                painter,
+                (x, placed.y_of(point.db)),
+                lit_point,
+                palette.meter_safe,
+                palette,
+            );
         }
     }
 }
@@ -762,4 +794,170 @@ pub const fn next_mode(
         M::Read => M::Off,
         _ => M::TrimRead,
     }
+}
+
+/// An item's take volume curve on screen: the item's index, its box (left,
+/// top, right, height) and its curve.
+/// An item on screen with a take volume curve: its index, its box (left,
+/// top, right, height) and the curve.
+type TakeBox = (usize, (f64, f64, f64, f64), crate::automation::TakeCurve);
+
+fn take_boxes(scene: &Arrangement, view: Viewport, below: f64) -> Vec<TakeBox> {
+    if !crate::automation::any_take_curves() {
+        return Vec::new();
+    }
+    let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+    let x0 = view.panel_w - view.scroll_x;
+    scene
+        .item_boxes()
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            let (a, b) = (item.x0.mul_add(view.pps, x0), item.x1.mul_add(view.pps, x0));
+            if b < view.panel_w || a > view.width {
+                return None;
+            }
+            let (top, height) = scene.item_box(item)?;
+            let (top, height) = (top.mul_add(zoom, below), height * zoom);
+            if top > view.height || top + height < 0.0 || height < 8.0 {
+                return None;
+            }
+            let curve = crate::automation::take_curve(&item.guid)?;
+            Some((i, (a, top, b, height), curve))
+        })
+        .collect()
+}
+
+/// The y of take gain `gain` in an item `top`, `height` tall.
+fn take_y(top: f64, height: f64, gain: f64) -> f64 {
+    let span = 2.0f64.mul_add(-PAD, height).max(1.0);
+    (1.0 - crate::automation::take_y(gain)).mul_add(span, top + PAD)
+}
+
+/// The take volume curves of the items on screen, over them: the curve as
+/// the item plays it and its points. `lit`: the item and point under the
+/// pointer.
+pub fn take_lines(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    below: f64,
+    lit: Option<(usize, Option<usize>)>,
+) {
+    const STEP: f64 = 3.0;
+    for (i, (a, top, b, height), curve) in take_boxes(scene, view, below) {
+        let start = scene.item(i).map_or(0.0, |item| item.x0);
+        let (left, right) = (a.max(view.panel_w), b.min(view.width));
+        let steps = num_traits::ToPrimitive::to_u32(&((right - left) / STEP).ceil()).unwrap_or(0);
+        let mut path = BezPath::new();
+        for k in 0..=steps {
+            let x = f64::from(k).mul_add(STEP, left).min(right);
+            let t = (x - a) / view.pps.max(1e-9);
+            let gain = daw_proto::automation::value_at(&curve.points, t).unwrap_or(1.0);
+            let at = (x, take_y(top, height, gain));
+            if k == 0 {
+                path.move_to(at);
+            } else {
+                path.line_to(at);
+            }
+        }
+        let lit_item = lit.is_some_and(|(at, _)| at == i);
+        painter.stroke(
+            &Stroke::new(if lit_item { 1.8 } else { 1.2 }),
+            Affine::IDENTITY,
+            palette.text.multiply_alpha(0.85),
+            None,
+            &path,
+        );
+        // Points only where there is room between them to take one.
+        let x_of = |t: f64| (start + t).mul_add(view.pps, view.panel_w - view.scroll_x);
+        let spaced = curve.points.windows(2).all(|w| match w {
+            [p, q] => x_of(q.time.as_seconds()) - x_of(p.time.as_seconds()) >= 2.0 * POINT,
+            _ => true,
+        });
+        if !spaced && !lit_item {
+            continue;
+        }
+        for (k, point) in curve.points.iter().enumerate() {
+            let x = x_of(point.time.as_seconds());
+            if x < left - POINT || x > right + POINT {
+                continue;
+            }
+            let lit_point = lit.is_some_and(|(at, p)| at == i && p == Some(k));
+            square(
+                painter,
+                (x, take_y(top, height, point.value)),
+                lit_point,
+                palette.text,
+                palette,
+            );
+        }
+    }
+}
+
+/// What a press at `(x, y)` is on in an item's take volume curve.
+#[derive(Clone, Debug)]
+pub struct TakeHit {
+    /// The item's index in the arrangement, and its guid.
+    pub index: usize,
+    pub item: String,
+    /// The curve's point under the pointer, if one.
+    pub point: Option<usize>,
+    /// Seconds into the item, and the gain at the pointer's height.
+    pub t: f64,
+    pub gain: f64,
+    /// Where the item is on screen: its left, top and height.
+    pub left: f64,
+    pub top: f64,
+    pub height: f64,
+}
+
+/// The take volume curve under `(x, y)`: on one of its points, or near its
+/// line — anywhere else in the item is the item's.
+#[must_use]
+pub fn take_hit(
+    scene: &Arrangement,
+    view: Viewport,
+    below: f64,
+    x: f64,
+    y: f64,
+) -> Option<TakeHit> {
+    take_boxes(scene, view, below)
+        .into_iter()
+        .rev()
+        .find_map(|(i, (a, top, b, height), curve)| {
+            if x < a || x > b || y < top || y > top + height {
+                return None;
+            }
+            let t = (x - a) / view.pps.max(1e-9);
+            let point = curve.points.iter().position(|p| {
+                (p.time.as_seconds().mul_add(view.pps, a) - x).abs() <= REACH
+                    && (take_y(top, height, p.value) - y).abs() <= REACH
+            });
+            let on_line = daw_proto::automation::value_at(&curve.points, t)
+                .is_some_and(|g| (take_y(top, height, g) - y).abs() <= REACH);
+            if point.is_none() && !on_line {
+                return None;
+            }
+            let span = 2.0f64.mul_add(-PAD, height).max(1.0);
+            let gain = crate::automation::take_gain(1.0 - (y - top - PAD) / span);
+            Some(TakeHit {
+                index: i,
+                item: scene.item(i)?.guid.clone(),
+                point,
+                t,
+                gain,
+                left: a,
+                top,
+                height,
+            })
+        })
+}
+
+/// The gain at screen `y` in an item at `top`, `height` tall.
+#[must_use]
+pub fn take_gain_at(top: f64, height: f64, y: f64) -> f64 {
+    let span = 2.0f64.mul_add(-PAD, height).max(1.0);
+    crate::automation::take_gain(1.0 - (y - top - PAD) / span)
 }

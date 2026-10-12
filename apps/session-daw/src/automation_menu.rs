@@ -27,6 +27,8 @@ pub enum Pick {
     Back { track: String },
     /// Show (or hide) the vocal leveler's lanes.
     Leveler { track: String, show: bool },
+    /// Show (or hide) the track's items' volume curves on them.
+    TakeLines { track: String, show: bool },
     /// An envelope's automation mode, or (`envelope` `None`) the track's —
     /// what an envelope not made yet writes by.
     Mode {
@@ -89,6 +91,34 @@ fn shown(
         .collect()
 }
 
+/// Whether `track` shows its items' volume curves on them.
+#[must_use]
+pub fn takes_shown(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+) -> bool {
+    daw::service::Tracks::ext_state(daw, project.clone(), TrackRef::Guid(track.to_owned()))
+        .iter()
+        .any(|e| e.key == crate::automation::TAKE_LINES_KEY && e.value == "1")
+}
+
+/// Show or hide `track`'s items' volume curves on them.
+pub fn show_takes(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    shown: bool,
+) {
+    let _ = daw::service::Tracks::set_ext_state(
+        daw,
+        project.clone(),
+        TrackRef::Guid(track.to_owned()),
+        crate::automation::TAKE_LINES_KEY,
+        if shown { "1" } else { "" },
+    );
+}
+
 /// The first list: the track's own envelopes, then its plugins.
 #[must_use]
 pub fn top(track: &str) -> Vec<Choice<Pick>> {
@@ -116,6 +146,15 @@ pub fn top(track: &str) -> Vec<Choice<Pick>> {
             },
         ));
     }
+    let takes_on = takes_shown(daw, &project, track);
+    out.push(Choice::new(
+        "Item volume curves",
+        takes_on,
+        Pick::TakeLines {
+            track: track.to_owned(),
+            show: !takes_on,
+        },
+    ));
     if crate::vocal_level::has_lanes(daw, &project, track) {
         let is_on = crate::vocal_level::lane_shown(daw, &project, track);
         out.push(Choice::new(
@@ -227,6 +266,13 @@ pub fn act(pick: &Pick) -> Option<Vec<Choice<Pick>>> {
                         );
                     }
                 }
+                crate::studio::request_resync();
+            }
+            None
+        }
+        Pick::TakeLines { track, show } => {
+            if let Ok((daw, project)) = crate::actions::song() {
+                show_takes(daw, &project, track, *show);
                 crate::studio::request_resync();
             }
             None

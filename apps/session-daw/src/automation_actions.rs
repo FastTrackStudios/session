@@ -354,7 +354,7 @@ static SHOW: architect::action::ActionMeta = crate::actions::meta(
     "AUTOMATION_SHOW",
     "automation_show",
     "Show an envelope",
-    "Show `envelope` of `track` in a lane of its own under it (made if it is not there yet), or hide it (`shown`: false). `envelope` is Volume, Pan, Width, Mute, `FX/parameter` (`FTS EQ/SSL HF Gain`), or `Vocal leveler`: a leveled vocal's four lanes (gate, de-breath, de-ess, the ride, whose points are dragged) and their sum, item by item. `height` in pixels (64).",
+    "Show `envelope` of `track` in a lane of its own under it (made if it is not there yet), or hide it (`shown`: false). `envelope` is Volume, Pan, Width, Mute, `FX/parameter` (`FTS EQ/SSL HF Gain`), `Item volume`: each item's volume curve (a leveled drum's strokes) drawn on it, its points dragged there, or `Vocal leveler`: a leveled vocal's four lanes (gate, de-breath, de-ess, the ride, whose points are dragged) and their sum, item by item. `height` in pixels (64).",
     "Automation",
     "",
 );
@@ -907,7 +907,19 @@ pub(crate) fn register(list: &architect::action::ActionList) {
     list.register(&SHOW, Effect::Mutating, |a: ShowArg| {
         let (daw, project) = crate::actions::song()?;
         let track = track_of(daw, &project, &a.track)?;
-        if a.envelope.trim().eq_ignore_ascii_case(crate::automation::LEVELER)
+        if a.envelope.trim().eq_ignore_ascii_case("item volume") {
+            let shown = a.shown.unwrap_or(true);
+            crate::automation_menu::show_takes(daw, &project, &track.guid, shown);
+            crate::studio::request_resync();
+            return Ok(format!(
+                "Item volume curves on {}: {}",
+                track.name,
+                if shown { "shown" } else { "hidden" }
+            ));
+        }
+        if a.envelope
+            .trim()
+            .eq_ignore_ascii_case(crate::automation::LEVELER)
             || a.envelope.trim().eq_ignore_ascii_case("leveler")
         {
             let shown = a.shown.unwrap_or(true);

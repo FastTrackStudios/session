@@ -86,7 +86,10 @@ impl Leveled {
 #[must_use]
 pub fn db_at(points: &[level_dsp::envelope::EnvPoint], t: f64) -> f64 {
     let after = points.partition_point(|p| p.t_s <= t);
-    match (after.checked_sub(1).and_then(|i| points.get(i)), points.get(after)) {
+    match (
+        after.checked_sub(1).and_then(|i| points.get(i)),
+        points.get(after),
+    ) {
         (None, Some(b)) => b.db,
         (Some(a), None) => a.db,
         (Some(a), Some(b)) if a.hold || b.t_s <= a.t_s => a.db,
@@ -321,6 +324,125 @@ pub fn target_key(target: &EnvelopeRef) -> String {
     }
 }
 
+/// The track ext key that shows a track's items' volume curves on them.
+pub const TAKE_LINES_KEY: &str = "FTS:take-lines";
+
+/// An item's take volume curve: `(seconds into the item, linear gain)`
+/// points, drawn over the item and dragged there.
+#[derive(Clone, Debug, Default)]
+pub struct TakeCurve {
+    /// The item's track.
+    pub track: String,
+    pub points: Vec<EnvelopePoint>,
+}
+
+/// Where a take volume (linear gain) sits in its item, `0` at the bottom
+/// and `1` at the top: −48 dB to +24 dB, so a slice taken down and a
+/// verse brought up 20 dB both have room.
+#[must_use]
+pub fn take_y(gain: f64) -> f64 {
+    let db = 20.0 * gain.max(1e-6).log10();
+    ((db + 48.0) / 72.0).clamp(0.0, 1.0)
+}
+
+/// The gain at `y` in an item (the inverse of [`take_y`]).
+#[must_use]
+pub fn take_gain(y: f64) -> f64 {
+    10f64.powf(y.clamp(0.0, 1.0).mul_add(72.0, -48.0) / 20.0)
+}
+
+/// The take volume curves shown, by item guid.
+fn take_store() -> &'static Mutex<HashMap<String, TakeCurve>> {
+    static TAKES: LazyLock<Mutex<HashMap<String, TakeCurve>>> = LazyLock::new(Default::default);
+    &TAKES
+}
+
+/// `item`'s take volume curve, if its track shows them and it has one.
+#[must_use]
+pub fn take_curve(item: &str) -> Option<TakeCurve> {
+    take_store()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(item)
+        .cloned()
+}
+
+/// Change `item`'s take volume curve in place — a drag's points, at once.
+pub fn set_take_curve(item: &str, points: Vec<EnvelopePoint>) {
+    if let Some(curve) = take_store()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get_mut(item)
+    {
+        curve.points = points;
+    }
+}
+
+/// Show `curve` on `item` — what a read puts there, for a caller that
+/// already has it.
+pub fn put_take_curve(item: &str, curve: TakeCurve) {
+    take_store()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(item.to_owned(), curve);
+}
+
+/// Whether any take curve is shown (so a frame need not look for them).
+#[must_use]
+pub fn any_take_curves() -> bool {
+    !take_store()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .is_empty()
+}
+
+/// The take volume curves of every item of `tracks` whose track shows
+/// them ([`TAKE_LINES_KEY`]) and whose active take has one.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn read_takes(
+    daw: &daw::standalone::Standalone,
+    project: &daw_proto::ProjectContext,
+    tracks: &[daw_proto::Track],
+) -> HashMap<String, TakeCurve> {
+    use daw_proto::automation::{Automation, EnvelopeLocation, TakeEnvelopeKind};
+    use daw_proto::{ItemRef, Items as _, Takes as _, TrackRef, Tracks};
+    let mut out = HashMap::new();
+    for track in tracks {
+        let shown = Tracks::ext_state(daw, project.clone(), TrackRef::Guid(track.guid.clone()))
+            .iter()
+            .any(|e| e.key == TAKE_LINES_KEY && e.value == "1");
+        if !shown {
+            continue;
+        }
+        for item in daw.get_items(project.clone(), TrackRef::Guid(track.guid.clone())) {
+            let Some(take) = daw.get_active_take(project.clone(), ItemRef::Guid(item.guid.clone()))
+            else {
+                continue;
+            };
+            let at = EnvelopeLocation::new(
+                TrackRef::Index(0),
+                EnvelopeRef::Take {
+                    item_guid: item.guid.clone(),
+                    take_guid: take.guid,
+                    kind: TakeEnvelopeKind::Volume,
+                },
+            );
+            let points = Automation::points(daw, project.clone(), at);
+            if !points.is_empty() {
+                out.insert(
+                    item.guid,
+                    TakeCurve {
+                        track: track.guid.clone(),
+                        points,
+                    },
+                );
+            }
+        }
+    }
+    out
+}
+
 /// Every shown lane, by track guid, in the order they stack.
 fn store() -> &'static Mutex<HashMap<String, Vec<Lane>>> {
     static LANES: LazyLock<Mutex<HashMap<String, Vec<Lane>>>> = LazyLock::new(Default::default);
@@ -520,11 +642,10 @@ pub fn refresh_in(project: &str, tracks: &[daw_proto::Track]) {
     let Some(daw) = crate::open::local_engine() else {
         return;
     };
-    adopt(read(
-        daw,
-        &daw_proto::ProjectContext::Project(project.to_owned()),
-        tracks,
-    ));
+    let project = daw_proto::ProjectContext::Project(project.to_owned());
+    adopt(read(daw, &project, tracks));
+    *take_store().lock().unwrap_or_else(PoisonError::into_inner) =
+        read_takes(daw, &project, tracks);
 }
 
 /// [`refresh_in`] the song open now.

@@ -257,6 +257,9 @@ pub enum Edit {
     /// it must not play twice is.
     SetSnapOffset(String, f64),
     DeleteItem(String),
+    /// An item's active take's volume curve, all its points (seconds into
+    /// the item, linear gain): a point dragged on the item.
+    SetTakeVolume(String, Vec<daw_proto::automation::EnvelopePoint>),
     /// A track's envelope's points, all of them: a point drawn, dragged
     /// or deleted in its lane ([`crate::automation`]).
     SetEnvelope(
@@ -368,6 +371,7 @@ impl Edit {
             | Self::SetItemVolume(g, _)
             | Self::SetStretchMarkers(g, _)
             | Self::SetSnapOffset(g, _)
+            | Self::SetTakeVolume(g, _)
             | Self::SlipItem(g, _)
             | Self::DeleteItem(g)
             | Self::SetEnvelope(g, ..)
@@ -417,6 +421,7 @@ impl Edit {
                 | Self::SetItemVolume(..)
                 | Self::SetStretchMarkers(..)
                 | Self::SetSnapOffset(..)
+                | Self::SetTakeVolume(..)
                 | Self::SlipItem(..)
                 | Self::DeleteItem(_)
         )
@@ -445,6 +450,7 @@ impl Edit {
                 | Self::SetItemCurve(..)
                 | Self::MoveAutomationItem(..)
                 | Self::SetLaneHeight(..)
+                | Self::SetTakeVolume(..)
         )
     }
 
@@ -1437,6 +1443,10 @@ fn apply_locally(edit: &Edit) -> bool {
                     Ok(())
                 }
                 Edit::SetSnapOffset(_, s) => daw.set_snap_offset(project, item, secs(*s)),
+                Edit::SetTakeVolume(_, points) => {
+                    take_volume_locally(daw, &project, &guid, points);
+                    Ok(())
+                }
                 Edit::DeleteItem(_) => daw.delete_item(project, item),
                 _ => return false,
             }
@@ -1513,6 +1523,47 @@ async fn apply_automation(project: &daw_control::Project, edit: &Edit) {
     if let Err(error) = outcome {
         tracing::warn!(error = %error, "the engine refused an automation edit");
     }
+}
+
+/// An item's take volume replaced by `points` in this process's engine —
+/// and its waveform, drawn through it, read again.
+#[cfg(feature = "native")]
+fn take_volume_locally(
+    daw: &daw::standalone::Standalone,
+    project: &daw_proto::ProjectContext,
+    item: &str,
+    points: &[daw_proto::automation::EnvelopePoint],
+) {
+    use daw_proto::automation::{Automation as _, TakeEnvelopeKind, TimeRangeParams};
+    use daw_proto::{ItemRef, Takes as _};
+    let Some(take) = daw.get_active_take(project.clone(), ItemRef::Guid(item.to_owned())) else {
+        return;
+    };
+    let at = daw_proto::EnvelopeLocation::new(
+        daw_proto::TrackRef::Index(0),
+        daw_proto::EnvelopeRef::Take {
+            item_guid: item.to_owned(),
+            take_guid: take.guid,
+            kind: TakeEnvelopeKind::Volume,
+        },
+    );
+    daw.delete_points_in_range(
+        project.clone(),
+        at.clone(),
+        TimeRangeParams::new(
+            daw_proto::primitives::PositionInSeconds::from_seconds(f64::MIN / 4.0),
+            daw_proto::primitives::PositionInSeconds::from_seconds(f64::MAX / 4.0),
+        ),
+    );
+    for p in points {
+        daw.add_point(
+            project.clone(),
+            at.clone(),
+            daw_proto::automation::AddPointParams::new(p.time, p.value, p.shape),
+        );
+    }
+    crate::midi::mark_stale([item.to_owned()]);
+    crate::studio::request_resync();
 }
 
 /// One edit, against the engine, waited for: what a test or a tool that
@@ -1647,6 +1698,25 @@ async fn apply(edit: &Edit) {
                 Ok(())
             }
             Edit::DeleteItem(_) => item.delete().await,
+            Edit::SetTakeVolume(_, points) => match item.active_take().envelopes().await {
+                Ok(envelopes) => {
+                    let volume = envelopes.volume();
+                    match volume.clear().await {
+                        Ok(()) => {
+                            for p in points {
+                                if let Err(error) = volume.add_point(p.time, p.value, p.shape).await
+                                {
+                                    tracing::warn!(error = %error, "the engine refused a take volume point");
+                                    break;
+                                }
+                            }
+                            Ok(())
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            },
             _ => Ok(()),
         };
         if let Err(error) = outcome {
@@ -1809,6 +1879,7 @@ async fn apply(edit: &Edit) {
         | Edit::SetItemVolume(..)
         | Edit::SetStretchMarkers(..)
         | Edit::SetSnapOffset(..)
+        | Edit::SetTakeVolume(..)
         | Edit::SlipItem(..)
         | Edit::DeleteItem(_)
         // Already handled above, where they did not need a track.

@@ -296,6 +296,21 @@ fn run_hit_action(id: &'static str, args: String) {
 }
 
 /// A knob under the pointer, mid-turn.
+/// The undo step a take volume curve gesture makes.
+const TAKE_LABEL: &str = "Edit item volume";
+
+/// A point of an item's take volume curve being dragged: the item, the
+/// point's index now, and where the item is on screen.
+struct TakeDrag {
+    item: String,
+    index: usize,
+    left: f64,
+    top: f64,
+    height: f64,
+    /// The item's length, seconds: the point stays inside it.
+    length: f64,
+}
+
 struct ItemTurn {
     index: usize,
     from: f64,
@@ -552,6 +567,11 @@ pub struct ArrangementWidget {
     lane_drag: Option<crate::automation_edit::LaneDrag>,
     /// What in the automation lanes is under the pointer, lit.
     lane_lit: crate::automation_draw::Lit,
+    /// A point of an item's take volume curve being dragged
+    /// ([`crate::automation_draw::take_lines`]).
+    take_drag: Option<TakeDrag>,
+    /// The item and the point of its take volume curve under the pointer.
+    take_lit: Option<(usize, Option<usize>)>,
     /// The automation menu, open over the window
     /// ([`crate::automation_menu`]).
     #[cfg(feature = "native")]
@@ -700,6 +720,8 @@ impl ArrangementWidget {
             item_turn: None,
             lane_drag: None,
             lane_lit: crate::automation_draw::Lit::default(),
+            take_drag: None,
+            take_lit: None,
             #[cfg(feature = "native")]
             menu: None,
             edits: Rc::new(RefCell::new(Vec::new())),
@@ -1834,6 +1856,105 @@ impl ArrangementWidget {
         }
         self.dirty.set(true);
         true
+    }
+
+    /// The take volume curve under a point, if any (nothing over the
+    /// ruler).
+    fn take_hit(&self, x: f64, y: f64) -> Option<crate::automation_draw::TakeHit> {
+        if y < ruler::ruler_h() {
+            return None;
+        }
+        let view = self.viewport(self.size.0, self.size.1);
+        let below = ruler::ruler_h() - view.scroll_y;
+        crate::automation_draw::take_hit(&self.scene, view, below, x, y)
+    }
+
+    /// A press on an item's take volume curve: its point dragged (Alt:
+    /// deleted), or on its line a point made there and dragged. `false`
+    /// when the press is not on one.
+    fn take_pressed(&mut self, x: f64, y: f64, alt: bool) -> bool {
+        use crate::engine::Edit;
+        let Some(hit) = self.take_hit(x, y) else {
+            return false;
+        };
+        let Some(curve) = crate::automation::take_curve(&hit.item) else {
+            return false;
+        };
+        let length = self
+            .scene
+            .item(hit.index)
+            .map_or(0.0, |item| item.x1 - item.x0);
+        let begin = Edit::BeginUndo(TAKE_LABEL.to_owned());
+        let (points, index) = match hit.point {
+            Some(k) if alt => {
+                let points = crate::automation::without_point(&curve.points, k);
+                crate::automation::set_take_curve(&hit.item, points.clone());
+                self.edits.borrow_mut().extend([
+                    begin,
+                    Edit::SetTakeVolume(hit.item, points),
+                    Edit::EndUndo(TAKE_LABEL.to_owned()),
+                ]);
+                self.dirty.set(true);
+                return true;
+            }
+            Some(k) => (None, k),
+            None => {
+                let (points, k) = crate::automation::with_point(
+                    &curve.points,
+                    None,
+                    hit.t.clamp(0.0, length),
+                    hit.gain,
+                    daw_proto::automation::EnvelopeShape::Linear,
+                );
+                (Some(points), k)
+            }
+        };
+        let mut edits = vec![begin];
+        if let Some(points) = points {
+            crate::automation::set_take_curve(&hit.item, points.clone());
+            edits.push(Edit::SetTakeVolume(hit.item.clone(), points));
+        }
+        self.edits.borrow_mut().extend(edits);
+        self.take_drag = Some(TakeDrag {
+            item: hit.item,
+            index,
+            left: hit.left,
+            top: hit.top,
+            height: hit.height,
+            length,
+        });
+        self.take_lit = Some((hit.index, Some(index)));
+        self.dirty.set(true);
+        true
+    }
+
+    /// The take volume point being dragged, moved to `(x, y)`.
+    fn take_moved(&mut self, x: f64, y: f64) {
+        let view = self.viewport(self.size.0, self.size.1);
+        let Some(drag) = self.take_drag.as_mut() else {
+            return;
+        };
+        let Some(curve) = crate::automation::take_curve(&drag.item) else {
+            return;
+        };
+        let t = ((x - drag.left) / view.pps.max(1e-9)).clamp(0.0, drag.length);
+        let gain = crate::automation_draw::take_gain_at(drag.top, drag.height, y);
+        let (points, at) = crate::automation::with_point(
+            &curve.points,
+            Some(drag.index),
+            t,
+            gain,
+            daw_proto::automation::EnvelopeShape::Linear,
+        );
+        drag.index = at;
+        crate::automation::set_take_curve(&drag.item, points.clone());
+        self.edits
+            .borrow_mut()
+            .push(crate::engine::Edit::SetTakeVolume(
+                drag.item.clone(),
+                points,
+            ));
+        self.dirty.set(true);
     }
 
     /// The automation lane under a point, and what in it — nothing over
@@ -3286,6 +3407,10 @@ impl ArrangementWidget {
                 if let Some(menu) = self.menu.as_mut() {
                     return menu.hover_at(x, y);
                 }
+                if self.take_drag.is_some() {
+                    self.take_moved(x, y);
+                    return true;
+                }
                 let view = self.viewport(self.size.0, self.size.1);
                 if let Some(drag) = self.lane_drag.as_mut() {
                     let edits = crate::automation_edit::drag(drag, view, x, y);
@@ -3340,6 +3465,9 @@ impl ArrangementWidget {
                 let lit = self.lane_lit_at(x, y);
                 let relit = lit != self.lane_lit;
                 self.lane_lit = lit;
+                let take = self.take_hit(x, y).map(|h| (h.index, h.point));
+                let relit = relit || take != self.take_lit;
+                self.take_lit = take;
                 self.pointer.hover(spot) || moved || relit
             }
             UiEvent::PointerDown(e) => {
@@ -3378,6 +3506,10 @@ impl ArrangementWidget {
                     self.edits.borrow_mut().extend(edits);
                     self.lane_lit = self.lane_lit_at(x, y);
                     self.dirty.set(true);
+                    return true;
+                }
+                // An item's take volume curve, on its point or its line.
+                if self.take_pressed(x, y, e.mods.contains(Modifiers::ALT)) {
                     return true;
                 }
                 let spot = self.spot_at(x, y);
@@ -3447,6 +3579,13 @@ impl ArrangementWidget {
             }
             UiEvent::PointerUp(e) => {
                 let (x, y) = at(e);
+                if self.take_drag.take().is_some() {
+                    self.edits
+                        .borrow_mut()
+                        .push(crate::engine::Edit::EndUndo(TAKE_LABEL.to_owned()));
+                    self.dirty.set(true);
+                    return true;
+                }
                 if let Some(drag) = self.lane_drag.take() {
                     self.edits
                         .borrow_mut()
@@ -3655,6 +3794,15 @@ impl ArrangementWidget {
             lanes_at,
             self.hovered_item,
             self.item_turn.as_ref().map(|t| (t.index, t.now)),
+        );
+        // The items' take volume curves, over them.
+        crate::automation_draw::take_lines(
+            &mut out,
+            &self.palette,
+            &self.scene,
+            view,
+            below,
+            self.take_lit,
         );
         // The automation lanes under their tracks, over the items' rows.
         let lanes_placed =
@@ -4113,6 +4261,12 @@ mod tests {
     /// gives a track automation lanes (a store the whole process shares)
     /// names its own, so no other test's rows move under it.
     fn widget_named(prefix: &str) -> ArrangementWidget {
+        widget_with(prefix, &[])
+    }
+
+    /// The fixture with `items` — `(row, guid, start, length)` — on its
+    /// tracks.
+    fn widget_with(prefix: &str, items: &[(usize, &str, f64, f64)]) -> ArrangementWidget {
         let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
         let tracks: Vec<daw_proto::Track> = (0..4)
@@ -4125,8 +4279,25 @@ mod tests {
             .collect();
         let rows: Vec<(daw_proto::Track, u32)> = tracks.iter().cloned().map(|t| (t, 0)).collect();
         let refs = daw_ui::studio::RowsRef(std::sync::Arc::new(rows.clone()));
-        let project =
-            daw_ui::studio::ProjectRef(std::sync::Arc::new(daw_ui::studio::Project::default()));
+        let mut with = daw_ui::studio::Project {
+            tracks,
+            length_secs: 60.0,
+            ..daw_ui::studio::Project::default()
+        };
+        for (row, guid, start, length) in items {
+            let track = format!("{prefix}{row}");
+            with.items
+                .entry(track.clone())
+                .or_default()
+                .push(daw_proto::Item {
+                    guid: (*guid).to_owned(),
+                    track_guid: track,
+                    position: daw_proto::PositionInSeconds::from_seconds(*start),
+                    length: daw_proto::Duration::from_seconds(*length),
+                    ..daw_proto::Item::default()
+                });
+        }
+        let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(with));
         let layout = crate::layout::Layout::default();
         let scene = crate::arrangement::Arrangement::build(
             &palette,
@@ -4373,6 +4544,67 @@ mod tests {
             crate::engine::Edit::SetEnvelope(_, _, points) => Some(points.clone()),
             _ => None,
         })
+    }
+
+    /// An item's take volume curve: a press on its line makes a point there
+    /// and drags it; Alt and a press on a point deletes it.
+    #[test]
+    fn a_take_volume_point_is_made_dragged_and_deleted_on_its_item() {
+        use daw_proto::automation::EnvelopePoint;
+        let point = |t: f64, gain: f64| EnvelopePoint {
+            time: daw_proto::PositionInSeconds::from_seconds(t),
+            value: gain,
+            ..EnvelopePoint::default()
+        };
+        crate::automation::put_take_curve(
+            "take-item",
+            crate::automation::TakeCurve {
+                track: "take-t1".into(),
+                points: vec![point(0.0, 1.0), point(2.0, 1.0)],
+            },
+        );
+        let mut widget = widget_with("take-t", &[(1, "take-item", 1.0, 2.0)]);
+        let view = widget.viewport(widget.size.0, widget.size.1);
+        let below = crate::ruler::ruler_h() - view.scroll_y;
+        let item = widget.scene.item(0).expect("the item");
+        let (top, height) = widget.scene.item_box(item).expect("its box");
+        let (top, height) = (top.mul_add(view.zoom_y, below), height * view.zoom_y);
+        let x_at = |t: f64| (1.0 + t).mul_add(view.pps, view.panel_w - view.scroll_x);
+        // On the line at 0 dB, a second in.
+        let y0 = (1.0 - crate::automation::take_y(1.0)).mul_add(height - 8.0, top + 4.0);
+        assert!(widget.took(&UiEvent::PointerDown(pointer(x_at(1.0), y0))));
+        let made = crate::automation::take_curve("take-item")
+            .expect("the curve")
+            .points;
+        assert_eq!(made.len(), 3, "a point made: {made:?}");
+        // Dragged down to −12 dB.
+        let y12 = (1.0 - crate::automation::take_y(0.251)).mul_add(height - 8.0, top + 4.0);
+        assert!(widget.took(&UiEvent::PointerMove(pointer(x_at(1.0), y12))));
+        assert!(widget.took(&UiEvent::PointerUp(pointer(x_at(1.0), y12))));
+        let dragged = crate::automation::take_curve("take-item")
+            .expect("the curve")
+            .points;
+        let middle = dragged.get(1).map_or(0.0, |p| p.value);
+        assert!(
+            20.0f64.mul_add(middle.log10(), 12.0).abs() < 0.5,
+            "{dragged:?}"
+        );
+        assert!(widget.edits.borrow().iter().any(|e| matches!(
+            e,
+            crate::engine::Edit::SetTakeVolume(item, points) if item == "take-item" && points.len() == 3
+        )));
+        assert!(matches!(
+            widget.edits.borrow().last(),
+            Some(crate::engine::Edit::EndUndo(_))
+        ));
+        // Alt and a press on it: gone.
+        let mut alt = pointer(x_at(1.0), y12);
+        alt.mods = blitz_traits::events::Modifiers::ALT;
+        assert!(widget.took(&UiEvent::PointerDown(alt)));
+        let left = crate::automation::take_curve("take-item")
+            .expect("the curve")
+            .points;
+        assert_eq!(left.len(), 2, "{left:?}");
     }
 
     /// A lane sits under its track: the rows below move down by it, and
