@@ -167,7 +167,7 @@ fn front(path: &str) -> Option<(Vec<f64>, f64)> {
 }
 
 /// The items of `track` that play: not muted, on a lane that plays.
-fn playing(
+pub(crate) fn playing(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     track: &daw_proto::Track,
@@ -309,6 +309,92 @@ fn keep(
         &format!("{LANES_KEY}{item}"),
         &text,
     );
+}
+
+/// The track ext key that shows the leveler's lanes under a track.
+pub const LANE_SHOWN: &str = "FTS:level:lane";
+
+/// Whether `track` shows the vocal leveler's lane.
+#[must_use]
+pub fn lane_shown(daw: &daw::standalone::Standalone, project: &ProjectContext, track: &str) -> bool {
+    Tracks::ext_state(daw, project.clone(), TrackRef::Guid(track.to_owned()))
+        .iter()
+        .any(|e| e.key == LANE_SHOWN && e.value == "1")
+}
+
+/// Show or hide the vocal leveler's lane under `track`.
+pub fn show_lane(daw: &daw::standalone::Standalone, project: &ProjectContext, track: &str, shown: bool) {
+    let _ = Tracks::set_ext_state(
+        daw,
+        project.clone(),
+        TrackRef::Guid(track.to_owned()),
+        LANE_SHOWN,
+        if shown { "1" } else { "" },
+    );
+}
+
+/// Whether any of `track`'s items has lanes kept.
+#[must_use]
+pub fn has_lanes(daw: &daw::standalone::Standalone, project: &ProjectContext, track: &str) -> bool {
+    Tracks::ext_state(daw, project.clone(), TrackRef::Guid(track.to_owned()))
+        .iter()
+        .any(|e| e.key.starts_with(LANES_KEY))
+}
+
+/// `track`'s playing items that have lanes kept, each with its lanes and
+/// their sum — what the leveler's lane shows.
+#[must_use]
+pub fn leveled(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &daw_proto::Track,
+) -> Vec<crate::automation::Leveled> {
+    let mut out: Vec<crate::automation::Leveled> = playing(daw, project, track)
+        .into_iter()
+        .filter_map(|item| {
+            let lanes = kept(daw, project, &track.guid, &item.guid)?;
+            let speed = daw
+                .get_active_take(project.clone(), ItemRef::Guid(item.guid.clone()))
+                .map_or(1.0, |t| if t.play_rate > 0.0 { t.play_rate } else { 1.0 });
+            let mut one = crate::automation::Leveled {
+                item: item.guid.clone(),
+                position: item.position.as_seconds(),
+                length: item.length.as_seconds(),
+                stretch: 1.0 / speed,
+                lanes,
+                composite: Vec::new(),
+            };
+            one.resum();
+            Some(one)
+        })
+        .collect();
+    out.sort_by(|a, b| a.position.total_cmp(&b.position));
+    out
+}
+
+/// An item's lanes changed by hand, put back: kept, and their sum written
+/// as its volume — one undo step. `false` when the item is gone.
+pub fn relevel(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    leveled: &crate::automation::Leveled,
+) -> bool {
+    let Some(item) = daw.get_item(project.clone(), ItemRef::Guid(leveled.item.clone())) else {
+        return false;
+    };
+    let label = "Edit the vocal leveling";
+    daw::service::Projects::begin_undo_block(daw, project.clone(), label);
+    let curve: Vec<EnvPoint> = level_dsp::envelope::composite(&leveled.lanes)
+        .iter()
+        .map(|p| EnvPoint::new(p.t_s * leveled.stretch, p.db))
+        .collect();
+    crate::drum_level::write_curve(daw, project, &item, &curve);
+    // By hand: no knobs made these, so the digest says so.
+    keep(daw, project, track, (&leveled.item, &leveled.lanes, 0));
+    daw::service::Projects::end_undo_block(daw, project.clone(), label, None);
+    crate::midi::mark_stale([leveled.item.clone()]);
+    true
 }
 
 /// The lanes kept for `item` on `track`, if any.

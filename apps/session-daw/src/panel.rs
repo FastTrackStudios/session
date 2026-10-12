@@ -311,7 +311,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
             session
                 .rows
                 .iter()
-                .map(|(track, _)| layout.height_of(track.height))
+                .map(|(track, _)| layout.slot_of(track))
                 .sum::<f64>(),
         ))
     });

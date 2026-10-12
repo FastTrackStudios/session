@@ -132,6 +132,13 @@ impl Layout {
             .max(self.strip_min)
     }
 
+    /// How tall a track's slot is: the track, and its automation lanes
+    /// under it ([`crate::automation`]).
+    #[must_use]
+    pub fn slot_of(self, track: &daw_proto::Track) -> f64 {
+        self.height_of(track.height) + crate::automation::lanes_height(&track.guid)
+    }
+
     /// How tall to draw a track.
     ///
     /// Anything at or below zero is treated as unset: a stored height of

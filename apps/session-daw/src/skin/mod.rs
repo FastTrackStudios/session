@@ -251,6 +251,7 @@ pub const fn row_name(control: crate::row::Control) -> &'static str {
         C::LanePrev => "lane-prev",
         C::LaneNext => "lane-next",
         C::LaneName => "lane-name",
+        C::Automation => "automation",
     }
 }
 

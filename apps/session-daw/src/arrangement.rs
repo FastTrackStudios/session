@@ -240,6 +240,9 @@ pub struct Arrangement {
     /// actually asks is "which row is at this y", and a running sum
     /// answers it with a binary search where heights would need a walk.
     offsets: Vec<f64>,
+    /// Each row's track, without the automation lanes under it — what its
+    /// items and its panel controls sit in. `offsets` spans both.
+    track_h: Vec<f64>,
 }
 
 /// Which commands belong to which row, and how wide each one is.
@@ -604,9 +607,13 @@ impl Arrangement {
         self.offsets.last().copied().unwrap_or(0.0)
     }
 
-    /// How tall row `i` is, in content pixels.
+    /// How tall row `i`'s track is (its automation lanes not counted), in
+    /// content pixels.
     #[must_use]
     fn row_height(&self, row: usize) -> f64 {
+        if let Some(h) = self.track_h.get(row) {
+            return *h;
+        }
         let top = self.offsets.get(row).copied().unwrap_or(0.0);
         let bottom = self
             .offsets
@@ -625,7 +632,19 @@ impl Arrangement {
     pub fn row_box(&self, row: usize) -> Option<(f64, f64)> {
         let top = *self.offsets.get(row)?;
         let bottom = *self.offsets.get(row.checked_add(1)?)?;
-        Some((top, (bottom - top - DIVIDER).max(0.5)))
+        let track = self.track_h.get(row).copied().unwrap_or(bottom - top);
+        Some((top, (track.min(bottom - top) - DIVIDER).max(0.5)))
+    }
+
+    /// Where row `row`'s automation lanes start and how much room they
+    /// have together, in session coordinates: under its track, to the
+    /// bottom of its slot. `None` for a row with none.
+    #[must_use]
+    pub fn lanes_box(&self, row: usize) -> Option<(f64, f64)> {
+        let top = *self.offsets.get(row)?;
+        let bottom = *self.offsets.get(row.checked_add(1)?)?;
+        let track = self.track_h.get(row).copied()?;
+        (bottom - top - track > 0.5).then_some((top + track, bottom - top - track))
     }
 
     /// An item's band in session coordinates — its row's, narrowed to its
@@ -730,7 +749,8 @@ impl Arrangement {
         if let Some(
             step @ (crate::row::Control::LanePrev
             | crate::row::Control::LaneNext
-            | crate::row::Control::LaneName),
+            | crate::row::Control::LaneName
+            | crate::row::Control::Automation),
         ) = row.control_at(x, y)
         {
             return Some((index, step));
@@ -905,6 +925,9 @@ fn record_panel(
                     _ => {}
                 },
             );
+            // The automation button over a theme's row as over the
+            // built-in one (hit the same way on both: `row_spot_at`).
+            crate::tcp::automation_button(&mut panel, palette, y, body, tcp);
         } else {
             crate::tcp::draw_row(
                 &mut panel, palette, font, track, depth, y, body, &ancestors, tcp,
@@ -937,7 +960,9 @@ fn record_panel(
 
         spans.push(from..command_index(&panel));
         bar_spans.push(bar_from..command_index(&bar));
-        y += h;
+        // Its automation lanes under it: their headers are drawn live
+        // ([`crate::automation_draw`]), so the panel only leaves room.
+        y += crate::automation::lanes_height(&track.guid).mul_add(zoom, h);
     }
     Panels {
         panel,
@@ -974,6 +999,7 @@ impl Arrangement {
         let mut titles = Vec::with_capacity(project.item_count);
         let mut boxes = Vec::with_capacity(project.item_count);
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
+        let mut track_h = Vec::with_capacity(rows.len());
         let mut y = 0.0_f64;
         let keys = keys_of(project);
         let roles = kit_roles(project);
@@ -1232,7 +1258,8 @@ impl Arrangement {
             }
 
             index.lanes.push(lanes_from..command_index(&lanes));
-            y += h;
+            track_h.push(h);
+            y += h + crate::automation::lanes_height(&track.guid);
         }
         // The bottom of the last row, so every row has a `..end`.
         offsets.push(y);
@@ -1257,6 +1284,7 @@ impl Arrangement {
             panel_zoom: cut.zoom,
             index,
             offsets,
+            track_h,
             rows: rows.len(),
             length_secs: project.length_secs,
             bpm: project.bpm,

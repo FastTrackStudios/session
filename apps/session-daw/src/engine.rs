@@ -257,6 +257,32 @@ pub enum Edit {
     /// it must not play twice is.
     SetSnapOffset(String, f64),
     DeleteItem(String),
+    /// A track's envelope's points, all of them: a point drawn, dragged
+    /// or deleted in its lane ([`crate::automation`]).
+    SetEnvelope(
+        String,
+        daw_proto::automation::EnvelopeRef,
+        Vec<daw_proto::automation::EnvelopePoint>,
+    ),
+    /// An automation item's curve — its pool's, so every instance's.
+    SetItemCurve(
+        String,
+        daw_proto::automation::EnvelopeRef,
+        u32,
+        Vec<daw_proto::automation::EnvelopePoint>,
+    ),
+    /// An automation item moved to a position, in seconds.
+    MoveAutomationItem(String, daw_proto::automation::EnvelopeRef, u32, f64),
+    /// Show or hide a track's envelope in a lane of its own.
+    ShowEnvelope(String, daw_proto::automation::EnvelopeRef, bool),
+    /// One envelope's automation mode.
+    SetEnvelopeMode(
+        String,
+        daw_proto::automation::EnvelopeRef,
+        daw_proto::primitives::AutomationMode,
+    ),
+    /// An envelope lane's height, in pixels.
+    SetLaneHeight(String, daw_proto::automation::EnvelopeRef, u32),
 }
 
 impl Edit {
@@ -319,7 +345,13 @@ impl Edit {
             | Self::SetStretchMarkers(g, _)
             | Self::SetSnapOffset(g, _)
             | Self::SlipItem(g, _)
-            | Self::DeleteItem(g) => g,
+            | Self::DeleteItem(g)
+            | Self::SetEnvelope(g, ..)
+            | Self::SetItemCurve(g, ..)
+            | Self::MoveAutomationItem(g, ..)
+            | Self::ShowEnvelope(g, ..)
+            | Self::SetEnvelopeMode(g, ..)
+            | Self::SetLaneHeight(g, ..) => g,
         }
     }
 
@@ -384,6 +416,42 @@ impl Edit {
                 | Self::MoveItem(..)
                 | Self::TrimItem(..)
                 | Self::SlipItem(..)
+                | Self::SetEnvelope(..)
+                | Self::SetItemCurve(..)
+                | Self::MoveAutomationItem(..)
+                | Self::SetLaneHeight(..)
+        )
+    }
+
+    /// Which envelope (and automation item) this edit is about, if any —
+    /// part of a control's identity like [`Self::route`]: two lanes on
+    /// one track are two controls.
+    #[must_use]
+    pub(crate) fn lane(&self) -> Option<String> {
+        match self {
+            Self::SetEnvelope(_, target, _)
+            | Self::ShowEnvelope(_, target, _)
+            | Self::SetEnvelopeMode(_, target, _)
+            | Self::SetLaneHeight(_, target, _) => Some(crate::automation::target_key(target)),
+            Self::SetItemCurve(_, target, item, _)
+            | Self::MoveAutomationItem(_, target, item, _) => {
+                Some(format!("{}#{item}", crate::automation::target_key(target)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this is about a track's automation.
+    #[must_use]
+    pub const fn is_automation(&self) -> bool {
+        matches!(
+            self,
+            Self::SetEnvelope(..)
+                | Self::SetItemCurve(..)
+                | Self::MoveAutomationItem(..)
+                | Self::ShowEnvelope(..)
+                | Self::SetEnvelopeMode(..)
+                | Self::SetLaneHeight(..)
         )
     }
 
@@ -433,6 +501,7 @@ type ControlKey = (
     String,
     std::mem::Discriminant<Edit>,
     Option<crate::routes::At>,
+    Option<String>,
 );
 
 impl Queue {
@@ -443,7 +512,12 @@ impl Queue {
             .saturating_add(u64::try_from(self.pending.len()).unwrap_or(u64::MAX));
         let guid = edit.guid().to_owned();
         if edit.coalesces() {
-            let key: ControlKey = (guid, std::mem::discriminant(&edit), edit.route());
+            let key: ControlKey = (
+                guid,
+                std::mem::discriminant(&edit),
+                edit.route(),
+                edit.lane(),
+            );
             let live = self.control.get(&key).copied().filter(|&at| {
                 at >= self.popped && self.barrier.get(&key.0).is_none_or(|&wall| wall < at)
             });
@@ -1349,6 +1423,73 @@ fn apply_locally(edit: &Edit) -> bool {
     true
 }
 
+/// An automation edit, through the facade: the envelope by its track and
+/// reference, its points replaced whole.
+async fn apply_automation(project: &daw_control::Project, edit: &Edit) {
+    let Ok(Some(track)) = project.tracks().by_guid(edit.guid()).await else {
+        return;
+    };
+    let outcome = match edit {
+        Edit::SetEnvelope(_, target, points) => {
+            let envelope = track.envelopes().of(target.clone());
+            match envelope.clear().await {
+                Ok(()) => {
+                    let mut done = Ok(());
+                    for p in points {
+                        if let Err(error) = envelope.add_point(p.time, p.value, p.shape).await {
+                            done = Err(error);
+                            break;
+                        }
+                    }
+                    done
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Edit::SetItemCurve(_, target, item, points) => {
+            track
+                .envelopes()
+                .of(target.clone())
+                .set_automation_item_points(*item, points.clone())
+                .await
+        }
+        Edit::MoveAutomationItem(_, target, item, at) => {
+            let mut params = daw_proto::automation::SetAutomationItemParams::at(*item);
+            params.position = Some(daw_proto::primitives::PositionInSeconds::from_seconds(*at));
+            track
+                .envelopes()
+                .of(target.clone())
+                .set_automation_item(params)
+                .await
+        }
+        Edit::ShowEnvelope(_, target, shown) => {
+            track
+                .envelopes()
+                .of(target.clone())
+                .set_visible(*shown)
+                .await
+        }
+        Edit::SetEnvelopeMode(_, target, mode) => {
+            track
+                .envelopes()
+                .of(target.clone())
+                .set_automation_mode(*mode)
+                .await
+        }
+        Edit::SetLaneHeight(_, target, height) => {
+            track
+                .envelopes()
+                .of(target.clone())
+                .show_in_lane(*height)
+                .await
+        }
+        _ => Ok(()),
+    };
+    if let Err(error) = outcome {
+        tracing::warn!(error = %error, "the engine refused an automation edit");
+    }
+}
+
 /// One edit, against the engine, waited for: what a test or a tool that
 /// needs the result before going on does instead of the queue. False when
 /// there is no runtime to run it on.
@@ -1412,6 +1553,10 @@ async fn apply(edit: &Edit) {
             return;
         }
         _ => {}
+    }
+    if edit.is_automation() {
+        apply_automation(&project, edit).await;
+        return;
     }
     if edit.is_item() {
         if let Edit::DeselectAllItems(_) = edit {
@@ -1598,7 +1743,13 @@ async fn apply(edit: &Edit) {
         Edit::SetGroupModifier(_, slot, modifier, on) => {
             track.set_group_modifier(*slot, *modifier, *on).await
         }
-        Edit::SetFadeIn(..)
+        Edit::SetEnvelope(..)
+        | Edit::SetItemCurve(..)
+        | Edit::MoveAutomationItem(..)
+        | Edit::ShowEnvelope(..)
+        | Edit::SetEnvelopeMode(..)
+        | Edit::SetLaneHeight(..)
+        | Edit::SetFadeIn(..)
         | Edit::SetFadeOut(..)
         | Edit::SelectItem(..)
         | Edit::DeselectItem(_)

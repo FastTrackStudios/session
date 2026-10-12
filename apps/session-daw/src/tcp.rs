@@ -484,6 +484,7 @@ pub fn draw_row(
             // compact panel leaves out with the arm.
             if !tcp.compact {
                 row_two(scene, palette, font, track, y);
+                automation_button(scene, palette, y, h, tcp);
             }
         }
         // The same band as a full row, never taller: a taller row is a
@@ -741,6 +742,35 @@ fn row_two(scene: &mut anyrender::Scene, palette: &Palette, font: &Font, track: 
         // The combo's caret — the shared triangle, not a glyph.
         caret(scene, palette.text_faint, 91.0 + 181.0, two + 8.0);
     }
+}
+
+/// The automation button, where a row has room for it: a field with an
+/// envelope's line drawn in it.
+pub(crate) fn automation_button(
+    scene: &mut anyrender::Scene,
+    palette: &Palette,
+    y: f64,
+    h: f64,
+    tcp: Tcp,
+) {
+    let Some(r) = crate::row::automation_button(y, h, tcp) else {
+        return;
+    };
+    rect(scene, palette.tcp_field, r.x0, r.y0, r.x1, r.y1);
+    let mut line = vello::kurbo::BezPath::new();
+    let (x0, x1) = (r.x0 + 4.0, r.x1 - 4.0);
+    let (lo, hi) = (r.y1 - 6.0, r.y0 + 6.0);
+    line.move_to((x0, lo));
+    line.line_to(((x1 - x0).mul_add(0.35, x0), hi));
+    line.line_to(((x1 - x0).mul_add(0.65, x0), hi));
+    line.line_to((x1, lo - 3.0));
+    scene.stroke(
+        &vello::kurbo::Stroke::new(1.4),
+        Affine::IDENTITY,
+        palette.text_dim,
+        None,
+        &line,
+    );
 }
 
 /// A track's own colour, or the palette's neutral when it has none.

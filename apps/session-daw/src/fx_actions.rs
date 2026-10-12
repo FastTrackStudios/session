@@ -206,7 +206,7 @@ struct ParamRow {
 }
 
 /// `track`'s chain and the FX `which` names in it.
-fn target(
+pub(crate) fn target(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     track: &str,
@@ -271,7 +271,7 @@ fn target(
 
 /// The parameter `which` names among `params`: `#index`, a name, or a
 /// repeated name with its count (`Post Freq 6`).
-fn param_of<'a>(
+pub(crate) fn param_of<'a>(
     params: &'a [daw_proto::fx::FxParameter],
     which: &str,
 ) -> Result<&'a daw_proto::fx::FxParameter, String> {
@@ -317,7 +317,11 @@ fn param_of<'a>(
 /// The normalized value for `text` on `param` of `fx`: `=0.42` as given;
 /// a choice by its label; else the plugin's own reading of the words (an
 /// FTS processor's, `builtin_fx::setting`).
-fn value_of(fx: &str, param: &daw_proto::fx::FxParameter, text: &str) -> Result<f64, String> {
+pub(crate) fn value_of(
+    fx: &str,
+    param: &daw_proto::fx::FxParameter,
+    text: &str,
+) -> Result<f64, String> {
     let text = text.trim();
     if let Some(raw) = text.strip_prefix('=') {
         let v: f64 = raw
@@ -348,7 +352,7 @@ fn value_of(fx: &str, param: &daw_proto::fx::FxParameter, text: &str) -> Result<
 /// Where `text` is, seconds: a bar (`33`, `33:2`, `33:2.5` — beat 2 and a
 /// half), a time (`12.5s`), or a section by name (`Chorus 1`; its end with
 /// ` end`).
-fn moment(
+pub(crate) fn moment(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     text: &str,
@@ -393,7 +397,9 @@ fn moment(
 }
 
 /// The shape a word names.
-fn shape_of(word: Option<&str>) -> Result<daw::service::automation::EnvelopeShape, String> {
+pub(crate) fn shape_of(
+    word: Option<&str>,
+) -> Result<daw::service::automation::EnvelopeShape, String> {
     use daw::service::automation::EnvelopeShape;
     match word.map(|w| w.trim().to_lowercase()).as_deref() {
         None | Some("" | "linear" | "line" | "ramp") => Ok(EnvelopeShape::Linear),
@@ -422,7 +428,7 @@ const fn shape_word(shape: daw::service::automation::EnvelopeShape) -> &'static 
 }
 
 /// The mode a word names.
-fn mode_of(word: &str) -> Result<daw::service::AutomationMode, String> {
+pub(crate) fn mode_of(word: &str) -> Result<daw::service::AutomationMode, String> {
     use daw::service::AutomationMode;
     match word.trim().to_lowercase().as_str() {
         "read" => Ok(AutomationMode::Read),

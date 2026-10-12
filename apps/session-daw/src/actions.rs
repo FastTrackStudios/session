@@ -989,6 +989,7 @@ fn register_data(list: &ActionList) {
     #[cfg(feature = "native")]
     crate::fx_actions::register(list);
     crate::vocal_level::register(list);
+    crate::automation_actions::register(list);
 }
 
 static REFERENCE_MAP: ActionMeta = meta(

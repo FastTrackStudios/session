@@ -40,6 +40,9 @@ pub enum Control {
     /// The playing lane's name, between them: shows all the lanes, or only
     /// the one that plays again.
     LaneName,
+    /// The automation button, at the head of row two: what the track can
+    /// automate, to show in lanes ([`crate::automation_menu`]).
+    Automation,
 }
 
 impl Control {
@@ -48,6 +51,18 @@ impl Control {
     pub const fn is_continuous(self) -> bool {
         matches!(self, Self::Volume | Self::Pan)
     }
+}
+
+/// The automation button on a row at `y`, `height` tall: at the head of
+/// row two, on a full panel's row tall enough for one.
+#[must_use]
+pub fn automation_button(y: f64, height: f64, tcp: Tcp) -> Option<Rect> {
+    let two = f64::from(g::ROW_TWO);
+    let h = f64::from(g::FIELD_H);
+    (!tcp.compact && height >= two + h + 2.0).then(|| {
+        let x = f64::from(g::NAME_FIELD_X);
+        Rect::new(x, y + two, x + 21.0, y + two + h)
+    })
 }
 
 /// Which form a value indicator has taken.
@@ -219,6 +234,9 @@ impl Row {
                 let (prev, next) = (self.lane_step(false)?, self.lane_step(true)?);
                 Some(Rect::new(prev.x1, prev.y0, next.x0, next.y1))
             }
+            // At the head of row two, where a row is tall enough to have
+            // one (`tcp::row_two` draws it from the same numbers).
+            Control::Automation => automation_button(self.y, self.height, self.tcp),
             Control::Folder => Some(Rect::new(
                 self.indent,
                 self.y,
@@ -349,6 +367,7 @@ impl Row {
             Control::Pan,
             Control::Routing,
             Control::Fx,
+            Control::Automation,
             Control::Folder,
             Control::Name,
         ]

@@ -653,6 +653,19 @@ pub fn setting(fx: &str, param: &str, text: &str) -> Option<(u32, f64)> {
     })
 }
 
+/// How built-in `fx` writes `value` (normalized) for its parameter
+/// `index` — `+3.0 dB` — the inverse of [`setting`]: what an automation
+/// lane says a point is.
+#[must_use]
+pub fn reading(fx: &str, index: u32, value: f64) -> Option<String> {
+    let entry = entry(fx)?;
+    SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let plugin = scratch.entry(entry.name).or_insert_with(|| (entry.make)());
+        plugin.value_to_text(index, value.clamp(0.0, 1.0))
+    })
+}
+
 thread_local! {
     /// One unprepared instance of each built-in, kept to read settings
     /// with ([`setting`]): a strip turned is a lookup, not a plugin built.

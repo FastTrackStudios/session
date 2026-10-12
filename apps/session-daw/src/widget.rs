@@ -548,6 +548,14 @@ pub struct ArrangementWidget {
     /// An item's volume dial being turned: which item, the pointer's
     /// height at the press, the dB it was at and is at now.
     item_turn: Option<ItemTurn>,
+    /// A drag in an automation lane ([`crate::automation_edit`]).
+    lane_drag: Option<crate::automation_edit::LaneDrag>,
+    /// What in the automation lanes is under the pointer, lit.
+    lane_lit: crate::automation_draw::Lit,
+    /// The automation menu, open over the window
+    /// ([`crate::automation_menu`]).
+    #[cfg(feature = "native")]
+    menu: Option<crate::popup::Popup<crate::automation_menu::Pick>>,
     /// What the widget wants done to the session, for the window to
     /// pick up and hand to the engine.
     ///
@@ -642,9 +650,7 @@ impl ArrangementWidget {
             read_back: Rc::default(),
             mixer: None,
             content_h: Rc::new(std::cell::Cell::new(
-                rows.iter()
-                    .map(|(track, _)| layout.height_of(track.height))
-                    .sum(),
+                rows.iter().map(|(track, _)| layout.slot_of(track)).sum(),
             )),
             scene,
             palette,
@@ -692,6 +698,10 @@ impl ArrangementWidget {
             last_strip: None,
             turning: None,
             item_turn: None,
+            lane_drag: None,
+            lane_lit: crate::automation_draw::Lit::default(),
+            #[cfg(feature = "native")]
+            menu: None,
             edits: Rc::new(RefCell::new(Vec::new())),
             controls: None,
             was: at_rest,
@@ -1559,7 +1569,7 @@ impl ArrangementWidget {
         self.map = crate::plan::Rows::of(&rows, &self.tracks);
         self.content_h.set(
             rows.iter()
-                .map(|(track, _)| self.layout.height_of(track.height))
+                .map(|(track, _)| self.layout.slot_of(track))
                 .sum(),
         );
         self.rows = rows;
@@ -1765,6 +1775,98 @@ impl ArrangementWidget {
     ///
     /// The same four numbers `paint` works from, so a hit and a draw
     /// cannot disagree about where anything is.
+    /// Open the automation menu under row `row`'s automation button.
+    #[cfg(feature = "native")]
+    fn open_automation_menu(&mut self, row: usize) {
+        let Some((track, _)) = self.rows.get(row) else {
+            return;
+        };
+        let view = self.viewport(self.size.0, self.size.1);
+        let below = ruler::ruler_h() - view.scroll_y;
+        let Some((top, height)) = self.scene.row_band(row, view) else {
+            return;
+        };
+        let at = crate::row::automation_button(top + below, height, self.scene.tcp).map_or_else(
+            || (self.scene.tcp.width() * 0.2, top + below + height),
+            |r| (r.x0, r.y1 + 2.0),
+        );
+        let choices = crate::automation_menu::top(&track.guid);
+        self.menu = Some(crate::popup::Popup::open(
+            &self.font, choices, at, self.size,
+        ));
+        self.dirty.set(true);
+    }
+
+    /// A press while the automation menu is open: a choice taken (the menu
+    /// going on to its next list, or closing), or the menu closed.
+    #[cfg(feature = "native")]
+    fn menu_pressed(&mut self, x: f64, y: f64) -> bool {
+        let Some(menu) = self.menu.take() else {
+            return false;
+        };
+        if let Some(next) = menu
+            .take(x, y)
+            .and_then(|pick| crate::automation_menu::act(&pick))
+        {
+            let bounds = menu.bounds();
+            self.menu = Some(crate::popup::Popup::open(
+                &self.font,
+                next,
+                (bounds.x0, bounds.y0),
+                self.size,
+            ));
+        }
+        self.dirty.set(true);
+        true
+    }
+
+    /// The automation lane under a point, and what in it — nothing over
+    /// the ruler, which covers the lanes scrolled under it.
+    fn lane_hit(&self, x: f64, y: f64) -> Option<crate::automation_draw::Hit> {
+        if y < ruler::ruler_h() {
+            return None;
+        }
+        let view = self.viewport(self.size.0, self.size.1);
+        let below = ruler::ruler_h() - view.scroll_y;
+        crate::automation_draw::hit(&self.scene, &self.tracks, view, below, x, y)
+    }
+
+    /// What to light in the lanes for the pointer at a point.
+    fn lane_lit_at(&self, x: f64, y: f64) -> crate::automation_draw::Lit {
+        use crate::automation_draw::{Lit, Spot};
+        let Some(hit) = self.lane_hit(x, y) else {
+            return Lit::default();
+        };
+        let lane = Some((
+            hit.placed.lane.track.clone(),
+            hit.placed.lane.target.clone(),
+        ));
+        match hit.spot {
+            Spot::Body {
+                t,
+                point,
+                item,
+                item_point,
+                ..
+            } => Lit {
+                lane,
+                point,
+                item,
+                item_point,
+                t: Some(t),
+            },
+            Spot::ItemBar { item } => Lit {
+                lane,
+                item: Some(item),
+                ..Lit::default()
+            },
+            _ => Lit {
+                lane,
+                ..Lit::default()
+            },
+        }
+    }
+
     fn viewport(&self, width: f64, height: f64) -> Viewport {
         let at = *self.view.borrow();
         Viewport {
@@ -1897,6 +1999,12 @@ impl ArrangementWidget {
                 // Shut, a click opens it; open, it shuts.
                 let open = !crate::folds::shut(&self.rows, spot.row);
                 crate::folds::toggle(&guid, open);
+                return;
+            }
+            // What the track can automate, to show in lanes.
+            C::Automation => {
+                #[cfg(feature = "native")]
+                self.open_automation_menu(spot.row);
                 return;
             }
             // The rack and the routing panel are surfaces this widget
@@ -3156,6 +3264,19 @@ impl ArrangementWidget {
                         crate::ghosts::local_tcp_pointer(track, x / panel, fy);
                     }
                 }
+                // A point, an item or an edge in an automation lane,
+                // following the hand wherever it goes.
+                #[cfg(feature = "native")]
+                if let Some(menu) = self.menu.as_mut() {
+                    return menu.hover_at(x, y);
+                }
+                let view = self.viewport(self.size.0, self.size.1);
+                if let Some(drag) = self.lane_drag.as_mut() {
+                    let edits = crate::automation_edit::drag(drag, view, x, y);
+                    self.edits.borrow_mut().extend(edits);
+                    self.dirty.set(true);
+                    return true;
+                }
                 // The editor owns the gesture once it has taken a
                 // press: an item being dragged follows the pointer off
                 // the lane it started on, which is what dragging is.
@@ -3200,10 +3321,29 @@ impl ArrangementWidget {
                 let over = self.item_under(x, y);
                 let moved = self.hovered_item != over;
                 self.hovered_item = over;
-                self.pointer.hover(spot) || moved
+                let lit = self.lane_lit_at(x, y);
+                let relit = lit != self.lane_lit;
+                self.lane_lit = lit;
+                self.pointer.hover(spot) || moved || relit
             }
             UiEvent::PointerDown(e) => {
                 let (x, y) = at(e);
+                // An open menu takes every press: a choice, or closing it.
+                #[cfg(feature = "native")]
+                if self.menu_pressed(x, y) {
+                    return true;
+                }
+                // An automation lane takes its own presses: its header in
+                // the panel's column, its curve under the items.
+                if let Some(hit) = self.lane_hit(x, y) {
+                    let (drag, edits) =
+                        crate::automation_edit::press(&hit, y, e.mods.contains(Modifiers::ALT));
+                    self.lane_drag = drag;
+                    self.edits.borrow_mut().extend(edits);
+                    self.lane_lit = self.lane_lit_at(x, y);
+                    self.dirty.set(true);
+                    return true;
+                }
                 let spot = self.spot_at(x, y);
                 self.pointer.hover(spot);
                 self.pointer.press();
@@ -3267,6 +3407,13 @@ impl ArrangementWidget {
             }
             UiEvent::PointerUp(e) => {
                 let (x, y) = at(e);
+                if let Some(drag) = self.lane_drag.take() {
+                    self.edits
+                        .borrow_mut()
+                        .extend(crate::automation_edit::release(&drag));
+                    self.dirty.set(true);
+                    return true;
+                }
                 // A turn ends where it ends. It has already been sent,
                 // every move of it, so there is nothing to do on
                 // release but stop — and NOT to treat it as a click,
@@ -3322,6 +3469,11 @@ impl ArrangementWidget {
             UiEvent::KeyDown(e) => self.typed(e),
             UiEvent::KeyUp(e) => self.released(e),
             UiEvent::PointerCancel(_) => {
+                if let Some(drag) = self.lane_drag.take() {
+                    self.edits
+                        .borrow_mut()
+                        .extend(crate::automation_edit::release(&drag));
+                }
                 self.holding = false;
                 self.turning = None;
                 self.pointer.release();
@@ -3463,6 +3615,17 @@ impl ArrangementWidget {
             self.hovered_item,
             self.item_turn.as_ref().map(|t| (t.index, t.now)),
         );
+        // The automation lanes under their tracks, over the items' rows.
+        let lanes_placed =
+            crate::automation_draw::on_screen(&self.scene, &self.tracks, view, below);
+        crate::automation_draw::bodies(
+            &mut out,
+            &self.palette,
+            &self.font,
+            &lanes_placed,
+            view,
+            &self.lane_lit,
+        );
         crate::arrangement::selection_overlay(
             &mut out,
             &self.palette,
@@ -3541,6 +3704,16 @@ impl ArrangementWidget {
         let panel = self
             .scene
             .replay_panel(&mut out, view, Affine::translate((0.0, below)));
+        // The lanes' headers, in the panel's column under each track.
+        crate::automation_draw::headers(
+            &mut out,
+            &self.palette,
+            &self.font,
+            &lanes_placed,
+            view,
+            &self.lane_lit,
+            crate::engine::Transport::shared().map_or(0.0, |t| t.read().0),
+        );
         spent.panel = since(&mut mark);
         ruler::grid(
             &mut out,
@@ -3692,6 +3865,11 @@ impl ArrangementWidget {
             self.meters_lit.set(lit);
         }
         anyrender::PaintScene::pop_layer(&mut out);
+        // The automation menu, over everything.
+        #[cfg(feature = "native")]
+        if let Some(menu) = &self.menu {
+            menu.paint(&mut out, &self.palette, &self.font);
+        }
         // The edit cursor and the time selection, over the lanes and
         // up through the ruler. Drawn from the editor's own state,
         // which is what a click on the ruler moves.
@@ -3887,11 +4065,18 @@ mod tests {
     /// The narrow tiers drop mute and solo on purpose, and a test that
     /// used them would be asserting they are missing.
     fn widget() -> ArrangementWidget {
+        widget_named("t")
+    }
+
+    /// The fixture with its tracks' guids starting `prefix`: a test that
+    /// gives a track automation lanes (a store the whole process shares)
+    /// names its own, so no other test's rows move under it.
+    fn widget_named(prefix: &str) -> ArrangementWidget {
         let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
         let tracks: Vec<daw_proto::Track> = (0..4)
             .map(|i| daw_proto::Track {
-                guid: format!("t{i}"),
+                guid: format!("{prefix}{i}"),
                 name: format!("Track {i}"),
                 height: Some(90),
                 ..daw_proto::Track::default()
@@ -4098,6 +4283,116 @@ mod tests {
             element: Point { x, y },
             active_pointers: std::sync::Arc::default(),
         }
+    }
+
+    /// A track with a volume lane, in the shared store, under the
+    /// fixture's second row.
+    fn with_volume_lane(
+        prefix: &str,
+        points: Vec<daw_proto::automation::EnvelopePoint>,
+    ) -> ArrangementWidget {
+        let track = format!("{prefix}1");
+        let mut lane = crate::automation::Lane {
+            track: track.clone(),
+            target: daw_proto::automation::EnvelopeRef::Type(
+                daw_proto::automation::EnvelopeType::Volume,
+            ),
+            name: "Volume".into(),
+            kind: crate::automation::Kind::Volume,
+            height: 80.0,
+            mode: daw_proto::primitives::AutomationMode::TrimRead,
+            points,
+            items: Vec::new(),
+            played: Vec::new(),
+            rest: 1.0,
+            fx_name: None,
+            leveled: Vec::new(),
+        };
+        lane.replay();
+        crate::automation::replace([(track, vec![lane])]);
+        widget_named(prefix)
+    }
+
+    /// Where `seconds` and `value` are in row 1's first lane, on screen.
+    fn in_lane(widget: &ArrangementWidget, seconds: f64, value: f64) -> (f64, f64) {
+        let view = widget.viewport(widget.size.0, widget.size.1);
+        let below = crate::ruler::ruler_h() - view.scroll_y;
+        let placed = crate::automation_draw::on_screen(&widget.scene, &widget.tracks, view, below);
+        let lane = placed.first().expect("the lane is on screen");
+        (
+            seconds.mul_add(view.pps, view.panel_w - view.scroll_x),
+            lane.y_of(value),
+        )
+    }
+
+    fn envelope_edit(
+        widget: &ArrangementWidget,
+    ) -> Option<Vec<daw_proto::automation::EnvelopePoint>> {
+        widget.edits.borrow().iter().rev().find_map(|e| match e {
+            crate::engine::Edit::SetEnvelope(_, _, points) => Some(points.clone()),
+            _ => None,
+        })
+    }
+
+    /// A lane sits under its track: the rows below move down by it, and
+    /// the track's own controls stay where they were.
+    #[test]
+    fn an_automation_lane_sits_under_its_track() {
+        let plain = widget_named("plain-lane-t");
+        let laned = with_volume_lane("sits-lane-t", Vec::new());
+        let view = plain.viewport(plain.size.0, plain.size.1);
+        let (a, b) = (plain.scene.row_box(2), laned.scene.row_box(2));
+        let ((top, _), (moved, _)) = (a.expect("row 2"), b.expect("row 2"));
+        assert!((moved - top - 80.0).abs() < 1e-6, "{top} → {moved}");
+        assert_eq!(
+            plain.scene.row_box(1),
+            laned.scene.row_box(1),
+            "the track itself"
+        );
+        assert!(laned.scene.lanes_box(1).is_some() && plain.scene.lanes_box(1).is_none());
+        let _ = view;
+    }
+
+    /// A press on a lane's ground adds a point there and drags it; a
+    /// release closes the step; Alt and a press on the point deletes it.
+    // r[verify automation.lanes]
+    #[test]
+    fn a_point_is_drawn_dragged_and_deleted_in_its_lane() {
+        let mut widget = with_volume_lane("draw-lane-t", Vec::new());
+        let (x, y) = in_lane(&widget, 2.0, 0.5);
+        assert!(widget.took(&UiEvent::PointerDown(pointer(x, y))));
+        let added = envelope_edit(&widget).expect("a point drawn");
+        let [point] = added.as_slice() else {
+            panic!("one point: {added:?}");
+        };
+        assert!((point.time.as_seconds() - 2.0).abs() < 0.05, "{point:?}");
+        assert!((point.value - 0.5).abs() < 0.05, "{point:?}");
+        assert!(matches!(
+            widget.edits.borrow().first(),
+            Some(crate::engine::Edit::BeginUndo(_))
+        ));
+
+        let (x2, y2) = in_lane(&widget, 3.0, 1.0);
+        assert!(widget.took(&UiEvent::PointerMove(pointer(x2, y2))));
+        let moved = envelope_edit(&widget).expect("the point dragged");
+        let [point] = moved.as_slice() else {
+            panic!("still one point: {moved:?}");
+        };
+        assert!((point.time.as_seconds() - 3.0).abs() < 0.05, "{point:?}");
+        assert!((point.value - 1.0).abs() < 0.05, "{point:?}");
+        assert!(widget.took(&UiEvent::PointerUp(pointer(x2, y2))));
+        assert!(matches!(
+            widget.edits.borrow().last(),
+            Some(crate::engine::Edit::EndUndo(_))
+        ));
+        // The store has it: drawn where it was let go.
+        let lane = crate::automation::lanes_of("draw-lane-t1");
+        assert_eq!(lane.first().map(|l| l.points.len()), Some(1));
+
+        let mut alt = pointer(x2, y2);
+        alt.mods = blitz_traits::events::Modifiers::ALT;
+        assert!(widget.took(&UiEvent::PointerDown(alt)));
+        assert_eq!(envelope_edit(&widget).map(|p| p.len()), Some(0), "deleted");
     }
 
     #[test]

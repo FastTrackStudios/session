@@ -12,6 +12,13 @@ pub mod arrange_edit;
 pub mod arrangement;
 pub mod art;
 pub mod audio_mode;
+pub mod automation;
+#[cfg(feature = "native")]
+pub mod automation_actions;
+pub mod automation_draw;
+pub mod automation_edit;
+#[cfg(feature = "native")]
+pub mod automation_menu;
 pub mod balance;
 pub mod beats;
 #[cfg(feature = "native")]
@@ -70,6 +77,7 @@ pub mod options;
 #[cfg(feature = "native")]
 pub mod organize;
 pub mod plugin_faces;
+pub mod popup;
 #[cfg(feature = "native")]
 pub mod project_file;
 #[cfg(feature = "native")]

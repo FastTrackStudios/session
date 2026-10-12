@@ -176,6 +176,8 @@ impl StudioSession {
         let raw = daw_ui::studio::project::fetch_of(handle.clone())
             .await
             .ok_or_else(|| eyre::eyre!("could not read {name} back"))?;
+        #[cfg(feature = "native")]
+        crate::automation::refresh_in(project, &raw.tracks);
         let planner = Planner {
             raw: Arc::new(raw),
             scene: Some(SCENE),
@@ -418,7 +420,9 @@ pub fn fetch() -> Option<daw_ui::studio::project::Project> {
         .enable_all()
         .build()
         .ok()?;
-    rt.block_on(daw_ui::studio::project::fetch())
+    let project = rt.block_on(daw_ui::studio::project::fetch())?;
+    crate::automation::refresh(&project.tracks);
+    Some(project)
 }
 
 /// A chart for the song `project` (the current one when `None`) written
