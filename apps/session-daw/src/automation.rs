@@ -32,53 +32,16 @@ pub const LANE_H: f64 = 64.0;
 /// The least a lane can be dragged to.
 pub const LANE_MIN_H: f64 = 24.0;
 
-/// The vocal leveler's lane: its bottom and how many dB it spans to its
-/// top — ±36: a gate's floor near the bottom, and a ride that carries the
-/// makeup (a quiet verse brought up 20 dB and more) under the top.
-const LEVELER_FLOOR_DB: f64 = -36.0;
-const LEVELER_SPAN_DB: f64 = 72.0;
-
-/// The vocal leveler's lane's name, and the reference it goes by.
+/// The vocal leveler's lanes' name, and what their references start with
+/// (`Vocal leveler/Ride`).
 pub const LEVELER: &str = "Vocal leveler";
 
-/// One leveled item in the vocal leveler's lane: its four lanes and their
-/// sum, in the recording's seconds (`stretch` turns them into the item's).
-#[derive(Clone, Debug)]
-pub struct Leveled {
-    pub item: String,
-    /// Where the item starts and how long it is, seconds.
-    pub position: f64,
-    pub length: f64,
-    /// Item seconds per recording second.
-    pub stretch: f64,
-    pub lanes: level_dsp::envelope::Contributions,
-    /// Their sum — what the item's volume plays.
-    pub composite: Vec<level_dsp::envelope::EnvPoint>,
-}
+pub use crate::leveler::{Leveled, Stage};
 
-impl Leveled {
-    /// Timeline seconds for a lane's time.
-    #[must_use]
-    pub fn at(&self, t_s: f64) -> f64 {
-        t_s.mul_add(self.stretch, self.position)
-    }
-
-    /// A lane's time for timeline seconds.
-    #[must_use]
-    pub fn lane_time(&self, t: f64) -> f64 {
-        (t - self.position) / self.stretch.max(1e-9)
-    }
-
-    /// Whether timeline `t` is in the item.
-    #[must_use]
-    pub fn holds(&self, t: f64) -> bool {
-        t >= self.position && t <= self.position + self.length
-    }
-
-    /// The sum again, after its lanes changed.
-    pub fn resum(&mut self) {
-        self.composite = level_dsp::envelope::composite(&self.lanes);
-    }
+/// The reference of the vocal leveler's lane for `stage`.
+#[must_use]
+pub fn leveler_target(stage: Stage) -> EnvelopeRef {
+    EnvelopeRef::ByName(format!("{LEVELER}/{}", stage.name()))
 }
 
 /// The dB a leveler curve (`hold` points step) gives at lane time `t`; 0
@@ -112,11 +75,17 @@ pub enum Kind {
     Width,
     /// A plugin parameter, normalized.
     Param,
-    /// The vocal leveler's lanes, in dB ([`Leveled`]).
-    Leveler,
+    /// One of the vocal leveler's four stages, in dB ([`Leveled`]).
+    Leveler(Stage),
 }
 
 impl Kind {
+    /// Whether it is one of the vocal leveler's stages.
+    #[must_use]
+    pub const fn is_leveler(self) -> bool {
+        matches!(self, Self::Leveler(_))
+    }
+
     /// The kind of a track envelope type.
     #[must_use]
     pub const fn of(ty: EnvelopeType) -> Self {
@@ -142,7 +111,10 @@ impl Kind {
             Self::Volume => (value.max(0.0) / 2.0).sqrt().sqrt().min(1.0),
             Self::Pan | Self::Mute => 1.0 - value.clamp(0.0, 1.0),
             Self::Width | Self::Param => value.clamp(0.0, 1.0),
-            Self::Leveler => ((value - LEVELER_FLOOR_DB) / LEVELER_SPAN_DB).clamp(0.0, 1.0),
+            Self::Leveler(stage) => {
+                let (floor, top) = stage.range();
+                ((value - floor) / (top - floor)).clamp(0.0, 1.0)
+            }
         }
     }
 
@@ -161,7 +133,10 @@ impl Kind {
                 }
             }
             Self::Width | Self::Param => y,
-            Self::Leveler => y.mul_add(LEVELER_SPAN_DB, LEVELER_FLOOR_DB),
+            Self::Leveler(stage) => {
+                let (floor, top) = stage.range();
+                y.mul_add(top - floor, floor)
+            }
         }
     }
 
@@ -189,7 +164,7 @@ impl Kind {
             }
             Self::Mute => if value > 0.5 { "Muted" } else { "On" }.to_owned(),
             Self::Width | Self::Param => format!("{:.0}%", value * 100.0),
-            Self::Leveler => format!("{value:+.1} dB"),
+            Self::Leveler(_) => format!("{value:+.1} dB"),
         }
     }
 
@@ -267,12 +242,12 @@ impl Lane {
     /// The value playing at `t` seconds.
     #[must_use]
     pub fn value_at(&self, t: f64) -> f64 {
-        if self.kind == Kind::Leveler {
+        if let Kind::Leveler(stage) = self.kind {
             return self
                 .leveled
                 .iter()
                 .find(|l| l.holds(t))
-                .map_or(0.0, |l| db_at(&l.composite, l.lane_time(t)));
+                .map_or(0.0, |l| db_at(l.curves.of(stage), l.lane_time(t)));
         }
         daw_proto::automation::value_at(&self.played, t).unwrap_or(self.rest)
     }
@@ -565,13 +540,42 @@ pub fn adopt(lanes: impl IntoIterator<Item = (String, Vec<Lane>)>) {
 
 /// The lanes the engine shows for `tracks` — each track's visible
 /// envelopes (not a take's, which ride on their items), their points,
-/// items and what plays — read from the engine in this process.
+/// items and what plays, and a leveled vocal's four stages where its
+/// leveler is expanded — read from the engine in this process.
 #[cfg(feature = "native")]
 #[must_use]
 pub fn read(
     daw: &daw::standalone::Standalone,
     project: &daw_proto::ProjectContext,
     tracks: &[daw_proto::Track],
+) -> HashMap<String, Vec<Lane>> {
+    read_with(daw, project, tracks, &read_leveled(daw, project, tracks))
+}
+
+/// Every leveled item of `tracks`, by track: what the items draw on them
+/// and the stage lanes draw under them.
+#[cfg(feature = "native")]
+#[must_use]
+pub fn read_leveled(
+    daw: &daw::standalone::Standalone,
+    project: &daw_proto::ProjectContext,
+    tracks: &[daw_proto::Track],
+) -> HashMap<String, Vec<Leveled>> {
+    tracks
+        .iter()
+        .filter(|t| crate::vocal_level::has_lanes(daw, project, &t.guid))
+        .map(|t| (t.guid.clone(), crate::vocal_level::leveled(daw, project, t)))
+        .filter(|(_, items)| !items.is_empty())
+        .collect()
+}
+
+/// [`read`], with the leveled items already read.
+#[cfg(feature = "native")]
+fn read_with(
+    daw: &daw::standalone::Standalone,
+    project: &daw_proto::ProjectContext,
+    tracks: &[daw_proto::Track],
+    leveled: &HashMap<String, Vec<Leveled>>,
 ) -> HashMap<String, Vec<Lane>> {
     use daw_proto::TrackRef;
     use daw_proto::automation::{Automation, EnvelopeLocation};
@@ -633,25 +637,12 @@ pub fn read(
                     Some(lane)
                 })
                 .collect();
-        if crate::vocal_level::lane_shown(daw, project, &track.guid) {
-            let leveled = crate::vocal_level::leveled(daw, project, track);
-            if !leveled.is_empty() {
-                lanes.push(Lane {
-                    track: track.guid.clone(),
-                    target: EnvelopeRef::ByName(LEVELER.to_owned()),
-                    name: LEVELER.to_owned(),
-                    kind: Kind::Leveler,
-                    height: 2.0 * LANE_H,
-                    mode: AutomationMode::Read,
-                    points: Vec::new(),
-                    items: Vec::new(),
-                    played: Vec::new(),
-                    rest: 0.0,
-                    fx_name: None,
-                    leveled,
-                    choices: Vec::new(),
-                });
-            }
+        // The leveler expanded: its four stages, a lane each. Collapsed,
+        // their sum is drawn on the items alone.
+        if let Some(items) = leveled.get(&track.guid)
+            && crate::vocal_level::lane_shown(daw, project, &track.guid)
+        {
+            lanes.extend(stage_lanes(&track.guid, items));
         }
         if lanes.is_empty() {
             continue;
@@ -671,7 +662,9 @@ pub fn refresh_in(project: &str, tracks: &[daw_proto::Track]) {
         return;
     };
     let project = daw_proto::ProjectContext::Project(project.to_owned());
-    adopt(read(daw, &project, tracks));
+    let leveled = read_leveled(daw, &project, tracks);
+    adopt(read_with(daw, &project, tracks, &leveled));
+    crate::leveler::adopt(leveled);
     *take_store().lock().unwrap_or_else(PoisonError::into_inner) =
         read_takes(daw, &project, tracks);
 }
@@ -831,6 +824,45 @@ async fn remote_takes(
     out
 }
 
+/// The vocal leveler's four stage lanes for `track`'s leveled `items`.
+#[must_use]
+pub fn stage_lanes(track: &str, items: &[Leveled]) -> Vec<Lane> {
+    Stage::ALL
+        .iter()
+        .map(|stage| Lane {
+            track: track.to_owned(),
+            target: leveler_target(*stage),
+            name: stage.name().to_owned(),
+            kind: Kind::Leveler(*stage),
+            height: LANE_H,
+            mode: AutomationMode::Read,
+            points: Vec::new(),
+            items: Vec::new(),
+            played: Vec::new(),
+            rest: 0.0,
+            fx_name: None,
+            leveled: items.to_vec(),
+            choices: Vec::new(),
+        })
+        .collect()
+}
+
+/// Change every leveled item in `track`'s stage lanes in place — what
+/// [`crate::leveler::update`] does to the lanes.
+pub fn update_leveled(track: &str, f: &impl Fn(&mut Leveled)) {
+    let mut store = store().lock().unwrap_or_else(PoisonError::into_inner);
+    for lane in store
+        .get_mut(track)
+        .into_iter()
+        .flatten()
+        .filter(|l| l.kind.is_leveler())
+    {
+        for leveled in &mut lane.leveled {
+            f(leveled);
+        }
+    }
+}
+
 /// Put lanes and item curves read through the facade ([`read_remote`])
 /// in place of the window's.
 pub fn adopt_remote(
@@ -850,7 +882,7 @@ fn order(lane: &Lane) -> (u8, String) {
         Kind::Width => 2,
         Kind::Mute => 3,
         Kind::Param => 4,
-        Kind::Leveler => 5,
+        Kind::Leveler(stage) => 5_u8.saturating_add(stage.rank()),
     };
     (rank, lane.name.clone())
 }
@@ -861,7 +893,7 @@ pub const fn neutral(kind: Kind) -> f64 {
     match kind {
         Kind::Volume | Kind::Width => 1.0,
         Kind::Pan | Kind::Param => 0.5,
-        Kind::Mute | Kind::Leveler => 0.0,
+        Kind::Mute | Kind::Leveler(_) => 0.0,
     }
 }
 

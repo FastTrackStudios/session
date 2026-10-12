@@ -3502,7 +3502,7 @@ impl ArrangementWidget {
                     // The mode: chosen from a list, not cycled through six.
                     #[cfg(feature = "native")]
                     if hit.spot == crate::automation_draw::Spot::Mode
-                        && hit.placed.lane.kind != crate::automation::Kind::Leveler
+                        && !hit.placed.lane.kind.is_leveler()
                     {
                         let lane = &hit.placed.lane;
                         let choices = crate::automation_menu::modes(
@@ -3957,6 +3957,8 @@ impl ArrangementWidget {
             self.scene.tempo(),
         );
         // The song's own shape over the timeline: the section bands and
+        // A leveled vocal's leveler, summed, over each of its items.
+        crate::automation_draw::leveler_lines(&mut out, &self.palette, &self.scene, view, below);
         // the marker flags, and the lines they drop through the lanes.
         ruler::lanes(
             &mut out,

@@ -26,7 +26,12 @@
 //!
 //! The four lanes are kept with the track, per item (`FTS:level:<item>`),
 //! with the settings they came from — editable, and read back as they
-//! were made. The composite is the item's own.
+//! were made — and where in its recording each was read
+//! (`FTS:leveler:from:<item>`), so they stay on the audio through a slip,
+//! and a split's new half or a comp's slice is drawn with the lanes of the
+//! item it was cut from. The track's dials (`FTS:leveler:stages`, see
+//! [`crate::leveler`]) switch each stage on or off and say how far it
+//! goes; what plays is the four through them.
 //!
 //! A two-channel vocal is a dual-capsule recording (front left, rear
 //! right; FTS Mic makes it the mic): it is read off its front capsule.
@@ -139,6 +144,8 @@ struct Read {
     analysis: Analysis,
     /// Seconds of the item per second of its analysis (1 / play rate).
     stretch: f64,
+    /// Where in its recording it was read from.
+    anchor: crate::leveler::Anchor,
 }
 
 impl Read {
@@ -220,6 +227,10 @@ fn read(
                 item,
                 analysis,
                 stretch: 1.0 / speed,
+                anchor: crate::leveler::Anchor {
+                    offset: take.start_offset.as_seconds(),
+                    path,
+                },
             })
         })
         .collect()
@@ -291,12 +302,14 @@ fn value_at(points: &[EnvPoint], t: f64) -> f64 {
     }
 }
 
-/// The track's lanes for one item, as kept.
+/// The track's lanes for one item, as kept, with where in its recording
+/// they were read (`anchor`).
 fn keep(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     track: &str,
     (item, lanes, digest): (&str, &Contributions, u64),
+    anchor: &crate::leveler::Anchor,
 ) {
     let kept = expression_editor_daw::state::ItemEnvelopes::capture(item, lanes, digest);
     let Ok(text) = facet_json::to_string(&kept) else {
@@ -309,6 +322,13 @@ fn keep(
         &format!("{LANES_KEY}{item}"),
         &text,
     );
+    let _ = Tracks::set_ext_state(
+        daw,
+        project.clone(),
+        TrackRef::Guid(track.to_owned()),
+        &format!("{}{item}", crate::leveler::ANCHOR_KEY),
+        &anchor.to_text(),
+    );
 }
 
 /// The track ext key that shows the leveler's lanes under a track.
@@ -316,14 +336,23 @@ pub const LANE_SHOWN: &str = "FTS:level:lane";
 
 /// Whether `track` shows the vocal leveler's lane.
 #[must_use]
-pub fn lane_shown(daw: &daw::standalone::Standalone, project: &ProjectContext, track: &str) -> bool {
+pub fn lane_shown(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+) -> bool {
     Tracks::ext_state(daw, project.clone(), TrackRef::Guid(track.to_owned()))
         .iter()
         .any(|e| e.key == LANE_SHOWN && e.value == "1")
 }
 
 /// Show or hide the vocal leveler's lane under `track`.
-pub fn show_lane(daw: &daw::standalone::Standalone, project: &ProjectContext, track: &str, shown: bool) {
+pub fn show_lane(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    shown: bool,
+) {
     let _ = Tracks::set_ext_state(
         daw,
         project.clone(),
@@ -333,46 +362,143 @@ pub fn show_lane(daw: &daw::standalone::Standalone, project: &ProjectContext, tr
     );
 }
 
-/// Whether any of `track`'s items has lanes kept.
+/// Whether any of `track`'s items has lanes kept — not the key that
+/// expands the leveler, which shares their prefix.
 #[must_use]
 pub fn has_lanes(daw: &daw::standalone::Standalone, project: &ProjectContext, track: &str) -> bool {
     Tracks::ext_state(daw, project.clone(), TrackRef::Guid(track.to_owned()))
         .iter()
-        .any(|e| e.key.starts_with(LANES_KEY))
+        .any(|e| e.key.starts_with(LANES_KEY) && e.key != LANE_SHOWN && !e.value.is_empty())
 }
 
-/// `track`'s playing items that have lanes kept, each with its lanes and
-/// their sum — what the leveler's lane shows.
+/// `track`'s leveler dials, as kept (as made when never turned).
+#[must_use]
+pub fn stages(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+) -> crate::leveler::Stages {
+    Tracks::ext_state(daw, project.clone(), TrackRef::Guid(track.to_owned()))
+        .iter()
+        .find(|e| e.key == crate::leveler::STAGES_KEY)
+        .map(|e| crate::leveler::Stages::parse(&e.value))
+        .unwrap_or_default()
+}
+
+/// One item's lanes as kept with its track: whose, where in its
+/// recording they were read, and how far they reach.
+struct Kept {
+    item: String,
+    anchor: Option<crate::leveler::Anchor>,
+    reach: f64,
+    lanes: Contributions,
+}
+
+/// Every item's lanes kept with a track (`ext`, its ext state). Lanes
+/// kept before anchors were are taken to start where their item's take
+/// does now — as they were drawn then.
+fn kept_all(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    ext: &[daw_proto::TrackExtEntry],
+) -> Vec<Kept> {
+    let anchors: HashMap<&str, crate::leveler::Anchor> = ext
+        .iter()
+        .filter_map(|e| {
+            let item = e.key.strip_prefix(crate::leveler::ANCHOR_KEY)?;
+            Some((item, crate::leveler::Anchor::parse(&e.value)?))
+        })
+        .collect();
+    ext.iter()
+        .filter(|e| e.key != LANE_SHOWN)
+        .filter_map(|e| {
+            let item = e.key.strip_prefix(LANES_KEY)?;
+            let lanes =
+                facet_json::from_str::<expression_editor_daw::state::ItemEnvelopes>(&e.value)
+                    .ok()?
+                    .restore();
+            let anchor = anchors.get(item).cloned().or_else(|| {
+                let take = daw.get_active_take(project.clone(), ItemRef::Guid(item.to_owned()))?;
+                Some(crate::leveler::Anchor {
+                    offset: take.start_offset.as_seconds(),
+                    path: take.source_file_path?,
+                })
+            });
+            Some(Kept {
+                item: item.to_owned(),
+                anchor,
+                reach: crate::leveler::extent(&lanes),
+                lanes,
+            })
+        })
+        .collect()
+}
+
+/// `track`'s playing items that are leveled, each with its four lanes,
+/// the track's dials and their sum — what the item draws on it and the
+/// leveler's lanes under it.
+///
+/// An item's lanes are its own, or — for one with none, a split's new
+/// half or a comp's slice — those read over the stretch of the same
+/// recording it plays. Either way they are placed by where in the
+/// recording they were read, so they stay on the audio through a slip or
+/// a cut, as the take's volume envelope does.
 #[must_use]
 pub fn leveled(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     track: &daw_proto::Track,
 ) -> Vec<crate::automation::Leveled> {
+    let ext = Tracks::ext_state(daw, project.clone(), TrackRef::Guid(track.guid.clone()));
+    let dials = ext
+        .iter()
+        .find(|e| e.key == crate::leveler::STAGES_KEY)
+        .map(|e| crate::leveler::Stages::parse(&e.value))
+        .unwrap_or_default();
+    let kept = kept_all(daw, project, &ext);
+    if kept.is_empty() {
+        return Vec::new();
+    }
+    let anchored: Vec<(&crate::leveler::Anchor, f64)> = kept
+        .iter()
+        .filter_map(|k| Some((k.anchor.as_ref()?, k.reach)))
+        .collect();
+    let anchored_kept: Vec<&Kept> = kept.iter().filter(|k| k.anchor.is_some()).collect();
     let mut out: Vec<crate::automation::Leveled> = playing(daw, project, track)
         .into_iter()
         .filter_map(|item| {
-            let lanes = kept(daw, project, &track.guid, &item.guid)?;
-            let speed = daw
-                .get_active_take(project.clone(), ItemRef::Guid(item.guid.clone()))
-                .map_or(1.0, |t| if t.play_rate > 0.0 { t.play_rate } else { 1.0 });
-            let mut one = crate::automation::Leveled {
-                item: item.guid.clone(),
-                position: item.position.as_seconds(),
-                length: item.length.as_seconds(),
-                stretch: 1.0 / speed,
-                lanes,
-                composite: Vec::new(),
+            let take = daw.get_active_take(project.clone(), ItemRef::Guid(item.guid.clone()))?;
+            let speed = if take.play_rate > 0.0 {
+                take.play_rate
+            } else {
+                1.0
             };
-            one.resum();
-            Some(one)
+            let now = take.start_offset.as_seconds();
+            let from = kept.iter().find(|k| k.item == item.guid).or_else(|| {
+                let path = take.source_file_path.as_deref()?;
+                let at = crate::leveler::covering(&anchored, path, now)?;
+                anchored_kept.get(at).copied()
+            })?;
+            let origin = from.anchor.as_ref().map_or(0.0, |a| a.offset - now);
+            Some(crate::automation::Leveled::new(
+                (track.guid.as_str(), item.guid.as_str()),
+                (
+                    item.position.as_seconds(),
+                    item.length.as_seconds(),
+                    1.0 / speed,
+                    origin,
+                ),
+                from.lanes.clone(),
+                dials,
+            ))
         })
         .collect();
     out.sort_by(|a, b| a.position.total_cmp(&b.position));
     out
 }
 
-/// An item's lanes changed by hand, put back: kept, and their sum written
+/// An item's lanes changed by hand, put back: kept (with where in its
+/// recording they start), and their sum through the track's dials written
 /// as its volume — one undo step. `false` when the item is gone.
 pub fn relevel(
     daw: &daw::standalone::Standalone,
@@ -383,18 +509,60 @@ pub fn relevel(
     let Some(item) = daw.get_item(project.clone(), ItemRef::Guid(leveled.item.clone())) else {
         return false;
     };
+    let take = daw.get_active_take(project.clone(), ItemRef::Guid(leveled.item.clone()));
+    let anchor = crate::leveler::Anchor {
+        offset: take.as_ref().map_or(0.0, |t| t.start_offset.as_seconds()) + leveled.origin,
+        path: take.and_then(|t| t.source_file_path).unwrap_or_default(),
+    };
     let label = "Edit the vocal leveling";
     daw::service::Projects::begin_undo_block(daw, project.clone(), label);
-    let curve: Vec<EnvPoint> = level_dsp::envelope::composite(&leveled.lanes)
-        .iter()
-        .map(|p| EnvPoint::new(p.t_s * leveled.stretch, p.db))
-        .collect();
-    crate::drum_level::write_curve(daw, project, &item, &curve);
+    crate::drum_level::write_curve(daw, project, &item, &leveled.item_curve());
     // By hand: no knobs made these, so the digest says so.
-    keep(daw, project, track, (&leveled.item, &leveled.lanes, 0));
+    keep(
+        daw,
+        project,
+        track,
+        (&leveled.item, &leveled.lanes, 0),
+        &anchor,
+    );
     daw::service::Projects::end_undo_block(daw, project.clone(), label, None);
     crate::midi::mark_stale([leveled.item.clone()]);
     true
+}
+
+/// Set `track`'s leveler dials: kept with the track, and every leveled
+/// item's volume written again through them — one undo step. How many
+/// items were.
+#[must_use]
+pub fn set_stages(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &str,
+    dials: &crate::leveler::Stages,
+) -> usize {
+    let label = "Dial the vocal leveler";
+    daw::service::Projects::begin_undo_block(daw, project.clone(), label);
+    let _ = Tracks::set_ext_state(
+        daw,
+        project.clone(),
+        TrackRef::Guid(track.to_owned()),
+        crate::leveler::STAGES_KEY,
+        &dials.to_text(),
+    );
+    let items = Tracks::get(daw, project.clone(), TrackRef::Guid(track.to_owned()))
+        .map(|t| leveled(daw, project, &t))
+        .unwrap_or_default();
+    let mut written = Vec::with_capacity(items.len());
+    for l in &items {
+        if let Some(item) = daw.get_item(project.clone(), ItemRef::Guid(l.item.clone())) {
+            crate::drum_level::write_curve(daw, project, &item, &l.item_curve());
+            written.push(l.item.clone());
+        }
+    }
+    daw::service::Projects::end_undo_block(daw, project.clone(), label, None);
+    let count = written.len();
+    crate::midi::mark_stale(written);
+    count
 }
 
 /// The lanes kept for `item` on `track`, if any.
@@ -509,8 +677,16 @@ pub fn level(
         .target_db
         .map_or_else(|| (f64::midpoint(quiet, loud), loud), |t| (t, t));
     let mut made: Vec<Contributions> = reads.iter().map(|r| lanes(r, target_db, knobs)).collect();
+    // What plays is the lanes through the track's dials, as they were
+    // left: the makeup is measured through them, and written with them.
+    let dials = stages(daw, project, &track.guid);
+    let summed = |all: &[Contributions]| -> Vec<Vec<EnvPoint>> {
+        all.iter()
+            .map(|l| env::composite(&dials.apply(l)))
+            .collect()
+    };
     // The makeup: the leveled track's sung level put at the target.
-    let composites: Vec<Vec<EnvPoint>> = made.iter().map(env::composite).collect();
+    let composites = summed(&made);
     let after = power_mean(
         sung_blocks(&reads, |k, t| {
             composites.get(k).map_or(0.0, |c| value_at(c, t))
@@ -520,16 +696,23 @@ pub fn level(
     )
     .unwrap_or(level_db);
     let makeup_db = (level_db - after).clamp(-MAKEUP_MAX_DB, MAKEUP_MAX_DB);
-    // The makeup rides in the ride: it is how loud the line is.
+    // The makeup rides in the ride: it is how loud the line is. Through
+    // the ride's dial, so it lands where it says; none with the ride off.
+    let ride = dials.ride.gain();
+    let makeup_made = if ride > 1e-3 {
+        (makeup_db / ride).clamp(-MAKEUP_MAX_DB, MAKEUP_MAX_DB)
+    } else {
+        0.0
+    };
     for lanes in &mut made {
         if lanes.ride.is_empty() {
             lanes.ride.push(EnvPoint::new(0.0, 0.0));
         }
         for p in &mut lanes.ride {
-            p.db += makeup_db;
+            p.db += makeup_made;
         }
     }
-    let composites: Vec<Vec<EnvPoint>> = made.iter().map(env::composite).collect();
+    let composites = summed(&made);
 
     let sections = by_section(daw, project, &reads, &composites);
     let spread = |f: fn(&SectionLevel) -> f64| {
@@ -564,12 +747,16 @@ pub fn level(
     for ((r, lanes), composite) in reads.iter().zip(&made).zip(&composites) {
         // The curves are in the analysis's time — the recording's — and
         // the volume envelope in the item's.
-        let curve: Vec<EnvPoint> = composite
-            .iter()
-            .map(|p| EnvPoint::new(p.t_s * r.stretch, p.db))
-            .collect();
+        let curve =
+            crate::leveler::on_item(composite, (0.0, r.stretch), r.item.length.as_seconds());
         crate::drum_level::write_curve(daw, project, &r.item, &curve);
-        keep(daw, project, &track.guid, (&r.item.guid, lanes, digest));
+        keep(
+            daw,
+            project,
+            &track.guid,
+            (&r.item.guid, lanes, digest),
+            &r.anchor,
+        );
         crate::midi::mark_stale([r.item.guid.clone()]);
     }
     said.items = count(reads.len());
@@ -604,6 +791,143 @@ static LEVEL: architect::action::ActionMeta = crate::actions::meta(
     "Vocals",
     "",
 );
+
+static DIALS: architect::action::ActionMeta = crate::actions::meta(
+    "VOCAL_LEVELER",
+    "vocal_leveler",
+    "The vocal leveler's dials",
+    "Each leveled vocal's leveler (`tracks`: paths, names or GUIDs; every leveled vocal when left out): its four stages — De-Ess, De-Breath, Ride, Gate — each on or off and how far it goes (`amount_percent`: 100 as leveled, 0 none, 200 twice as deep), whether they are expanded into a lane each under the track (their sum is drawn on each item either way), and how many items are leveled.",
+    "Vocals",
+    "",
+);
+
+static DIAL: architect::action::ActionMeta = crate::actions::meta(
+    "VOCAL_LEVELER_SET",
+    "vocal_leveler_set",
+    "Dial the vocal leveler",
+    "Turn a leveled vocal's stages (`tracks` as VOCAL_LEVELER's): `stage` De-Ess, De-Breath, Ride or Gate (every one when left out) switched `on` or off and/or set to `amount` percent (0–200; 100 as leveled) — each stage's curve in dB scaled by it — and each item's volume written again as the stages' sum (what plays and what the waveform draws). `expanded` shows (or hides) the four as lanes under the track. One undo step per track. Says the dials as they are now.",
+    "Vocals",
+    "",
+);
+
+/// One stage's dial, said.
+#[derive(Facet, Clone, Debug)]
+pub struct StageDial {
+    pub stage: String,
+    pub on: bool,
+    /// 100 as leveled.
+    pub amount_percent: f64,
+}
+
+/// A vocal's leveler, said.
+#[derive(Facet, Clone, Debug)]
+pub struct LevelerState {
+    pub track: String,
+    /// Its four stages shown a lane each under it.
+    pub expanded: bool,
+    /// Its playing items that are leveled.
+    pub items: u32,
+    pub stages: Vec<StageDial>,
+}
+
+/// `track`'s leveler, said.
+fn state_of(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    track: &daw_proto::Track,
+) -> LevelerState {
+    let dials = stages(daw, project, &track.guid);
+    LevelerState {
+        track: track.name.clone(),
+        expanded: lane_shown(daw, project, &track.guid),
+        items: u32::try_from(leveled(daw, project, track).len()).unwrap_or(u32::MAX),
+        stages: crate::leveler::Stage::ALL
+            .iter()
+            .map(|s| {
+                let dial = dials.get(*s);
+                StageDial {
+                    stage: s.name().to_owned(),
+                    on: dial.on,
+                    amount_percent: dial.amount * 100.0,
+                }
+            })
+            .collect(),
+    }
+}
+
+/// Which leveled vocals.
+#[derive(Facet)]
+struct LevelerArg {
+    #[facet(default)]
+    tracks: Vec<String>,
+}
+
+/// Which leveled vocals, which stage, and how.
+#[derive(Facet)]
+struct DialArg {
+    #[facet(default)]
+    tracks: Vec<String>,
+    stage: Option<String>,
+    on: Option<bool>,
+    amount: Option<f64>,
+    expanded: Option<bool>,
+}
+
+/// The tracks `names` name, or (none named) every leveled vocal.
+fn leveled_tracks(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    names: &[String],
+) -> Result<Vec<daw_proto::Track>, String> {
+    if names.is_empty() {
+        return Ok(vocals(daw, project)
+            .into_iter()
+            .filter(|t| has_lanes(daw, project, &t.guid))
+            .collect());
+    }
+    names
+        .iter()
+        .map(|t| {
+            let guid = crate::actions::resolve(daw, project, t)?;
+            Tracks::get(daw, project.clone(), TrackRef::Guid(guid))
+                .ok_or_else(|| format!("{t}: no such track"))
+        })
+        .collect()
+}
+
+/// Turn the dials `a` says on each of its tracks.
+fn dial(a: &DialArg) -> Result<Vec<LevelerState>, String> {
+    let (daw, project) = crate::actions::song()?;
+    let which = match &a.stage {
+        Some(name) => vec![
+            crate::leveler::Stage::parse(name)
+                .ok_or_else(|| format!("{name}: a stage is De-Ess, De-Breath, Ride or Gate"))?,
+        ],
+        None => crate::leveler::Stage::ALL.to_vec(),
+    };
+    let tracks = leveled_tracks(daw, &project, &a.tracks)?;
+    for track in &tracks {
+        if a.on.is_some() || a.amount.is_some() {
+            let mut dials = stages(daw, &project, &track.guid);
+            for stage in &which {
+                let was = dials.get(*stage);
+                dials.set(
+                    *stage,
+                    crate::leveler::Dial {
+                        on: a.on.unwrap_or(was.on),
+                        amount: a.amount.map_or(was.amount, |p| p / 100.0),
+                    },
+                );
+            }
+            let _rewritten = set_stages(daw, &project, &track.guid, &dials);
+        }
+        if let Some(shown) = a.expanded {
+            show_lane(daw, &project, &track.guid, shown);
+        }
+    }
+    crate::studio::request_resync();
+    Ok(tracks.iter().map(|t| state_of(daw, &project, t)).collect())
+}
 
 /// Which vocals, and how hard.
 #[derive(Facet)]
@@ -677,4 +1001,21 @@ pub(crate) fn register(list: &architect::action::ActionList) {
             Ok(out)
         },
     );
+    list.register(
+        &DIALS,
+        architect::action::Effect::ReadOnly,
+        |a: LevelerArg| {
+            let (daw, project) = crate::actions::song()?;
+            let tracks = leveled_tracks(daw, &project, &a.tracks)?;
+            Ok::<_, String>(
+                tracks
+                    .iter()
+                    .map(|t| state_of(daw, &project, t))
+                    .collect::<Vec<_>>(),
+            )
+        },
+    );
+    list.register(&DIAL, architect::action::Effect::Mutating, |a: DialArg| {
+        dial(&a)
+    });
 }

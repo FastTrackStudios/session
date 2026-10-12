@@ -14,6 +14,11 @@
 //! - **A lane's bottom edge** makes it taller or shorter.
 //! - **In its header**, the cross hides the lane and the mode cycles
 //!   Trim/Read, Read and Off.
+//! - **A vocal leveler stage's lane**: the switch in its header turns the
+//!   stage on and off, a drag up or down its dial turns how far it goes
+//!   (Alt and a click: back to as made), and the cross folds the four back
+//!   into the sum on the items. In the ride's lane its points are dragged
+//!   as any envelope's are.
 //!
 //! Every change is made to the window's lanes at once — the picture
 //! follows the hand — and sent as an [`Edit`]; a gesture is one undo step.
@@ -69,6 +74,12 @@ pub enum Grab {
     Edge { from: f64, was: f64 },
     /// A point of the vocal leveler's ride, on leveled item `item`.
     Ride { item: usize, index: usize },
+    /// A leveler stage's dial: the y pressed and the amount it was at.
+    Knob {
+        stage: crate::leveler::Stage,
+        from: f64,
+        was: f64,
+    },
 }
 
 /// A drag in a lane under way.
@@ -134,8 +145,11 @@ pub fn press(hit: &Hit, y: f64, keys: Keys) -> (Option<LaneDrag>, Vec<Edit>) {
     };
     let begin = Edit::BeginUndo(LABEL.to_owned());
     match &hit.spot {
-        Spot::Hide if lane.kind == Kind::Leveler => {
-            hide(&track, &target);
+        Spot::Hide if lane.kind.is_leveler() => {
+            // The four fold back into the sum on the items together.
+            let mut lanes = automation::lanes_of(&track);
+            lanes.retain(|l| !l.kind.is_leveler());
+            automation::replace([(track.clone(), lanes)]);
             #[cfg(feature = "native")]
             if let Ok((daw, project)) = crate::actions::song() {
                 crate::vocal_level::show_lane(daw, &project, &track, false);
@@ -146,12 +160,50 @@ pub fn press(hit: &Hit, y: f64, keys: Keys) -> (Option<LaneDrag>, Vec<Edit>) {
             hide(&track, &target);
             (None, vec![Edit::ShowEnvelope(track, target, false)])
         }
-        // The leveler's lanes have no mode: they are the item's volume.
-        Spot::Mode if lane.kind == Kind::Leveler => (None, Vec::new()),
+        // The mode, which cycles — or in its place a leveler stage's
+        // switch, which turns the stage on and off (its lanes have no mode:
+        // they are the item's volume).
         Spot::Mode => {
+            if let Kind::Leveler(stage) = lane.kind {
+                let dial = dial_of(lane, stage);
+                crate::leveler::set_dial(
+                    &track,
+                    stage,
+                    crate::leveler::Dial {
+                        on: !dial.on,
+                        ..dial
+                    },
+                );
+                dials_done(&track);
+                return (None, Vec::new());
+            }
             let mode = draw::next_mode(lane.mode);
             automation::update(&track, &target, |l| l.mode = mode);
             (None, vec![Edit::SetEnvelopeMode(track, target, mode)])
+        }
+        Spot::Knob => {
+            let Kind::Leveler(stage) = lane.kind else {
+                return (None, Vec::new());
+            };
+            let dial = dial_of(lane, stage);
+            if alt {
+                crate::leveler::set_dial(
+                    &track,
+                    stage,
+                    crate::leveler::Dial {
+                        amount: 1.0,
+                        ..dial
+                    },
+                );
+                dials_done(&track);
+                return (None, Vec::new());
+            }
+            drag.grab = Grab::Knob {
+                stage,
+                from: y,
+                was: dial.amount,
+            };
+            (Some(drag), Vec::new())
         }
         Spot::Header => (None, Vec::new()),
         Spot::Edge => {
@@ -182,7 +234,7 @@ pub fn press(hit: &Hit, y: f64, keys: Keys) -> (Option<LaneDrag>, Vec<Edit>) {
             point: None,
             item_point: None,
             ..
-        } if keys.shift && lane.kind != Kind::Leveler => {
+        } if keys.shift && !lane.kind.is_leveler() => {
             drag.grab = Grab::Make { from: *t, to: *t };
             (Some(drag), vec![begin])
         }
@@ -247,8 +299,13 @@ fn body(
     (point, item, item_point): (Option<usize>, Option<usize>, Option<usize>),
     alt: bool,
 ) -> (Option<LaneDrag>, Vec<Edit>) {
-    if lane.kind == Kind::Leveler {
-        return ride_press(lane, drag, (t, value), (item, item_point), alt);
+    match lane.kind {
+        Kind::Leveler(crate::leveler::Stage::Ride) => {
+            return ride_press(lane, drag, (t, value), (item, item_point), alt);
+        }
+        // The other stages are read, not drawn: their dials say how far.
+        Kind::Leveler(_) => return (None, Vec::new()),
+        _ => {}
     }
     let (track, target) = (lane.track.clone(), lane.target.clone());
     let begin = Edit::BeginUndo(LABEL.to_owned());
@@ -315,10 +372,14 @@ fn body(
     }
 }
 
-/// A press in the vocal leveler's lane: on a ride point, it is dragged
-/// (with Alt, deleted); elsewhere over an item, a ride point is made there
-/// and dragged. The item's volume is written again when the hand lets go
-/// ([`release`]); a deletion at once.
+/// A press in the vocal leveler's ride lane: on a ride point, it is
+/// dragged (with Alt, deleted); elsewhere over an item, a ride point is
+/// made there and dragged. The item's volume is written again when the
+/// hand lets go ([`release`]); a deletion at once.
+///
+/// The ride is drawn through its dial, so a point put at a height is the
+/// ride as made at that height over the dial; with the ride off or dialled
+/// to nothing there is nothing to draw on.
 fn ride_press(
     lane: &automation::Lane,
     mut drag: LaneDrag,
@@ -329,15 +390,18 @@ fn ride_press(
     let Some((i, leveled)) = item.and_then(|i| lane.leveled.get(i).map(|l| (i, l))) else {
         return (None, Vec::new());
     };
-    let (track, target) = (lane.track.clone(), lane.target.clone());
+    let Some(scale) = ride_scale(leveled) else {
+        return (None, Vec::new());
+    };
+    let track = lane.track.clone();
     match item_point {
         Some(k) if alt => {
             let mut ride = leveled.lanes.ride.clone();
             if k < ride.len() {
                 ride.remove(k);
             }
-            set_ride(&track, &target, i, ride);
-            relevel(&track, &target, i);
+            set_ride(&track, &leveled.item, &ride);
+            relevel(&track, &leveled.item);
             (None, Vec::new())
         }
         Some(k) => {
@@ -346,12 +410,18 @@ fn ride_press(
         }
         None => {
             let at = leveled.lane_time(t).max(0.0);
-            let (ride, k) = with_ride_point(&leveled.lanes.ride, None, at, value);
-            set_ride(&track, &target, i, ride);
+            let (ride, k) = with_ride_point(&leveled.lanes.ride, None, at, value / scale);
+            set_ride(&track, &leveled.item, &ride);
             drag.grab = Grab::Ride { item: i, index: k };
             (Some(drag), Vec::new())
         }
     }
+}
+
+/// What the ride's dial multiplies it by, if a hand can draw on it.
+fn ride_scale(leveled: &automation::Leveled) -> Option<f64> {
+    let scale = leveled.stages.ride.gain();
+    (scale > 0.01).then_some(scale)
 }
 
 /// `ride` with point `moving` moved to (or a new point made at) `t`
@@ -371,31 +441,22 @@ fn with_ride_point(
     (out, at)
 }
 
-/// Leveled item `item`'s ride in the window's lanes, and its sum again.
-fn set_ride(
-    track: &str,
-    target: &EnvelopeRef,
-    item: usize,
-    ride: Vec<level_dsp::envelope::EnvPoint>,
-) {
-    automation::update(track, target, |l| {
-        if let Some(leveled) = l.leveled.get_mut(item) {
-            leveled.lanes.ride = ride;
-            leveled.resum();
+/// Leveled item `item`'s ride (as made) in the window, and its sum again.
+fn set_ride(track: &str, item: &str, ride: &[level_dsp::envelope::EnvPoint]) {
+    crate::leveler::update(track, |l| {
+        if l.item == item {
+            l.lanes.ride = ride.to_vec();
+            l.resum();
         }
     });
 }
 
-/// Leveled item `item`'s lanes as the window has them, kept and written as
-/// its volume ([`crate::vocal_level::relevel`]).
-fn relevel(track: &str, target: &EnvelopeRef, item: usize) {
+/// Leveled item `item` as the window has it, kept and written as its
+/// volume ([`crate::vocal_level::relevel`]).
+fn relevel(track: &str, item: &str) {
     #[cfg(feature = "native")]
     {
-        let Some(leveled) = automation::lanes_of(track)
-            .into_iter()
-            .find(|l| automation::same_target(&l.target, target))
-            .and_then(|l| l.leveled.into_iter().nth(item))
-        else {
+        let Some(leveled) = crate::leveler::with_item(item, Clone::clone) else {
             return;
         };
         if let Ok((daw, project)) = crate::actions::song() {
@@ -404,7 +465,28 @@ fn relevel(track: &str, target: &EnvelopeRef, item: usize) {
         }
     }
     #[cfg(not(feature = "native"))]
-    let _ = (track, target, item);
+    let _ = (track, item);
+}
+
+/// A leveler stage lane's dial, as its items have it.
+fn dial_of(lane: &automation::Lane, stage: crate::leveler::Stage) -> crate::leveler::Dial {
+    lane.leveled
+        .first()
+        .map_or_else(crate::leveler::Dial::default, |l| l.stages.get(stage))
+}
+
+/// `track`'s dials as the window has them now: kept with the song, and
+/// every leveled item's volume written through them.
+fn dials_done(track: &str) {
+    #[cfg(feature = "native")]
+    if let (Some(stages), Ok((daw, project))) =
+        (crate::leveler::stages_of(track), crate::actions::song())
+    {
+        let _rewritten = crate::vocal_level::set_stages(daw, &project, track, &stages);
+        crate::studio::request_resync();
+    }
+    #[cfg(not(feature = "native"))]
+    let _ = track;
 }
 
 /// The drag moved to `(x, y)`: the lane changed to follow it, and the edit
@@ -530,10 +612,27 @@ pub fn drag(drag: &mut LaneDrag, view: Viewport, x: f64, y: f64) -> Vec<Edit> {
             let Some(leveled) = lane.leveled.get(*item) else {
                 return Vec::new();
             };
+            let Some(scale) = ride_scale(leveled) else {
+                return Vec::new();
+            };
             let at = leveled.lane_time(t).max(0.0);
-            let (ride, k) = with_ride_point(&leveled.lanes.ride, Some(*index), at, value);
+            let (ride, k) = with_ride_point(&leveled.lanes.ride, Some(*index), at, value / scale);
             *index = k;
-            set_ride(&track, &target, *item, ride);
+            set_ride(&track, &leveled.item, &ride);
+            Vec::new()
+        }
+        Grab::Knob { stage, from, was } => {
+            // Up turns it up; the leveled items follow at once, and their
+            // volume is written when the hand lets go.
+            let dial = dial_of(lane, *stage);
+            crate::leveler::set_dial(
+                &track,
+                *stage,
+                crate::leveler::Dial {
+                    amount: (*from - y).mul_add(draw::KNOB_PER_PX, *was),
+                    ..dial
+                },
+            );
             Vec::new()
         }
         Grab::Edge { from, was } => {
@@ -592,7 +691,7 @@ pub fn release(drag: &LaneDrag, over: Option<&Hit>) -> Vec<Edit> {
             // Dropped on another lane (another track's, too): the copy is
             // there, at the time it was let go.
             let (track, target, at) = match over {
-                Some(hit) if hit.placed.lane.kind != Kind::Leveler => match hit.spot {
+                Some(hit) if !hit.placed.lane.kind.is_leveler() => match hit.spot {
                     Spot::Body { .. } | Spot::ItemBar { .. } | Spot::ItemEdge { .. } => (
                         hit.placed.lane.track.clone(),
                         hit.placed.lane.target.clone(),
@@ -622,7 +721,13 @@ pub fn release(drag: &LaneDrag, over: Option<&Hit>) -> Vec<Edit> {
         }
         Grab::Edge { .. } => Vec::new(),
         Grab::Ride { item, .. } => {
-            relevel(&drag.track, &drag.target, item);
+            if let Some(guid) = lane().and_then(|l| l.leveled.get(item).map(|x| x.item.clone())) {
+                relevel(&drag.track, &guid);
+            }
+            Vec::new()
+        }
+        Grab::Knob { .. } => {
+            dials_done(&drag.track);
             Vec::new()
         }
         _ => vec![Edit::EndUndo(LABEL.to_owned())],

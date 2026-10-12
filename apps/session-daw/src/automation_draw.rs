@@ -38,6 +38,12 @@ const ITEM_BAR: f64 = 11.0;
 const EDGE: f64 = 3.0;
 /// How far from an automation item's side a press resizes it.
 const EDGE_REACH: f64 = 4.0;
+/// A leveler stage's dial in its header: its radius, and the width of the
+/// strip it is turned in, left of the switch.
+const KNOB_R: f64 = 8.0;
+const KNOB_W: f64 = 30.0;
+/// How far a dial turns per pixel dragged: its whole travel in 200.
+pub const KNOB_PER_PX: f64 = crate::leveler::AMOUNT_MAX / 200.0;
 
 /// A lane where it is on screen.
 #[derive(Clone, Debug)]
@@ -104,8 +110,11 @@ pub fn on_screen(
 pub enum Spot {
     /// The header's hide button.
     Hide,
-    /// The header's mode, which cycles.
+    /// The header's mode, which cycles — or, in a leveler stage's lane,
+    /// its switch, which turns the stage on and off.
     Mode,
+    /// A leveler stage's dial, which a drag turns.
+    Knob,
     /// The rest of the header.
     Header,
     /// The lane's bottom edge, which resizes it.
@@ -153,6 +162,8 @@ pub fn hit(
             Spot::Hide
         } else if x >= panel - HIDE_W - 22.0 {
             Spot::Mode
+        } else if placed.lane.kind.is_leveler() && x >= panel - HIDE_W - 22.0 - KNOB_W {
+            Spot::Knob
         } else {
             Spot::Header
         };
@@ -168,14 +179,18 @@ pub fn hit(
     let t = (x - x0) / view.pps.max(1e-9);
     let x_of = |t: f64| t.mul_add(view.pps, x0);
     let lane = &placed.lane;
-    if lane.kind == Kind::Leveler {
-        // The leveled item under the pointer, and the ride's point near it.
+    if let Kind::Leveler(stage) = lane.kind {
+        // The leveled item under the pointer, and (in the ride's lane, the
+        // one drawn by hand) the ride's point near it.
         let item = lane.leveled.iter().position(|l| l.holds(t));
-        let item_point = item.and_then(|i| lane.leveled.get(i)).and_then(|l| {
-            l.lanes.ride.iter().position(|p| {
-                (x_of(l.at(p.t_s)) - x).abs() <= REACH && (placed.y_of(p.db) - y).abs() <= REACH
-            })
-        });
+        let item_point = item
+            .and_then(|i| lane.leveled.get(i))
+            .filter(|_| stage == crate::leveler::Stage::Ride)
+            .and_then(|l| {
+                l.curves.ride.iter().position(|p| {
+                    (x_of(l.at(p.t_s)) - x).abs() <= REACH && (placed.y_of(p.db) - y).abs() <= REACH
+                })
+            });
         let value = placed.value_at_y(y);
         return Some(Hit {
             placed,
@@ -296,7 +311,10 @@ pub const fn color(palette: &Palette, kind: Kind) -> Color {
         Kind::Mute => palette.mute,
         Kind::Width => palette.solo,
         Kind::Param => palette.accent,
-        Kind::Leveler => palette.text,
+        Kind::Leveler(crate::leveler::Stage::DeEss) => palette.solo,
+        Kind::Leveler(crate::leveler::Stage::DeBreath) => palette.pan,
+        Kind::Leveler(crate::leveler::Stage::Ride) => palette.meter_safe,
+        Kind::Leveler(crate::leveler::Stage::Gate) => palette.mute,
     }
 }
 
@@ -360,8 +378,15 @@ pub fn bodies(
             .lane
             .as_ref()
             .is_some_and(|(track, target)| lane.is(track, target));
-        if lane.kind == Kind::Leveler {
-            leveler(painter, palette, p, view, lit_here.then_some(lit));
+        if let Kind::Leveler(stage) = lane.kind {
+            leveler(painter, palette, (p, stage), view, lit_here.then_some(lit));
+            // The value under the pointer, beside it.
+            if lit_here && let Some(t) = lit.t {
+                let value = lane.value_at(t);
+                let x = x_of(t) + 8.0;
+                let y = p.y_of(value).clamp(p.top + 12.0, bottom - 3.0);
+                crate::tcp::glyphs(painter, font, palette.text, &lane.say(value), x, y, 10.0);
+            }
             continue;
         }
         windows(painter, palette, font, p, view, lit_here.then_some(lit));
@@ -512,14 +537,15 @@ fn points(
     }
 }
 
-/// The vocal leveler's lane: under each leveled item, its gate, its
-/// de-breath and its de-ess (each eased "ess" a bar along the foot), its
-/// ride with its points, and over them their sum — what the item's volume
-/// plays. `lit` when the pointer is in this lane.
+/// A vocal leveler's stage lane: under each leveled item, the stage's
+/// curve as it plays (through its dial), filled to 0 dB so what it takes
+/// away or adds is a shape; in the ride's lane its points, which a hand
+/// moves. A stage switched off is drawn faint and flat. `lit` when the
+/// pointer is in this lane.
 fn leveler(
     painter: &mut impl PaintScene,
     palette: &Palette,
-    placed: &Placed,
+    (placed, stage): (&Placed, crate::leveler::Stage),
     view: Viewport,
     lit: Option<&Lit>,
 ) {
@@ -528,6 +554,8 @@ fn leveler(
     let pps = view.pps.max(1e-9);
     let (left, right) = (view.panel_w, view.width);
     let bottom = placed.top + placed.height;
+    let ink = color(palette, placed.lane.kind);
+    let zero = placed.y_of(0.0);
     for (i, item) in placed.lane.leveled.iter().enumerate() {
         let (from_x, to_x) = (
             item.position.mul_add(pps, x0),
@@ -547,16 +575,123 @@ fn leveler(
             None,
             &Rect::new(from_x, placed.top + 1.0, to_x, bottom - 1.0),
         );
-        // A curve of the item's, sampled across the stretch of it on
-        // screen.
-        let trace = |points: &[level_dsp::envelope::EnvPoint]| {
+        let on = item.stages.get(stage).on;
+        let points = item.curves.of(stage);
+        let columns = crate::num::index(((to_x - from_x) / STEP).ceil());
+        let width = (to_x - from_x) / crate::num::coord(columns.max(1));
+        let span = (
+            item.lane_time((from_x - x0) / pps),
+            item.lane_time((to_x - x0) / pps),
+        );
+        let mut path = BezPath::new();
+        for (k, (column, db)) in crate::leveler::trace(points, span, columns)
+            .into_iter()
+            .enumerate()
+        {
+            let at = (column.mul_add(width, from_x), placed.y_of(db));
+            if k == 0 {
+                path.move_to(at);
+            } else {
+                path.line_to(at);
+            }
+        }
+        let mut under = path.clone();
+        under.line_to((to_x, zero));
+        under.line_to((from_x, zero));
+        under.close_path();
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            ink.multiply_alpha(if on { 0.18 } else { 0.05 }),
+            None,
+            &under,
+        );
+        painter.stroke(
+            &Stroke::new(if lit_item { 1.8 } else { 1.4 }),
+            Affine::IDENTITY,
+            ink.multiply_alpha(if on { 0.95 } else { 0.35 }),
+            None,
+            &path,
+        );
+        if stage != crate::leveler::Stage::Ride || !on {
+            continue;
+        }
+        // The ride's points, where there is room between them to take
+        // one (or the pointer is on the item): what a hand moves.
+        let xs: Vec<f64> = points
+            .iter()
+            .map(|p| item.at(p.t_s).mul_add(pps, x0))
+            .collect();
+        let spaced = xs.windows(2).all(|w| match w {
+            [a, b] => b - a >= 2.0 * POINT,
+            _ => true,
+        });
+        if !spaced && !lit_item {
+            continue;
+        }
+        for (k, (point, x)) in points.iter().zip(&xs).enumerate() {
+            if *x < from_x - POINT || *x > to_x + POINT {
+                continue;
+            }
+            let lit_point = lit_item && lit.is_some_and(|lit| lit.item_point == Some(k));
+            square(
+                painter,
+                (*x, placed.y_of(point.db)),
+                lit_point,
+                ink,
+                palette,
+            );
+        }
+    }
+}
+
+/// The vocal leveler's sum on each leveled item on screen, over its waveform.
+///
+/// A line across the item at the gain it plays at — 0 dB
+/// across its middle, ±24 dB at its top and foot — the way the item's
+/// take volume envelope plays it, and the waveform is drawn through it.
+pub fn leveler_lines(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    below: f64,
+) {
+    const STEP: f64 = 2.0;
+    if !crate::leveler::any() {
+        return;
+    }
+    let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+    let pps = view.pps.max(1e-9);
+    let x0 = view.panel_w - view.scroll_x;
+    for item in scene.item_boxes() {
+        let (a, b) = (item.x0.mul_add(pps, x0), item.x1.mul_add(pps, x0));
+        if b < view.panel_w || a > view.width {
+            continue;
+        }
+        let Some((top, height)) = scene.item_box(item) else {
+            continue;
+        };
+        let (top, height) = (top.mul_add(zoom, below), height * zoom);
+        if top > view.height || top + height < 0.0 || height < 8.0 {
+            continue;
+        }
+        let (left, right) = (a.max(view.panel_w), b.min(view.width));
+        let span = 2.0f64.mul_add(-PAD, height).max(1.0);
+        let y_of = |db: f64| (1.0 - crate::leveler::item_y(db)).mul_add(span, top + PAD);
+        let drawn = crate::leveler::with_item(&item.guid, |l| {
+            let columns = crate::num::index(((right - left) / STEP).ceil());
+            let width = (right - left) / crate::num::coord(columns.max(1));
+            let times = (
+                l.lane_time((left - x0) / pps),
+                l.lane_time((right - x0) / pps),
+            );
             let mut path = BezPath::new();
-            let steps =
-                num_traits::ToPrimitive::to_u32(&((to_x - from_x) / STEP).ceil()).unwrap_or(0);
-            for k in 0..=steps {
-                let x = f64::from(k).mul_add(STEP, from_x).min(to_x);
-                let t = item.lane_time((x - x0) / pps);
-                let at = (x, placed.y_of(crate::automation::db_at(points, t)));
+            for (k, (column, db)) in crate::leveler::trace(&l.composite, times, columns)
+                .into_iter()
+                .enumerate()
+            {
+                let at = (column.mul_add(width, left), y_of(db));
                 if k == 0 {
                     path.move_to(at);
                 } else {
@@ -564,66 +699,32 @@ fn leveler(
                 }
             }
             path
+        });
+        let Some(path) = drawn else {
+            continue;
         };
-        let lanes = &item.lanes;
-        for (points, ink, width) in [
-            (&lanes.gate, palette.text_faint, 1.0),
-            (&lanes.breath, palette.pan, 1.0),
-            (&lanes.ride, palette.meter_safe, 1.4),
-        ] {
-            if !points.is_empty() {
-                painter.stroke(
-                    &Stroke::new(width),
-                    Affine::IDENTITY,
-                    ink.multiply_alpha(0.8),
-                    None,
-                    &trace(points),
-                );
-            }
-        }
-        for span in &lanes.sibilance {
-            let (sa, sb) = (
-                item.at(span.from_s).mul_add(pps, x0),
-                item.at(span.to_s).mul_add(pps, x0),
-            );
-            if sb < from_x || sa > to_x {
-                continue;
-            }
-            painter.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                palette.solo.multiply_alpha(0.7),
-                None,
-                &Rect::new(
-                    sa.max(from_x),
-                    bottom - 5.0,
-                    sb.min(to_x).max(sa + 1.0),
-                    bottom - 2.0,
-                ),
-            );
-        }
+        // 0 dB, faint: where the leveler leaves the vocal as sung.
         painter.stroke(
-            &Stroke::new(1.8),
+            &Stroke::new(1.0),
             Affine::IDENTITY,
-            palette.text,
+            palette.text.multiply_alpha(0.18),
             None,
-            &trace(&item.composite),
+            &Line::new((left, y_of(0.0)), (right, y_of(0.0))),
         );
-        // The ride's points: what from_x hand moves.
-        for (k, point) in lanes.ride.iter().enumerate() {
-            let x = item.at(point.t_s).mul_add(pps, x0);
-            if x < from_x - POINT || x > to_x + POINT {
-                continue;
-            }
-            let lit_point = lit_item && lit.is_some_and(|lit| lit.item_point == Some(k));
-            square(
-                painter,
-                (x, placed.y_of(point.db)),
-                lit_point,
-                palette.meter_safe,
-                palette,
-            );
-        }
+        painter.stroke(
+            &Stroke::new(2.4),
+            Affine::IDENTITY,
+            palette.surface.multiply_alpha(0.6),
+            None,
+            &path,
+        );
+        painter.stroke(
+            &Stroke::new(1.3),
+            Affine::IDENTITY,
+            palette.text.multiply_alpha(0.9),
+            None,
+            &path,
+        );
     }
 }
 
@@ -733,7 +834,13 @@ pub fn headers(
             .lane
             .as_ref()
             .is_some_and(|(track, target)| lane.is(track, target));
-        let room = (width - 24.0 - HIDE_W - 26.0).max(0.0);
+        // A leveler stage's dial, if this is one's lane.
+        let dial = match lane.kind {
+            Kind::Leveler(stage) => lane.leveled.first().map(|l| l.stages.get(stage)),
+            _ => None,
+        };
+        let knob_room = if lane.kind.is_leveler() { KNOB_W } else { 0.0 };
+        let room = (width - 24.0 - HIDE_W - 26.0 - knob_room).max(0.0);
         let name = font.elide(&lane.name, 10.5, room);
         let name_ink = if lit_here {
             palette.text
@@ -753,14 +860,42 @@ pub fn headers(
                 10.0,
             );
         }
-        // Its mode, which a click cycles (the leveler's lanes have none:
-        // they are the items' volume), and the hide button.
-        let mode = if lane.kind == Kind::Leveler {
-            ""
-        } else {
-            mode_letters(lane.mode)
+        // Its mode, which a click cycles — a leveler stage's switch in its
+        // place (its lanes have no mode: they are the items' volume) —
+        // and the hide button.
+        let mode = match (lane.kind, dial) {
+            (Kind::Leveler(_), Some(d)) if d.on => "On",
+            (Kind::Leveler(_), _) => "Off",
+            _ => mode_letters(lane.mode),
         };
         let mx = width - HIDE_W - 22.0;
+        if let Some(d) = dial {
+            // The dial: how far the stage goes, 0 to twice as made, and
+            // under it the amount.
+            let centre = (mx - KNOB_W / 2.0 - 1.0, p.top + 5.0 + KNOB_R);
+            crate::tone::knob_arc(
+                painter,
+                palette,
+                centre,
+                KNOB_R,
+                d.amount / crate::leveler::AMOUNT_MAX,
+                if d.on { ink } else { palette.text_faint },
+                lit_here,
+            );
+            if p.height >= 2.0f64.mul_add(KNOB_R, 20.0) {
+                let text = d.text();
+                let w = font.width(&text, 8.5);
+                crate::tcp::glyphs(
+                    painter,
+                    font,
+                    palette.text_faint,
+                    &text,
+                    centre.0 - w / 2.0,
+                    2.0f64.mul_add(KNOB_R, p.top + 15.0),
+                    8.5,
+                );
+            }
+        }
         if !mode.is_empty() {
             painter.fill(
                 Fill::NonZero,
@@ -850,6 +985,11 @@ fn take_boxes(scene: &Arrangement, view: Viewport, below: f64) -> Vec<TakeBox> {
             let (top, height) = scene.item_box(item)?;
             let (top, height) = (top.mul_add(zoom, below), height * zoom);
             if top > view.height || top + height < 0.0 || height < 8.0 {
+                return None;
+            }
+            // A leveled vocal's volume is drawn as the leveler's sum, on
+            // its own scale: one line for one curve.
+            if crate::leveler::with_item(&item.guid, |_| ()).is_some() {
                 return None;
             }
             let curve = crate::automation::take_curve(&item.guid)?;

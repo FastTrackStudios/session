@@ -5180,9 +5180,10 @@ fn knobs(
     }
 }
 
-/// One knob: its track, its travel, its pointer.
-fn knob_arc(
-    scene: &mut Scene,
+/// One knob: its track, its travel, its pointer. The vocal leveler's
+/// stage dials are these too.
+pub(crate) fn knob_arc(
+    scene: &mut impl PaintScene,
     palette: &Palette,
     centre: (f64, f64),
     r: f64,
@@ -5213,11 +5214,12 @@ fn knob_arc(
         );
     }
     let (px, py) = (to.cos().mul_add(r, centre.0), to.sin().mul_add(r, centre.1));
-    rule_wide(
-        scene,
+    scene.stroke(
+        &Stroke::new(1.2),
+        Affine::IDENTITY,
         if held { palette.text } else { palette.text_dim },
-        Line::new(centre, (px, py)),
-        1.2,
+        None,
+        &Line::new(centre, (px, py)),
     );
 }
 

@@ -153,7 +153,7 @@ pub(crate) fn engine_value(found: &Found, v: &Value) -> Result<f64, String> {
         }
         Kind::Width => (n / 100.0).clamp(0.0, 1.0),
         Kind::Param => n.clamp(0.0, 1.0),
-        Kind::Leveler => n,
+        Kind::Leveler(_) => n,
     })
 }
 
@@ -372,7 +372,7 @@ static SHOW: architect::action::ActionMeta = crate::actions::meta(
     "AUTOMATION_SHOW",
     "automation_show",
     "Show an envelope",
-    "Show `envelope` of `track` in a lane of its own under it (made if it is not there yet), or hide it (`shown`: false). `envelope` is Volume, Pan, Width, Mute, `FX/parameter` (`FTS EQ/SSL HF Gain`), `Item volume`: each item's volume curve (a leveled drum's strokes) drawn on it, its points dragged there, or `Vocal leveler`: a leveled vocal's four lanes (gate, de-breath, de-ess, the ride, whose points are dragged) and their sum, item by item. `height` in pixels (64).",
+    "Show `envelope` of `track` in a lane of its own under it (made if it is not there yet), or hide it (`shown`: false). `envelope` is Volume, Pan, Width, Mute, `FX/parameter` (`FTS EQ/SSL HF Gain`), `Item volume`: each item's volume curve (a leveled drum's strokes) drawn on it, its points dragged there, or `Vocal leveler`: a leveled vocal's four stages — De-Ess, De-Breath, Ride (whose points are dragged), Gate — a lane each, with each stage's switch and dial in its lane's header (their sum is drawn on each item whether they are shown or not; VOCAL_LEVELER_SET turns the dials). `height` in pixels (64).",
     "Automation",
     "",
 );

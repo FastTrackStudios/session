@@ -25,7 +25,8 @@ pub enum Pick {
     Fx { track: String, fx: usize },
     /// Back to the first list.
     Back { track: String },
-    /// Show (or hide) the vocal leveler's lanes.
+    /// Expand (or fold) the vocal leveler: its four stages a lane each, or
+    /// only their sum on the items.
     Leveler { track: String, show: bool },
     /// Show (or hide) the track's items' volume curves on them.
     TakeLines { track: String, show: bool },
