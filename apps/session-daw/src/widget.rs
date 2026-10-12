@@ -1396,12 +1396,13 @@ impl ArrangementWidget {
         let started = std::time::Instant::now();
         // Where in its source each take started, before it is cut: every
         // slice of it shows its own part of the take's waveform.
+        let taken: std::collections::HashSet<&str> = items.iter().map(String::as_str).collect();
         let offsets: std::collections::HashMap<String, f64> = self
             .project
             .items
             .values()
             .flatten()
-            .filter(|i| items.contains(&i.guid))
+            .filter(|i| taken.contains(i.guid.as_str()))
             .map(|i| (i.guid.clone(), i.start_offset.as_seconds()))
             .collect();
         let mut effects = Vec::new();

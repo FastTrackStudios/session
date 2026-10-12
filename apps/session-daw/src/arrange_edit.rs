@@ -1730,12 +1730,15 @@ impl Editor {
             return;
         }
         let start = effects.len();
+        // A set, not a scan: a slip-edited kit is tens of thousands of
+        // takes, and every item of the song is asked about.
+        let takes: HashSet<&str> = items.iter().map(String::as_str).collect();
         let pieces = |project: &Project| -> HashSet<String> {
             project
                 .items
                 .values()
                 .flatten()
-                .filter(|i| items.iter().any(|m| piece_of(&i.guid, m)))
+                .filter(|i| of_mics(&i.guid, &takes))
                 .map(|i| i.guid.clone())
                 .collect()
         };
@@ -1854,7 +1857,10 @@ fn slip_takes(
         .items
         .values()
         .flatten()
-        .filter(|i| mics.iter().any(|m| piece_of(&i.guid, m)))
+        // The set, not a scan of every mic for every item: on a
+        // slip-edited kit that was 25 000 × 25 000 and froze a hit's drag
+        // for seconds.
+        .filter(|i| of_mics(&i.guid, &mic_set))
         .map(|i| i.position.as_seconds())
         .collect();
     starts.sort_by(f64::total_cmp);
@@ -2200,13 +2206,6 @@ impl Editor {
         self.razor.clear();
         true
     }
-}
-
-/// Whether `guid` is the mic `mic` or a piece a cut made of it
-/// (`{mic}-split@{t}`, and pieces of those).
-fn piece_of(guid: &str, mic: &str) -> bool {
-    guid.strip_prefix(mic)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with("-split@"))
 }
 
 /// Whether `guid` is one of `mics` or a piece a cut made of one — at any
