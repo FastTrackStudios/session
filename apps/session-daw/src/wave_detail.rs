@@ -23,15 +23,38 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// A real item a lane draws: which, and where it was when asked.
+/// What a lane's detail is read from, and where it was when asked.
+///
+/// A real item — or, for a shut folder's row, a whole track under it over the
+/// folder item's span (`track`), read once through the track's accessor
+/// rather than slice by slice: a slip-edited kit is thousands of slices of
+/// a few takes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Source {
+    /// The item's guid — or, read as a track, a name for the track over
+    /// this span, so two spans of one track are held apart.
     pub guid: String,
     /// Project seconds.
     pub at: f64,
     pub length: f64,
-    /// Seconds into its source.
+    /// Seconds into its source (an item's).
     pub offset: f64,
+    /// Read as this track's playing items, mixed, in project time.
+    pub track: Option<String>,
+}
+
+impl Source {
+    /// Track `track` over `at..at + length`, read as it plays.
+    #[must_use]
+    pub fn track(track: &str, at: f64, length: f64) -> Self {
+        Self {
+            guid: format!("{track}@{at:.6}+{length:.6}"),
+            at,
+            length,
+            offset: 0.0,
+            track: Some(track.to_owned()),
+        }
+    }
 }
 
 impl Source {
@@ -276,12 +299,23 @@ fn read((source, a, b, step): &Want) -> Option<Detail> {
     use daw_proto::{AudioAccessors as _, GetSamplesRequest};
     let daw = crate::open::local_engine()?;
     let project = ProjectContext::Project(crate::open::current_song()?);
-    // The engine's name for it: a piece the window split off has its own
+    // A track, read as it plays — its time is the project's; an item, by
+    // the engine's name for it: a piece the window split off has its own
     // name in the window until the song is read back, and asked by that
     // the engine knows no such item — every slice of an edited kit was
     // drawn coarse for good.
-    let guid = crate::engine::made(&source.guid);
-    let accessor = daw.create_take_accessor(project, ItemRef::Guid(guid), TakeRef::Active)?;
+    let (accessor, origin) = if let Some(track) = &source.track {
+        (
+            daw.create_track_accessor(project, daw::service::TrackRef::Guid(track.clone()))?,
+            0.0,
+        )
+    } else {
+        let guid = crate::engine::made(&source.guid);
+        (
+            daw.create_take_accessor(project, ItemRef::Guid(guid), TakeRef::Active)?,
+            source.at,
+        )
+    };
 
     // The source's own rate and channels: a read of none says them.
     let format = daw.get_samples(GetSamplesRequest {
@@ -300,7 +334,7 @@ fn read((source, a, b, step): &Want) -> Option<Detail> {
         accessor_id: accessor.clone(),
         sample_rate: rate,
         num_channels: channels,
-        start_time: a - source.at,
+        start_time: a - origin,
         num_samples: frames,
     });
     daw.destroy_accessor(&accessor);
@@ -329,6 +363,7 @@ mod tests {
                     at: 0.0,
                     length: 1.0,
                     offset: 0.0,
+                    track: None,
                 },
                 0.0,
                 1.0,

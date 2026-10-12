@@ -2857,6 +2857,7 @@ fn source_of(item: &daw_proto::Item) -> crate::wave_detail::Source {
         at: item.position.as_seconds(),
         length: item.length.as_seconds(),
         offset: item.start_offset.as_seconds(),
+        track: None,
     }
 }
 
@@ -2966,11 +2967,15 @@ fn folded_contents(
                     .filter(|((item, ..), _)| role_of(item) == *role)
                     .map(|(_, child)| crate::midi::Child { ..*child })
                     .collect();
-                let sources = held
-                    .iter()
-                    .filter(|(item, ..)| role_of(item) == *role)
-                    .map(|(item, ..)| source_of(item))
-                    .collect();
+                // Its tracks, each read once over the span as it plays —
+                // not its slices one by one.
+                let sources = tracks_over(
+                    held.iter()
+                        .filter(|(item, ..)| role_of(item) == *role)
+                        .map(|(item, ..)| item.track_guid.as_str()),
+                    span.start,
+                    span.end,
+                );
                 crate::midi::fold_waves(span.start, span.end, &these)
                     .map(|wave| (*role, std::sync::Arc::new(wave), sources))
             })
@@ -2982,8 +2987,30 @@ fn folded_contents(
         notes: crate::midi::fold_notes(span.start, span.end, &children),
         wave: crate::midi::fold_waves(span.start, span.end, &children).map(std::sync::Arc::new),
         layers,
-        sources: held.iter().map(|(item, ..)| source_of(item)).collect(),
+        sources: tracks_over(
+            held.iter().map(|(item, ..)| item.track_guid.as_str()),
+            span.start,
+            span.end,
+        ),
     })
+}
+
+/// Each of `tracks` once, read over `start..end` as it plays
+/// ([`crate::wave_detail::Source::track`]).
+fn tracks_over<'a>(
+    tracks: impl Iterator<Item = &'a str>,
+    start: f64,
+    end: f64,
+) -> Vec<crate::wave_detail::Source> {
+    let mut seen: Vec<&str> = Vec::new();
+    for track in tracks {
+        if !seen.contains(&track) {
+            seen.push(track);
+        }
+    }
+    seen.into_iter()
+        .map(|track| crate::wave_detail::Source::track(track, start, end - start))
+        .collect()
 }
 
 fn midi_preview(
@@ -3988,6 +4015,7 @@ mod lane_wave_tests {
             at: 0.0,
             length: 100.0,
             offset: 0.0,
+            track: None,
         };
         let mut lane = lane(100, false);
         lane.sources = vec![source.clone()];
@@ -4027,6 +4055,7 @@ mod lane_wave_tests {
             at: 0.0,
             length: 100.0,
             offset: 0.0,
+            track: None,
         };
         let mut lane = lane(100, false);
         lane.sources = vec![source.clone()];

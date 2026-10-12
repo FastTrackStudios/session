@@ -5381,7 +5381,71 @@ struct PeaksResult {
     peaks: Vec<f64>,
 }
 
+static TRACK_SAMPLES: ActionMeta = meta(
+    "TRACK_SAMPLES",
+    "track_samples",
+    "A track's samples",
+    "A track's audio from `from` to `to` (seconds) as samples: its playing items mixed as they play into it — each on the lane that plays, unmuted, through its volume and fades — before its FX (the engine's track accessor). `rate` (Hz, 8000 unless given) and `channels` (1: mixed to mono, unless given). At most 96 000 values; a longer span is refused. Read-only.",
+    "Data",
+    "",
+);
+
+/// Which stretch of a track, read how.
+#[derive(Facet)]
+struct TrackSamplesArg {
+    track: String,
+    from: f64,
+    to: f64,
+    rate: Option<f64>,
+    channels: Option<u32>,
+}
+
+/// A track's samples, interleaved.
+#[derive(Facet)]
+struct TrackSamplesOut {
+    from: f64,
+    rate: f64,
+    channels: u32,
+    samples: Vec<f64>,
+}
+
+/// The most values `TRACK_SAMPLES` gives.
+const MOST_SAMPLES: f64 = 96_000.0;
+
 fn register_peaks(list: &ActionList) {
+    list.register(&TRACK_SAMPLES, Effect::ReadOnly, |a: TrackSamplesArg| {
+        use daw_proto::AudioAccessors as _;
+        let (daw, project) = song()?;
+        let guid = resolve(daw, &project, &a.track)?;
+        if a.to <= a.from {
+            return Err("`to` must be after `from`".to_owned());
+        }
+        let rate = a.rate.unwrap_or(8_000.0).clamp(100.0, 192_000.0);
+        let channels = a.channels.unwrap_or(1).clamp(1, 8);
+        let frames = ((a.to - a.from) * rate).ceil();
+        if frames * f64::from(channels) > MOST_SAMPLES {
+            return Err(format!(
+                "{frames} frames of {channels} channels is past {MOST_SAMPLES} values: a shorter span, a lower `rate`"
+            ));
+        }
+        let accessor = daw
+            .create_track_accessor(project, daw::service::TrackRef::Guid(guid))
+            .ok_or("the track plays nothing to read")?;
+        let data = daw.get_samples(daw_proto::GetSamplesRequest {
+            accessor_id: accessor.clone(),
+            sample_rate: rate,
+            num_channels: channels,
+            start_time: a.from,
+            num_samples: num_traits::ToPrimitive::to_u32(&frames).unwrap_or(0),
+        });
+        daw.destroy_accessor(&accessor);
+        Ok(TrackSamplesOut {
+            from: a.from,
+            rate: data.sample_rate,
+            channels: data.num_channels,
+            samples: data.samples,
+        })
+    });
     list.register(&PEAKS, Effect::ReadOnly, |a: PeaksArg| {
         let (daw, project) = song()?;
         let guid = resolve(daw, &project, &a.track)?;
