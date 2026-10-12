@@ -90,5 +90,41 @@ mod signal_rig {
             Some("Drive"),
             "the state says what plays"
         );
+
+        // The Patch parameter, as automation sends it: named by the
+        // patches, and switching the rig back to Clean.
+        let choices: Vec<String> = rig
+            .param_choices(signal_fx::signal_rig::PATCH)
+            .into_iter()
+            .map(|(_, n)| n)
+            .collect();
+        assert!(choices.iter().any(|c| c == "Clean"), "{choices:?}");
+        let clean_at = rig
+            .text_to_value(signal_fx::signal_rig::PATCH, "clean")
+            .expect("Clean by name");
+        let input = vec![0.0_f32; BLOCK];
+        let (mut l, mut r) = (vec![0.0; BLOCK], vec![0.0; BLOCK]);
+        let point = [(signal_fx::signal_rig::PATCH, clean_at)];
+        rig.process_block(
+            &input,
+            &input,
+            &mut l,
+            &mut r,
+            &PluginEvents {
+                params: &point,
+                ..PluginEvents::EMPTY
+            },
+        )
+        .expect("a block");
+        // The switcher takes it off the audio thread within a few ms.
+        let switched = (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            playing.playing().1.as_deref() == Some("Clean")
+        });
+        assert!(
+            switched,
+            "the automation switched it: {:?}",
+            playing.playing()
+        );
     }
 }

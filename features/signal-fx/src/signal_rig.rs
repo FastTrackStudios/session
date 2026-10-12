@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use daw_standalone::plugin::{
@@ -33,7 +33,24 @@ pub struct Playing {
     pub instrument: Instrument,
     pub service: GuitarRigBackend,
     host: Arc<RigHost>,
+    /// The patch the Patch parameter asks for (its index; [`NONE`] when
+    /// nothing has), written by the audio thread, switched to by the
+    /// rig's switcher ([`Playing::switcher`]).
+    wanted: AtomicU32,
+    /// How many patches the profile has, for the audio thread to read the
+    /// parameter by without asking the service.
+    patch_count: AtomicU32,
 }
+
+/// No patch asked for.
+const NONE: u32 = u32::MAX;
+
+/// The Patch parameter's id.
+pub const PATCH: u32 = 0;
+
+/// How often the switcher looks for a patch asked for, ms: a switch is
+/// heard within this of its automation point, then crossfaded as any.
+const SWITCH_POLL_MS: u64 = 4;
 
 /// Every rig playing, by id.
 static RIGS: LazyLock<Mutex<HashMap<String, Arc<Playing>>>> =
@@ -159,12 +176,16 @@ impl SignalRig {
             let home = RigHome::new(instrument, library_dir(instrument));
             let (service, host) = GuitarRigBackend::hosted(home, rate);
             service.open_blocking();
+            let count = u32::try_from(service.patches().len()).unwrap_or(0);
             let playing = Arc::new(Playing {
                 id: self.state.id.clone(),
                 instrument,
                 service,
                 host,
+                wanted: AtomicU32::new(NONE),
+                patch_count: AtomicU32::new(count),
             });
+            Playing::switcher(Arc::downgrade(&playing));
             RIGS.lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .insert(self.state.id.clone(), Arc::clone(&playing));
@@ -183,6 +204,42 @@ impl SignalRig {
 impl Playing {
     fn host_rate(&self) -> u32 {
         self.host.sample_rate()
+    }
+
+    /// The patches, by name, in order: the Patch parameter's choices.
+    #[must_use]
+    pub fn patch_names(&self) -> Vec<String> {
+        self.service.patches().into_iter().map(|p| p.name).collect()
+    }
+
+    /// The patch playing, by index.
+    fn active(&self) -> Option<usize> {
+        self.service.patches().iter().position(|p| p.active)
+    }
+
+    /// Switch to the patch the Patch parameter asks for, off the audio
+    /// thread, as long as the rig plays: the service changes what plays
+    /// as a footswitch would, crossfaded. Keeps the patch count current.
+    fn switcher(rig: std::sync::Weak<Self>) {
+        let spawned = std::thread::Builder::new()
+            .name("signal-rig-switch".into())
+            .spawn(move || {
+                let mut last = NONE;
+                while let Some(rig) = rig.upgrade() {
+                    let wanted = rig.wanted.load(Ordering::Acquire);
+                    if wanted != NONE && wanted != last {
+                        let _ = rig.service.select_patch(wanted);
+                        last = wanted;
+                    }
+                    let count = u32::try_from(rig.service.patches().len()).unwrap_or(0);
+                    rig.patch_count.store(count, Ordering::Relaxed);
+                    drop(rig);
+                    std::thread::sleep(std::time::Duration::from_millis(SWITCH_POLL_MS));
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::warn!(error = %e, "signal rig: no switcher, the Patch parameter will not switch");
+        }
     }
 
     /// The profile and the patch it plays now.
@@ -211,19 +268,49 @@ impl PluginInstance for SignalRig {
     }
 
     fn params(&mut self) -> Vec<PluginParamInfo> {
-        Vec::new()
+        vec![PluginParamInfo {
+            id: PATCH,
+            name: "Patch".into(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.0,
+        }]
     }
 
-    fn param_value(&mut self, _id: u32) -> Option<f64> {
-        None
+    fn param_value(&mut self, id: u32) -> Option<f64> {
+        let playing = self.playing.as_ref().filter(|_| id == PATCH)?;
+        let count = playing.patch_names().len();
+        Some(crate::profile::normalized(playing.active()?, count))
     }
 
-    fn value_to_text(&mut self, _id: u32, _value: f64) -> Option<String> {
-        None
+    fn value_to_text(&mut self, id: u32, value: f64) -> Option<String> {
+        let playing = self.playing.as_ref().filter(|_| id == PATCH)?;
+        let names = playing.patch_names();
+        names
+            .get(crate::profile::scene_at(value, names.len()))
+            .cloned()
     }
 
-    fn text_to_value(&mut self, _id: u32, _text: &str) -> Option<f64> {
-        None
+    fn text_to_value(&mut self, id: u32, text: &str) -> Option<f64> {
+        let playing = self.playing.as_ref().filter(|_| id == PATCH)?;
+        let names = playing.patch_names();
+        names
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(text.trim()))
+            .map(|i| crate::profile::normalized(i, names.len()))
+    }
+
+    fn param_choices(&mut self, id: u32) -> Vec<(f64, String)> {
+        let Some(playing) = self.playing.as_ref().filter(|_| id == PATCH) else {
+            return Vec::new();
+        };
+        let names = playing.patch_names();
+        let count = names.len();
+        names
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| (crate::profile::normalized(i, count), name))
+            .collect()
     }
 
     fn latency(&mut self) -> u32 {
@@ -247,9 +334,21 @@ impl PluginInstance for SignalRig {
         in_r: &[f32],
         out_l: &mut [f32],
         out_r: &mut [f32],
-        _events: &PluginEvents<'_>,
+        events: &PluginEvents<'_>,
     ) -> Result<(), PluginError> {
         if let Some(playing) = &self.playing {
+            // The Patch parameter (automation, a write): which patch it
+            // asks for, for the switcher — nothing here waits on it.
+            if let Some(&(_, value)) = events.params.iter().rev().find(|(id, _)| *id == PATCH) {
+                let count =
+                    usize::try_from(playing.patch_count.load(Ordering::Relaxed)).unwrap_or(0);
+                if count > 0 {
+                    let index = crate::profile::scene_at(value, count);
+                    playing
+                        .wanted
+                        .store(u32::try_from(index).unwrap_or(NONE), Ordering::Release);
+                }
+            }
             playing.host.process(in_l, in_r, out_l, out_r);
         } else {
             out_l.iter_mut().zip(in_l).for_each(|(o, i)| *o = *i);
