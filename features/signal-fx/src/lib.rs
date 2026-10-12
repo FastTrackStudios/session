@@ -21,6 +21,8 @@
 
 pub mod bass;
 pub mod kit;
+pub mod profile;
+pub mod rig;
 
 use daw_standalone::plugin::{FxFactory, PluginInstance};
 
@@ -55,7 +57,7 @@ impl FxFactory for SignalFx {
 
     fn create(&self, name_or_ident: &str, sample_rate: f64) -> Option<Box<dyn PluginInstance>> {
         match Self::bare(name_or_ident)? {
-            BASS_RIG => Some(Box::new(bass::BassRig::new(sample_rate))),
+            BASS_RIG => Some(Box::new(rig::Rig::new(sample_rate))),
             KIT_MIC => Some(Box::new(kit::KitMic::new(sample_rate))),
             _ => None,
         }

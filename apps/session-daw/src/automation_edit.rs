@@ -101,6 +101,7 @@ impl LaneDrag {
                 rest: 0.0,
                 fx_name: None,
                 leveled: Vec::new(),
+                choices: Vec::new(),
             },
             top: self.top,
             height: self.height,
@@ -277,7 +278,7 @@ fn body(
                 return (None, Vec::new());
             };
             let at = draw::source_time(ai, t).max(0.0);
-            let (curve, k) = automation::with_point(curve, None, at, value, lane.kind.shape());
+            let (curve, k) = automation::with_point(curve, None, at, value, lane.shape());
             let index = ai.index;
             set_item_curve(&track, &target, i, &curve);
             drag.grab = Grab::ItemPoint { item: i, index: k };
@@ -303,8 +304,7 @@ fn body(
             (Some(drag), vec![begin])
         }
         (None, _, None) => {
-            let (points, k) =
-                automation::with_point(&lane.points, None, t, value, lane.kind.shape());
+            let (points, k) = automation::with_point(&lane.points, None, t, value, lane.shape());
             automation::update(&track, &target, |l| l.points.clone_from(&points));
             drag.grab = Grab::Point(k);
             (
@@ -425,7 +425,7 @@ pub fn drag(drag: &mut LaneDrag, view: Viewport, x: f64, y: f64) -> Vec<Edit> {
     match &mut drag.grab {
         Grab::Point(index) => {
             let (points, at) =
-                automation::with_point(&lane.points, Some(*index), t, value, lane.kind.shape());
+                automation::with_point(&lane.points, Some(*index), t, value, lane.shape());
             *index = at;
             automation::update(&track, &target, |l| l.points.clone_from(&points));
             vec![Edit::SetEnvelope(track, target, points)]
@@ -436,7 +436,7 @@ pub fn drag(drag: &mut LaneDrag, view: Viewport, x: f64, y: f64) -> Vec<Edit> {
             };
             let source = draw::source_time(ai, t).max(0.0);
             let (curve, at) =
-                automation::with_point(curve, Some(*index), source, value, lane.kind.shape());
+                automation::with_point(curve, Some(*index), source, value, lane.shape());
             *index = at;
             let id = ai.index;
             set_item_curve(&track, &target, *item, &curve);

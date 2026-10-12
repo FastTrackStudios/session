@@ -48,11 +48,29 @@ pub(crate) struct Found {
 impl Found {
     /// `value` said in this envelope's own terms.
     pub(crate) fn say(&self, value: f64) -> String {
+        if let Some(choice) = crate::automation::choice_at(self.choices(), value) {
+            return choice.to_owned();
+        }
         crate::automation::say(
             self.kind,
             self.param.as_ref().map(|(fx, p)| (fx.as_str(), p.index)),
             value,
         )
+    }
+}
+
+impl Found {
+    /// A stepped parameter's choices (a scene, a mode); empty otherwise.
+    pub(crate) fn choices(&self) -> &[(f64, String)] {
+        self.param
+            .as_ref()
+            .map_or(&[], |(_, p)| p.step_labels.as_slice())
+    }
+
+    /// Whether it steps — a switch, not a level: it jumps at a section's
+    /// downbeat rather than ramping through the choices between.
+    pub(crate) fn stepped(&self) -> bool {
+        !self.choices().is_empty() || self.kind == Kind::Mute
     }
 }
 
@@ -733,7 +751,13 @@ pub fn automate_by_section(
     if dry {
         return Ok(out);
     }
-    let ramp_beats = a.ramp_beats.max(0.0);
+    // A switch (a scene, a mute) changes on the downbeat: a ramp would
+    // pass through the choices between.
+    let ramp_beats = if found.stepped() {
+        0.0
+    } else {
+        a.ramp_beats.max(0.0)
+    };
     let pooled = a.pooled;
     let first = sections.first().map_or(0.0, |s| s.start);
     let last = sections.last().map_or(0.0, |s| s.end);
@@ -1033,6 +1057,7 @@ fn write(a: &WriteArg) -> Result<String, String> {
             )?;
             let shape = match p.shape.as_deref() {
                 Some(word) => crate::fx_actions::shape_of(Some(word))?,
+                None if found.stepped() => EnvelopeShape::Square,
                 None => found.kind.shape(),
             };
             Ok(point(t, value, shape))

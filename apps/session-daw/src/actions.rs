@@ -2214,7 +2214,7 @@ static BASS_RIG: ActionMeta = meta(
     "BASS_RIG",
     "bass_rig",
     "Bass rig on the bass",
-    "signal's bass rig (FTS Bass Rig: drive capture, amp capture, cab, trims) on each track under Bass, first in its chain, with the patch its name holds: Clean (the DP3X preamp fed low, barely breaking up), Harmonics (the DP3X as captured), Crunch (an HM2 drive into it). A track no patch fits is left, and said. Reran, the rig there takes the patch again. `dry_run`.",
+    "signal's bass rig (FTS Bass Rig) on each track under Bass, first in its chain: a signal bass `profile` (`Metal` unless given; from Session's own copy of signal's bass library, never the live rig's) with every scene loaded — Clean, Crunch, Drive … — starting on the scene its name holds, else the profile's default. Its Scene parameter switches them and is automated like any other (`FTS Bass Rig/Scene`, by name: `\"Crunch\"`). `patches`: true gives the older fixed patches instead (Clean: the DP3X fed low; Harmonics: the DP3X as captured; Crunch: an HM2 into it). Reran, the rig there takes it again. `dry_run`.",
     "Bass",
     "",
 );
@@ -2223,6 +2223,8 @@ static BASS_RIG: ActionMeta = meta(
 #[cfg(feature = "signal")]
 #[derive(Facet)]
 struct BassRigArg {
+    profile: Option<String>,
+    patches: Option<bool>,
     dry_run: Option<bool>,
 }
 
@@ -2230,7 +2232,12 @@ struct BassRigArg {
 fn register_bass_rig(list: &ActionList) {
     list.register(&BASS_RIG, Effect::Mutating, |a: BassRigArg| {
         let (daw, project) = song()?;
-        crate::bass_rig::set_up(daw, &project, a.dry_run.unwrap_or(false))
+        let setup = if a.patches.unwrap_or(false) {
+            crate::bass_rig::Setup::Patches
+        } else {
+            crate::bass_rig::Setup::Profile(a.profile.unwrap_or_else(|| "Metal".to_owned()))
+        };
+        crate::bass_rig::set_up(daw, &project, &setup, a.dry_run.unwrap_or(false))
     });
 }
 

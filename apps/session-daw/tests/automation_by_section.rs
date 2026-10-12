@@ -261,3 +261,102 @@ fn the_kicks_top_end_comes_up_in_the_loud_sections() {
     assert!(near(value(12.0), level("+2 dB")) && near(value(20.0), level("+3 dB")));
     assert!(near(value(4.0), level("0 dB")));
 }
+
+/// The bass rig's scene switched by section: the choruses on Drive, the rest
+/// on Clean — named, as its plugin names its scenes; stepping at each
+/// chorus's downbeat rather than ramping through Crunch.
+#[cfg(feature = "signal")]
+#[test]
+fn the_bass_rigs_scene_follows_the_sections() {
+    let dir = std::env::temp_dir().join(format!("by-section-rig-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a folder");
+    // SAFETY: before anything of this process reads it.
+    unsafe { std::env::set_var("FTS_BASS_RIG_DIR", dir.join("bass-rig")) };
+    let (vocal, guitar) = (dir.join("vocal.wav"), dir.join("guitar.wav"));
+    wav(
+        &vocal,
+        &[(16.0, Some(-20.0)), (8.0, None), (8.0, Some(-20.0))],
+    );
+    wav(&guitar, &[(8.0, Some(-36.0)), (24.0, Some(-8.0))]);
+    let song = SONG
+        .replace("VOCAL_WAV", &vocal.to_string_lossy())
+        .replace("GUITAR_WAV", &guitar.to_string_lossy());
+    let daw = daw::standalone::Standalone::new();
+    daw.set_fx_factory(Arc::new(signal_fx::SignalFx));
+    let loaded =
+        daw::standalone::project_loader::load_rpp_text(&daw, "song", "/tmp/song.RPP", &song)
+            .expect("the song");
+    let project = ProjectContext::Project(loaded.project_guid);
+    let bass = daw::service::Tracks::all(&daw, project.clone())
+        .into_iter()
+        .find(|t| t.name == "Kick")
+        .expect("a track for the rig");
+    let fx = daw_proto::fx::Effects::add(
+        &daw,
+        project.clone(),
+        daw_proto::fx::FxChainContext::Track(bass.guid.clone()),
+        signal_fx::BASS_RIG,
+    )
+    .expect("the rig");
+    daw.apply_plugin_state(&fx, br#"{"profile": "Metal", "scene": "Clean"}"#)
+        .expect("a profile");
+
+    let text = |t: &str| Value {
+        value: None,
+        text: Some(t.to_owned()),
+    };
+    let set = automate_by_section(
+        &daw,
+        &project,
+        &BySection {
+            track: "Kick".into(),
+            envelope: "FTS Bass Rig/Scene".into(),
+            values: vec![("CH".into(), text("Drive"))],
+            rest: Some(text("Clean")),
+            ramp_beats: 1.0,
+            pooled: false,
+        },
+        false,
+    )
+    .expect("automated");
+    let said: Vec<(&str, &str)> = set
+        .iter()
+        .map(|s| (s.section.as_str(), s.value.as_str()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("VS 1", "Clean"),
+            ("CH 1", "Drive"),
+            ("INST", "Clean"),
+            ("CH 2", "Drive")
+        ]
+    );
+
+    let at = EnvelopeLocation::new(
+        TrackRef::Guid(bass.guid.clone()),
+        EnvelopeRef::FxParam {
+            fx_guid: fx,
+            param_index: signal_fx::rig::SCENE,
+        },
+    );
+    let value = |t: f64| {
+        daw.value_at(
+            project.clone(),
+            at.clone(),
+            PositionInSeconds::from_seconds(t),
+        )
+    };
+    // Clean is the first scene (0), Drive the last (1): no step between.
+    assert!(
+        value(7.99).abs() < 1e-9,
+        "Clean up to the chorus: {}",
+        value(7.99)
+    );
+    assert!(
+        (value(8.0) - 1.0).abs() < 1e-9,
+        "Drive on its downbeat: {}",
+        value(8.0)
+    );
+    assert!(value(20.0).abs() < 1e-9 && (value(28.0) - 1.0).abs() < 1e-9);
+}

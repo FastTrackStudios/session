@@ -231,6 +231,9 @@ pub struct Lane {
     pub fx_name: Option<String>,
     /// The vocal leveler's lane's items (empty for every other lane).
     pub leveled: Vec<Leveled>,
+    /// A stepped parameter's choices (a mode, a scene): each its value and
+    /// its name. Empty for a continuous one.
+    pub choices: Vec<(f64, String)>,
 }
 
 impl Lane {
@@ -238,6 +241,9 @@ impl Lane {
     /// parameter as the plugin writes it.
     #[must_use]
     pub fn say(&self, value: f64) -> String {
+        if let Some(choice) = choice_at(&self.choices, value) {
+            return choice.to_owned();
+        }
         let param = match (&self.fx_name, &self.target) {
             (Some(fx), EnvelopeRef::FxParam { param_index, .. }) => {
                 Some((fx.as_str(), *param_index))
@@ -245,6 +251,17 @@ impl Lane {
             _ => None,
         };
         say(self.kind, param, value)
+    }
+
+    /// The shape a point drawn in this lane gets: a stepped parameter and
+    /// a mute switch, the rest move.
+    #[must_use]
+    pub const fn shape(&self) -> EnvelopeShape {
+        if self.choices.is_empty() {
+            self.kind.shape()
+        } else {
+            EnvelopeShape::Square
+        }
     }
 
     /// The value playing at `t` seconds.
@@ -298,6 +315,15 @@ pub fn say(kind: Kind, param: Option<(&str, u32)>, value: f64) -> String {
     #[cfg(not(feature = "native"))]
     let _ = param;
     kind.text(value)
+}
+
+/// The choice nearest `value` among a stepped parameter's `choices`.
+#[must_use]
+pub fn choice_at(choices: &[(f64, String)], value: f64) -> Option<&str> {
+    choices
+        .iter()
+        .min_by(|a, b| (a.0 - value).abs().total_cmp(&(b.0 - value).abs()))
+        .map(|(_, name)| name.as_str())
 }
 
 /// Whether two references name one envelope.
@@ -580,12 +606,12 @@ pub fn read(
                         })
                         .collect();
                     let kind = Kind::of(e.envelope_type);
-                    let (name, rest, fx_name) = match &target {
+                    let (name, rest, fx_name, choices) = match &target {
                         EnvelopeRef::FxParam {
                             fx_guid,
                             param_index,
                         } => param(daw, project, &track.guid, fx_guid, *param_index),
-                        _ => (e.name.clone(), neutral(kind), None),
+                        _ => (e.name.clone(), neutral(kind), None, Vec::new()),
                     };
                     let height = f64::from(e.lane_height);
                     let mut lane = Lane {
@@ -601,6 +627,7 @@ pub fn read(
                         rest,
                         fx_name,
                         leveled: Vec::new(),
+                        choices,
                     };
                     lane.replay();
                     Some(lane)
@@ -622,6 +649,7 @@ pub fn read(
                     rest: 0.0,
                     fx_name: None,
                     leveled,
+                    choices: Vec::new(),
                 });
             }
         }
@@ -713,7 +741,7 @@ async fn remote_lanes(handle: &daw_control::TrackHandle, track: &str) -> Vec<Lan
             items.push((item, curve));
         }
         let kind = Kind::of(e.envelope_type);
-        let (name, rest, fx_name) = match &target {
+        let (name, rest, fx_name, choices) = match &target {
             EnvelopeRef::FxParam {
                 fx_guid,
                 param_index,
@@ -726,11 +754,21 @@ async fn remote_lanes(handle: &daw_control::TrackHandle, track: &str) -> Vec<Lan
                 let fx_name = fx.map_or_else(|| "FX".to_owned(), |f| f.name.clone());
                 let short = fx_name.strip_prefix("FTS ").unwrap_or(&fx_name).to_owned();
                 match params.iter().find(|p| p.index == *param_index) {
-                    Some(p) => (format!("{short}: {}", p.name), p.value, Some(fx_name)),
-                    None => (format!("{short}: #{param_index}"), 0.5, Some(fx_name)),
+                    Some(p) => (
+                        format!("{short}: {}", p.name),
+                        p.value,
+                        Some(fx_name),
+                        p.step_labels.clone(),
+                    ),
+                    None => (
+                        format!("{short}: #{param_index}"),
+                        0.5,
+                        Some(fx_name),
+                        Vec::new(),
+                    ),
                 }
             }
-            _ => (e.name.clone(), neutral(kind), None),
+            _ => (e.name.clone(), neutral(kind), None, Vec::new()),
         };
         let height = f64::from(e.lane_height);
         let mut lane = Lane {
@@ -746,6 +784,7 @@ async fn remote_lanes(handle: &daw_control::TrackHandle, track: &str) -> Vec<Lan
             rest,
             fx_name,
             leveled: Vec::new(),
+            choices,
         };
         lane.replay();
         mine.push(lane);
@@ -835,7 +874,7 @@ fn param(
     track: &str,
     fx_guid: &str,
     index: u32,
-) -> (String, f64, Option<String>) {
+) -> (String, f64, Option<String>, Vec<(f64, String)>) {
     use daw_proto::fx::{Effects, FxChainContext, FxRef, FxTarget};
     let chain = FxChainContext::Track(track.to_owned());
     let fx = Effects::list(daw, project.clone(), chain.clone())
@@ -848,8 +887,13 @@ fn param(
     let fx_name = fx.map_or_else(|| "FX".to_owned(), |f| f.name);
     let short = fx_name.strip_prefix("FTS ").unwrap_or(&fx_name).to_owned();
     match found {
-        Some(p) => (format!("{short}: {}", p.name), p.value, Some(fx_name)),
-        None => (format!("{short}: #{index}"), 0.5, Some(fx_name)),
+        Some(p) => (
+            format!("{short}: {}", p.name),
+            p.value,
+            Some(fx_name),
+            p.step_labels,
+        ),
+        None => (format!("{short}: #{index}"), 0.5, Some(fx_name), Vec::new()),
     }
 }
 

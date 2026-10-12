@@ -335,6 +335,9 @@ signal-fx = { path = "features/signal-fx" }
 # sibling checkout as daw is: both resolve daw to ../daw, so its
 # processors are the session engine's `PluginInstance`s.
 signal-sampler = { path = "../signal/features/sampler/signal-sampler" }
+# signal's rig library — its profiles, scenes and how a profile becomes the
+# chains a scene plays (the bass rig's profile mode, signal-fx).
+signal-guitar = { path = "../signal/features/rigs/guitar" }
 
 expression-editor-audio = { path = "features/expression-editor/expression-editor-audio" }
 expression-editor-core = { path = "features/expression-editor/expression-editor-core" }

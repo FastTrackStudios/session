@@ -4543,6 +4543,7 @@ mod tests {
             rest: 1.0,
             fx_name: None,
             leveled: Vec::new(),
+            choices: Vec::new(),
         };
         lane.replay();
         crate::automation::replace([(track, vec![lane])]);

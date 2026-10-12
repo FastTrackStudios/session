@@ -1,11 +1,14 @@
-//! signal's bass rig on the session's bass tracks, a patch to each.
+//! signal's bass rig on the session's bass tracks.
 //!
-//! A bass recorded as parallel tracks — a clean DI, a harmonics track, a
-//! crunch track — wants a rig voiced for each, not one sound on all. The
-//! rig is signal's ([`signal_fx::bass`]: drive capture, amp capture, cab,
-//! trims); the patch a track gets is the one whose name its own name
-//! holds. The patches are this window's, not signal's library: that is the
-//! live rig's, and its order is what a footswitch steps through.
+//! By default each gets a **profile** from Session's own copy of signal's
+//! bass library ([`signal_fx::profile`]) — every scene of it loaded, the
+//! Scene parameter switching between them (and automatable, section by
+//! section) — starting on the scene its name holds (a "Crunch" track on
+//! Crunch), else the profile's own default. The copy is Session's, not the
+//! player's live library: that one's scenes and order are a gig's.
+//!
+//! The older fixed **patches** (drive capture, amp capture, cab, trims; a
+//! patch to a track by the name it holds) remain, asked for by name.
 
 use daw::service::{FxChainContext, ProjectContext, Tracks};
 
@@ -93,8 +96,32 @@ impl Patch {
     }
 }
 
-/// Put the rig on each bass track that a patch fits — first in its chain,
-/// before its tone — or, `dry`, say which. One line a track.
+/// How the rig is set up: a profile (its name; the library's first when
+/// empty), or the fixed patches.
+#[derive(Clone, Debug)]
+pub enum Setup {
+    Profile(String),
+    Patches,
+}
+
+/// The rig's state for a track called `name` on `profile`: its scene the one
+/// the name holds, else the profile's default. `None` when the library has
+/// no such profile.
+fn profile_state(profile: &str, name: &str) -> Option<(String, String, serde_json::Value)> {
+    let found = signal_fx::profile::profile(profile)?;
+    let lower = name.to_ascii_lowercase();
+    let scene = found
+        .patches
+        .iter()
+        .find(|p| lower.contains(&p.name.to_ascii_lowercase()))
+        .or_else(|| found.patches.get(found.default_patch))
+        .map(|p| p.name.clone())?;
+    let state = serde_json::json!({ "profile": found.name, "scene": scene });
+    Some((found.name.clone(), scene, state))
+}
+
+/// Put the rig on each bass track — first in its chain, before its tone —
+/// as `setup` says, or, `dry`, say what each would get. One line a track.
 ///
 /// # Errors
 ///
@@ -102,6 +129,7 @@ impl Patch {
 pub fn set_up(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
+    setup: &Setup,
     dry: bool,
 ) -> Result<Vec<String>, String> {
     let tracks = Tracks::all(daw, project.clone());
@@ -116,19 +144,38 @@ pub fn set_up(
         {
             continue;
         }
-        let Some(patch) = patch_for(&track.name) else {
-            said.push(format!("{}: no patch fits it", folders.join("/")));
-            continue;
+        let state = match setup {
+            Setup::Profile(profile) => {
+                let Some((profile, scene, state)) = profile_state(profile, &track.name) else {
+                    said.push(format!(
+                        "{}: the bass library has no profile {profile:?}",
+                        folders.join("/")
+                    ));
+                    continue;
+                };
+                said.push(format!(
+                    "{}: the {profile} profile, on {scene}",
+                    folders.join("/")
+                ));
+                state
+            }
+            Setup::Patches => {
+                let Some(patch) = patch_for(&track.name) else {
+                    said.push(format!("{}: no patch fits it", folders.join("/")));
+                    continue;
+                };
+                if !patch.present() {
+                    said.push(format!(
+                        "{}: the {} patch's captures are not on disk",
+                        folders.join("/"),
+                        patch.name
+                    ));
+                    continue;
+                }
+                said.push(format!("{}: the {} patch", folders.join("/"), patch.name));
+                patch.state()
+            }
         };
-        if !patch.present() {
-            said.push(format!(
-                "{}: the {} patch's captures are not on disk",
-                folders.join("/"),
-                patch.name
-            ));
-            continue;
-        }
-        said.push(format!("{}: the {} patch", folders.join("/"), patch.name));
         if dry {
             continue;
         }
@@ -149,7 +196,7 @@ pub fn set_up(
             )
             .ok_or("the bass rig would not add")?,
         };
-        daw.apply_plugin_state(&fx, patch.state().to_string().as_bytes())
+        daw.apply_plugin_state(&fx, state.to_string().as_bytes())
             .map_err(|e| format!("the bass rig would not load: {e}"))?;
     }
     if !dry {
