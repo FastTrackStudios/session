@@ -449,12 +449,20 @@ impl LaneWave {
 /// through shows as near-silent rather than as its noise floor blown up
 /// to full height.
 fn wave_gain(wave: &crate::midi::Wave) -> f64 {
-    const MOST_GAIN: f64 = 24.0; // ≈ +27.6 dB
-    let loudest = wave
-        .points
+    gain_for(loudest_of(wave))
+}
+
+/// The loudest point of `wave`, either way.
+fn loudest_of(wave: &crate::midi::Wave) -> f64 {
+    wave.points
         .iter()
         .map(|&(max, min)| f64::from(max.abs().max(min.abs())))
-        .fold(0.0_f64, f64::max);
+        .fold(0.0_f64, f64::max)
+}
+
+/// The display gain that brings `loudest` to the band's edge.
+fn gain_for(loudest: f64) -> f64 {
+    const MOST_GAIN: f64 = 24.0; // ≈ +27.6 dB
     if loudest > 0.0 {
         (1.0 / loudest).min(MOST_GAIN)
     } else {
@@ -540,8 +548,15 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
         if sa >= sb {
             continue;
         }
-        match crate::wave_detail::get(source, sa, sb, 1.0 / pps) {
-            Some(detail) => details.push((detail, sa, sb)),
+        // A track is asked for over the view, the same for every item of
+        // it on screen: one read, not one an item.
+        let (ask_a, ask_b) = if source.track.is_some() {
+            (left.max(0.0), right)
+        } else {
+            (sa, sb)
+        };
+        match crate::wave_detail::get(source, ask_a, ask_b, 1.0 / pps) {
+            Some(detail) => details.push((detail, sa, sb, source.scale)),
             None => missing = true,
         }
     }
@@ -554,7 +569,8 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
     let every_sample = !missing
         && details
             .iter()
-            .all(|(d, sa, sb)| d.samples && d.from <= *sa && d.to() >= *sb);
+            .all(|(d, sa, sb, _)| d.samples && d.from <= *sa && d.to() >= *sb);
+    let scaled = |scale: f64, v: f32| v * num_traits::ToPrimitive::to_f32(&scale).unwrap_or(1.0);
     if every_sample && coarsest * pps >= 1.0 {
         let half = (lane.bottom - lane.top) / 2.0;
         let mid = f64::midpoint(lane.top, lane.bottom);
@@ -562,10 +578,10 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
         let reach = edge * lane.gain;
         let mut lines = Vec::new();
         let mut dots = Vec::new();
-        for (detail, sa, sb) in &details {
+        for (detail, sa, sb, scale) in &details {
             let mut trace = BezPath::new();
             for (i, (t, (v, _))) in detail.between(*sa, *sb).enumerate() {
-                let y = mid - (f64::from(v) * reach).clamp(-edge, edge);
+                let y = mid - (f64::from(scaled(*scale, v)) * reach).clamp(-edge, edge);
                 let at = place(transform, t, y);
                 if i == 0 {
                     trace.move_to(at);
@@ -600,9 +616,14 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
             *col = Some((mx.max(max), mn.min(min)));
         }
     };
-    for (detail, sa, sb) in &details {
-        for (t, point) in detail.between(*sa, *sb) {
-            take(&mut cols, t, detail.step, point);
+    for (detail, sa, sb, scale) in &details {
+        for (t, (max, min)) in detail.between(*sa, *sb) {
+            take(
+                &mut cols,
+                t,
+                detail.step,
+                (scaled(*scale, max), scaled(*scale, min)),
+            );
         }
     }
     // Where no detail reaches yet, the lane's own points.
@@ -1093,6 +1114,7 @@ impl Arrangement {
         {
             std::collections::HashMap::new()
         } else {
+        let versions = track_versions(project);
             project
                 .items
                 .values()
@@ -1106,6 +1128,7 @@ impl Arrangement {
             // Command indices are `u32`: two per row plus one per item,
             // so four billion of them is a project nothing could open.
             // Saturating rather than wrapping, because a wrapped index
+        let loudest = folder_loudest(project, &by_guid, previews);
             // would cull the wrong rows rather than fail.
             let lanes_from = command_index(&lanes);
             offsets.push(y);
@@ -1243,14 +1266,30 @@ impl Arrangement {
                 //
                 // A shut folder's item holds what is under it: the
                 // children's audio as one envelope, their notes over it.
-                let folded = folded_contents(project, &by_guid, &roles, previews, &item.guid);
+                let folded =
+                    folded_contents(project, (&by_guid, &roles, &versions), previews, &item.guid);
                 let is_folder = folded.is_some();
                 let held = folded.unwrap_or_else(|| Held {
                     notes: previews.get(&item.guid),
                     wave: previews.wave(&item.guid),
                     layers: Vec::new(),
-                    sources: vec![source_of(item)],
+                    sources: vec![source],
                 });
+                // An item that plays is read as its track plays: one read
+                // of the track for all its items, kept through an edit.
+                let source =
+                    if daw_ui::studio::project::on_playing_lane(lane_track, item) && !item.muted {
+                        let version = versions.get(item.track_guid.as_str()).copied().unwrap_or(0);
+                        let scale = if item.volume > 1e-6 {
+                            item.volume.recip()
+                        } else {
+                            1.0
+                        };
+                        crate::wave_detail::Source::track(&item.track_guid, x0, x1 - x0, version)
+                            .scaled(scale)
+                    } else {
+                        source_of(item)
+                    };
                 let (notes, wave) = (held.notes, held.wave);
                 // Audio: the take's own peaks, once they have been read —
                 // plain until then, for the same reason.
@@ -1272,8 +1311,12 @@ impl Arrangement {
                         wave_gain(&whole)
                     };
                     let lane = |wave, color, sources| LaneWave {
+                    let shared_loudest = daw_ui::studio::folded::parse_guid(&item.guid)
+                        .and_then(|(folder, _)| loudest.get(folder));
                         runs: std::cell::RefCell::default(),
                         sources,
+                    } else if let Some(&loudest) = shared_loudest {
+                        gain_for(loudest)
                         gain,
                         wave,
                         x0,
@@ -2852,13 +2895,37 @@ struct Held {
 
 /// An item as a source of detail for the waveform drawn of it.
 fn source_of(item: &daw_proto::Item) -> crate::wave_detail::Source {
-    crate::wave_detail::Source {
-        guid: item.guid.clone(),
-        at: item.position.as_seconds(),
-        length: item.length.as_seconds(),
-        offset: item.start_offset.as_seconds(),
-        track: None,
-    }
+    crate::wave_detail::Source::item(
+        &item.guid,
+        item.position.as_seconds(),
+        item.length.as_seconds(),
+        item.start_offset.as_seconds(),
+    )
+}
+
+/// Each track's items as they are now, as a number that changes when any
+/// of them moves, is cut, slipped, faded or switched lane: what a track's
+/// detail is held for ([`crate::wave_detail::Source::version`]).
+fn track_versions(project: &ProjectRef) -> std::collections::HashMap<&str, u64> {
+    use std::hash::{Hash as _, Hasher as _};
+    project
+        .items
+        .iter()
+        .map(|(track, items)| {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            for item in items {
+                item.position.as_seconds().to_bits().hash(&mut hash);
+                item.length.as_seconds().to_bits().hash(&mut hash);
+                item.start_offset.as_seconds().to_bits().hash(&mut hash);
+                item.volume.to_bits().hash(&mut hash);
+                item.fade_in_length.as_seconds().to_bits().hash(&mut hash);
+                item.fade_out_length.as_seconds().to_bits().hash(&mut hash);
+                item.fixed_lane.hash(&mut hash);
+                item.muted.hash(&mut hash);
+            }
+            (track.as_str(), hash.finish())
+        })
+        .collect()
 }
 
 use expression_editor_core::kit::LaneRole;
@@ -2915,8 +2982,40 @@ fn kit_roles(project: &ProjectRef) -> std::collections::HashMap<&str, LaneRole> 
 /// the children under its span — or `None` when `guid` is not one.
 fn folded_contents(
     project: &ProjectRef,
+    (by_guid, roles, versions): Lookups<'_, '_>,
+/// Each shut folder's loudest point anywhere under it: one display gain
+/// for all of its items. Each its own, an edit that cuts the folder into
+/// a piece a seam blew every quiet stretch up to the band's edge.
+fn folder_loudest<'a>(
+    project: &'a ProjectRef,
     by_guid: &std::collections::HashMap<&str, &daw_proto::Item>,
-    roles: &std::collections::HashMap<&str, LaneRole>,
+    previews: &crate::midi::Previews,
+) -> std::collections::HashMap<&'a str, f64> {
+    project
+        .folds
+        .iter()
+        .map(|(folder, fold)| {
+            let loudest = fold
+                .spans
+                .iter()
+                .flat_map(|span| span.from.iter())
+                .filter(|child| by_guid.contains_key(child.as_str()))
+                .filter_map(|child| previews.wave(child))
+                .map(|wave| loudest_of(&wave))
+                .fold(0.0_f64, f64::max);
+            (folder.as_str(), loudest)
+        })
+        .collect()
+}
+
+/// What a shut folder's row looks its children up in: every item by guid,
+/// each track's drum, each track's items' version.
+type Lookups<'m, 'k> = (
+    &'m std::collections::HashMap<&'k str, &'k daw_proto::Item>,
+    &'m std::collections::HashMap<&'k str, LaneRole>,
+    &'m std::collections::HashMap<&'k str, u64>,
+);
+
     previews: &crate::midi::Previews,
     guid: &str,
 ) -> Option<Held> {
@@ -2973,8 +3072,8 @@ fn folded_contents(
                     held.iter()
                         .filter(|(item, ..)| role_of(item) == *role)
                         .map(|(item, ..)| item.track_guid.as_str()),
-                    span.start,
-                    span.end,
+                    (span.start, span.end),
+                    versions,
                 );
                 crate::midi::fold_waves(span.start, span.end, &these)
                     .map(|wave| (*role, std::sync::Arc::new(wave), sources))
@@ -2989,8 +3088,8 @@ fn folded_contents(
         layers,
         sources: tracks_over(
             held.iter().map(|(item, ..)| item.track_guid.as_str()),
-            span.start,
-            span.end,
+            (span.start, span.end),
+            versions,
         ),
     })
 }
@@ -2999,8 +3098,8 @@ fn folded_contents(
 /// ([`crate::wave_detail::Source::track`]).
 fn tracks_over<'a>(
     tracks: impl Iterator<Item = &'a str>,
-    start: f64,
-    end: f64,
+    (start, end): (f64, f64),
+    versions: &std::collections::HashMap<&str, u64>,
 ) -> Vec<crate::wave_detail::Source> {
     let mut seen: Vec<&str> = Vec::new();
     for track in tracks {
@@ -3009,7 +3108,10 @@ fn tracks_over<'a>(
         }
     }
     seen.into_iter()
-        .map(|track| crate::wave_detail::Source::track(track, start, end - start))
+        .map(|track| {
+            let version = versions.get(track).copied().unwrap_or(0);
+            crate::wave_detail::Source::track(track, start, end - start, version)
+        })
         .collect()
 }
 
@@ -4010,13 +4112,7 @@ mod lane_wave_tests {
     /// coarse one is).
     #[test]
     fn zoomed_in_the_waveform_is_drawn_from_detail() {
-        let source = crate::wave_detail::Source {
-            guid: "fine-test-item".to_owned(),
-            at: 0.0,
-            length: 100.0,
-            offset: 0.0,
-            track: None,
-        };
+        let source = crate::wave_detail::Source::item("fine-test-item", 0.0, 100.0, 0.0);
         let mut lane = lane(100, false);
         lane.sources = vec![source.clone()];
         let at = Affine::IDENTITY;
@@ -4050,13 +4146,7 @@ mod lane_wave_tests {
     /// only its close (which panics the moment it is filled).
     #[test]
     fn a_sliver_between_detail_points_draws_no_envelope() {
-        let source = crate::wave_detail::Source {
-            guid: "fine-sliver-item".to_owned(),
-            at: 0.0,
-            length: 100.0,
-            offset: 0.0,
-            track: None,
-        };
+        let source = crate::wave_detail::Source::item("fine-sliver-item", 0.0, 100.0, 0.0);
         let mut lane = lane(100, false);
         lane.sources = vec![source.clone()];
         let samples: Vec<f64> = (0..4_800).map(|k| f64::from(k % 7) / 7.0 - 0.5).collect();
@@ -4224,8 +4314,7 @@ mod kit_layer_tests {
 
         let kit = folded_contents(
             &project,
-            &by_guid,
-            &roles,
+            (&by_guid, &roles, &std::collections::HashMap::new()),
             &previews,
             &folded::guid_of("drums", 0),
         )
@@ -4235,8 +4324,7 @@ mod kit_layer_tests {
 
         let guitars = folded_contents(
             &project,
-            &by_guid,
-            &roles,
+            (&by_guid, &roles, &std::collections::HashMap::new()),
             &previews,
             &folded::guid_of("gtrs", 0),
         )

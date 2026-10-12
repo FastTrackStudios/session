@@ -1444,17 +1444,21 @@ impl ArrangementWidget {
             })
             .collect();
         draw_slices(&self.previews, items.clone(), slices);
-        tracing::info!(
-            slip.takes = items.len(),
-            slip.moves = moves.len(),
-            slip.edits = effects.len(),
-            slip.ms = started.elapsed().as_millis(),
-            "drums slip-edited"
-        );
+        let (kit_takes, edits, cut_ms) = (items.len(), effects.len(), started.elapsed());
         self.settle(effects);
+        let drawn_at = started.elapsed();
         // The kit's row folded again from the slices, so every cut is on
         // it (in Edit mode; elsewhere the seams are joined).
         self.replan_rows();
+        tracing::info!(
+            slip.takes = kit_takes,
+            slip.moves = moves.len(),
+            slip.edits = edits,
+            slip.ms = cut_ms.as_millis(),
+            slip.settle_ms = drawn_at.saturating_sub(cut_ms).as_millis(),
+            slip.replan_ms = started.elapsed().saturating_sub(drawn_at).as_millis(),
+            "drums slip-edited"
+        );
         // The hits have moved: what was detected is not where they are.
         crate::hit_overlay::refresh();
         self.dirty.set(true);

@@ -1326,8 +1326,16 @@ impl Applier {
                     while let Ok(more) = rx.try_recv() {
                         queue.push(more);
                     }
+                    let mut items = false;
                     while let Some(edit) = queue.pop() {
+                        items |= edit.is_item();
                         runtime.block_on(apply_reported(&edit));
+                    }
+                    // What the engine plays now is what the window drew:
+                    // the tracks' detail and the hit markers read again.
+                    if items {
+                        crate::wave_detail::engine_changed();
+                        crate::hit_overlay::refresh();
                     }
                 }
             })

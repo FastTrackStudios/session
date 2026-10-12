@@ -358,15 +358,23 @@ pub(crate) fn record_steps() {
                         // What is made from the recording follows it first —
                         // the kit's samples onto where its hits play now — so
                         // it is in the same commit as the edit that moved it.
+                        let started = std::time::Instant::now();
                         if let Some(daw) = crate::open::local_engine() {
                             crate::actions::samples_follow(
                                 daw,
                                 &daw::service::ProjectContext::Project(project.clone()),
                             );
                         }
+                        let followed = started.elapsed();
                         if let Err(why) = record(&project, &labels.join("; ")) {
                             tracing::warn!(project.guid = %project, why, "an edit step was not recorded");
                         }
+                        tracing::debug!(
+                            steps.labels = labels.len(),
+                            steps.follow_ms = followed.as_millis(),
+                            steps.record_ms = started.elapsed().saturating_sub(followed).as_millis(),
+                            "edit steps recorded"
+                        );
                     }
                     PENDING.fetch_sub(taken, std::sync::atomic::Ordering::SeqCst);
                 }

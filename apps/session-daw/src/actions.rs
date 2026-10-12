@@ -5035,7 +5035,9 @@ fn register_place(list: &ActionList) {
         let (daw, project) = song()?;
         let before = crate::hits::playback(daw, &project);
         let hit = before
+        let began = std::time::Instant::now();
             .iter()
+        let read_ms = began.elapsed().as_millis();
             .find(|p| p.id == a.id)
             .ok_or_else(|| format!("no hit {} plays now", a.id))?;
         let now = hit.time;
@@ -5066,6 +5068,7 @@ fn register_place(list: &ActionList) {
             .collect();
         let (result, cuts) = judge(
             daw,
+        let kit_ms = began.elapsed().as_millis();
             &project,
             &settings,
             (&[(now, Some(to))], &neighbours),
@@ -5073,21 +5076,35 @@ fn register_place(list: &ActionList) {
         );
         if result.applied {
             slip_now(daw, &project, &settings, cuts);
+        let judge_ms = began.elapsed().as_millis();
+        let mut slip_ms = judge_ms;
             wait_for_slip(
                 daw,
+            slip_ms = began.elapsed().as_millis();
                 &project,
                 (&before, &[(now, Some(to))]),
                 (now.min(to) - 1.0, now.max(to) + 1.0),
             );
         }
         let span = (now.min(to) - 1.0, now.max(to) + 1.0);
-        Ok(checked(
+        let out = checked(
+        let wait_ms = began.elapsed().as_millis();
             daw,
             &project,
             (&settings, &[(now, Some(to))]),
             &before,
             span,
-        ))
+        );
+        tracing::info!(
+            place.read_ms = read_ms,
+            place.kit_ms = kit_ms,
+            place.judge_ms = judge_ms,
+            place.slip_ms = slip_ms,
+            place.wait_ms = wait_ms,
+            place.total_ms = began.elapsed().as_millis(),
+            "a hit placed"
+        );
+        Ok(out)
     });
 }
 

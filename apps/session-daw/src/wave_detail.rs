@@ -18,6 +18,15 @@
 //! slip-edited kit is thousands of items, each read on its own, and what
 //! is on screen now matters more than what was a scroll ago. What was read is kept for the
 //! item as it was read — a moved or slipped item is read again.
+//!
+//! A track that plays its items in one lane — a kit's, sliced into
+//! thousands by an edit — is read as a track instead ([`Source::track`]):
+//! its playing items mixed, over the span on screen, held once for every
+//! item of it. A slice cut or moved by an edit then has its detail already;
+//! the track is read again over the screen when its items change (their
+//! `version`) or the engine has taken an edit ([`engine_changed`]), and
+//! what was held is drawn meanwhile — an edit never drops the picture back
+//! to the coarse one.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,45 +34,80 @@ use std::sync::{Arc, Mutex};
 
 /// What a lane's detail is read from, and where it was when asked.
 ///
-/// A real item — or, for a shut folder's row, a whole track under it over the
-/// folder item's span (`track`), read once through the track's accessor
-/// rather than slice by slice: a slip-edited kit is thousands of slices of
-/// a few takes.
+/// A real item — or a whole track (`track`), read through the track's
+/// accessor rather than item by item: a slip-edited kit is thousands of
+/// slices of a few takes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Source {
-    /// The item's guid — or, read as a track, a name for the track over
-    /// this span, so two spans of one track are held apart.
+    /// The item's guid — or, read as a track, the track's name for what
+    /// is held of it (one for every item of it).
     pub guid: String,
-    /// Project seconds.
+    /// Project seconds: what of it this lane draws.
     pub at: f64,
     pub length: f64,
     /// Seconds into its source (an item's).
     pub offset: f64,
     /// Read as this track's playing items, mixed, in project time.
     pub track: Option<String>,
+    /// A track's items as the window has them (a hash of where they are):
+    /// changed, what was held of it is read again.
+    pub version: u64,
+    /// What the detail is drawn times: a track's mix has each item through
+    /// its item volume, which an item's lane puts on itself.
+    pub scale: f64,
 }
 
 impl Source {
-    /// Track `track` over `at..at + length`, read as it plays.
+    /// An item, read as its take plays.
     #[must_use]
-    pub fn track(track: &str, at: f64, length: f64) -> Self {
+    pub fn item(guid: &str, at: f64, length: f64, offset: f64) -> Self {
         Self {
-            guid: format!("{track}@{at:.6}+{length:.6}"),
+            guid: guid.to_owned(),
+            at,
+            length,
+            offset,
+            track: None,
+            version: 0,
+            scale: 1.0,
+        }
+    }
+
+    /// Track `track` (its items at `version`), drawn over `at..at +
+    /// length`, read as it plays.
+    #[must_use]
+    pub fn track(track: &str, at: f64, length: f64, version: u64) -> Self {
+        Self {
+            guid: format!("track:{track}"),
             at,
             length,
             offset: 0.0,
             track: Some(track.to_owned()),
+            version,
+            scale: 1.0,
         }
+    }
+
+    /// The same, drawn `scale` times.
+    #[must_use]
+    pub const fn scaled(mut self, scale: f64) -> Self {
+        self.scale = scale;
+        self
     }
 }
 
 impl Source {
+    /// What a held read is good for: a track's items as they were, or an
+    /// item where it was.
     const fn key(&self) -> (u64, u64, u64) {
-        (
-            self.at.to_bits(),
-            self.length.to_bits(),
-            self.offset.to_bits(),
-        )
+        if self.track.is_some() {
+            (self.version, 0, 0)
+        } else {
+            (
+                self.at.to_bits(),
+                self.length.to_bits(),
+                self.offset.to_bits(),
+            )
+        }
     }
 }
 
@@ -154,11 +198,14 @@ pub fn reduce(samples: &[f64], channels: usize, rate: f64, from: f64, per: usize
 /// What was read, by item.
 struct Held {
     key: (u64, u64, u64),
+    /// The engine's edits taken when it was read ([`engine_changed`]).
+    epoch: u64,
     detail: Arc<Detail>,
 }
 
-/// What is wanted, by item: the item, the span, the seconds a point.
-type Want = (Source, f64, f64, f64);
+/// What is wanted, by item: the item, the span, the seconds a point, and
+/// for a track the engine's edits it must be read after.
+type Want = (Source, f64, f64, f64, u64);
 
 #[derive(Default)]
 struct Shared {
@@ -174,6 +221,14 @@ struct Shared {
 static SHARED: std::sync::LazyLock<Mutex<Shared>> =
     std::sync::LazyLock::new(|| Mutex::new(Shared::default()));
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+static EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The engine has taken item edits: every track held is read again where
+/// it is on screen (what was held still drawn meanwhile).
+pub fn engine_changed() {
+    EPOCH.fetch_add(1, Ordering::Relaxed);
+    GENERATION.fetch_add(1, Ordering::Relaxed);
+}
 
 /// Goes up each time detail arrives: a window compares it with the one
 /// it drew to know to draw again.
@@ -196,25 +251,37 @@ const MOST_SAMPLES: f64 = 4_000_000.0;
 /// read, or it has moved since.
 #[must_use]
 pub fn get(source: &Source, a: f64, b: f64, step: f64) -> Option<Arc<Detail>> {
+    let epoch = EPOCH.load(Ordering::Relaxed);
+    let track = source.track.is_some();
     let mut shared = SHARED.lock().ok()?;
-    let held = shared
-        .held
-        .get(&source.guid)
-        .filter(|held| held.key == source.key())
+    let entry = shared.held.get(&source.guid);
+    let fresh =
+        entry.is_some_and(|held| held.key == source.key() && (!track || held.epoch == epoch));
+    // A track's, stale, is still drawn until it is read again; an item's
+    // is for where the item was.
+    let held = entry
+        .filter(|held| track || held.key == source.key())
         .map(|held| Arc::clone(&held.detail));
-    if held.as_ref().is_some_and(|d| {
-        d.from <= a + 1e-9 && d.to() >= b - 1e-9 && (d.samples || d.step <= step * 1.5)
-    }) {
+    if fresh
+        && held.as_ref().is_some_and(|d| {
+            d.from <= a + 1e-9 && d.to() >= b - 1e-9 && (d.samples || d.step <= step * 1.5)
+        })
+    {
         return held;
     }
     let held = held.filter(|d| d.from < b && d.to() > a);
     let spare = (b - a) * 0.5;
-    let want: Want = (
-        source.clone(),
-        (a - spare).max(source.at),
-        (b + spare).min(source.at + source.length),
-        step,
-    );
+    let want: Want = if track {
+        (source.clone(), (a - spare).max(0.0), b + spare, step, epoch)
+    } else {
+        (
+            source.clone(),
+            (a - spare).max(source.at),
+            (b + spare).min(source.at + source.length),
+            step,
+            0,
+        )
+    };
     if shared.reading.get(&source.guid) != Some(&want)
         && shared.wanted.get(&source.guid).map(|(w, _)| w) != Some(&want)
     {
@@ -236,6 +303,7 @@ pub fn hold(source: &Source, detail: Detail) {
             source.guid.clone(),
             Held {
                 key: source.key(),
+                epoch: EPOCH.load(Ordering::Relaxed),
                 detail: Arc::new(detail),
             },
         );
@@ -271,6 +339,7 @@ fn read_newest() {
                     guid,
                     Held {
                         key: want.0.key(),
+                        epoch: want.4,
                         detail: Arc::new(detail),
                     },
                 );
@@ -294,7 +363,7 @@ fn newest(wanted: &HashMap<String, (Want, u64)>) -> Option<String> {
 
 /// Read one stretch from the engine.
 #[cfg(feature = "native")]
-fn read((source, a, b, step): &Want) -> Option<Detail> {
+fn read((source, a, b, step, _): &Want) -> Option<Detail> {
     use daw::service::{ItemRef, ProjectContext, TakeRef};
     use daw_proto::{AudioAccessors as _, GetSamplesRequest};
     let daw = crate::open::local_engine()?;
@@ -356,20 +425,7 @@ mod tests {
     /// before what was a scroll ago.
     #[test]
     fn the_newest_ask_is_read_first() {
-        let want = |guid: &str| {
-            (
-                Source {
-                    guid: guid.to_owned(),
-                    at: 0.0,
-                    length: 1.0,
-                    offset: 0.0,
-                    track: None,
-                },
-                0.0,
-                1.0,
-                0.01,
-            )
-        };
+        let want = |guid: &str| (Source::item(guid, 0.0, 1.0, 0.0), 0.0, 1.0, 0.01, 0);
         let mut wanted = HashMap::new();
         for (order, guid) in ["a", "b", "c"].iter().enumerate() {
             wanted.insert(
@@ -381,6 +437,35 @@ mod tests {
         assert_eq!(newest(&wanted).as_deref(), Some("a"), "asked again, newest");
         wanted.remove("a");
         assert_eq!(newest(&wanted).as_deref(), Some("c"));
+    }
+
+    /// A track's detail is drawn through an edit until it is read again:
+    /// its items changed (a new version) or the engine took an edit, what
+    /// was held is still given. An item's is for where the item was.
+    #[test]
+    fn a_tracks_detail_is_drawn_through_an_edit() {
+        let detail = || reduce(&[0.5; 100], 1, 100.0, 10.0, 1);
+        let before = Source::track("held-through-an-edit", 10.0, 1.0, 1);
+        hold(&before, detail());
+        assert!(get(&before, 10.2, 10.4, 0.01).is_some(), "held");
+        let after = Source::track("held-through-an-edit", 10.3, 0.2, 2);
+        assert!(
+            get(&after, 10.2, 10.4, 0.01).is_some(),
+            "its items changed: still drawn while it is read again"
+        );
+        engine_changed();
+        assert!(
+            get(&before, 10.2, 10.4, 0.01).is_some(),
+            "the engine took an edit: still drawn"
+        );
+
+        let item = Source::item("moved-item", 10.0, 1.0, 0.0);
+        hold(&item, detail());
+        let moved = Source::item("moved-item", 12.0, 1.0, 0.0);
+        assert!(
+            get(&moved, 12.2, 12.4, 0.01).is_none(),
+            "an item moved is not drawn from where it was"
+        );
     }
 
     /// Runs of samples become their loudest each way, both channels'.

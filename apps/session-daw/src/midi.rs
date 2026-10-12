@@ -273,33 +273,34 @@ pub fn fold_waves(start: f64, end: f64, children: &[Child<'_>]) -> Option<Wave> 
     }
     let count = crate::num::index((span / finest).ceil()).clamp(1, FOLDED_POINTS);
     let step = span / crate::num::coord(count);
-    let points = (0..count)
-        .map(|k| {
-            let from = crate::num::coord(k).mul_add(step, start);
-            let to = from + step;
-            waves
-                .iter()
-                .fold((0.0_f32, 0.0_f32), |(max, min), (at, wave)| {
-                    if to <= *at {
-                        return (max, min);
-                    }
-                    // The child's points across `from..to` (`index` floors a
-                    // point before the child's start to its first).
-                    let first = crate::num::index((from - at) / wave.step);
-                    let last =
-                        crate::num::index(((to - at) / wave.step).ceil()).min(wave.points.len());
-                    wave.points
-                        .get(first..last.max(first))
-                        .unwrap_or_default()
-                        .iter()
-                        .fold((max, min), |(max, min), (hi, lo)| {
-                            (max.max(*hi), min.min(*lo))
-                        })
-                })
-        })
-        .collect();
+    // Each child's points once, into every folded point they overlap: a
+    // slip-edited kit is tens of thousands of slices under one folder
+    // item, and asking each folded point of every child was billions of
+    // steps — ten seconds of a frozen window.
+    let mut points = vec![(0.0_f32, 0.0_f32); count];
+    let last = count.saturating_sub(1);
+    for (at, wave) in &waves {
+        for (j, (hi, lo)) in wave.points.iter().enumerate() {
+            let begins = crate::num::coord(j).mul_add(wave.step, *at);
+            let ends = begins + wave.step;
+            if ends <= start || begins >= end {
+                continue;
+            }
+            // A point that only meets a folded point's edge is not in it.
+            let first = crate::num::index(((begins - start) / step + EDGE).floor()).min(last);
+            let past = crate::num::index(((ends - start) / step - EDGE).ceil())
+                .clamp(first.saturating_add(1), count);
+            for point in points.iter_mut().take(past).skip(first) {
+                *point = (point.0.max(*hi), point.1.min(*lo));
+            }
+        }
+    }
     Some(Wave { step, points })
 }
+
+/// How near a folded point's edge, in folded points, a child's point that
+/// meets it is taken to only meet it.
+const EDGE: f64 = 1e-9;
 
 /// A shut folder's item, `start..end` seconds, as the notes under it: each
 /// child's notes placed where they sound and cut to the span, as fractions
@@ -727,6 +728,62 @@ mod fold_tests {
 
     /// A shut folder's item is the loudest of the children sounding at
     /// each moment, placed where each child sits — silent where none is.
+    #[test]
+    fn folding_is_each_childs_loudest_where_its_points_overlap() {
+        // The definition, point by point: every child point that overlaps
+        // a folded point's span counts.
+        let naive = |start: f64, end: f64, kids: &[(f64, Wave)], count: usize| {
+            let step = (end - start) / crate::num::coord(count);
+            (0..count)
+                .map(|k| {
+                    let from = crate::num::coord(k).mul_add(step, start);
+                    let to = from + step;
+                    kids.iter().fold((0.0_f32, 0.0_f32), |acc, (at, w)| {
+                        w.points
+                            .iter()
+                            .enumerate()
+                            .fold(acc, |(mx, mn), (j, (hi, lo))| {
+                                let b = crate::num::coord(j).mul_add(w.step, *at);
+                                if b < to && b + w.step > from {
+                                    (mx.max(*hi), mn.min(*lo))
+                                } else {
+                                    (mx, mn)
+                                }
+                            })
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let wave = |step: f64, n: usize, seed: f32| Wave {
+            step,
+            points: (0..n)
+                .map(|i| {
+                    let at = num_traits::ToPrimitive::to_f32(&crate::num::coord(i)).unwrap_or(0.0);
+                    let v = ((at + seed) * 0.37).sin().abs();
+                    (v, -v * 0.8)
+                })
+                .collect(),
+        };
+        let kids = vec![
+            (1.003, wave(0.01, 40, 0.0)),
+            (1.21, wave(0.01, 7, 3.0)),
+            (1.35, wave(0.004, 90, 5.0)),
+            (0.9, wave(0.01, 20, 9.0)),
+        ];
+        let children: Vec<Child<'_>> = kids
+            .iter()
+            .map(|(at, w)| Child {
+                at: *at,
+                length: crate::num::coord(w.points.len()) * w.step,
+                wave: Some(w),
+                notes: None,
+            })
+            .collect();
+        let folded = fold_waves(1.0, 1.8, &children).expect("a fold");
+        let want = naive(1.0, 1.8, &kids, folded.points.len());
+        assert_eq!(folded.points, want);
+    }
+
     #[test]
     fn a_folded_wave_is_the_loudest_child_where_it_sounds() {
         let quiet = flat(0.2, 10); // 0..1 s
