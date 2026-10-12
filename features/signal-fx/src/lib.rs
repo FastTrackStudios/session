@@ -15,6 +15,10 @@
 //!   reach each, so their round robins stay together, as in signal's own
 //!   per-track kit.
 //!
+//! - **`FTS Signal Rig`** ([`signal_rig::SignalRig`]): signal's guitar or
+//!   bass rig, whole — its profiles, stacks and patches — its service kept
+//!   for the window and the actions to drive.
+//!
 //! Each keeps what it plays in its state (JSON): which model, which kit
 //! preset, which pieces and mics. That is what a session saves, and what
 //! prepare writes when it builds the rig.
@@ -23,6 +27,7 @@ pub mod bass;
 pub mod kit;
 pub mod profile;
 pub mod rig;
+pub mod signal_rig;
 
 use daw_standalone::plugin::{FxFactory, PluginInstance};
 
@@ -30,6 +35,8 @@ use daw_standalone::plugin::{FxFactory, PluginInstance};
 pub const BASS_RIG: &str = "FTS Bass Rig";
 /// The kit voice's name.
 pub const KIT_MIC: &str = "FTS Kit Mic";
+/// signal's guitar or bass rig, whole ([`signal_rig::SignalRig`]).
+pub const SIGNAL_RIG: &str = "FTS Signal Rig";
 
 /// signal's FX, by name.
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,7 +45,7 @@ pub struct SignalFx;
 impl SignalFx {
     fn bare(name: &str) -> Option<&'static str> {
         let name = name.trim();
-        [BASS_RIG, KIT_MIC]
+        [BASS_RIG, KIT_MIC, SIGNAL_RIG]
             .into_iter()
             .find(|known| name.eq_ignore_ascii_case(known))
     }
@@ -46,7 +53,7 @@ impl SignalFx {
 
 impl FxFactory for SignalFx {
     fn installed(&self) -> Vec<daw_proto::fx::InstalledFx> {
-        [BASS_RIG, KIT_MIC]
+        [BASS_RIG, KIT_MIC, SIGNAL_RIG]
             .into_iter()
             .map(|name| daw_proto::fx::InstalledFx {
                 name: name.to_owned(),
@@ -59,6 +66,7 @@ impl FxFactory for SignalFx {
         match Self::bare(name_or_ident)? {
             BASS_RIG => Some(Box::new(rig::Rig::new(sample_rate))),
             KIT_MIC => Some(Box::new(kit::KitMic::new(sample_rate))),
+            SIGNAL_RIG => Some(Box::new(signal_rig::SignalRig::new(sample_rate))),
             _ => None,
         }
     }
