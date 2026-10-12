@@ -36,6 +36,8 @@ const HIDE_W: f64 = 16.0;
 const ITEM_BAR: f64 = 11.0;
 /// How far from a lane's bottom edge a press resizes it.
 const EDGE: f64 = 3.0;
+/// How far from an automation item's side a press resizes it.
+const EDGE_REACH: f64 = 4.0;
 
 /// A lane where it is on screen.
 #[derive(Clone, Debug)]
@@ -109,7 +111,9 @@ pub enum Spot {
     /// The lane's bottom edge, which resizes it.
     Edge,
     /// An automation item's name bar, which moves it.
-    ItemBar { item: usize },
+    ItemBar { item: usize, t: f64 },
+    /// An automation item's left or right (`right`) edge, which resizes it.
+    ItemEdge { item: usize, right: bool },
     /// The body: at `t` seconds and `value`, over the envelope's point
     /// `point` or, inside automation item `item`, over its curve's point
     /// `item_point`.
@@ -184,13 +188,37 @@ pub fn hit(
             },
         });
     }
+    // An item's edges, before its bar and its curve: a hair's width
+    // either side.
+    let edge = lane
+        .items
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, (ai, _))| {
+            let start = ai.position.as_seconds();
+            let end = start + ai.length.as_seconds();
+            if (x_of(end) - x).abs() <= EDGE_REACH {
+                Some((i, true))
+            } else if (x_of(start) - x).abs() <= EDGE_REACH {
+                Some((i, false))
+            } else {
+                None
+            }
+        });
+    if let Some((item, right)) = edge {
+        return Some(Hit {
+            placed,
+            spot: Spot::ItemEdge { item, right },
+        });
+    }
     let item = lane.item_at(t);
     if let Some(i) = item
         && y < placed.top + ITEM_BAR
     {
         return Some(Hit {
             placed,
-            spot: Spot::ItemBar { item: i },
+            spot: Spot::ItemBar { item: i, t },
         });
     }
     let near = |at: f64, value: f64| {
@@ -411,7 +439,9 @@ fn windows(
             None,
             &Rect::new(a, p.top + 1.0, b, p.top + ITEM_BAR),
         );
-        let label = if item.name.is_empty() {
+        let label = if item.pool_id < -1 {
+            "New".to_owned()
+        } else if item.name.is_empty() {
             format!("Pool {}", item.pool_id)
         } else {
             item.name.clone()

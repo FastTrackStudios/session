@@ -386,6 +386,15 @@ static MODE: architect::action::ActionMeta = crate::actions::meta(
     "",
 );
 
+static ITEM: architect::action::ActionMeta = crate::actions::meta(
+    "AUTOMATION_ITEM",
+    "automation_item",
+    "Make an automation item",
+    "Make an automation item on `envelope` of `track` from `from` to `to` (bars `33`, `33:2.5`, times `12.5s` or sections `CH 1`, `CH 1 end`): a fresh one, its curve what the envelope plays there now — or, with `pool_of` (`track`, `envelope`, `at`: a time inside one of its items), another instance of that item's pool, on this track or any other, so editing one edits all (`to` left out: the source item's length). `delete`: true deletes the item at `from` instead. Shows the lane. One undo step.",
+    "Automation",
+    "",
+);
+
 static SECTIONS: architect::action::ActionMeta = crate::actions::meta(
     "AUTOMATION_SECTIONS",
     "automation_sections",
@@ -440,6 +449,23 @@ struct ClearArg {
     envelope: String,
     from: Option<f64>,
     to: Option<f64>,
+}
+
+#[derive(Facet)]
+struct PoolOf {
+    track: String,
+    envelope: String,
+    at: String,
+}
+
+#[derive(Facet)]
+struct ItemArg {
+    track: String,
+    envelope: String,
+    from: String,
+    to: Option<String>,
+    pool_of: Option<PoolOf>,
+    delete: Option<bool>,
 }
 
 #[derive(Facet)]
@@ -859,6 +885,134 @@ fn current(
     }
 }
 
+/// The automation item of the envelope at `at` playing at `t`, if one: its
+/// index, pool and length.
+fn item_at(
+    daw: &Daw,
+    project: &ProjectContext,
+    at: &EnvelopeLocation,
+    t: f64,
+) -> Option<(u32, i32, f64)> {
+    Automation::automation_items(daw, project.clone(), at.clone())
+        .into_iter()
+        .rev()
+        .find(|i| {
+            let start = i.position.as_seconds();
+            t >= start && t <= start + i.length.as_seconds()
+        })
+        .map(|i| (i.index, i.pool_id, i.length.as_seconds()))
+}
+
+/// What the envelope at `at` plays from `from` to `to`, as an automation
+/// item's own curve (seconds into the item).
+fn curve_between(
+    daw: &Daw,
+    project: &ProjectContext,
+    at: &EnvelopeLocation,
+    (from, to): (f64, f64),
+    rest: f64,
+) -> Vec<EnvelopePoint> {
+    let points = Automation::points(daw, project.clone(), at.clone());
+    let items: Vec<_> = Automation::automation_items(daw, project.clone(), at.clone())
+        .into_iter()
+        .map(|i| {
+            let curve =
+                Automation::automation_item_points(daw, project.clone(), at.clone(), i.index);
+            (i, curve)
+        })
+        .collect();
+    let played = daw_proto::automation::played(&points, &items);
+    let value = |t: f64| daw_proto::automation::value_at(&played, t).unwrap_or(rest);
+    let mut curve = vec![point(0.0, value(from), EnvelopeShape::Linear)];
+    curve.extend(
+        played
+            .iter()
+            .filter(|p| p.time.as_seconds() > from && p.time.as_seconds() < to)
+            .map(|p| EnvelopePoint {
+                time: PositionInSeconds::from_seconds(p.time.as_seconds() - from),
+                ..p.clone()
+            }),
+    );
+    curve.push(point(to - from, value(to), EnvelopeShape::Linear));
+    curve
+}
+
+/// `AUTOMATION_ITEM`: an automation item made (fresh, or another instance
+/// of a pool) or deleted.
+fn item(a: &ItemArg) -> Result<String, String> {
+    let (daw, project) = crate::actions::song()?;
+    let track = track_of(daw, &project, &a.track)?;
+    let found = find(daw, &project, &track.guid, &a.envelope)?;
+    let at = location(&track.guid, &found);
+    let from = crate::fx_actions::moment(daw, &project, &a.from)?;
+    if a.delete.unwrap_or(false) {
+        let (index, ..) = item_at(daw, &project, &at, from)
+            .ok_or_else(|| format!("no automation item at {}", a.from))?;
+        undoable(daw, &project, "Delete an automation item", || {
+            let _ = Automation::delete_automation_item(daw, project.clone(), at.clone(), index);
+        });
+        return Ok(format!("the item at {} on {} deleted", a.from, found.name));
+    }
+    let pooled = match &a.pool_of {
+        Some(of) => {
+            let source = track_of(daw, &project, &of.track)?;
+            let source_env = find(daw, &project, &source.guid, &of.envelope)?;
+            let t = crate::fx_actions::moment(daw, &project, &of.at)?;
+            let (_, pool, length) = item_at(daw, &project, &location(&source.guid, &source_env), t)
+                .ok_or_else(|| format!("no automation item at {} on {}", of.at, source_env.name))?;
+            Some((pool, length))
+        }
+        None => None,
+    };
+    let to = match (&a.to, pooled) {
+        (Some(to), _) => crate::fx_actions::moment(daw, &project, to)?,
+        (None, Some((_, length))) => from + length,
+        (None, None) => return Err("a fresh item needs `to`".to_owned()),
+    };
+    if to <= from {
+        return Err(format!("{to} is not after {from}"));
+    }
+    let rest = current(daw, &project, &track.guid, &found, &at);
+    let curve = curve_between(daw, &project, &at, (from, to), rest);
+    let made = undoable(daw, &project, "Make an automation item", || {
+        show(daw, &project, &track.guid, &found, 64);
+        let span = (
+            PositionInSeconds::from_seconds(from),
+            Duration::from_seconds(to - from),
+        );
+        let made = Automation::add_automation_item(
+            daw,
+            project.clone(),
+            at.clone(),
+            match pooled {
+                Some((pool, _)) => AddAutomationItemParams::pooled(pool, span.0, span.1),
+                None => AddAutomationItemParams::new(span.0, span.1),
+            },
+        );
+        if let (Ok(index), None) = (&made, pooled) {
+            let _ = Automation::set_automation_item_points(
+                daw,
+                project.clone(),
+                at.clone(),
+                SetAutomationItemPointsParams {
+                    index: *index,
+                    points: curve.clone(),
+                },
+            );
+        }
+        made
+    });
+    let index = made.map_err(|e| e.to_string())?;
+    Ok(match pooled {
+        Some((pool, _)) => format!("item #{index} on {}: another of pool {pool}", found.name),
+        None => format!(
+            "item #{index} on {}: a fresh pool, {} points",
+            found.name,
+            curve.len()
+        ),
+    })
+}
+
 /// `AUTOMATION_WRITE`: points into an envelope, what was between the
 /// first and the last replaced.
 fn write(a: &WriteArg) -> Result<String, String> {
@@ -987,6 +1141,7 @@ pub(crate) fn register(list: &architect::action::ActionList) {
         });
         Ok::<_, String>(format!("{} on {}: {mode:?}", found.name, track.name))
     });
+    list.register(&ITEM, Effect::Mutating, |a: ItemArg| item(&a));
     list.register(&SECTIONS, Effect::ReadOnly, |(): ()| {
         let (daw, project) = crate::actions::song()?;
         Ok::<_, String>(analyse(daw, &project))

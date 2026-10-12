@@ -5,7 +5,12 @@
 //!   press **on a point** drags it; **Alt** and a press on a point deletes
 //!   it. Inside an automation item the same goes for the item's own curve
 //!   (its pool's: every instance of it changes).
-//! - **An item's name bar** moves the item.
+//! - **An item's name bar** moves the item; with **Ctrl** it makes a
+//!   pooled copy, dropped where the pointer lets go (in another track's
+//!   lane too); with **Alt** it deletes the item.
+//! - **An item's edges** resize it (the left one keeps what plays in place).
+//! - **Shift and a drag on the ground** makes an automation item over the
+//!   span, its curve what the envelope played there.
 //! - **A lane's bottom edge** makes it taller or shorter.
 //! - **In its header**, the cross hides the lane and the mode cycles
 //!   Trim/Read, Read and Off.
@@ -23,6 +28,18 @@ use crate::engine::Edit;
 /// The undo step a lane gesture makes.
 const LABEL: &str = "Edit automation";
 
+/// The pool a stand-in for an item not made yet has in the window's
+/// lanes (drawn "New" until the engine's own is read back).
+const STANDING_IN: i32 = -2;
+
+/// The keys held at a press.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Keys {
+    pub alt: bool,
+    pub shift: bool,
+    pub ctrl: bool,
+}
+
 /// What a drag in a lane is moving.
 #[derive(Clone, Debug)]
 pub enum Grab {
@@ -31,8 +48,23 @@ pub enum Grab {
     /// A point of automation item `item`'s curve.
     ItemPoint { item: usize, index: usize },
     /// Automation item `item`, by its bar: the time pressed and where
-    /// the item was.
-    Item { item: usize, from: f64, was: f64 },
+    /// the item was; `copy`: a pooled copy of it being placed.
+    Item {
+        item: usize,
+        from: f64,
+        was: f64,
+        copy: bool,
+    },
+    /// An automation item being made over the span from `from` to the
+    /// pointer.
+    Make { from: f64, to: f64 },
+    /// Automation item `item`'s left or right (`right`) edge: where it
+    /// was (position, length, offset).
+    Bound {
+        item: usize,
+        right: bool,
+        was: (f64, f64, f64),
+    },
     /// The lane's bottom edge: the y pressed and the height it was.
     Edge { from: f64, was: f64 },
     /// A point of the vocal leveler's ride, on leveled item `item`.
@@ -86,7 +118,8 @@ fn seconds(view: Viewport, x: f64) -> f64 {
 /// A press on `hit` at `(x, y)`: the drag it starts, if any, and the edits
 /// it makes at once.
 #[must_use]
-pub fn press(hit: &Hit, y: f64, alt: bool) -> (Option<LaneDrag>, Vec<Edit>) {
+pub fn press(hit: &Hit, y: f64, keys: Keys) -> (Option<LaneDrag>, Vec<Edit>) {
+    let alt = keys.alt;
     let lane = &hit.placed.lane;
     let track = lane.track.clone();
     let target = lane.target.clone();
@@ -127,15 +160,29 @@ pub fn press(hit: &Hit, y: f64, alt: bool) -> (Option<LaneDrag>, Vec<Edit>) {
             };
             (Some(drag), Vec::new())
         }
-        Spot::ItemBar { item } => {
+        Spot::ItemBar { item, t } => bar_press(lane, drag, (*item, *t), keys),
+        Spot::ItemEdge { item, right } => {
             let Some((ai, _)) = lane.items.get(*item) else {
                 return (None, Vec::new());
             };
-            drag.grab = Grab::Item {
+            drag.grab = Grab::Bound {
                 item: *item,
-                from: f64::NAN,
-                was: ai.position.as_seconds(),
+                right: *right,
+                was: (
+                    ai.position.as_seconds(),
+                    ai.length.as_seconds(),
+                    ai.start_offset.as_seconds(),
+                ),
             };
+            (Some(drag), vec![begin])
+        }
+        Spot::Body {
+            t,
+            point: None,
+            item_point: None,
+            ..
+        } if keys.shift && lane.kind != Kind::Leveler => {
+            drag.grab = Grab::Make { from: *t, to: *t };
             (Some(drag), vec![begin])
         }
         Spot::Body {
@@ -146,6 +193,46 @@ pub fn press(hit: &Hit, y: f64, alt: bool) -> (Option<LaneDrag>, Vec<Edit>) {
             item_point,
         } => body(lane, drag, (*t, *value), (*point, *item, *item_point), alt),
     }
+}
+
+/// A press on automation item `item`'s name bar at `t` seconds: Alt
+/// deletes it, Ctrl starts a pooled copy, a plain press a move.
+fn bar_press(
+    lane: &automation::Lane,
+    mut drag: LaneDrag,
+    (item, from): (usize, f64),
+    keys: Keys,
+) -> (Option<LaneDrag>, Vec<Edit>) {
+    let (track, target) = (lane.track.clone(), lane.target.clone());
+    let begin = Edit::BeginUndo(LABEL.to_owned());
+    let alt = keys.alt;
+    let Some((ai, _)) = lane.items.get(item) else {
+        return (None, Vec::new());
+    };
+    if alt {
+        let index = ai.index;
+        let which = item;
+        automation::update(&track, &target, |l| {
+            if which < l.items.len() {
+                l.items.remove(which);
+            }
+        });
+        return (
+            None,
+            vec![
+                begin,
+                Edit::DeleteAutomationItem(track, target, index),
+                Edit::EndUndo(LABEL.to_owned()),
+            ],
+        );
+    }
+    drag.grab = Grab::Item {
+        item,
+        from,
+        was: ai.position.as_seconds(),
+        copy: keys.ctrl,
+    };
+    (Some(drag), vec![begin])
 }
 
 /// A press on a lane's ground at `t` seconds and `value`, over envelope
@@ -284,7 +371,12 @@ fn with_ride_point(
 }
 
 /// Leveled item `item`'s ride in the window's lanes, and its sum again.
-fn set_ride(track: &str, target: &EnvelopeRef, item: usize, ride: Vec<level_dsp::envelope::EnvPoint>) {
+fn set_ride(
+    track: &str,
+    target: &EnvelopeRef,
+    item: usize,
+    ride: Vec<level_dsp::envelope::EnvPoint>,
+) {
     automation::update(track, target, |l| {
         if let Some(leveled) = l.leveled.get_mut(item) {
             leveled.lanes.ride = ride;
@@ -349,14 +441,30 @@ pub fn drag(drag: &mut LaneDrag, view: Viewport, x: f64, y: f64) -> Vec<Edit> {
             set_item_curve(&track, &target, *item, &curve);
             vec![Edit::SetItemCurve(track, target, id, curve)]
         }
-        Grab::Item { item, from, was } => {
-            if from.is_nan() {
-                *from = t;
-            }
+        Grab::Item {
+            item,
+            from,
+            was,
+            copy,
+        } => {
             let to = (*was + t - *from).max(0.0);
-            let Some((ai, _)) = lane.items.get(*item) else {
+            let Some((ai, curve)) = lane.items.get(*item) else {
                 return Vec::new();
             };
+            if *copy {
+                // The copy's stand-in, where it would land in this lane.
+                let stand_in = daw_proto::automation::AutomationItem {
+                    index: u32::MAX,
+                    position: daw_proto::primitives::PositionInSeconds::from_seconds(to),
+                    ..ai.clone()
+                };
+                let curve = curve.clone();
+                automation::update(&track, &target, |l| {
+                    l.items.retain(|(ai, _)| ai.index != u32::MAX);
+                    l.items.push((stand_in, curve));
+                });
+                return Vec::new();
+            }
             let id = ai.index;
             let which = *item;
             automation::update(&track, &target, |l| {
@@ -365,6 +473,57 @@ pub fn drag(drag: &mut LaneDrag, view: Viewport, x: f64, y: f64) -> Vec<Edit> {
                 }
             });
             vec![Edit::MoveAutomationItem(track, target, id, to)]
+        }
+        Grab::Make { from, to } => {
+            *to = t;
+            let (start, end) = (from.min(t), from.max(t));
+            let stand_in = daw_proto::automation::AutomationItem {
+                index: u32::MAX,
+                pool_id: STANDING_IN,
+                position: daw_proto::primitives::PositionInSeconds::from_seconds(start),
+                length: daw_proto::primitives::Duration::from_seconds(end - start),
+                ..daw_proto::automation::AutomationItem::default()
+            };
+            let curve = curve_over(lane, start, end);
+            automation::update(&track, &target, |l| {
+                l.items.retain(|(ai, _)| ai.index != u32::MAX);
+                l.items.push((stand_in, curve));
+            });
+            Vec::new()
+        }
+        Grab::Bound { item, right, was } => {
+            let Some((ai, _)) = lane.items.get(*item) else {
+                return Vec::new();
+            };
+            let (pos, len, off) = *was;
+            let rate = if ai.play_rate > 0.0 {
+                ai.play_rate
+            } else {
+                1.0
+            };
+            let shortest = 0.05;
+            let (pos, len, off) = if *right {
+                (pos, (t - pos).max(shortest), off)
+            } else {
+                // The left edge: what plays stays where it is.
+                let to = t.clamp(0.0, pos + len - shortest);
+                let moved = to - pos;
+                (to, len - moved, moved.mul_add(rate, off).max(0.0))
+            };
+            let (id, which) = (ai.index, *item);
+            automation::update(&track, &target, |l| {
+                if let Some((ai, _)) = l.items.get_mut(which) {
+                    ai.position = daw_proto::primitives::PositionInSeconds::from_seconds(pos);
+                    ai.length = daw_proto::primitives::Duration::from_seconds(len);
+                    ai.start_offset = daw_proto::primitives::Duration::from_seconds(off);
+                }
+            });
+            vec![Edit::SetAutomationItemBounds(
+                track,
+                target,
+                id,
+                (pos, len, off),
+            )]
         }
         Grab::Ride { item, index } => {
             let Some(leveled) = lane.leveled.get(*item) else {
@@ -385,10 +544,81 @@ pub fn drag(drag: &mut LaneDrag, view: Viewport, x: f64, y: f64) -> Vec<Edit> {
     }
 }
 
-/// The drag let go: the undo step it opened closed.
+/// The drag let go over `over` (the lane under the pointer, if any): an
+/// item made or copied there, and the undo step it opened closed.
 #[must_use]
-pub fn release(drag: &LaneDrag) -> Vec<Edit> {
+pub fn release(drag: &LaneDrag, over: Option<&Hit>) -> Vec<Edit> {
+    let end = Edit::EndUndo(LABEL.to_owned());
+    let lane = || {
+        automation::lanes_of(&drag.track)
+            .into_iter()
+            .find(|l| automation::same_target(&l.target, &drag.target))
+    };
     match drag.grab {
+        Grab::Make { from, to } => {
+            let (start, stop) = (from.min(to), from.max(to));
+            if stop - start < 0.05 {
+                clear_stand_in(&drag.track, &drag.target);
+                return vec![end];
+            }
+            let curve = lane().map_or_else(Vec::new, |l| curve_over(&l, start, stop));
+            vec![
+                Edit::AddAutomationItem(
+                    drag.track.clone(),
+                    drag.target.clone(),
+                    (start, stop - start, -1),
+                    curve,
+                ),
+                end,
+            ]
+        }
+        Grab::Item {
+            item, copy: true, ..
+        } => {
+            let Some(source) = lane() else {
+                return vec![end];
+            };
+            let placed = source
+                .items
+                .iter()
+                .find(|(ai, _)| ai.index == u32::MAX)
+                .cloned();
+            let pool = source.items.get(item).map(|(ai, _)| ai.pool_id);
+            clear_stand_in(&drag.track, &drag.target);
+            let (Some((stand_in, _)), Some(pool)) = (placed, pool) else {
+                return vec![end];
+            };
+            // Dropped on another lane (another track's, too): the copy is
+            // there, at the time it was let go.
+            let (track, target, at) = match over {
+                Some(hit) if hit.placed.lane.kind != Kind::Leveler => match hit.spot {
+                    Spot::Body { .. } | Spot::ItemBar { .. } | Spot::ItemEdge { .. } => (
+                        hit.placed.lane.track.clone(),
+                        hit.placed.lane.target.clone(),
+                        stand_in.position.as_seconds(),
+                    ),
+                    _ => (
+                        drag.track.clone(),
+                        drag.target.clone(),
+                        stand_in.position.as_seconds(),
+                    ),
+                },
+                _ => (
+                    drag.track.clone(),
+                    drag.target.clone(),
+                    stand_in.position.as_seconds(),
+                ),
+            };
+            vec![
+                Edit::AddAutomationItem(
+                    track,
+                    target,
+                    (at, stand_in.length.as_seconds(), pool),
+                    Vec::new(),
+                ),
+                end,
+            ]
+        }
         Grab::Edge { .. } => Vec::new(),
         Grab::Ride { item, .. } => {
             relevel(&drag.track, &drag.target, item);
@@ -396,6 +626,41 @@ pub fn release(drag: &LaneDrag) -> Vec<Edit> {
         }
         _ => vec![Edit::EndUndo(LABEL.to_owned())],
     }
+}
+
+/// The envelope's curve over `start..end` as an automation item's own —
+/// what plays there, in seconds into the item.
+fn curve_over(
+    lane: &automation::Lane,
+    start: f64,
+    end: f64,
+) -> Vec<daw_proto::automation::EnvelopePoint> {
+    let at = |t: f64, value: f64| daw_proto::automation::EnvelopePoint {
+        time: daw_proto::primitives::PositionInSeconds::from_seconds(t - start),
+        value,
+        ..daw_proto::automation::EnvelopePoint::default()
+    };
+    let mut out = vec![at(start, lane.value_at(start))];
+    out.extend(
+        lane.played
+            .iter()
+            .filter(|p| p.time.as_seconds() > start && p.time.as_seconds() < end)
+            .map(|p| daw_proto::automation::EnvelopePoint {
+                time: daw_proto::primitives::PositionInSeconds::from_seconds(
+                    p.time.as_seconds() - start,
+                ),
+                ..p.clone()
+            }),
+    );
+    out.push(at(end, lane.value_at(end)));
+    out
+}
+
+/// A stand-in item gone from the window's lanes.
+fn clear_stand_in(track: &str, target: &EnvelopeRef) {
+    automation::update(track, target, |l| {
+        l.items.retain(|(ai, _)| ai.index != u32::MAX);
+    });
 }
 
 /// Automation item `item`'s curve changed in the window's lanes — and every

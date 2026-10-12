@@ -276,6 +276,26 @@ pub enum Edit {
     ),
     /// An automation item moved to a position, in seconds.
     MoveAutomationItem(String, daw_proto::automation::EnvelopeRef, u32, f64),
+    /// An automation item made: at a position, a length (seconds), in a
+    /// pool (`-1`: a fresh one, its curve the points given, seconds into
+    /// it), its curve its pool's otherwise.
+    AddAutomationItem(
+        String,
+        daw_proto::automation::EnvelopeRef,
+        (f64, f64, i32),
+        Vec<daw_proto::automation::EnvelopePoint>,
+    ),
+    /// An automation item's bounds: its index, position, length and how
+    /// far into its source it starts (seconds) — an edge dragged.
+    SetAutomationItemBounds(
+        String,
+        daw_proto::automation::EnvelopeRef,
+        u32,
+        (f64, f64, f64),
+    ),
+    /// An automation item deleted, by index (the envelope's points under
+    /// it play again).
+    DeleteAutomationItem(String, daw_proto::automation::EnvelopeRef, u32),
     /// Show or hide a track's envelope in a lane of its own.
     ShowEnvelope(String, daw_proto::automation::EnvelopeRef, bool),
     /// One envelope's automation mode.
@@ -377,6 +397,9 @@ impl Edit {
             | Self::SetEnvelope(g, ..)
             | Self::SetItemCurve(g, ..)
             | Self::MoveAutomationItem(g, ..)
+            | Self::AddAutomationItem(g, ..)
+            | Self::SetAutomationItemBounds(g, ..)
+            | Self::DeleteAutomationItem(g, ..)
             | Self::ShowEnvelope(g, ..)
             | Self::SetEnvelopeMode(g, ..)
             | Self::SetLaneHeight(g, ..)
@@ -449,6 +472,7 @@ impl Edit {
                 | Self::SetEnvelope(..)
                 | Self::SetItemCurve(..)
                 | Self::MoveAutomationItem(..)
+                | Self::SetAutomationItemBounds(..)
                 | Self::SetLaneHeight(..)
                 | Self::SetTakeVolume(..)
         )
@@ -465,7 +489,9 @@ impl Edit {
             | Self::SetEnvelopeMode(_, target, _)
             | Self::SetLaneHeight(_, target, _) => Some(crate::automation::target_key(target)),
             Self::SetItemCurve(_, target, item, _)
-            | Self::MoveAutomationItem(_, target, item, _) => {
+            | Self::MoveAutomationItem(_, target, item, _)
+            | Self::SetAutomationItemBounds(_, target, item, _)
+            | Self::DeleteAutomationItem(_, target, item) => {
                 Some(format!("{}#{item}", crate::automation::target_key(target)))
             }
             _ => None,
@@ -480,6 +506,9 @@ impl Edit {
             Self::SetEnvelope(..)
                 | Self::SetItemCurve(..)
                 | Self::MoveAutomationItem(..)
+                | Self::AddAutomationItem(..)
+                | Self::SetAutomationItemBounds(..)
+                | Self::DeleteAutomationItem(..)
                 | Self::ShowEnvelope(..)
                 | Self::SetEnvelopeMode(..)
                 | Self::SetLaneHeight(..)
@@ -1497,6 +1526,53 @@ async fn apply_automation(project: &daw_control::Project, edit: &Edit) {
                 .set_automation_item(params)
                 .await
         }
+        Edit::AddAutomationItem(_, target, (at, length, pool), curve) => {
+            let envelope = track.envelopes().of(target.clone());
+            let (at, length) = (
+                daw_proto::primitives::PositionInSeconds::from_seconds(*at),
+                daw_proto::primitives::Duration::from_seconds(*length),
+            );
+            let made = if *pool >= 0 {
+                envelope.add_pooled_automation_item(*pool, at, length).await
+            } else {
+                envelope.add_automation_item(at, length).await
+            };
+            let outcome = match made {
+                Ok(index) if *pool < 0 && !curve.is_empty() => {
+                    envelope
+                        .set_automation_item_points(index, curve.clone())
+                        .await
+                }
+                Ok(_) => Ok(()),
+                Err(error) => Err(error),
+            };
+            // The window drew a stand-in: the engine's own, read back.
+            #[cfg(feature = "native")]
+            crate::studio::request_resync();
+            outcome
+        }
+        Edit::SetAutomationItemBounds(_, target, index, (at, length, offset)) => {
+            let mut params = daw_proto::automation::SetAutomationItemParams::at(*index);
+            params.position = Some(daw_proto::primitives::PositionInSeconds::from_seconds(*at));
+            params.length = Some(daw_proto::primitives::Duration::from_seconds(*length));
+            params.start_offset = Some(daw_proto::primitives::Duration::from_seconds(*offset));
+            track
+                .envelopes()
+                .of(target.clone())
+                .set_automation_item(params)
+                .await
+        }
+        Edit::DeleteAutomationItem(_, target, index) => {
+            let outcome = track
+                .envelopes()
+                .of(target.clone())
+                .delete_automation_item(*index)
+                .await;
+            // The items after it are numbered again.
+            #[cfg(feature = "native")]
+            crate::studio::request_resync();
+            outcome
+        }
         Edit::ShowEnvelope(_, target, shown) => {
             track
                 .envelopes()
@@ -1860,6 +1936,9 @@ async fn apply(edit: &Edit) {
             track.set_group_modifier(*slot, *modifier, *on).await
         }
         Edit::SetEnvelope(..)
+        | Edit::AddAutomationItem(..)
+        | Edit::SetAutomationItemBounds(..)
+        | Edit::DeleteAutomationItem(..)
         | Edit::SetItemCurve(..)
         | Edit::MoveAutomationItem(..)
         | Edit::ShowEnvelope(..)

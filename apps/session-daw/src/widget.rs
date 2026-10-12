@@ -1992,7 +1992,7 @@ impl ArrangementWidget {
                 item_point,
                 t: Some(t),
             },
-            Spot::ItemBar { item } => Lit {
+            Spot::ItemBar { item, .. } => Lit {
                 lane,
                 item: Some(item),
                 ..Lit::default()
@@ -3500,8 +3500,15 @@ impl ArrangementWidget {
                         self.dirty.set(true);
                         return true;
                     }
-                    let (drag, edits) =
-                        crate::automation_edit::press(&hit, y, e.mods.contains(Modifiers::ALT));
+                    let (drag, edits) = crate::automation_edit::press(
+                        &hit,
+                        y,
+                        crate::automation_edit::Keys {
+                            alt: e.mods.contains(Modifiers::ALT),
+                            shift: e.mods.contains(Modifiers::SHIFT),
+                            ctrl: e.mods.contains(Modifiers::CONTROL),
+                        },
+                    );
                     self.lane_drag = drag;
                     self.edits.borrow_mut().extend(edits);
                     self.lane_lit = self.lane_lit_at(x, y);
@@ -3587,9 +3594,10 @@ impl ArrangementWidget {
                     return true;
                 }
                 if let Some(drag) = self.lane_drag.take() {
+                    let over = self.lane_hit(x, y);
                     self.edits
                         .borrow_mut()
-                        .extend(crate::automation_edit::release(&drag));
+                        .extend(crate::automation_edit::release(&drag, over.as_ref()));
                     self.dirty.set(true);
                     return true;
                 }
@@ -3652,7 +3660,7 @@ impl ArrangementWidget {
                 if let Some(drag) = self.lane_drag.take() {
                     self.edits
                         .borrow_mut()
-                        .extend(crate::automation_edit::release(&drag));
+                        .extend(crate::automation_edit::release(&drag, None));
                 }
                 self.holding = false;
                 self.turning = None;
@@ -4503,6 +4511,18 @@ mod tests {
         prefix: &str,
         points: Vec<daw_proto::automation::EnvelopePoint>,
     ) -> ArrangementWidget {
+        with_items_lane(prefix, points, Vec::new())
+    }
+
+    /// The same, with automation items on the lane.
+    fn with_items_lane(
+        prefix: &str,
+        points: Vec<daw_proto::automation::EnvelopePoint>,
+        items: Vec<(
+            daw_proto::automation::AutomationItem,
+            Vec<daw_proto::automation::EnvelopePoint>,
+        )>,
+    ) -> ArrangementWidget {
         let track = format!("{prefix}1");
         let mut lane = crate::automation::Lane {
             track: track.clone(),
@@ -4514,7 +4534,7 @@ mod tests {
             height: 80.0,
             mode: daw_proto::primitives::AutomationMode::TrimRead,
             points,
-            items: Vec::new(),
+            items,
             played: Vec::new(),
             rest: 1.0,
             fx_name: None,
@@ -4605,6 +4625,112 @@ mod tests {
             .expect("the curve")
             .points;
         assert_eq!(left.len(), 2, "{left:?}");
+    }
+
+    /// Automation items by hand: Shift and a drag makes one over the span,
+    /// its right edge resizes it, Ctrl and a drag on its bar makes another
+    /// of its pool, Alt and a press on its bar deletes it.
+    #[test]
+    fn automation_items_are_made_resized_copied_and_deleted_by_hand() {
+        use crate::engine::Edit;
+        use daw_proto::automation::{AutomationItem, EnvelopePoint};
+        use daw_proto::primitives::{Duration, PositionInSeconds};
+        let flat = |v: f64| EnvelopePoint {
+            value: v,
+            ..EnvelopePoint::default()
+        };
+        let existing = AutomationItem {
+            index: 0,
+            pool_id: 4,
+            position: PositionInSeconds::from_seconds(10.0),
+            length: Duration::from_seconds(2.0),
+            ..AutomationItem::default()
+        };
+        let mut widget = with_items_lane(
+            "items-lane-t",
+            vec![flat(1.0)],
+            vec![(existing, vec![flat(0.5)])],
+        );
+        let shift = |x: f64, y: f64| {
+            let mut e = pointer(x, y);
+            e.mods = blitz_traits::events::Modifiers::SHIFT;
+            e
+        };
+        // Shift-drag from 2 s to 5 s: a fresh item over the span, its
+        // curve what played there (0 dB).
+        let (x2, y) = in_lane(&widget, 2.0, 0.5);
+        let (x5, _) = in_lane(&widget, 5.0, 0.5);
+        assert!(widget.took(&UiEvent::PointerDown(shift(x2, y))));
+        assert!(widget.took(&UiEvent::PointerMove(pointer(x5, y))));
+        assert!(widget.took(&UiEvent::PointerUp(pointer(x5, y))));
+        let made = widget.edits.borrow().iter().find_map(|e| match e {
+            Edit::AddAutomationItem(_, _, (at, length, pool), curve) => {
+                Some((*at, *length, *pool, curve.clone()))
+            }
+            _ => None,
+        });
+        let (at, length, pool, curve) = made.expect("an item made");
+        assert!(
+            (at - 2.0).abs() < 0.05 && (length - 3.0).abs() < 0.05 && pool == -1,
+            "{at} {length} {pool}"
+        );
+        assert!(
+            curve.iter().all(|p| (p.value - 1.0).abs() < 1e-9) && curve.len() >= 2,
+            "{curve:?}"
+        );
+        widget.edits.borrow_mut().clear();
+
+        // The existing item's right edge, dragged from 12 s to 13 s.
+        let (x12, y_bar) = in_lane(&widget, 12.0, 1.9);
+        let (x13, _) = in_lane(&widget, 13.0, 1.9);
+        assert!(widget.took(&UiEvent::PointerDown(pointer(x12, y_bar + 20.0))));
+        assert!(widget.took(&UiEvent::PointerMove(pointer(x13, y_bar + 20.0))));
+        assert!(widget.took(&UiEvent::PointerUp(pointer(x13, y_bar + 20.0))));
+        let bounds = widget.edits.borrow().iter().find_map(|e| match e {
+            Edit::SetAutomationItemBounds(_, _, 0, b) => Some(*b),
+            _ => None,
+        });
+        let (at, length, _) = bounds.expect("resized");
+        assert!(
+            (at - 10.0).abs() < 1e-9 && (length - 3.0).abs() < 0.05,
+            "{at} {length}"
+        );
+        widget.edits.borrow_mut().clear();
+
+        // Its bar, Ctrl-dragged on by 10 s: another of pool 4 at 20 s.
+        let view = widget.viewport(widget.size.0, widget.size.1);
+        let below = crate::ruler::ruler_h() - view.scroll_y;
+        let lane = crate::automation_draw::on_screen(&widget.scene, &widget.tracks, view, below)
+            .into_iter()
+            .next()
+            .expect("the lane");
+        let bar = lane.top + 5.0;
+        let (x11, _) = in_lane(&widget, 11.0, 1.0);
+        let (x21, _) = in_lane(&widget, 21.0, 1.0);
+        let mut ctrl = pointer(x11, bar);
+        ctrl.mods = blitz_traits::events::Modifiers::CONTROL;
+        assert!(widget.took(&UiEvent::PointerDown(ctrl)));
+        assert!(widget.took(&UiEvent::PointerMove(pointer(x21, bar))));
+        assert!(widget.took(&UiEvent::PointerUp(pointer(x21, bar))));
+        let copied = widget.edits.borrow().iter().find_map(|e| match e {
+            Edit::AddAutomationItem(_, _, (at, _, pool), _) => Some((*at, *pool)),
+            _ => None,
+        });
+        let (at, pool) = copied.expect("a copy");
+        assert!((at - 20.0).abs() < 0.05 && pool == 4, "{at} {pool}");
+        widget.edits.borrow_mut().clear();
+
+        // Alt and a press on its bar: deleted.
+        let mut alt = pointer(x11, bar);
+        alt.mods = blitz_traits::events::Modifiers::ALT;
+        assert!(widget.took(&UiEvent::PointerDown(alt)));
+        assert!(
+            widget
+                .edits
+                .borrow()
+                .iter()
+                .any(|e| matches!(e, Edit::DeleteAutomationItem(_, _, 0)))
+        );
     }
 
     /// A lane sits under its track: the rows below move down by it, and
