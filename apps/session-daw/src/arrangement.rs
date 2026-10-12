@@ -250,6 +250,9 @@ pub struct Arrangement {
     /// The lanes each row shows, when it shows them all ([`row_lanes`]):
     /// what its strips are named by and swiped on.
     laned: Vec<Option<daw_proto::Track>>,
+    /// Which of those lanes has a strip, top to bottom ([`lane_slots`]):
+    /// empty for a row showing what plays.
+    slots: Vec<Vec<u32>>,
 }
 
 /// Which commands belong to which row, and how wide each one is.
@@ -705,6 +708,13 @@ impl Arrangement {
         self.laned.get(row).and_then(Option::as_ref)
     }
 
+    /// The lanes row `row` gives a strip, top to bottom ([`lane_slots`]);
+    /// empty when it shows what plays.
+    #[must_use]
+    pub fn lane_slots(&self, row: usize) -> &[u32] {
+        self.slots.get(row).map_or(&[], Vec::as_slice)
+    }
+
     /// Where row `row`'s automation lanes start and how much room they
     /// have together, in session coordinates: under its track, to the
     /// bottom of its slot. `None` for a row with none.
@@ -1073,6 +1083,7 @@ impl Arrangement {
         let mut track_h = Vec::with_capacity(rows.len());
         let mut lane_tracks = Vec::with_capacity(rows.len());
         let mut laned_rows = Vec::with_capacity(rows.len());
+        let mut row_slots = Vec::with_capacity(rows.len());
         let mut y = 0.0_f64;
         let keys = keys_of(project);
         let roles = kit_roles(project);
@@ -1153,15 +1164,25 @@ impl Arrangement {
             let opened = row_lanes(project, track);
             let lanes_shown = opened.is_some();
             let lane_track = opened.as_ref().unwrap_or(track);
-            let lane_count = lane_track.lane_count.max(1);
             let row_items: Vec<&daw_proto::Item> = if lanes_shown {
                 project.lane(&track.guid).iter().collect()
             } else {
                 project.sounding(track)
             };
+            // A strip each for the lanes holding something and the one
+            // that plays — not one for every lane number the song has
+            // used, most of them empty.
+            let slots = if lanes_shown {
+                lane_slots(
+                    lane_track,
+                    row_items.iter().map(|i| i.fixed_lane.unwrap_or(0)),
+                )
+            } else {
+                Vec::new()
+            };
             if lanes_shown {
-                for lane in 1..lane_count {
-                    let (at, _) = lane_band(lane, lane_count);
+                for strip in 1..slots.len() {
+                    let at = crate::num::coord(strip) / crate::num::coord(slots.len());
                     let line = at.mul_add(body, y);
                     lanes.fill(
                         Fill::NonZero,
@@ -1175,12 +1196,7 @@ impl Arrangement {
             }
             for item in row_items {
                 let band = if lanes_shown {
-                    lane_band(
-                        item.fixed_lane
-                            .unwrap_or(0)
-                            .min(lane_count.saturating_sub(1)),
-                        lane_count,
-                    )
+                    slot_band(item.fixed_lane.unwrap_or(0), &slots)
                 } else {
                     (0.0, 1.0)
                 };
@@ -1344,6 +1360,7 @@ impl Arrangement {
                     .collect(),
             );
             laned_rows.push(opened);
+            row_slots.push(slots);
             y += h + crate::automation::lanes_height(&track.guid);
         }
         // The bottom of the last row, so every row has a `..end`.
@@ -1372,6 +1389,7 @@ impl Arrangement {
             track_h,
             lane_tracks,
             laned: laned_rows,
+            slots: row_slots,
             rows: rows.len(),
             length_secs: project.length_secs,
             bpm: project.bpm,
@@ -2223,8 +2241,22 @@ pub fn hits_overlay(
     }
     let marks = overlay.between(from, to);
     let thin = vello::kurbo::Stroke::new(1.0);
+    // A row showing its lanes: the hits are where they play, on the lane
+    // that plays — its strip, not every take's.
+    let marks_span = |row: usize| {
+        let slots = scene.lane_slots(row);
+        let playing = scene.lanes_shown(row).and_then(crate::lanes::playing);
+        let (Some(lane), false) = (playing, slots.is_empty()) else {
+            return y_span(row);
+        };
+        let (y, h) = scene.row_box(row)?;
+        let (b0, b1) = slot_band(lane, slots);
+        let y0 = b0.mul_add(h, y).mul_add(view.zoom_y, oy).max(top);
+        let y1 = b1.mul_add(h, y).mul_add(view.zoom_y, oy).min(view.height);
+        (y1 > y0).then_some((y0, y1))
+    };
     for &(row, piece) in rows {
-        let Some((y0, y1)) = y_span(row) else {
+        let Some((y0, y1)) = marks_span(row) else {
             continue;
         };
         let mine: Vec<&crate::hit_overlay::Mark> =
@@ -2444,10 +2476,12 @@ pub fn cuts_overlay(
         // A folder showing its lanes: each lane's cuts in its own strip,
         // between its own items — every lane's are by start, not all of
         // them together.
-        let lanes = row_lanes(project, track).map_or(1, |t| t.lane_count.max(1));
-        for lane in 0..lanes {
-            let band = if lanes > 1 {
-                lane_band(lane, lanes)
+        let slots = scene.lane_slots(index);
+        let laned = !slots.is_empty();
+        let whole = [0_u32];
+        for &lane in if laned { slots } else { &whole } {
+            let band = if laned {
+                slot_band(lane, slots)
             } else {
                 (0.0, 1.0)
             };
@@ -2465,7 +2499,7 @@ pub fn cuts_overlay(
                 continue;
             }
             let owned: Vec<daw_proto::Item>;
-            let items: &[daw_proto::Item] = if lanes > 1 {
+            let items: &[daw_proto::Item] = if laned {
                 owned = fold
                     .items
                     .iter()
@@ -4286,6 +4320,35 @@ pub fn row_lanes(
             }
         },
     )
+}
+
+/// The lanes a row showing its lanes gives a strip, top to bottom: those
+/// `lanes` holds something on (each item's lane), and the one that plays.
+///
+/// A kit's EDIT lane is lane 35 of a take recorded over and over: a strip
+/// for every lane number was 36 strips, each a sliver.
+#[must_use]
+pub fn lane_slots(track: &daw_proto::Track, lanes: impl Iterator<Item = u32>) -> Vec<u32> {
+    let mut held: Vec<u32> = lanes.chain(crate::lanes::playing(track)).collect();
+    held.sort_unstable();
+    held.dedup();
+    if held.is_empty() {
+        held.push(0);
+    }
+    held
+}
+
+/// Lane `lane`'s strip of a row showing `slots` ([`lane_slots`]), as
+/// fractions of the row; the last strip for a lane it gives none.
+#[must_use]
+pub fn slot_band(lane: u32, slots: &[u32]) -> (f64, f64) {
+    let strip = slots
+        .iter()
+        .position(|s| *s == lane)
+        .unwrap_or_else(|| slots.len().saturating_sub(1));
+    let count = crate::num::coord(slots.len().max(1));
+    let at = crate::num::coord(strip);
+    (at / count, (at + 1.0) / count)
 }
 
 /// Lane `lane` of `count`'s strip of its row, top to bottom, as

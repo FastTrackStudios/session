@@ -1139,7 +1139,8 @@ impl ArrangementWidget {
         let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
         let content_y = (y - ruler::ruler_h() + view.scroll_y) / zoom;
         let (top, height) = self.scene.row_box(row)?;
-        let lane = crate::swipe::lane_at(top, height, laned.lane_count, content_y)?;
+        let slots = self.scene.lane_slots(row).to_vec();
+        let lane = crate::swipe::lane_at(top, height, &slots, content_y)?;
         if !crate::swipe::starts_on(laned, lane) {
             return None;
         }
@@ -1156,7 +1157,7 @@ impl ArrangementWidget {
             track: track.guid.clone(),
             with,
             lane,
-            lanes: laned.lane_count,
+            slots,
             called: crate::lanes::called(laned, lane),
             from: at,
             to: at,
@@ -5378,7 +5379,16 @@ mod tests {
         let _ = crate::lanes::set_expanded(&["vox".to_owned()], Some(true));
         let rows = vec![(track.clone(), 0)];
         let refs = daw_ui::studio::RowsRef(std::sync::Arc::new(rows.clone()));
+        // A take on each lane: a lane holding nothing gets no strip.
+        let take = |lane: u32| daw_proto::Item {
+            guid: format!("take{lane}"),
+            track_guid: "vox".to_owned(),
+            length: daw_proto::primitives::Duration::from_seconds(30.0),
+            fixed_lane: Some(lane),
+            ..daw_proto::Item::default()
+        };
         let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(daw_ui::studio::Project {
+            items: std::iter::once(("vox".to_owned(), vec![take(0), take(1), take(2)])).collect(),
             tracks: vec![track],
             length_secs: 60.0,
             ..daw_ui::studio::Project::default()
@@ -5428,7 +5438,10 @@ mod tests {
         let (to, _) = place(&widget, 2.0, 6.0);
         widget.handle_event(&UiEvent::PointerDown(pointer(from, y)));
         let swipe = widget.swipe.clone().expect("a swipe along take 2");
-        assert_eq!((swipe.row, swipe.lane, swipe.lanes), (0, 2, 3));
+        assert_eq!(
+            (swipe.row, swipe.lane, swipe.slots.as_slice()),
+            (0, 2, &[0, 1, 2][..])
+        );
         assert_eq!((swipe.track.as_str(), swipe.called.as_str()), ("vox", "2"));
         widget.handle_event(&UiEvent::PointerMove(pointer(to, y)));
         let (a, b) = widget.swipe.as_ref().expect("followed").span();

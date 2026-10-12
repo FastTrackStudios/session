@@ -24,11 +24,12 @@ pub struct Swipe {
     /// The tracks comped with it: its media-edit group, while grouping is
     /// on ([`crate::lanes::grouped_tracks`]) — a kit's mics as one.
     pub with: Vec<String>,
-    /// The lane swiped along, of how many the row shows, and what it is
-    /// called ([`crate::lanes::called`]) — how the comp finds it on each
-    /// track under a folder.
+    /// The lane swiped along, the lanes the row gives a strip
+    /// ([`crate::arrangement::lane_slots`]), and what it is called
+    /// ([`crate::lanes::called`]) — how the comp finds it on each track
+    /// under a folder.
     pub lane: u32,
-    pub lanes: u32,
+    pub slots: Vec<u32>,
     pub called: String,
     /// Where it was pressed and where the hand is now, seconds.
     pub from: f64,
@@ -64,19 +65,19 @@ impl Swipe {
     }
 }
 
-/// Which of `count` lanes a row `(top, height)` shows is at `content_y`
-/// (session units, as the row's box is) — the first at the top, as
-/// [`crate::arrangement::lane_band`] stacks them. `None` off the row.
+/// Which lane of a row is at `content_y`.
+///
+/// The row `(top, height)` gives `slots` a strip each; `content_y` is in
+/// session units, as the row's box is — the first at the top, as
+/// [`crate::arrangement::slot_band`] stacks them. `None` off the row.
 #[must_use]
-pub fn lane_at(top: f64, height: f64, count: u32, content_y: f64) -> Option<u32> {
-    if count == 0 || height <= 0.0 || content_y < top || content_y >= top + height {
+pub fn lane_at(top: f64, height: f64, slots: &[u32], content_y: f64) -> Option<u32> {
+    if slots.is_empty() || height <= 0.0 || content_y < top || content_y >= top + height {
         return None;
     }
     let fraction = (content_y - top) / height;
-    let lane = crate::num::index(fraction * f64::from(count));
-    u32::try_from(lane)
-        .ok()
-        .map(|lane| lane.min(count.saturating_sub(1)))
+    let strip = crate::num::index(fraction * crate::num::coord(slots.len()));
+    slots.get(strip.min(slots.len().saturating_sub(1))).copied()
 }
 
 /// Whether a press on lane `lane` of a row showing `laned`'s lanes starts
@@ -102,7 +103,7 @@ pub fn overlay(
         return;
     };
     let (ox, oy) = origin;
-    let (b0, b1) = crate::arrangement::lane_band(swipe.lane, swipe.lanes.max(1));
+    let (b0, b1) = crate::arrangement::slot_band(swipe.lane, &swipe.slots);
     let (start, end) = swipe.span();
     let r = Rect::new(
         start.mul_add(view.pps, ox),
@@ -157,9 +158,9 @@ pub fn labels(
         else {
             continue;
         };
-        let count = laned.lane_count.clamp(1, 64);
-        for lane in 0..count {
-            let (b0, b1) = crate::arrangement::lane_band(lane, count);
+        let slots = scene.lane_slots(row);
+        for &lane in slots {
+            let (b0, b1) = crate::arrangement::slot_band(lane, slots);
             let y0 = b0.mul_add(height, top).mul_add(view.zoom_y, oy);
             let y1 = b1.mul_add(height, top).mul_add(view.zoom_y, oy);
             // A strip too thin to name, or under the ruler.
@@ -213,12 +214,34 @@ mod tests {
     /// the last running to the row's foot; off the row, none.
     #[test]
     fn a_lane_is_found_by_its_strip() {
-        assert_eq!(lane_at(100.0, 60.0, 3, 100.0), Some(0));
-        assert_eq!(lane_at(100.0, 60.0, 3, 125.0), Some(1));
-        assert_eq!(lane_at(100.0, 60.0, 3, 159.9), Some(2));
-        assert_eq!(lane_at(100.0, 60.0, 3, 160.0), None);
-        assert_eq!(lane_at(100.0, 60.0, 3, 99.0), None);
-        assert_eq!(lane_at(100.0, 60.0, 0, 120.0), None);
+        let three = [0, 1, 2];
+        assert_eq!(lane_at(100.0, 60.0, &three, 100.0), Some(0));
+        assert_eq!(lane_at(100.0, 60.0, &three, 125.0), Some(1));
+        assert_eq!(lane_at(100.0, 60.0, &three, 159.9), Some(2));
+        assert_eq!(lane_at(100.0, 60.0, &three, 160.0), None);
+        assert_eq!(lane_at(100.0, 60.0, &three, 99.0), None);
+        assert_eq!(lane_at(100.0, 60.0, &[], 120.0), None);
+    }
+
+    /// A kit's lanes are numbered COMP 0, C1 1 and EDIT 35, the numbers
+    /// between empty: three strips, a third of the row each — EDIT the
+    /// last — not thirty-six slivers.
+    #[test]
+    fn only_the_lanes_holding_something_get_a_strip() {
+        let track = daw_proto::Track {
+            lane_count: 36,
+            lane_play_mask: 1 << 35,
+            ..daw_proto::Track::default()
+        };
+        let slots = crate::arrangement::lane_slots(&track, [0, 1, 1, 0].into_iter());
+        assert_eq!(
+            slots,
+            [0, 1, 35],
+            "the lanes with items, and the one that plays"
+        );
+        assert_eq!(lane_at(100.0, 60.0, &slots, 159.0), Some(35));
+        let (top, bottom) = crate::arrangement::slot_band(35, &slots);
+        assert!((top - 2.0 / 3.0).abs() < 1e-12 && (bottom - 1.0).abs() < 1e-12);
     }
 
     /// A swipe starts on a take's lane, not on the comp it lands on.
@@ -246,7 +269,7 @@ mod tests {
             track: "kit".into(),
             with: vec!["out".into()],
             lane: 0,
-            lanes: 3,
+            slots: vec![0, 1, 2],
             called: "1".into(),
             from: 6.0,
             to: 4.0,
