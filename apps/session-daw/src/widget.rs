@@ -3981,7 +3981,9 @@ impl ArrangementWidget {
             self.editor.ghost(),
         );
         // Every item's outline, its cuts with it; without outlines, in
-        // Edit mode, the cuts on a shut folder's row.
+        // Edit mode, the cuts on a shut folder's row — quiet under the
+        // kit's hit markers, which are what is being worked on there.
+        let quiet = self.editing.get() && crate::hit_overlay::current().is_some();
         if crate::options::OUTLINED.get() {
             crate::arrangement::outlines_overlay(
                 &mut out,
@@ -3989,6 +3991,7 @@ impl ArrangementWidget {
                 &self.scene,
                 view,
                 lanes_at,
+                quiet,
             );
         } else if self.editing.get() && crate::folds::cuts_shown() {
             crate::arrangement::cuts_overlay(
@@ -3999,6 +4002,7 @@ impl ArrangementWidget {
                 lanes_at,
                 &self.rows,
                 &self.project,
+                quiet,
             );
         }
         // In Edit mode, the kit's hit markers, each on its own piece.

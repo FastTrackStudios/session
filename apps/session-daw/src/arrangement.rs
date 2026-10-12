@@ -1184,7 +1184,8 @@ impl Arrangement {
                 } else {
                     (0.0, 1.0)
                 };
-                let plays = !lanes_shown || daw_ui::studio::project::on_playing_lane(lane_track, item);
+                let plays =
+                    !lanes_shown || daw_ui::studio::project::on_playing_lane(lane_track, item);
                 let (y, body) = (band.0.mul_add(body, y), (band.1 - band.0) * body);
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
@@ -2163,11 +2164,11 @@ pub fn marquee_overlay(
 /// ([`Overlay::pieces`] index) — so the kick's hits are on the kick and
 /// nowhere else.
 ///
-/// A line in the colour of who placed it — the text's for found and
-/// unchecked, the accent for placed by hand, the meters' safe for found
-/// and checked — or the meters' warn for one to look at (bleed, or found
-/// unsure); a ghost note drawn to half the row. A flag at its head, where
-/// the hits are far enough apart to read.
+/// A line in its drum's colour — the kick's red, the snare's blue, the
+/// toms' purple, as their waveforms are drawn — or the meters' warn for
+/// one to look at (bleed, or found unsure); a ghost note drawn to half the
+/// row. A flag at its head, where the hits are far enough apart to read:
+/// solid when placed by hand or checked, hollow when found and unchecked.
 ///
 /// [`Overlay::pieces`]: crate::hit_overlay::Overlay::pieces
 pub fn hits_overlay(
@@ -2228,6 +2229,11 @@ pub fn hits_overlay(
         };
         let mine: Vec<&crate::hit_overlay::Mark> =
             marks.iter().filter(|m| m.piece == piece).collect();
+        let drum = overlay
+            .pieces
+            .get(piece)
+            .and_then(|name| kit_color(expression_editor_core::kit::kit_role(name, &[])))
+            .unwrap_or(palette.text);
         let spaced = |k: usize| {
             let x = mine.get(k).map_or(0.0, |m| x_of(m.time));
             let gap = |j: Option<usize>| {
@@ -2237,15 +2243,7 @@ pub fn hits_overlay(
             gap(k.checked_sub(1)).min(gap(k.checked_add(1))) >= CLEAR
         };
         for (k, m) in mine.iter().enumerate() {
-            let colour = if m.doubt {
-                palette.meter_warn
-            } else {
-                match m.who {
-                    Who::Auto => palette.text,
-                    Who::Manual => palette.accent,
-                    Who::Approved => palette.meter_safe,
-                }
-            };
+            let colour = if m.doubt { palette.meter_warn } else { drum };
             let clear = spaced(k);
             let colour = colour.multiply_alpha(if clear { 0.85 } else { 0.45 });
             let x = x_of(m.time).round() + 0.5;
@@ -2263,7 +2261,11 @@ pub fn hits_overlay(
                 flag.line_to((x + 3.5, y0));
                 flag.line_to((x, y0 + 5.0));
                 flag.close_path();
-                painter.fill(Fill::NonZero, Affine::IDENTITY, colour, None, &flag);
+                if m.who == Who::Auto {
+                    painter.stroke(&thin, Affine::IDENTITY, colour, None, &flag);
+                } else {
+                    painter.fill(Fill::NonZero, Affine::IDENTITY, colour, None, &flag);
+                }
             }
         }
     }
@@ -2307,12 +2309,17 @@ fn body_alpha() -> f32 {
 /// Drawn per frame, a pixel wide in each item's own colour. Where a box
 /// starts as the one before ends — a cut on a shut folder's row, the
 /// slices of an edited take — the line between them is the cut.
+///
+/// `quiet` (the kit's hit markers shown over it): a cut is a faint
+/// neutral line, so the markers — what is being worked on — read over a
+/// kit of a thousand slices.
 pub fn outlines_overlay(
     painter: &mut impl PaintScene,
     palette: &Palette,
     scene: &Arrangement,
     view: Viewport,
     origin: (f64, f64),
+    quiet: bool,
 ) {
     /// Item edges this close are one edge: a cut.
     const TOUCH: f64 = 1e-3;
@@ -2370,10 +2377,15 @@ pub fn outlines_overlay(
                 .filter(|(row, _)| *row == item.row)
                 .map_or(CLEAR, |(_, x)| x0 - x);
             let strength = (gap / CLEAR).clamp(0.12, 1.0);
+            let (cut_ink, most) = if quiet {
+                (palette.divider, 0.35)
+            } else {
+                (palette.meter_danger, 0.7)
+            };
             line(
                 painter,
-                palette.meter_danger.multiply_alpha(
-                    num_traits::ToPrimitive::to_f32(&(0.7 * strength)).unwrap_or(0.7),
+                cut_ink.multiply_alpha(
+                    num_traits::ToPrimitive::to_f32(&(most * strength)).unwrap_or(0.5),
                 ),
                 (x0 + 0.5, y0),
                 (x0 + 0.5, y1),
@@ -2405,6 +2417,7 @@ pub fn cuts_overlay(
     origin: (f64, f64),
     rows: &[(daw_proto::Track, u32)],
     project: &daw_ui::studio::project::Project,
+    quiet: bool,
 ) {
     /// Ends this close are one edge.
     const TOUCH: f64 = 1e-3;
@@ -2412,7 +2425,12 @@ pub fn cuts_overlay(
     let pps = view.pps.max(f64::EPSILON);
     let (from, to) = ((view.panel_w - ox) / pps, (view.width - ox) / pps);
     let thin = vello::kurbo::Stroke::new(1.0);
-    let ink = palette.divider;
+    // Under the hit markers, fainter: the markers are what is read.
+    let ink = if quiet {
+        palette.divider.multiply_alpha(0.4)
+    } else {
+        palette.divider
+    };
     for index in scene.visible_rows(view) {
         let Some((track, _)) = rows.get(index) else {
             continue;
@@ -4203,6 +4221,19 @@ mod item_color_tests {
 
 #[cfg(test)]
 mod dial_tests {
+    /// A hit marker is drawn in its drum's colour, found from the piece's
+    /// name as the hit overlay names it: the kick red, the snare blue, a
+    /// tom purple, as their waveforms are.
+    #[test]
+    fn a_hit_marker_wears_its_drums_colour() {
+        let colour =
+            |piece: &str| super::kit_color(expression_editor_core::kit::kit_role(piece, &[]));
+        assert_eq!(colour("Kick"), super::kit_color(super::LaneRole::Kick));
+        assert_eq!(colour("Snare"), super::kit_color(super::LaneRole::Snare));
+        assert_eq!(colour("Tom 1"), super::kit_color(super::LaneRole::Toms));
+        assert!(colour("Kick").is_some() && colour("Kick") != colour("Snare"));
+    }
+
     use super::{dial_angle, item_dial};
 
     #[test]
