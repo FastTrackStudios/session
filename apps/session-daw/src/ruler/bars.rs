@@ -84,24 +84,36 @@ pub fn grid(
     let (from, to) = view.secs();
     let from = from.max(0.0);
 
-    // Beat and sub-beat lines, at whatever division still fits.
+    // Three weights, so a bar's start, its beats and what is between them
+    // each read for what they are: the subdivisions faint, the beats
+    // plainer, the bars strongest and wider.
+    let beat_px = bars.secs_per_beat * view.pps;
     if let Some(division) = adaptive.fit(finest, measure_px) {
         let step = division * 4.0 * bars.secs_per_beat;
-        if step > 0.0 {
-            line_every(
-                painter,
-                view,
-                step,
-                from,
-                to,
-                palette.grid_beat,
-                1.0,
-                origin,
-            );
+        // Finer than a beat: its own lines, under the beats'.
+        if step > 0.0 && step < bars.secs_per_beat - 1e-9 {
+            line_every(painter, view, step, from, to, palette.grid_sub, 1.0, origin);
         }
     }
-    // Bar lines always, and brighter: they are what the numbers above
+    if beat_px >= GRID_BEAT_ROOM {
+        line_every(
+            painter,
+            view,
+            bars.secs_per_beat,
+            from,
+            to,
+            palette.grid_beat,
+            1.0,
+            origin,
+        );
+    }
+    // Bar lines always, and brightest: they are what the numbers above
     // count, so they have to survive whatever the division does.
+    let bar_width = if measure_px >= GRID_WIDE_BAR {
+        2.0
+    } else {
+        1.0
+    };
     line_every(
         painter,
         view,
@@ -109,10 +121,16 @@ pub fn grid(
         from,
         to,
         palette.grid,
-        1.0,
+        bar_width,
         origin,
     );
 }
+
+/// How far apart beats must be for the grid to draw their lines, px.
+const GRID_BEAT_ROOM: f64 = 6.0;
+
+/// How wide a bar must be for its line to be drawn two pixels wide, px.
+const GRID_WIDE_BAR: f64 = 80.0;
 
 /// The ruler strip: its ground, its ticks and its bar numbers.
 ///
@@ -178,75 +196,124 @@ pub fn ruler(
     // Measured at the start rather than averaged: a ruler whose
     // spacing changed mid-screen would be harder to read than one
     // slightly too dense at one end.
-    let every = step_beats(bar_px, f64::from(first.per_bar));
-
-    // Which beats get a number. Counted in beats from the start so the
-    // step lands on the same beats however far you scroll.
-    let mut since = 0.0_f64;
-    for (index, beat) in beats.iter().enumerate() {
-        if index > 0 {
-            since += 1.0;
+    let beat_px = bar_px / f64::from(first.per_bar.max(1));
+    let bars_apart = bars_between_numbers(bar_px);
+    let beat_numbers = beat_px >= BEAT_ROOM;
+    let subs = subdivisions(beat_px);
+    // Three weights, so where a bar starts reads at a glance: the bar's
+    // line the full height and its number bright and large, each beat a
+    // shorter line and a small number, the subdivisions short faint ticks
+    // with no number at all.
+    let height = bars_h();
+    let x_of = |t: f64| t.mul_add(view.pps, view.panel_w - view.scroll_x);
+    let shown = |x: f64| x >= view.panel_w - 1.0 && x <= view.width;
+    let tick = |painter: &mut _, x: f64, tall: f64, color: Color, width: f64| {
+        fill(
+            painter,
+            color,
+            Rect::new(ox + x, oy + height - tall, ox + x + width, oy + height),
+        );
+    };
+    for beat in &beats {
+        if beat.at > to {
+            break;
         }
-        // A downbeat is always written when whole bars are the step;
-        // otherwise every `every` beats. Fractional steps subdivide
-        // between the beats, which the sub-beat loop below handles.
-        let on_step = if every >= 1.0 {
-            (since % every).abs() < 1e-6 || (since % every - every).abs() < 1e-6
-        } else {
-            true
-        };
-        if !on_step {
+        if beat.at + beat.secs_per_beat < from {
             continue;
         }
-        let ticks: Vec<(f64, f64)> = if every < 1.0 {
-            // Inside the beat: the beat itself and the fractions of it
-            // that fit, each measured with THIS beat's length.
-            let mut out = Vec::new();
-            let mut fraction = 0.0_f64;
-            while fraction < 1.0 - 1e-9 {
-                out.push((
-                    fraction.mul_add(beat.secs_per_beat, beat.at),
-                    f64::from(beat.beat - 1) + fraction,
-                ));
-                fraction += every;
+        if let Some(n) = subs {
+            for k in 1..n {
+                let x = x_of((f64::from(k) / f64::from(n)).mul_add(beat.secs_per_beat, beat.at));
+                if shown(x) {
+                    tick(
+                        painter,
+                        x,
+                        height * SUB_TICK,
+                        palette.ruler_fg2.multiply_alpha(0.6),
+                        1.0,
+                    );
+                }
             }
-            out
-        } else {
-            vec![(beat.at, f64::from(beat.beat - 1))]
-        };
-        for (t, into_bar) in ticks {
-            if t < from || t > to {
-                continue;
-            }
-            let x = t.mul_add(view.pps, view.panel_w - view.scroll_x);
-            if x < view.panel_w - 1.0 || x > view.width {
-                continue;
-            }
-            fill(
+        }
+        let x = x_of(beat.at);
+        if !shown(x) {
+            continue;
+        }
+        let bar = from_song(beat.measure, bar_one);
+        if beat.beat == 1 {
+            let numbered = i64::from(beat.measure)
+                .saturating_sub(i64::from(bar_one))
+                .rem_euclid(bars_apart)
+                == 0;
+            let tall = if numbered { height } else { height * BEAT_TICK };
+            tick(
                 painter,
-                palette.grid,
-                Rect::new(ox + x, oy + bars_h() - tick, ox + x + 1.0, oy + bars_h()),
-            );
-            crate::tcp::glyphs(
-                painter,
-                font,
+                x,
+                tall,
                 palette.ruler_fg,
-                &written(
-                    from_song(beat.measure, bar_one),
-                    into_bar,
-                    f64::from(beat.per_bar),
-                    every,
-                ),
-                // Close to its own line, not floating between two. Four
-                // pixels put the number nearer the NEXT tick than its
-                // own at a beat-wide zoom, which is the one thing a
-                // ruler must never be ambiguous about.
-                ox + x + 2.0,
-                oy + number_y,
-                number_size,
+                if numbered { 2.0 } else { 1.0 },
             );
+            if numbered {
+                crate::tcp::glyphs(
+                    painter,
+                    font,
+                    palette.ruler_fg,
+                    &bar.to_string(),
+                    // Close to its own line, not floating between two.
+                    ox + x + 3.0,
+                    oy + number_y,
+                    number_size + 1.5,
+                );
+            }
+        } else if beat_px >= 4.0 {
+            tick(painter, x, height * BEAT_TICK, palette.ruler_fg2, 1.0);
+            if beat_numbers {
+                crate::tcp::glyphs(
+                    painter,
+                    font,
+                    palette.ruler_fg2,
+                    &beat.beat.to_string(),
+                    ox + x + 2.0,
+                    oy + number_y,
+                    number_size - 1.5,
+                );
+            }
         }
     }
+}
+
+/// How tall a beat's line is on the ruler, of its height.
+const BEAT_TICK: f64 = 0.45;
+
+/// How tall a subdivision's tick is, of the ruler's height.
+const SUB_TICK: f64 = 0.22;
+
+/// How wide a beat must be for its number, px.
+pub(super) const BEAT_ROOM: f64 = 26.0;
+
+/// How wide a bar must be between numbered bars, px.
+pub(super) const BAR_ROOM: f64 = 36.0;
+
+/// How far apart a subdivision's ticks must be, px.
+pub(super) const SUB_ROOM: f64 = 7.0;
+
+/// How many bars between numbered bars, for a bar this wide.
+#[must_use]
+pub fn bars_between_numbers(bar_px: f64) -> i64 {
+    BAR_STEPS
+        .into_iter()
+        .find(|n| bar_px * f64::from(*n) >= BAR_ROOM)
+        .map_or(256, i64::from)
+}
+
+/// How many parts a beat is ticked in — sixteenths (4) or eighths (2) of
+/// a quarter-note beat, the finest whose ticks stay apart — `None` when
+/// even eighths would crowd.
+#[must_use]
+pub fn subdivisions(beat_px: f64) -> Option<u32> {
+    [4_u32, 2]
+        .into_iter()
+        .find(|n| beat_px / f64::from(*n) >= SUB_ROOM)
 }
 
 /// A measure counted from the song's: `bar_one` (a measure counted from
@@ -300,76 +367,5 @@ pub fn song_bar_beat(
 /// zoom from asking for them at all.
 pub(super) const MAX_BEATS: usize = 100_000;
 
-/// How many BEATS a ruler will put between two numbers.
-///
-/// Beats, not bars, because that is what the numbering counts: a bar is
-/// however many beats the signature says, and a step measured in bars
-/// cannot land on beat three of four. Quarters and halves of a beat
-/// first, so zooming in keeps saying something; then a beat, then whole
-/// bars by way of the signature.
-///
-/// The bar-sized steps are filled in from the signature at use, because
-/// four beats is a bar in four four and three in three four.
-pub(super) const BEAT_STEPS: [f64; 3] = [0.25, 0.5, 1.0];
-
 /// How many bars between numbers once a beat is too fine to label.
-pub(super) const BAR_STEPS: [f64; 8] = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0];
-
-/// The step between numbers, in beats, for a bar this wide.
-#[must_use]
-pub fn step_beats(bar_px: f64, beats_per_bar: f64) -> f64 {
-    let beat_px = bar_px / beats_per_bar.max(1.0);
-    if let Some(step) = BEAT_STEPS.into_iter().find(|n| beat_px * n >= LABEL_ROOM) {
-        return step;
-    }
-    BAR_STEPS
-        .into_iter()
-        .find(|n| bar_px * n >= LABEL_ROOM)
-        .unwrap_or(256.0)
-        * beats_per_bar
-}
-
-/// How much room a number needs before the next one, in pixels.
-pub(super) const LABEL_ROOM: f64 = 56.0;
-
-/// A position written the way a DAW writes one: measure.beat.subdivision.
-///
-/// Takes the measure it is IN rather than working it out, because after
-/// a signature change the measure is no longer a division of the beat
-/// count — the walk that produced it is the only thing that knows.
-///
-/// How much of it is written is decided by the STEP, not by the
-/// position. A row reading 1, 1.2, 1.3, 1.4, 2 makes you notice that
-/// the first of each bar is written differently from the rest and
-/// wonder what that means; 1.1, 1.2, 1.3, 1.4, 2.1 is one column of
-/// the same thing, which is what a row of beats is.
-///
-/// So: stepping in whole bars gives bar numbers, "5". Stepping in beats
-/// gives "5.1" for every one of them, downbeat included. Stepping finer
-/// carries the subdivision in THOUSANDTHS of a beat, zero-padded:
-/// "5.2.250" is a quarter of the way through the second beat.
-///
-/// Thousandths because that is what a musical position IS here — the
-/// DAW's own `MusicalPosition` carries measure, beat and a subdivision
-/// of 0..999 — so a number read off this ruler is one you can type
-/// back in.
-#[must_use]
-pub fn written(measure: i64, into_bar: f64, per_bar: f64, step: f64) -> String {
-    let whole_beat = into_bar.floor();
-    let fraction = into_bar - whole_beat;
-    let beat_no = (whole_beat + 1.0).round() as i64;
-
-    // A whole bar between numbers: bar numbers, nothing else to say.
-    if step >= per_bar.max(1.0) - 1e-9 {
-        return format!("{measure}");
-    }
-    // A whole beat or more: every label names its beat, downbeat
-    // included, so the row is one column of the same thing.
-    if step >= 1.0 - 1e-9 || fraction.abs() < 1e-9 {
-        return format!("{measure}.{beat_no}");
-    }
-    // Thousandths of a beat, zero-padded so a column of them lines up
-    // and .050 cannot be misread as .5.
-    let sub = (fraction * 1000.0).round() as i64;
-    format!("{measure}.{beat_no}.{sub:03}")
-}
+pub(super) const BAR_STEPS: [i32; 8] = [1, 2, 4, 8, 16, 32, 64, 128];

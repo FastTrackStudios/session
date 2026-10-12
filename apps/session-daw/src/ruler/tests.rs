@@ -1,4 +1,4 @@
-use super::{Bars, Timeline, step_beats, written};
+use super::{Bars, Timeline, bars_between_numbers, subdivisions};
 use daw_ui::studio::project::TempoChange;
 
 fn at(at: f64, bpm: f64, per_bar: u32) -> TempoChange {
@@ -127,38 +127,25 @@ fn a_signature_change_starts_a_measure() {
     assert_eq!(change.measure, 3, "in a new measure, not the middle of one");
 }
 
-/// Zooming in keeps saying something new, down to the beat.
+/// Zooming in numbers more bars, then ticks the beats finer.
 #[test]
-fn zooming_in_subdivides_the_bar() {
-    assert!(step_beats(400.0, 4.0) <= 1.0);
-    assert!(step_beats(20.0, 4.0) >= 4.0);
-    assert!(step_beats(400.0, 4.0) <= step_beats(100.0, 4.0));
+fn zooming_in_numbers_more_and_ticks_finer() {
+    assert_eq!(bars_between_numbers(400.0), 1, "every bar, wide");
+    assert!(bars_between_numbers(10.0) >= 4, "fewer, narrow");
+    assert!(bars_between_numbers(400.0) <= bars_between_numbers(100.0));
+    assert_eq!(subdivisions(100.0), Some(4), "sixteenths with room");
+    assert_eq!(subdivisions(20.0), Some(2), "eighths, closer");
+    assert_eq!(subdivisions(8.0), None, "none when they would crowd");
 }
 
-/// measure.beat.subdivision, and only as much as the step needs.
+/// Bars counted from the song: the bar it starts in is 1, the two before
+/// it −1 and −2, and there is no bar 0.
 #[test]
-fn a_position_is_written_the_way_a_daw_writes_one() {
-    // Stepping in bars: bar numbers.
-    // Counted from the song: the bar it starts in is 1, the two before
-    // it −1 and −2, and there is no bar 0.
+fn bars_are_counted_from_the_song() {
     assert_eq!(super::bars::from_song(3, 3), 1);
     assert_eq!(super::bars::from_song(4, 3), 2);
     assert_eq!(super::bars::from_song(2, 3), -1);
     assert_eq!(super::bars::from_song(1, 3), -2);
-    assert_eq!(written(-1, 3.0, 4.0, 1.0), "-1.4");
-    assert_eq!(written(1, 0.0, 4.0, 4.0), "1");
-    assert_eq!(written(2, 0.0, 4.0, 4.0), "2");
-    // Stepping in beats: every label names its beat, downbeat too.
-    assert_eq!(written(1, 0.0, 4.0, 1.0), "1.1");
-    assert_eq!(written(1, 1.0, 4.0, 1.0), "1.2");
-    assert_eq!(written(2, 3.0, 4.0, 1.0), "2.4");
-    // Thousandths of a beat, zero-padded.
-    assert_eq!(written(1, 0.25, 4.0, 0.25), "1.1.250");
-    assert_eq!(written(1, 0.5, 4.0, 0.25), "1.1.500");
-    assert_eq!(written(1, 0.75, 4.0, 0.25), "1.1.750");
-    assert_eq!(written(2, 0.5, 4.0, 0.25), "2.1.500");
-    // A beat that lands whole still names itself at a fine step.
-    assert_eq!(written(1, 1.0, 4.0, 0.25), "1.2");
 }
 
 /// A sane fallback when the project has no tempo at all.

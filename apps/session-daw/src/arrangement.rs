@@ -88,8 +88,12 @@ pub struct Palette {
     pub grid: Color,
     /// The sub-bar lines, dimmer than the bar lines they sit between.
     pub grid_beat: Color,
+    /// The grid's lines finer than a beat.
+    pub grid_sub: Color,
     pub ruler_bg: Color,
     pub ruler_fg: Color,
+    /// The ruler's quieter ink: beats and subdivisions.
+    pub ruler_fg2: Color,
     pub item_edge: Color,
     pub text: Color,
     pub text_dim: Color,
@@ -140,8 +144,10 @@ impl Palette {
             divider: c(theme.arrange.row_divider[0]),
             grid: c(theme.arrange.grid_measure),
             grid_beat: c(theme.arrange.grid_beat),
+            grid_sub: c(theme.arrange.grid_sub),
             ruler_bg: c(theme.arrange.ruler_bg),
             ruler_fg: c(theme.arrange.ruler_fg),
+            ruler_fg2: c(theme.arrange.ruler_fg2),
             item_edge: c(theme.arrange.item_edge),
             text_dim: c(theme.tokens.text_dim),
             text_faint: c(theme.tokens.text_faint),
@@ -564,13 +570,13 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
         return None;
     }
     let coarsest = details.iter().map(|(d, ..)| d.step).fold(0.0, f64::max);
+    let scaled = |scale: f64, v: f32| v * num_traits::ToPrimitive::to_f32(&scale).unwrap_or(1.0);
     // A line through the samples only once every item under it has them
     // across the span: a line can have no gaps.
     let every_sample = !missing
         && details
             .iter()
             .all(|(d, sa, sb, _)| d.samples && d.from <= *sa && d.to() >= *sb);
-    let scaled = |scale: f64, v: f32| v * num_traits::ToPrimitive::to_f32(&scale).unwrap_or(1.0);
     if every_sample && coarsest * pps >= 1.0 {
         let half = (lane.bottom - lane.top) / 2.0;
         let mid = f64::midpoint(lane.top, lane.bottom);
@@ -1108,13 +1114,13 @@ impl Arrangement {
         let mut y = 0.0_f64;
         let keys = keys_of(project);
         let roles = kit_roles(project);
+        let versions = track_versions(project);
         // Every item by guid, for the shut folders' rows to find what is
         // under them — built only when some folder is shut.
         let by_guid: std::collections::HashMap<&str, &daw_proto::Item> = if project.folds.is_empty()
         {
             std::collections::HashMap::new()
         } else {
-        let versions = track_versions(project);
             project
                 .items
                 .values()
@@ -1122,13 +1128,13 @@ impl Arrangement {
                 .map(|item| (item.guid.as_str(), item))
                 .collect()
         };
+        let loudest = folder_loudest(project, &by_guid, previews);
         for (row, (track, depth)) in rows.iter().enumerate() {
             // A folder closes simply by the next row being shallower,
             // so the truncate IS the close.
             // Command indices are `u32`: two per row plus one per item,
             // so four billion of them is a project nothing could open.
             // Saturating rather than wrapping, because a wrapped index
-        let loudest = folder_loudest(project, &by_guid, previews);
             // would cull the wrong rows rather than fail.
             let lanes_from = command_index(&lanes);
             offsets.push(y);
@@ -1269,12 +1275,6 @@ impl Arrangement {
                 let folded =
                     folded_contents(project, (&by_guid, &roles, &versions), previews, &item.guid);
                 let is_folder = folded.is_some();
-                let held = folded.unwrap_or_else(|| Held {
-                    notes: previews.get(&item.guid),
-                    wave: previews.wave(&item.guid),
-                    layers: Vec::new(),
-                    sources: vec![source],
-                });
                 // An item that plays is read as its track plays: one read
                 // of the track for all its items, kept through an edit.
                 let source =
@@ -1290,6 +1290,12 @@ impl Arrangement {
                     } else {
                         source_of(item)
                     };
+                let held = folded.unwrap_or_else(|| Held {
+                    notes: previews.get(&item.guid),
+                    wave: previews.wave(&item.guid),
+                    layers: Vec::new(),
+                    sources: vec![source],
+                });
                 let (notes, wave) = (held.notes, held.wave);
                 // Audio: the take's own peaks, once they have been read —
                 // plain until then, for the same reason.
@@ -1305,18 +1311,18 @@ impl Arrangement {
                     // kick's hits near the edge, the hats under them, a
                     // track recorded low small until it is staged. A shut
                     // folder's row is a summary, as loud as the lane allows.
+                    let shared_loudest = daw_ui::studio::folded::parse_guid(&item.guid)
+                        .and_then(|(folder, _)| loudest.get(folder));
                     let gain = if held.layers.is_empty() && !is_folder {
                         item.volume.max(0.0)
+                    } else if let Some(&loudest) = shared_loudest {
+                        gain_for(loudest)
                     } else {
                         wave_gain(&whole)
                     };
                     let lane = |wave, color, sources| LaneWave {
-                    let shared_loudest = daw_ui::studio::folded::parse_guid(&item.guid)
-                        .and_then(|(folder, _)| loudest.get(folder));
                         runs: std::cell::RefCell::default(),
                         sources,
-                    } else if let Some(&loudest) = shared_loudest {
-                        gain_for(loudest)
                         gain,
                         wave,
                         x0,
@@ -2978,11 +2984,6 @@ fn kit_roles(project: &ProjectRef) -> std::collections::HashMap<&str, LaneRole> 
         .collect()
 }
 
-/// What a shut folder's item `guid` holds — the notes and the envelope of
-/// the children under its span — or `None` when `guid` is not one.
-fn folded_contents(
-    project: &ProjectRef,
-    (by_guid, roles, versions): Lookups<'_, '_>,
 /// Each shut folder's loudest point anywhere under it: one display gain
 /// for all of its items. Each its own, an edit that cuts the folder into
 /// a piece a seam blew every quiet stretch up to the band's edge.
@@ -3016,6 +3017,11 @@ type Lookups<'m, 'k> = (
     &'m std::collections::HashMap<&'k str, u64>,
 );
 
+/// What a shut folder's item `guid` holds — the notes and the envelope of
+/// the children under its span — or `None` when `guid` is not one.
+fn folded_contents(
+    project: &ProjectRef,
+    (by_guid, roles, versions): Lookups<'_, '_>,
     previews: &crate::midi::Previews,
     guid: &str,
 ) -> Option<Held> {
