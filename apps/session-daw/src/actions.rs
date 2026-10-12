@@ -73,7 +73,7 @@ pub fn frame_owed() -> bool {
 /// A frame owed for actions just carried out.
 static FOLLOW_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-fn queue(action: Action) {
+pub(crate) fn queue(action: Action) {
     if let Ok(mut q) = WINDOW.lock() {
         q.push_back(action);
     }
@@ -141,6 +141,7 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         Action::ToggleEditor => (TOGGLE_EDITOR.id, String::new()),
         Action::ToggleFx => (TOGGLE_FX.id, String::new()),
         Action::ToggleBrowser => (crate::browser::BROWSER.id, String::new()),
+        Action::BarStep(n) => (crate::bar_step::STEP_ACTION.id, by(*n)),
         Action::FxFull => (FX_FULL.id, String::new()),
         Action::ToggleScene(slug) => (SCENE.id, format!(r#"{{"scene":"{slug}"}}"#)),
         Action::Visibility(crate::keys::Visibility::Toggle(group)) => (
@@ -1055,6 +1056,7 @@ fn register_data(list: &ActionList) {
     crate::project_new::register(list);
     crate::instrument_tracks::register(list);
     crate::timeline_actions::register(list);
+    crate::bar_step::register(list);
     #[cfg(feature = "signal")]
     crate::rig_actions::register(list);
 }
@@ -5033,11 +5035,11 @@ fn register_revert(list: &ActionList) {
 fn register_place(list: &ActionList) {
     list.register(&PLACE, Effect::Mutating, |a: PlaceArg| {
         let (daw, project) = song()?;
-        let before = crate::hits::playback(daw, &project);
-        let hit = before
         let began = std::time::Instant::now();
-            .iter()
+        let before = crate::hits::playback(daw, &project);
         let read_ms = began.elapsed().as_millis();
+        let hit = before
+            .iter()
             .find(|p| p.id == a.id)
             .ok_or_else(|| format!("no hit {} plays now", a.id))?;
         let now = hit.time;
@@ -5066,29 +5068,29 @@ fn register_place(list: &ActionList) {
             .filter_map(|i| times.get(i).copied())
             .filter(|t| (t - now).abs() > KIT_MERGE)
             .collect();
+        let kit_ms = began.elapsed().as_millis();
         let (result, cuts) = judge(
             daw,
-        let kit_ms = began.elapsed().as_millis();
             &project,
             &settings,
             (&[(now, Some(to))], &neighbours),
             false,
         );
-        if result.applied {
-            slip_now(daw, &project, &settings, cuts);
         let judge_ms = began.elapsed().as_millis();
         let mut slip_ms = judge_ms;
+        if result.applied {
+            slip_now(daw, &project, &settings, cuts);
+            slip_ms = began.elapsed().as_millis();
             wait_for_slip(
                 daw,
-            slip_ms = began.elapsed().as_millis();
                 &project,
                 (&before, &[(now, Some(to))]),
                 (now.min(to) - 1.0, now.max(to) + 1.0),
             );
         }
+        let wait_ms = began.elapsed().as_millis();
         let span = (now.min(to) - 1.0, now.max(to) + 1.0);
         let out = checked(
-        let wait_ms = began.elapsed().as_millis();
             daw,
             &project,
             (&settings, &[(now, Some(to))]),

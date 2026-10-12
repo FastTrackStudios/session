@@ -112,6 +112,8 @@ pub enum Action {
     ToggleFx,
     /// Show or hide the browser (`b`): what to load on the selected track.
     ToggleBrowser,
+    /// The view a page of bars on, or back (`]`, `[`): `SESSION_STEP`.
+    BarStep(i32),
     /// The FX's own view, full size (`F`): several tracks' chains.
     FxFull,
     /// Show the session as a scene (`v v` Overview, `v t` Overview TOP),
@@ -190,6 +192,8 @@ pub fn action_of(id: &str) -> Action {
         "FTS_EXPRESSION_EDITOR_OPEN" => Action::ToggleEditor,
         "FTS_TOGGLE_FX" => Action::ToggleFx,
         "FTS_BROWSER" => Action::ToggleBrowser,
+        "FTS_STEP_NEXT" => Action::BarStep(1),
+        "FTS_STEP_PREV" => Action::BarStep(-1),
         "FTS_FX_FULL" => Action::FxFull,
         "FTS_SCENE_OVERVIEW" => Action::ToggleScene("overview"),
         "FTS_SCENE_OVERVIEW_TOP" => Action::ToggleScene("overview-top"),
@@ -455,6 +459,8 @@ const BUILTIN: &str = r#"{
       "d": "40006",
       "e": "FTS_EXPRESSION_EDITOR_OPEN",
       "b": "FTS_BROWSER",
+      "[": "FTS_STEP_PREV",
+      "]": "FTS_STEP_NEXT",
       "q": "FTS_QUANTIZE_DRUMS",
       "Shift+q": "FTS_QUANTIZE_PANEL",
       "Alt+q": "FTS_REVERT_DRUMS",

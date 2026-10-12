@@ -20,6 +20,7 @@ pub mod automation_edit;
 #[cfg(feature = "native")]
 pub mod automation_menu;
 pub mod balance;
+pub mod bar_step;
 pub mod beats;
 #[cfg(feature = "native")]
 pub mod chart_editor;

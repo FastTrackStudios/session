@@ -189,6 +189,10 @@ fn TransportBarView(reading: crate::engine::Reading, big: bool) -> Element {
                 Button { title: "Go to end", on: false, color: TEXT, glyph: Glyph::End, big,
                     onpress: move |()| transport(Move::End, 0.0) }
             }
+            if big {
+                Hairline {}
+            }
+            crate::bar_step::Stepper { big }
                         if big {
                 Hairline {}
             } else {
