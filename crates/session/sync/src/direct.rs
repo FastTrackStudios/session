@@ -138,7 +138,13 @@ pub fn set_item_fields(
                 d.set_position(c(), at(), PositionInSeconds::from_seconds(item.position))?;
             }
             ItemField::Length => d.set_length(c(), at(), Duration::from_seconds(item.length))?,
-            ItemField::SnapOffset => {}
+            // The engine's own state takes these ([`crate::whole`]).
+            ItemField::SnapOffset
+            | ItemField::Timing
+            | ItemField::TakeSettings
+            | ItemField::TakeEnvelopes
+            | ItemField::Midi
+            | ItemField::Takes => {}
             ItemField::Muted => d.set_muted(c(), at(), item.muted)?,
             ItemField::Locked => d.set_locked(c(), at(), item.locked)?,
             ItemField::Volume => daw_proto::Items::set_volume(d, c(), at(), item.volume)?,

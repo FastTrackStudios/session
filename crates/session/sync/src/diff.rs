@@ -13,7 +13,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::model::{
-    ItemState, MarkerState, RegionState, SessionModel, TakeMarkerState, TempoPoint, TrackState,
+    ItemState, MarkerState, ProjectSettings, RegionState, SessionModel, TakeMarkerState,
+    TempoPoint, TrackState,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,6 +72,9 @@ pub enum Change {
         source: String,
         markers: Vec<TakeMarkerState>,
     },
+    /// The project's settings, the master bus or the monitoring chain
+    /// changed: all of them as they are now.
+    ProjectChanged(ProjectSettings),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +99,28 @@ pub enum TrackField {
     Fx,
     Sends,
     Envelopes,
+    Armed,
+    /// Its automation mode — which, set, every envelope on it takes.
+    AutomationMode,
+    /// Input monitoring.
+    Monitor,
+    RecordInput,
+    /// How many channels it carries.
+    Channels,
+    /// Its panel's height.
+    Height,
+    /// Its mixer strip's width.
+    Width,
+    /// How its fixed lanes are drawn.
+    LaneDisplay,
+    /// Its comping: record and comp lanes, comp areas.
+    Comping,
+    /// Its ext-state under named sections.
+    ExtSections,
+    /// Its input FX chain.
+    InputFx,
+    /// Its hardware outputs.
+    HwOutputs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +149,17 @@ pub enum ItemField {
     TakeVolume,
     /// A MIDI take's notes.
     Notes,
+    /// How it follows tempo, its auto-stretch, group and own offset.
+    Timing,
+    /// The active take's colour, gain, pitch, channel mode, source
+    /// details and stretch mode.
+    TakeSettings,
+    /// The active take's envelopes other than volume.
+    TakeEnvelopes,
+    /// The active take's MIDI events other than notes.
+    Midi,
+    /// Its other takes, and which one is active.
+    Takes,
 }
 
 /// The steps from `old` to `new`.
@@ -219,6 +256,7 @@ pub fn diff(old: &SessionModel, new: &SessionModel) -> Vec<Change> {
     // After the items: a recording's markers are set through an item cut
     // from it, which has to be there.
     out.extend(take_markers(old, new));
+    out.extend((old.project != new.project).then(|| Change::ProjectChanged(new.project.clone())));
 
     let kept: HashSet<&str> = new.tracks.iter().map(|t| t.guid.as_str()).collect();
     // Deepest first, so a folder goes after what it held.
@@ -309,6 +347,21 @@ fn track_fields(a: &TrackState, b: &TrackState) -> Vec<TrackField> {
         (a.fx != b.fx, TrackField::Fx),
         (a.sends != b.sends, TrackField::Sends),
         (a.envelopes != b.envelopes, TrackField::Envelopes),
+        (a.armed != b.armed, TrackField::Armed),
+        (
+            a.automation_mode != b.automation_mode,
+            TrackField::AutomationMode,
+        ),
+        (a.monitor != b.monitor, TrackField::Monitor),
+        (a.record_input != b.record_input, TrackField::RecordInput),
+        (a.channels != b.channels, TrackField::Channels),
+        (a.height != b.height, TrackField::Height),
+        (a.width != b.width, TrackField::Width),
+        (a.lane_display != b.lane_display, TrackField::LaneDisplay),
+        (a.comping != b.comping, TrackField::Comping),
+        (a.ext_sections != b.ext_sections, TrackField::ExtSections),
+        (a.input_fx != b.input_fx, TrackField::InputFx),
+        (a.hw_outputs != b.hw_outputs, TrackField::HwOutputs),
     ];
     checks
         .into_iter()
@@ -351,6 +404,30 @@ pub fn item_fields(a: &ItemState, b: &ItemState) -> Vec<ItemField> {
         (a.take.stretch != b.take.stretch, ItemField::Stretch),
         (a.take.volume != b.take.volume, ItemField::TakeVolume),
         (a.take.notes != b.take.notes, ItemField::Notes),
+        (a.timing != b.timing, ItemField::Timing),
+        (
+            a.take.color != b.take.color
+                || a.take.gain != b.take.gain
+                || a.take.pitch != b.take.pitch
+                || a.take.preserve_pitch != b.take.preserve_pitch
+                || a.take.channel_mode != b.take.channel_mode
+                || a.take.source_type != b.take.source_type
+                || a.take.source_length != b.take.source_length
+                || a.take.source_rate != b.take.source_rate
+                || a.take.source_channels != b.take.source_channels
+                || a.take.note_count != b.take.note_count
+                || a.take.stretch_mode != b.take.stretch_mode,
+            ItemField::TakeSettings,
+        ),
+        (
+            a.take.envelopes != b.take.envelopes,
+            ItemField::TakeEnvelopes,
+        ),
+        (a.take.midi_events != b.take.midi_events, ItemField::Midi),
+        (
+            a.other_takes != b.other_takes || a.active_take != b.active_take,
+            ItemField::Takes,
+        ),
     ];
     checks
         .into_iter()

@@ -28,6 +28,8 @@ pub mod net;
 pub mod presence;
 pub mod slug;
 pub mod transport;
+#[cfg(feature = "engine")]
+pub mod whole;
 
 #[cfg(feature = "engine")]
 pub use bridge::Bridge;
@@ -35,7 +37,10 @@ pub use diff::{Change, ItemField, TrackField, diff};
 pub use doc::{ORIGIN_LOCAL, SCHEMA, SessionDoc};
 pub use loro;
 pub use model::{
-    EnvelopePointState, EnvelopeState, FxState, GainPoint, HitState, ItemState, LaneState,
-    MarkerState, NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint,
-    TakeMarkerState, TakeState, TempoPoint, TrackState,
+    AutomationItemState, CcState, ChannelPressureState, CompAreaState, CompingState,
+    EnvelopePointState, EnvelopeState, FxState, GainPoint, HitState, ItemState, ItemTiming,
+    LaneState, MarkerState, MasterState, MidiEvents, NoteExpressionState, NoteState,
+    PitchBendState, PolyPressureState, ProgramChangeState, ProjectSettings, RegionState,
+    RulerLaneState, SendState, SessionModel, Sources, StretchPoint, SysexState, TakeMarkerState,
+    TakeState, TempoPoint, TrackState,
 };

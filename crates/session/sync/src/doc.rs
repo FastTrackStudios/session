@@ -21,7 +21,12 @@
 //! sends  : Map   "<track>#<n>" → Map { track, index, dest, mode, volume,
 //!                pan, muted, from, to }
 //! envelopes: Map "<track>|<what>" → Map { track, what, mode, visible,
-//!                armed, points }  (points: [at, value, shape, tension]…)
+//!                armed, points, own_lane, lane_height, items }
+//!                (points: [at, value, shape, tension]…)
+//! hw_outputs: Map "<track>#<n>" → Map { as a send's, dest the output }
+//! project: Map  { master.volume, master.pan, master.muted, ext,
+//!                ruler_lanes, automation_override, bay, looping,
+//!                metronome, playrate, record_mode }
 //! ```
 //!
 //! Schema 2 adds `fx`, `sends` and `envelopes`, a track's fixed lanes and
@@ -34,6 +39,42 @@
 //! Schema 3 adds `take_markers`: a recording's markers, drum hits among
 //! them, each its own map — one person approving a hit while another
 //! moves the next both land.
+//!
+//! Schema 4 holds the rest of the project, so that every edit is a step
+//! the doc records and an undo can put back:
+//!
+//! - on a track's node: `armed`, `automation_mode`, `monitor`,
+//!   `record_input`, `channels`, `height`, `width`, `lane_display`, its
+//!   comping (`comp.record`, `comp.lane`, `comp.last`, `comp.areas`:
+//!   `[start, end, source lane, comp lane, fade in, fade out]…`) and its
+//!   ext-state under named sections (`ext_sections`);
+//! - an FX's `chain` (`""` a track's own, `input`, `monitoring`), its
+//!   `params` (`[id, value]…`), `param_count`, `preset`, `preset_name`
+//!   and named `config`; the master bus's FX, sends and envelopes are
+//!   kept as a track's, under the track id `master`, and the monitoring
+//!   chain's FX under no track;
+//! - a send's `mono`, `phase_inverted`, `automation_mode`, channel
+//!   counts, MIDI channels and far end's `label`; hardware outputs, in
+//!   `hw_outputs`;
+//! - an envelope's lane (`own_lane`, `lane_height`) and its automation
+//!   items (`items`, each with its own points); a track's envelopes are
+//!   also its sends' (`send:<n>:<volume|pan|mute>`), play rate and pitch
+//!   (`playrate`, `pitch`), and named ones (`named:<name>`);
+//! - an item's `beat_attach`, `auto_stretch`, `group`, `start_offset`,
+//!   every take (`takes`: the others, in order, each a map; the active
+//!   one's place `active_take`), and the active take's fields beyond the
+//!   flat `take.*` ones in `take.more`: colour, gain, pitch, channel mode,
+//!   source details, stretch mode, its envelopes other than volume, which
+//!   notes are muted, and its MIDI events other than notes (`midi`:
+//!   `cc`, `pb`, `pc`, `chp`, `pp`, `nx` flat number lists and `sysex`).
+//!
+//! `take.more`, `takes`, an envelope's `items`, the project's `ext` and
+//! `ruler_lanes` are each one value: two people changing one of them at
+//! once is last-writer-wins for the whole of it. A take with no file
+//! keeps its markers in `take_markers` under `take:<item>:<place>`.
+//!
+//! A doc written before schema 4 reads with each of these at the
+//! engine's default.
 //!
 //! Every field is its own map entry, so two people changing different
 //! things about the same item — one moves it, one turns it down — both
@@ -57,13 +98,15 @@ use loro::{
 };
 
 use crate::model::{
+    AutomationItemState, CcState, ChannelPressureState, CompAreaState, CompingState,
     EnvelopePointState, EnvelopeState, FxState, GainPoint, HitState, ItemState, LaneState,
-    MarkerState, NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint,
-    TakeMarkerState, TakeState, TempoPoint, TrackState,
+    MarkerState, MidiEvents, NoteExpressionState, NoteState, PitchBendState, PolyPressureState,
+    ProgramChangeState, ProjectSettings, RegionState, RulerLaneState, SendState, SessionModel,
+    Sources, StretchPoint, SysexState, TakeMarkerState, TakeState, TempoPoint, TrackState,
 };
 
 /// The schema version written into `meta.schema`.
-pub const SCHEMA: i64 = 3;
+pub const SCHEMA: i64 = 4;
 
 const META: &str = "meta";
 const TRACKS: &str = "tracks";
@@ -75,6 +118,12 @@ const FX: &str = "fx";
 const SENDS: &str = "sends";
 const ENVELOPES: &str = "envelopes";
 const TAKE_MARKERS: &str = "take_markers";
+const HW_OUTPUTS: &str = "hw_outputs";
+const PROJECT: &str = "project";
+
+/// The track id the master bus's FX, sends and envelopes are kept under —
+/// the engine's own name for it.
+pub const MASTER: &str = "master";
 
 /// Origin tag for commits made from the local engine.
 pub const ORIGIN_LOCAL: &str = "local";
@@ -163,10 +212,8 @@ impl SessionDoc {
         write_entities(&self.doc.get_map(ITEMS), &model.items, item_fields)?;
         write_entities(&self.doc.get_map(MARKERS), &model.markers, marker_fields)?;
         write_entities(&self.doc.get_map(REGIONS), &model.regions, region_fields)?;
-        let (fx, sends, envelopes) = track_parts(&model.tracks);
-        write_entities(&self.doc.get_map(FX), &fx, fx_fields)?;
-        write_entities(&self.doc.get_map(SENDS), &sends, send_fields)?;
-        write_entities(&self.doc.get_map(ENVELOPES), &envelopes, envelope_fields)?;
+        self.write_parts(&model.tracks, &model.project)?;
+        sync_fields(&self.doc.get_map(PROJECT), &project_fields(&model.project))?;
         write_text(&self.doc.get_text(CHART), &model.chart)?;
         write_entities(
             &self.doc.get_map(TAKE_MARKERS),
@@ -201,10 +248,12 @@ impl SessionDoc {
         }
         if before.tracks != model.tracks {
             self.write_tracks(&model.tracks)?;
-            let (fx, sends, envelopes) = track_parts(&model.tracks);
-            write_entities(&self.doc.get_map(FX), &fx, fx_fields)?;
-            write_entities(&self.doc.get_map(SENDS), &sends, send_fields)?;
-            write_entities(&self.doc.get_map(ENVELOPES), &envelopes, envelope_fields)?;
+        }
+        if before.tracks != model.tracks || before.project != model.project {
+            self.write_parts(&model.tracks, &model.project)?;
+        }
+        if before.project != model.project {
+            sync_fields(&self.doc.get_map(PROJECT), &project_fields(&model.project))?;
         }
         write_changed(
             &self.doc.get_map(ITEMS),
@@ -276,13 +325,7 @@ impl SessionDoc {
             .and_then(as_string)
             .map(|s| decode_tempo(&s))
             .unwrap_or_default();
-        let mut tracks = self.read_tracks();
-        attach_parts(
-            &mut tracks,
-            &read_entities(&self.doc.get_map(FX), read_fx),
-            &read_entities(&self.doc.get_map(SENDS), read_send),
-            &read_entities(&self.doc.get_map(ENVELOPES), read_envelope),
-        );
+        let (tracks, project) = self.read_tracks_and_project();
         SessionModel {
             tracks,
             items: read_entities(&self.doc.get_map(ITEMS), read_item),
@@ -291,7 +334,37 @@ impl SessionDoc {
             tempo,
             chart: self.doc.get_text(CHART).to_string(),
             take_markers: read_entities(&self.doc.get_map(TAKE_MARKERS), read_take_marker),
+            project,
         }
+    }
+
+    /// The tracks with their parts, and the project's settings with the
+    /// master's and the monitoring chain's.
+    fn read_tracks_and_project(&self) -> (Vec<TrackState>, ProjectSettings) {
+        let mut tracks = self.read_tracks();
+        let mut project = read_project(&map_value(&self.doc.get_map(PROJECT).get_deep_value()));
+        let parts = Parts {
+            fx: read_entities(&self.doc.get_map(FX), read_fx),
+            sends: read_entities(&self.doc.get_map(SENDS), read_send),
+            hw: read_entities(&self.doc.get_map(HW_OUTPUTS), read_send),
+            envelopes: read_entities(&self.doc.get_map(ENVELOPES), read_envelope),
+        };
+        attach_parts(&mut tracks, &mut project, &parts);
+        (tracks, project)
+    }
+
+    /// Every FX, send, hardware output and envelope — the tracks', the
+    /// master's, the monitoring chain's — each in its own map.
+    fn write_parts(&self, tracks: &[TrackState], project: &ProjectSettings) -> LoroResult<()> {
+        let parts = track_parts(tracks, project);
+        write_entities(&self.doc.get_map(FX), &parts.fx, fx_fields)?;
+        write_entities(&self.doc.get_map(SENDS), &parts.sends, send_fields)?;
+        write_entities(&self.doc.get_map(HW_OUTPUTS), &parts.hw, send_fields)?;
+        write_entities(
+            &self.doc.get_map(ENVELOPES),
+            &parts.envelopes,
+            envelope_fields,
+        )
     }
 
     /// Note what each change to the doc touches, from now on, into the
@@ -328,15 +401,12 @@ impl SessionDoc {
             return self.read();
         }
         let mut model = base.clone();
-        if touched.parts.tracks {
-            let mut tracks = self.read_tracks();
-            attach_parts(
-                &mut tracks,
-                &read_entities(&self.doc.get_map(FX), read_fx),
-                &read_entities(&self.doc.get_map(SENDS), read_send),
-                &read_entities(&self.doc.get_map(ENVELOPES), read_envelope),
-            );
+        if touched.parts.tracks || touched.parts.project {
+            // The master's parts are kept beside the tracks', so either
+            // reads both.
+            let (tracks, project) = self.read_tracks_and_project();
             model.tracks = tracks;
+            model.project = project;
         }
         reread(
             &self.doc.get_map(ITEMS),
@@ -565,11 +635,14 @@ pub struct Watch {
 /// The parts of the doc read back whole when touched.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Whole {
-    /// The track tree, and the FX, sends and envelopes on it.
+    /// The track tree, and the FX, sends, hardware outputs and envelopes
+    /// on it.
     pub tracks: bool,
     /// The tempo map.
     pub meta: bool,
     pub chart: bool,
+    /// The project's settings and the master bus.
+    pub project: bool,
 }
 
 impl Touched {
@@ -616,7 +689,8 @@ impl Touched {
             (None, _) => Vec::new(),
         };
         match root.as_deref() {
-            Some(TRACKS | FX | SENDS | ENVELOPES) => self.parts.tracks = true,
+            Some(TRACKS | FX | SENDS | ENVELOPES | HW_OUTPUTS) => self.parts.tracks = true,
+            Some(PROJECT) => self.parts.project = true,
             Some(META) => self.parts.meta = true,
             Some(CHART) => self.parts.chart = true,
             Some(ITEMS) if !keys.is_empty() => self.items.extend(keys),
@@ -769,6 +843,13 @@ impl Get<'_> {
     fn string(&self, key: &str) -> String {
         self.0.get(key).and_then(as_string).unwrap_or_default()
     }
+    /// A string, `default` when the doc predates it.
+    fn string_or(&self, key: &str, default: &str) -> String {
+        self.0
+            .get(key)
+            .and_then(as_string)
+            .unwrap_or_else(|| default.to_owned())
+    }
     fn opt_string(&self, key: &str) -> Option<String> {
         self.0.get(key).and_then(as_string)
     }
@@ -813,16 +894,80 @@ fn track_fields(t: &TrackState) -> Fields {
             LoroValue::I64(i64::from_ne_bytes(t.lanes.play_mask.to_ne_bytes())),
         ),
         ("grouping", grouping_value(&t.grouping)),
+        ("ext", string_map(&t.ext)),
+        ("armed", LoroValue::Bool(t.armed)),
         (
-            "ext",
-            LoroValue::from(
-                t.ext
-                    .iter()
-                    .map(|(k, v)| (k.clone(), LoroValue::from(v.as_str())))
-                    .collect::<HashMap<String, LoroValue>>(),
-            ),
+            "automation_mode",
+            LoroValue::from(t.automation_mode.as_str()),
         ),
+        ("monitor", LoroValue::from(t.monitor.as_str())),
+        ("record_input", LoroValue::from(t.record_input.as_str())),
+        ("channels", LoroValue::I64(i64::from(t.channels))),
+        ("height", color(t.height)),
+        ("width", color(t.width)),
+        ("lane_display", LoroValue::from(t.lane_display.as_str())),
+        ("comp.record", color(t.comping.record_lane)),
+        ("comp.lane", color(t.comping.comp_lane)),
+        ("comp.last", color(t.comping.last_comp_lane)),
+        (
+            "comp.areas",
+            number_list(t.comping.areas.iter().flat_map(|a| {
+                [
+                    a.start,
+                    a.end,
+                    f64::from(a.source_lane),
+                    f64::from(a.comp_lane),
+                    a.fade_in,
+                    a.fade_out,
+                ]
+            })),
+        ),
+        ("ext_sections", sections_value(&t.ext_sections)),
     ]
+}
+
+/// A string map as a map value.
+fn string_map(map: &BTreeMap<String, String>) -> LoroValue {
+    LoroValue::from(
+        map.iter()
+            .map(|(k, v)| (k.clone(), LoroValue::from(v.as_str())))
+            .collect::<HashMap<String, LoroValue>>(),
+    )
+}
+
+fn read_string_map(v: Option<&LoroValue>) -> BTreeMap<String, String> {
+    match v {
+        Some(LoroValue::Map(map)) => map
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), as_string(v)?)))
+            .collect(),
+        _ => BTreeMap::new(),
+    }
+}
+
+/// Ext-state by section, as nested map values.
+fn sections_value(sections: &BTreeMap<String, BTreeMap<String, String>>) -> LoroValue {
+    LoroValue::from(
+        sections
+            .iter()
+            .map(|(section, keys)| (section.clone(), string_map(keys)))
+            .collect::<HashMap<String, LoroValue>>(),
+    )
+}
+
+fn read_sections(v: Option<&LoroValue>) -> BTreeMap<String, BTreeMap<String, String>> {
+    match v {
+        Some(LoroValue::Map(map)) => map
+            .iter()
+            .map(|(section, keys)| (section.clone(), read_string_map(Some(keys))))
+            .collect(),
+        _ => BTreeMap::new(),
+    }
+}
+
+/// An optional `u32` read back (see [`color`]).
+fn opt_u32(v: Option<&LoroValue>) -> Option<u32> {
+    v.and_then(as_color)
 }
 
 /// A track's group masks, as `family → hex`.
@@ -894,17 +1039,46 @@ fn read_track(fields: &HashMap<String, LoroValue>, folder: Option<&str>) -> Opti
             play_mask: u64::from_ne_bytes(g.i64("lanes.play", 0).to_ne_bytes()),
         },
         grouping: read_grouping(fields.get("grouping")),
-        ext: match fields.get("ext") {
-            Some(LoroValue::Map(map)) => map
-                .iter()
-                .filter_map(|(k, v)| Some((k.clone(), as_string(v)?)))
-                .collect(),
-            _ => BTreeMap::new(),
-        },
+        ext: read_string_map(fields.get("ext")),
         fx: Vec::new(),
         sends: Vec::new(),
         envelopes: BTreeMap::new(),
+        armed: g.bool("armed", false),
+        automation_mode: g.string_or("automation_mode", "trim"),
+        monitor: g.string_or("monitor", "off"),
+        record_input: g.string_or("record_input", "none"),
+        channels: u32::try_from(g.i64("channels", 2)).unwrap_or(2),
+        height: opt_u32(fields.get("height")),
+        width: opt_u32(fields.get("width")),
+        lane_display: g.string_or("lane_display", "small"),
+        comping: CompingState {
+            record_lane: opt_u32(fields.get("comp.record")),
+            comp_lane: opt_u32(fields.get("comp.lane")),
+            last_comp_lane: opt_u32(fields.get("comp.last")),
+            areas: numbers(fields.get("comp.areas"))
+                .chunks_exact(6)
+                .filter_map(|a| match *a {
+                    [start, end, source, comp, fade_in, fade_out] => Some(CompAreaState {
+                        start,
+                        end,
+                        source_lane: count(source),
+                        comp_lane: count(comp),
+                        fade_in,
+                        fade_out,
+                    }),
+                    _ => None,
+                })
+                .collect(),
+        },
+        ext_sections: read_sections(fields.get("ext_sections")),
+        input_fx: Vec::new(),
+        hw_outputs: Vec::new(),
     })
+}
+
+/// A count or index stored as a number.
+fn count(v: f64) -> u32 {
+    num_traits::ToPrimitive::to_u32(&v.round().max(0.0)).unwrap_or(0)
 }
 
 fn item_fields(i: &ItemState) -> Fields {
@@ -946,24 +1120,376 @@ fn item_fields(i: &ItemState) -> Fields {
             "take.volume",
             number_list(i.take.volume.iter().flat_map(|g| [g.at, g.value])),
         ),
+        ("take.notes", notes_value(&i.take.notes)),
+        ("take.more", take_more(&i.take)),
         (
-            "take.notes",
-            number_list(i.take.notes.iter().flat_map(|n| {
-                [
-                    n.start,
-                    n.length,
-                    f64::from(n.pitch),
-                    f64::from(n.velocity),
-                    f64::from(n.channel),
-                ]
-            })),
+            "beat_attach",
+            LoroValue::from(i.timing.beat_attach.as_str()),
+        ),
+        ("auto_stretch", LoroValue::Bool(i.timing.auto_stretch)),
+        ("group", color(i.timing.group)),
+        ("start_offset", LoroValue::Double(i.timing.start_offset)),
+        ("active_take", LoroValue::I64(i64::from(i.active_take))),
+        (
+            "takes",
+            LoroValue::from(i.other_takes.iter().map(take_value).collect::<Vec<_>>()),
         ),
     ]
 }
 
+fn notes_value(notes: &[NoteState]) -> LoroValue {
+    number_list(notes.iter().flat_map(|n| {
+        [
+            n.start,
+            n.length,
+            f64::from(n.pitch),
+            f64::from(n.velocity),
+            f64::from(n.channel),
+        ]
+    }))
+}
+
+fn read_notes(v: Option<&LoroValue>) -> Vec<NoteState> {
+    numbers(v)
+        .chunks_exact(5)
+        .filter_map(|n| match *n {
+            [start, length, pitch, velocity, channel] => Some(NoteState {
+                start,
+                length,
+                pitch: byte(pitch),
+                velocity: byte(velocity),
+                channel: byte(channel),
+                muted: false,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn stretch_value(stretch: &[StretchPoint]) -> LoroValue {
+    number_list(stretch.iter().flat_map(|m| [m.at, m.source, m.slope]))
+}
+
+fn read_stretch(v: Option<&LoroValue>) -> Vec<StretchPoint> {
+    numbers(v)
+        .chunks_exact(3)
+        .filter_map(|m| match *m {
+            [at, source, slope] => Some(StretchPoint { at, source, slope }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn gains_value(volume: &[GainPoint]) -> LoroValue {
+    number_list(volume.iter().flat_map(|g| [g.at, g.value]))
+}
+
+fn read_gains(v: Option<&LoroValue>) -> Vec<GainPoint> {
+    numbers(v)
+        .chunks_exact(2)
+        .filter_map(|g| match *g {
+            [at, value] => Some(GainPoint { at, value }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A take's fields beyond the flat `take.*` ones, as one map value.
+fn take_more(t: &TakeState) -> LoroValue {
+    let muted: Vec<f64> = t
+        .notes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.muted)
+        .filter_map(|(i, _)| u32::try_from(i).ok().map(f64::from))
+        .collect();
+    let mut map: HashMap<String, LoroValue> = HashMap::new();
+    map.insert("color".into(), color(t.color));
+    map.insert("gain".into(), LoroValue::Double(t.gain));
+    map.insert("pitch".into(), LoroValue::Double(t.pitch));
+    map.insert("preserve_pitch".into(), LoroValue::Bool(t.preserve_pitch));
+    map.insert(
+        "channel_mode".into(),
+        LoroValue::I64(i64::from(t.channel_mode)),
+    );
+    map.insert(
+        "source_type".into(),
+        LoroValue::from(t.source_type.as_str()),
+    );
+    map.insert(
+        "source_length".into(),
+        t.source_length.map_or(LoroValue::Null, LoroValue::Double),
+    );
+    map.insert("source_rate".into(), color(t.source_rate));
+    map.insert("source_channels".into(), color(t.source_channels));
+    map.insert("note_count".into(), color(t.note_count));
+    map.insert(
+        "stretch_mode".into(),
+        LoroValue::I64(i64::from(t.stretch_mode)),
+    );
+    map.insert("notes_muted".into(), number_list(muted));
+    map.insert(
+        "envelopes".into(),
+        LoroValue::from(
+            t.envelopes
+                .iter()
+                .map(|(kind, e)| (kind.clone(), envelope_value(e)))
+                .collect::<HashMap<String, LoroValue>>(),
+        ),
+    );
+    map.insert("midi".into(), midi_value(&t.midi_events));
+    LoroValue::from(map)
+}
+
+/// [`take_more`]'s fields read back onto `take`.
+fn read_take_more(v: Option<&LoroValue>, take: &mut TakeState) {
+    // A doc from before schema 4: the take as the engine would make it.
+    let Some(v) = v else {
+        return;
+    };
+    let fields = map_value(v);
+    let g = Get(&fields);
+    take.color = g.color("color");
+    take.gain = g.f64("gain", 1.0);
+    take.pitch = g.f64("pitch", 0.0);
+    take.preserve_pitch = g.bool("preserve_pitch", false);
+    take.channel_mode = u32::try_from(g.i64("channel_mode", 0)).unwrap_or(0);
+    take.source_type = g.string("source_type");
+    take.source_length = fields.get("source_length").and_then(as_f64);
+    take.source_rate = g.color("source_rate");
+    take.source_channels = g.color("source_channels");
+    take.note_count = g.color("note_count");
+    take.stretch_mode = u8::try_from(g.i64("stretch_mode", 0)).unwrap_or(0);
+    for i in numbers(fields.get("notes_muted")) {
+        if let Some(note) = usize::try_from(count(i))
+            .ok()
+            .and_then(|i| take.notes.get_mut(i))
+        {
+            note.muted = true;
+        }
+    }
+    take.envelopes = match fields.get("envelopes") {
+        Some(LoroValue::Map(map)) => map
+            .iter()
+            .map(|(kind, e)| (kind.clone(), read_envelope_state(&map_value(e))))
+            .collect(),
+        _ => BTreeMap::new(),
+    };
+    take.midi_events = read_midi(fields.get("midi"));
+}
+
+/// A whole take, as one map value: an item's other takes.
+fn take_value(t: &TakeState) -> LoroValue {
+    let mut map = map_value(&take_more(t));
+    map.insert("name".into(), LoroValue::from(t.name.as_str()));
+    map.insert("source".into(), opt_str(t.source.as_deref()));
+    map.insert("start_offset".into(), LoroValue::Double(t.start_offset));
+    map.insert("playrate".into(), LoroValue::Double(t.playrate));
+    map.insert("midi_take".into(), LoroValue::Bool(t.midi));
+    map.insert("stretch".into(), stretch_value(&t.stretch));
+    map.insert("volume".into(), gains_value(&t.volume));
+    map.insert("notes".into(), notes_value(&t.notes));
+    LoroValue::from(map)
+}
+
+fn read_take_value(v: &LoroValue) -> TakeState {
+    let fields = map_value(v);
+    let g = Get(&fields);
+    let mut take = TakeState {
+        name: g.string("name"),
+        source: g.opt_string("source"),
+        start_offset: g.f64("start_offset", 0.0),
+        playrate: g.f64("playrate", 1.0),
+        midi: g.bool("midi_take", false),
+        stretch: read_stretch(fields.get("stretch")),
+        volume: read_gains(fields.get("volume")),
+        notes: read_notes(fields.get("notes")),
+        ..TakeState::default()
+    };
+    read_take_more(Some(v), &mut take);
+    take
+}
+
+/// A take's MIDI events other than notes: a flat number list per kind,
+/// and each sysex message as `[at, bytes]`.
+fn midi_value(m: &MidiEvents) -> LoroValue {
+    let mut map: HashMap<String, LoroValue> = HashMap::new();
+    map.insert(
+        "cc".into(),
+        number_list(m.ccs.iter().flat_map(|e| {
+            [
+                e.at,
+                f64::from(e.channel),
+                f64::from(e.controller),
+                f64::from(e.value),
+            ]
+        })),
+    );
+    map.insert(
+        "pb".into(),
+        number_list(
+            m.pitch_bends
+                .iter()
+                .flat_map(|e| [e.at, f64::from(e.channel), f64::from(e.value)]),
+        ),
+    );
+    map.insert(
+        "pc".into(),
+        number_list(
+            m.program_changes
+                .iter()
+                .flat_map(|e| [e.at, f64::from(e.channel), f64::from(e.program)]),
+        ),
+    );
+    map.insert(
+        "chp".into(),
+        number_list(
+            m.channel_pressures
+                .iter()
+                .flat_map(|e| [e.at, f64::from(e.channel), f64::from(e.pressure)]),
+        ),
+    );
+    map.insert(
+        "pp".into(),
+        number_list(m.poly_pressures.iter().flat_map(|e| {
+            [
+                e.at,
+                f64::from(e.channel),
+                f64::from(e.note),
+                f64::from(e.pressure),
+            ]
+        })),
+    );
+    map.insert(
+        "nx".into(),
+        number_list(m.note_expressions.iter().flat_map(|e| {
+            [
+                e.at,
+                f64::from(e.channel),
+                f64::from(e.note),
+                f64::from(e.dimension),
+                e.value,
+            ]
+        })),
+    );
+    map.insert(
+        "sysex".into(),
+        LoroValue::from(
+            m.sysex
+                .iter()
+                .map(|e| {
+                    LoroValue::from(vec![
+                        LoroValue::Double(e.at),
+                        LoroValue::from(e.data.clone()),
+                    ])
+                })
+                .collect::<Vec<_>>(),
+        ),
+    );
+    LoroValue::from(map)
+}
+
+fn read_midi(v: Option<&LoroValue>) -> MidiEvents {
+    let fields = v.map(map_value).unwrap_or_default();
+    let list = |key: &str, stride: usize| -> Vec<Vec<f64>> {
+        numbers(fields.get(key))
+            .chunks_exact(stride)
+            .map(<[f64]>::to_vec)
+            .collect()
+    };
+    MidiEvents {
+        ccs: list("cc", 4)
+            .iter()
+            .filter_map(|e| match **e {
+                [at, channel, controller, value] => Some(CcState {
+                    at,
+                    channel: byte(channel),
+                    controller: byte(controller),
+                    value: byte(value),
+                }),
+                _ => None,
+            })
+            .collect(),
+        pitch_bends: list("pb", 3)
+            .iter()
+            .filter_map(|e| match **e {
+                [at, channel, value] => Some(PitchBendState {
+                    at,
+                    channel: byte(channel),
+                    value: num_traits::ToPrimitive::to_i16(&value.round()).unwrap_or(0),
+                }),
+                _ => None,
+            })
+            .collect(),
+        program_changes: list("pc", 3)
+            .iter()
+            .filter_map(|e| match **e {
+                [at, channel, program] => Some(ProgramChangeState {
+                    at,
+                    channel: byte(channel),
+                    program: byte(program),
+                }),
+                _ => None,
+            })
+            .collect(),
+        channel_pressures: list("chp", 3)
+            .iter()
+            .filter_map(|e| match **e {
+                [at, channel, pressure] => Some(ChannelPressureState {
+                    at,
+                    channel: byte(channel),
+                    pressure: byte(pressure),
+                }),
+                _ => None,
+            })
+            .collect(),
+        poly_pressures: list("pp", 4)
+            .iter()
+            .filter_map(|e| match **e {
+                [at, channel, note, pressure] => Some(PolyPressureState {
+                    at,
+                    channel: byte(channel),
+                    note: byte(note),
+                    pressure: byte(pressure),
+                }),
+                _ => None,
+            })
+            .collect(),
+        note_expressions: list("nx", 5)
+            .iter()
+            .filter_map(|e| match **e {
+                [at, channel, note, dimension, value] => Some(NoteExpressionState {
+                    at,
+                    channel: byte(channel),
+                    note: byte(note),
+                    dimension: byte(dimension),
+                    value,
+                }),
+                _ => None,
+            })
+            .collect(),
+        sysex: match fields.get("sysex") {
+            Some(LoroValue::List(list)) => list
+                .iter()
+                .filter_map(|e| match e {
+                    LoroValue::List(pair) => match (pair.first(), pair.get(1)) {
+                        (Some(at), Some(LoroValue::Binary(data))) => Some(SysexState {
+                            at: as_f64(at)?,
+                            data: data.to_vec(),
+                        }),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        },
+    }
+}
+
 fn read_item(fields: &HashMap<String, LoroValue>) -> ItemState {
     let g = Get(fields);
-    ItemState {
+    let mut item = ItemState {
         track: g.string("track"),
         position: g.f64("position", 0.0),
         length: g.f64("length", 0.0),
@@ -983,40 +1509,30 @@ fn read_item(fields: &HashMap<String, LoroValue>) -> ItemState {
             start_offset: g.f64("take.start_offset", 0.0),
             playrate: g.f64("take.playrate", 1.0),
             midi: g.bool("take.midi", false),
-            stretch: numbers(fields.get("take.stretch"))
-                .chunks_exact(3)
-                .filter_map(|m| match *m {
-                    [at, source, slope] => Some(StretchPoint { at, source, slope }),
-                    _ => None,
-                })
-                .collect(),
-            volume: numbers(fields.get("take.volume"))
-                .chunks_exact(2)
-                .filter_map(|g| match *g {
-                    [at, value] => Some(GainPoint { at, value }),
-                    _ => None,
-                })
-                .collect(),
-            notes: numbers(fields.get("take.notes"))
-                .chunks_exact(5)
-                .filter_map(|n| match *n {
-                    [start, length, pitch, velocity, channel] => Some(NoteState {
-                        start,
-                        length,
-                        pitch: byte(pitch),
-                        velocity: byte(velocity),
-                        channel: byte(channel),
-                    }),
-                    _ => None,
-                })
-                .collect(),
+            stretch: read_stretch(fields.get("take.stretch")),
+            volume: read_gains(fields.get("take.volume")),
+            notes: read_notes(fields.get("take.notes")),
+            ..TakeState::default()
         },
         fixed_lane: match fields.get("fixed_lane") {
             Some(LoroValue::I64(l)) => u32::try_from(*l).ok(),
             _ => None,
         },
         loop_source: g.bool("loop", false),
-    }
+        timing: crate::model::ItemTiming {
+            beat_attach: g.string_or("beat_attach", "time"),
+            auto_stretch: g.bool("auto_stretch", false),
+            group: g.color("group"),
+            start_offset: g.f64("start_offset", 0.0),
+        },
+        other_takes: match fields.get("takes") {
+            Some(LoroValue::List(list)) => list.iter().map(read_take_value).collect(),
+            _ => Vec::new(),
+        },
+        active_take: u32::try_from(g.i64("active_take", 0)).unwrap_or(0),
+    };
+    read_take_more(fields.get("take.more"), &mut item.take);
+    item
 }
 
 /// A MIDI byte stored as a number.
@@ -1024,16 +1540,24 @@ fn byte(v: f64) -> u8 {
     num_traits::ToPrimitive::to_u8(&v.round().clamp(0.0, 127.0)).unwrap_or(0)
 }
 
-// ── a track's parts: its FX, sends, envelopes ──────────────────────────
+// ── a track's parts: its FX, sends, hardware outputs, envelopes ─────────
 
-/// One FX as the doc keeps it, with the track it is on and its place.
+/// The chain an FX is on: a track's own, its input chain, the monitoring
+/// chain.
+const CHAIN_INPUT: &str = "input";
+const CHAIN_MONITORING: &str = "monitoring";
+
+/// One FX as the doc keeps it, with the track it is on, its chain and
+/// its place.
 #[derive(Debug, Clone, PartialEq)]
 struct FxEntry {
     track: String,
+    chain: String,
     index: usize,
     fx: FxState,
 }
 
+/// A send or a hardware output, with its track and place.
 #[derive(Debug, Clone, PartialEq)]
 struct SendEntry {
     track: String,
@@ -1048,100 +1572,179 @@ struct EnvelopeEntry {
     envelope: EnvelopeState,
 }
 
-type Parts = (
-    BTreeMap<String, FxEntry>,
-    BTreeMap<String, SendEntry>,
-    BTreeMap<String, EnvelopeEntry>,
-);
+/// Every FX, send, hardware output and envelope, each keyed as the doc
+/// keeps it.
+#[derive(Default)]
+struct Parts {
+    fx: BTreeMap<String, FxEntry>,
+    sends: BTreeMap<String, SendEntry>,
+    hw: BTreeMap<String, SendEntry>,
+    envelopes: BTreeMap<String, EnvelopeEntry>,
+}
 
-/// Every track's FX, sends and envelopes, each keyed as the doc keeps it.
-fn track_parts(tracks: &[TrackState]) -> Parts {
-    let mut fx = BTreeMap::new();
-    let mut sends = BTreeMap::new();
-    let mut envelopes = BTreeMap::new();
-    for t in tracks {
-        for (index, f) in t.fx.iter().enumerate() {
-            fx.insert(
+impl Parts {
+    fn add_chain(&mut self, track: &str, chain: &str, fx: &[FxState]) {
+        for (index, f) in fx.iter().enumerate() {
+            self.fx.insert(
                 f.guid.clone(),
                 FxEntry {
-                    track: t.guid.clone(),
+                    track: track.to_owned(),
+                    chain: chain.to_owned(),
                     index,
                     fx: f.clone(),
                 },
             );
         }
-        for (index, send) in t.sends.iter().enumerate() {
-            sends.insert(
-                format!("{}#{index}", t.guid),
+    }
+
+    fn add_routes(into: &mut BTreeMap<String, SendEntry>, track: &str, routes: &[SendState]) {
+        for (index, send) in routes.iter().enumerate() {
+            into.insert(
+                format!("{track}#{index}"),
                 SendEntry {
-                    track: t.guid.clone(),
+                    track: track.to_owned(),
                     index,
                     send: send.clone(),
                 },
             );
         }
-        for (what, envelope) in &t.envelopes {
-            envelopes.insert(
-                format!("{}|{what}", t.guid),
+    }
+
+    fn add_envelopes(&mut self, track: &str, envelopes: &BTreeMap<String, EnvelopeState>) {
+        for (what, envelope) in envelopes {
+            self.envelopes.insert(
+                format!("{track}|{what}"),
                 EnvelopeEntry {
-                    track: t.guid.clone(),
+                    track: track.to_owned(),
                     what: what.clone(),
                     envelope: envelope.clone(),
                 },
             );
         }
     }
-    (fx, sends, envelopes)
 }
 
-/// Each part back onto its track, in order.
-fn attach_parts(
-    tracks: &mut [TrackState],
-    fx: &BTreeMap<String, FxEntry>,
-    sends: &BTreeMap<String, SendEntry>,
-    envelopes: &BTreeMap<String, EnvelopeEntry>,
-) {
+/// Every track's parts, the master's and the monitoring chain's.
+fn track_parts(tracks: &[TrackState], project: &ProjectSettings) -> Parts {
+    let mut parts = Parts::default();
+    for t in tracks {
+        parts.add_chain(&t.guid, "", &t.fx);
+        parts.add_chain(&t.guid, CHAIN_INPUT, &t.input_fx);
+        Parts::add_routes(&mut parts.sends, &t.guid, &t.sends);
+        Parts::add_routes(&mut parts.hw, &t.guid, &t.hw_outputs);
+        parts.add_envelopes(&t.guid, &t.envelopes);
+    }
+    let master = &project.master;
+    parts.add_chain(MASTER, "", &master.fx);
+    Parts::add_routes(&mut parts.hw, MASTER, &master.hw_outputs);
+    parts.add_envelopes(MASTER, &master.envelopes);
+    parts.add_chain("", CHAIN_MONITORING, &project.monitoring_fx);
+    parts
+}
+
+/// Where a part goes: a track (by its index), or the master.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Owner {
+    Track(usize),
+    Master,
+}
+
+/// Each part back onto its track (or the master, or the monitoring
+/// chain), in order. A part of a track the doc no longer holds is left
+/// out.
+fn attach_parts(tracks: &mut [TrackState], project: &mut ProjectSettings, parts: &Parts) {
     let by_track: HashMap<String, usize> = tracks
         .iter()
         .enumerate()
         .map(|(i, t)| (t.guid.clone(), i))
         .collect();
-    let mut chains: HashMap<usize, Vec<FxEntry>> = HashMap::new();
-    for (id, entry) in fx {
-        if let Some(&i) = by_track.get(entry.track.as_str()) {
-            // The FX's id is the key it is kept under.
-            let mut entry = entry.clone();
-            entry.fx.guid.clone_from(id);
-            chains.entry(i).or_default().push(entry);
+    let owner = |track: &str| -> Option<Owner> {
+        if track == MASTER {
+            Some(Owner::Master)
+        } else {
+            by_track.get(track).map(|&i| Owner::Track(i))
         }
+    };
+    let mut chains: HashMap<(Option<Owner>, String), Vec<FxEntry>> = HashMap::new();
+    for (id, entry) in &parts.fx {
+        let place = if entry.chain == CHAIN_MONITORING {
+            None
+        } else {
+            match owner(&entry.track) {
+                Some(o) => Some(o),
+                None => continue,
+            }
+        };
+        // The FX's id is the key it is kept under.
+        let mut entry = entry.clone();
+        entry.fx.guid.clone_from(id);
+        chains
+            .entry((place, entry.chain.clone()))
+            .or_default()
+            .push(entry);
     }
-    let mut routes: HashMap<usize, Vec<&SendEntry>> = HashMap::new();
-    for entry in sends.values() {
-        if let Some(&i) = by_track.get(entry.track.as_str()) {
-            routes.entry(i).or_default().push(entry);
-        }
-    }
-    for (i, mut chain) in chains {
+    for ((place, chain), mut entries) in chains {
         // By place, then id: two FX given one place at once (two people
         // adding at the same time) keep one order on every replica.
-        chain.sort_by(|a, b| a.index.cmp(&b.index).then(a.fx.guid.cmp(&b.fx.guid)));
-        if let Some(t) = tracks.get_mut(i) {
-            t.fx = chain.into_iter().map(|e| e.fx).collect();
+        entries.sort_by(|a, b| a.index.cmp(&b.index).then(a.fx.guid.cmp(&b.fx.guid)));
+        let fx: Vec<FxState> = entries.into_iter().map(|e| e.fx).collect();
+        match (place, chain.as_str()) {
+            (None, _) => project.monitoring_fx = fx,
+            (Some(Owner::Master), _) => project.master.fx = fx,
+            (Some(Owner::Track(i)), CHAIN_INPUT) => {
+                if let Some(t) = tracks.get_mut(i) {
+                    t.input_fx = fx;
+                }
+            }
+            (Some(Owner::Track(i)), _) => {
+                if let Some(t) = tracks.get_mut(i) {
+                    t.fx = fx;
+                }
+            }
         }
     }
-    for (i, mut route) in routes {
-        route.sort_by_key(|e| e.index);
-        if let Some(t) = tracks.get_mut(i) {
-            t.sends = route.into_iter().map(|e| e.send.clone()).collect();
+    for (routes, hw) in [(&parts.sends, false), (&parts.hw, true)] {
+        let mut by_owner: HashMap<Owner, Vec<&SendEntry>> = HashMap::new();
+        for entry in routes.values() {
+            if let Some(o) = owner(&entry.track) {
+                by_owner.entry(o).or_default().push(entry);
+            }
+        }
+        for (o, mut entries) in by_owner {
+            entries.sort_by_key(|e| e.index);
+            let list: Vec<SendState> = entries.into_iter().map(|e| e.send.clone()).collect();
+            match (o, hw) {
+                (Owner::Master, true) => project.master.hw_outputs = list,
+                // The master sends nowhere but its outputs.
+                (Owner::Master, false) => {}
+                (Owner::Track(i), true) => {
+                    if let Some(t) = tracks.get_mut(i) {
+                        t.hw_outputs = list;
+                    }
+                }
+                (Owner::Track(i), false) => {
+                    if let Some(t) = tracks.get_mut(i) {
+                        t.sends = list;
+                    }
+                }
+            }
         }
     }
-    for entry in envelopes.values() {
-        if let Some(t) = by_track
-            .get(entry.track.as_str())
-            .and_then(|&i| tracks.get_mut(i))
-        {
-            t.envelopes
-                .insert(entry.what.clone(), entry.envelope.clone());
+    for entry in parts.envelopes.values() {
+        match owner(&entry.track) {
+            Some(Owner::Master) => {
+                project
+                    .master
+                    .envelopes
+                    .insert(entry.what.clone(), entry.envelope.clone());
+            }
+            Some(Owner::Track(i)) => {
+                if let Some(t) = tracks.get_mut(i) {
+                    t.envelopes
+                        .insert(entry.what.clone(), entry.envelope.clone());
+                }
+            }
+            None => {}
         }
     }
 }
@@ -1149,12 +1752,25 @@ fn attach_parts(
 fn fx_fields(e: &FxEntry) -> Fields {
     vec![
         ("track", LoroValue::from(e.track.as_str())),
+        ("chain", LoroValue::from(e.chain.as_str())),
         ("index", LoroValue::I64(i64::try_from(e.index).unwrap_or(0))),
         ("plugin", LoroValue::from(e.fx.plugin.as_str())),
         ("name", LoroValue::from(e.fx.name.as_str())),
         ("enabled", LoroValue::Bool(e.fx.enabled)),
         ("offline", LoroValue::Bool(e.fx.offline)),
         ("state", opt_str(e.fx.state.as_deref())),
+        (
+            "params",
+            number_list(
+                e.fx.params
+                    .iter()
+                    .flat_map(|(id, value)| [f64::from(*id), *value]),
+            ),
+        ),
+        ("param_count", LoroValue::I64(i64::from(e.fx.param_count))),
+        ("preset", color(e.fx.preset)),
+        ("preset_name", opt_str(e.fx.preset_name.as_deref())),
+        ("config", string_map(&e.fx.config)),
     ]
 }
 
@@ -1162,6 +1778,7 @@ fn read_fx(fields: &HashMap<String, LoroValue>) -> FxEntry {
     let g = Get(fields);
     FxEntry {
         track: g.string("track"),
+        chain: g.string("chain"),
         index: usize::try_from(g.i64("index", 0)).unwrap_or(0),
         fx: FxState {
             guid: String::new(),
@@ -1170,6 +1787,17 @@ fn read_fx(fields: &HashMap<String, LoroValue>) -> FxEntry {
             enabled: g.bool("enabled", true),
             offline: g.bool("offline", false),
             state: g.opt_string("state"),
+            params: numbers(fields.get("params"))
+                .chunks_exact(2)
+                .filter_map(|p| match *p {
+                    [id, value] => Some((count(id), value)),
+                    _ => None,
+                })
+                .collect(),
+            param_count: u32::try_from(g.i64("param_count", 0)).unwrap_or(0),
+            preset: g.color("preset"),
+            preset_name: g.opt_string("preset_name"),
+            config: read_string_map(fields.get("config")),
         },
     }
 }
@@ -1185,6 +1813,16 @@ fn send_fields(e: &SendEntry) -> Fields {
         ("muted", LoroValue::Bool(e.send.muted)),
         ("from", LoroValue::I64(i64::from(e.send.from))),
         ("to", LoroValue::I64(i64::from(e.send.to))),
+        ("mono", LoroValue::Bool(e.send.mono)),
+        ("phase_inverted", LoroValue::Bool(e.send.phase_inverted)),
+        (
+            "automation_mode",
+            LoroValue::from(e.send.automation_mode.as_str()),
+        ),
+        ("from_count", LoroValue::I64(i64::from(e.send.from_count))),
+        ("to_count", LoroValue::I64(i64::from(e.send.to_count))),
+        ("midi", opt_str(e.send.midi.as_deref())),
+        ("label", opt_str(e.send.label.as_deref())),
     ]
 }
 
@@ -1201,27 +1839,128 @@ fn read_send(fields: &HashMap<String, LoroValue>) -> SendEntry {
             muted: g.bool("muted", false),
             from: u32::try_from(g.i64("from", 0)).unwrap_or(0),
             to: u32::try_from(g.i64("to", 0)).unwrap_or(0),
+            mono: g.bool("mono", false),
+            phase_inverted: g.bool("phase_inverted", false),
+            automation_mode: g.string_or("automation_mode", "trim"),
+            from_count: u32::try_from(g.i64("from_count", 2)).unwrap_or(2),
+            to_count: u32::try_from(g.i64("to_count", 2)).unwrap_or(2),
+            midi: g.opt_string("midi"),
+            label: g.opt_string("label"),
         },
     }
 }
 
-fn envelope_fields(e: &EnvelopeEntry) -> Fields {
+fn points_value(points: &[EnvelopePointState]) -> LoroValue {
+    number_list(
+        points
+            .iter()
+            .flat_map(|p| [p.at, p.value, f64::from(p.shape), p.tension]),
+    )
+}
+
+fn read_points(v: Option<&LoroValue>) -> Vec<EnvelopePointState> {
+    numbers(v)
+        .chunks_exact(4)
+        .filter_map(|p| match *p {
+            [at, value, shape, tension] => Some(EnvelopePointState {
+                at,
+                value,
+                shape: num_traits::ToPrimitive::to_u8(&shape).unwrap_or(0),
+                tension,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An envelope's own fields, whoever owns it.
+fn envelope_parts(e: &EnvelopeState) -> Fields {
     vec![
-        ("track", LoroValue::from(e.track.as_str())),
-        ("what", LoroValue::from(e.what.as_str())),
-        ("mode", LoroValue::from(e.envelope.mode.as_str())),
-        ("visible", LoroValue::Bool(e.envelope.visible)),
-        ("armed", LoroValue::Bool(e.envelope.armed)),
+        ("mode", LoroValue::from(e.mode.as_str())),
+        ("visible", LoroValue::Bool(e.visible)),
+        ("armed", LoroValue::Bool(e.armed)),
+        ("points", points_value(&e.points)),
+        ("own_lane", LoroValue::Bool(e.own_lane)),
+        ("lane_height", LoroValue::I64(i64::from(e.lane_height))),
         (
-            "points",
-            number_list(
-                e.envelope
-                    .points
+            "items",
+            LoroValue::from(
+                e.items
                     .iter()
-                    .flat_map(|p| [p.at, p.value, f64::from(p.shape), p.tension]),
+                    .map(automation_item_value)
+                    .collect::<Vec<_>>(),
             ),
         ),
     ]
+}
+
+/// An envelope as one map value (a take's).
+fn envelope_value(e: &EnvelopeState) -> LoroValue {
+    LoroValue::from(
+        envelope_parts(e)
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect::<HashMap<String, LoroValue>>(),
+    )
+}
+
+fn read_envelope_state(fields: &HashMap<String, LoroValue>) -> EnvelopeState {
+    let g = Get(fields);
+    EnvelopeState {
+        mode: g.string("mode"),
+        visible: g.bool("visible", false),
+        armed: g.bool("armed", false),
+        points: read_points(fields.get("points")),
+        own_lane: g.bool("own_lane", false),
+        lane_height: u32::try_from(g.i64("lane_height", 0)).unwrap_or(0),
+        items: match fields.get("items") {
+            Some(LoroValue::List(list)) => list
+                .iter()
+                .map(|v| read_automation_item(&map_value(v)))
+                .collect(),
+            _ => Vec::new(),
+        },
+    }
+}
+
+fn automation_item_value(a: &AutomationItemState) -> LoroValue {
+    let mut map: HashMap<String, LoroValue> = HashMap::new();
+    map.insert("pool".into(), LoroValue::I64(i64::from(a.pool)));
+    map.insert("name".into(), LoroValue::from(a.name.as_str()));
+    map.insert("position".into(), LoroValue::Double(a.position));
+    map.insert("length".into(), LoroValue::Double(a.length));
+    map.insert("start_offset".into(), LoroValue::Double(a.start_offset));
+    map.insert("playrate".into(), LoroValue::Double(a.playrate));
+    map.insert("baseline".into(), LoroValue::Double(a.baseline));
+    map.insert("amplitude".into(), LoroValue::Double(a.amplitude));
+    map.insert("looped".into(), LoroValue::Bool(a.looped));
+    map.insert("points".into(), points_value(&a.points));
+    LoroValue::from(map)
+}
+
+fn read_automation_item(fields: &HashMap<String, LoroValue>) -> AutomationItemState {
+    let g = Get(fields);
+    AutomationItemState {
+        pool: i32::try_from(g.i64("pool", 0)).unwrap_or(0),
+        name: g.string("name"),
+        position: g.f64("position", 0.0),
+        length: g.f64("length", 0.0),
+        start_offset: g.f64("start_offset", 0.0),
+        playrate: g.f64("playrate", 1.0),
+        baseline: g.f64("baseline", 0.0),
+        amplitude: g.f64("amplitude", 1.0),
+        looped: g.bool("looped", false),
+        points: read_points(fields.get("points")),
+    }
+}
+
+fn envelope_fields(e: &EnvelopeEntry) -> Fields {
+    let mut fields = vec![
+        ("track", LoroValue::from(e.track.as_str())),
+        ("what", LoroValue::from(e.what.as_str())),
+    ];
+    fields.extend(envelope_parts(&e.envelope));
+    fields
 }
 
 fn read_envelope(fields: &HashMap<String, LoroValue>) -> EnvelopeEntry {
@@ -1229,23 +1968,89 @@ fn read_envelope(fields: &HashMap<String, LoroValue>) -> EnvelopeEntry {
     EnvelopeEntry {
         track: g.string("track"),
         what: g.string("what"),
-        envelope: EnvelopeState {
-            mode: g.string("mode"),
-            visible: g.bool("visible", false),
-            armed: g.bool("armed", false),
-            points: numbers(fields.get("points"))
-                .chunks_exact(4)
-                .filter_map(|p| match *p {
-                    [at, value, shape, tension] => Some(EnvelopePointState {
-                        at,
-                        value,
-                        shape: num_traits::ToPrimitive::to_u8(&shape).unwrap_or(0),
-                        tension,
-                    }),
-                    _ => None,
+        envelope: read_envelope_state(fields),
+    }
+}
+
+// ── the project's own settings ──────────────────────────────────────────
+
+fn project_fields(p: &ProjectSettings) -> Fields {
+    vec![
+        ("master.volume", LoroValue::Double(p.master.volume)),
+        ("master.pan", LoroValue::Double(p.master.pan)),
+        ("master.muted", LoroValue::Bool(p.master.muted)),
+        ("ext", sections_value(&p.ext)),
+        (
+            "ruler_lanes",
+            LoroValue::from(
+                p.ruler_lanes
+                    .iter()
+                    .map(|(index, lane)| {
+                        let mut map: HashMap<String, LoroValue> = HashMap::new();
+                        map.insert("name".into(), LoroValue::from(lane.name.as_str()));
+                        map.insert("flags".into(), LoroValue::I64(i64::from(lane.flags)));
+                        (index.to_string(), LoroValue::from(map))
+                    })
+                    .collect::<HashMap<String, LoroValue>>(),
+            ),
+        ),
+        (
+            "automation_override",
+            opt_str(p.automation_override.as_deref()),
+        ),
+        (
+            "bay",
+            p.bay
+                .as_ref()
+                .map_or(LoroValue::Null, |b| LoroValue::from(b.clone())),
+        ),
+        ("looping", LoroValue::Bool(p.looping)),
+        ("metronome", LoroValue::Bool(p.metronome)),
+        ("playrate", LoroValue::Double(p.playrate)),
+        ("record_mode", LoroValue::from(p.record_mode.as_str())),
+    ]
+}
+
+/// The project's settings; the master's and the monitoring chain's parts
+/// are attached after ([`attach_parts`]).
+fn read_project(fields: &HashMap<String, LoroValue>) -> ProjectSettings {
+    let g = Get(fields);
+    let defaults = ProjectSettings::default();
+    ProjectSettings {
+        master: crate::model::MasterState {
+            volume: g.f64("master.volume", 1.0),
+            pan: g.f64("master.pan", 0.0),
+            muted: g.bool("master.muted", false),
+            ..crate::model::MasterState::default()
+        },
+        ext: read_sections(fields.get("ext")),
+        ruler_lanes: match fields.get("ruler_lanes") {
+            Some(LoroValue::Map(map)) => map
+                .iter()
+                .filter_map(|(index, lane)| {
+                    let lane = map_value(lane);
+                    let g = Get(&lane);
+                    Some((
+                        index.parse().ok()?,
+                        RulerLaneState {
+                            name: g.string("name"),
+                            flags: u32::try_from(g.i64("flags", 0)).unwrap_or(0),
+                        },
+                    ))
                 })
                 .collect(),
+            _ => BTreeMap::new(),
         },
+        automation_override: g.opt_string("automation_override"),
+        monitoring_fx: Vec::new(),
+        bay: match fields.get("bay") {
+            Some(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+            _ => None,
+        },
+        looping: g.bool("looping", defaults.looping),
+        metronome: g.bool("metronome", defaults.metronome),
+        playrate: g.f64("playrate", defaults.playrate),
+        record_mode: g.string_or("record_mode", &defaults.record_mode),
     }
 }
 

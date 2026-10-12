@@ -38,6 +38,11 @@ pub struct Bridge {
     /// What changes to the doc have touched since the engine last matched
     /// it — so a remote edit or an undo reads back only that.
     watch: Watch,
+    /// Steps the engine finished since this peer's last recorded one that
+    /// changed nothing the doc holds, by name, last on top. Each is undone
+    /// first, as nothing: an undo never reaches past a step the person
+    /// took to the one before it.
+    quiet: Vec<String>,
 }
 
 /// An undo manager on `doc` whose steps carry the name `naming` holds
@@ -99,6 +104,7 @@ impl Bridge {
             undo,
             naming,
             watch,
+            quiet: Vec::new(),
         };
         // What the engine showed is what the doc now holds.
         bridge.take_touched();
@@ -134,6 +140,7 @@ impl Bridge {
             undo,
             naming,
             watch,
+            quiet: Vec::new(),
         };
         bridge.remote_changed().await?;
         Ok(bridge)
@@ -172,12 +179,19 @@ impl Bridge {
         self.name_next("Edits");
         self.doc.write(&now, ORIGIN_LOCAL)?;
         self.shown = now;
+        self.quiet.clear();
         Ok(true)
     }
 
     /// The engine finished an edit step named `label`: read it, and record
     /// what changed as one commit of that name — only what differs
     /// written. Returns whether anything was recorded.
+    ///
+    /// A step that changed nothing the doc holds (the doc holds the whole
+    /// project, so: nothing a collaborator or an undo could see) records
+    /// no commit — there is nothing to send anyone — but is kept as a
+    /// quiet step: the next [`Self::undo`] undoes it, as nothing, rather
+    /// than the step before it.
     ///
     /// # Errors
     /// When the engine cannot be read or the doc cannot be written.
@@ -192,12 +206,17 @@ impl Bridge {
         .await?;
         now.chart.clone_from(&self.shown.chart);
         if now == self.shown {
+            if self.quiet.len() >= UNDO_STEPS {
+                self.quiet.remove(0);
+            }
+            self.quiet.push(label.to_owned());
             return Ok(false);
         }
         self.name_next(label);
         self.doc
             .write_step(&self.shown, &now, ORIGIN_LOCAL, label)?;
         self.shown = now;
+        self.quiet.clear();
         Ok(true)
     }
 
@@ -207,6 +226,10 @@ impl Bridge {
     /// # Errors
     /// When the doc cannot undo or the engine cannot be made to match.
     pub async fn undo(&mut self) -> eyre::Result<Option<String>> {
+        // A step that changed nothing is undone as nothing.
+        if let Some(name) = self.quiet.pop() {
+            return Ok(Some(name));
+        }
         if !self.undo.can_undo() {
             return Ok(None);
         }
@@ -237,9 +260,11 @@ impl Bridge {
     /// The name of the step that would be undone next, if any.
     #[must_use]
     pub fn next_undo(&self) -> Option<String> {
-        self.undo
-            .can_undo()
-            .then(|| name_of(self.undo.top_undo_value()))
+        self.quiet.last().cloned().or_else(|| {
+            self.undo
+                .can_undo()
+                .then(|| name_of(self.undo.top_undo_value()))
+        })
     }
 
     /// The name of the step that would be redone next, if any.
@@ -267,6 +292,7 @@ impl Bridge {
         self.shown.chart = chart.to_string();
         self.name_next("Edit chart");
         self.doc.write(&self.shown, ORIGIN_LOCAL)?;
+        self.quiet.clear();
         Ok(())
     }
 

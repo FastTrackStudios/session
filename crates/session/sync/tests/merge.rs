@@ -83,6 +83,7 @@ fn song() -> SessionModel {
             enabled: true,
             offline: false,
             state: Some("ab12".into()),
+            ..FxState::default()
         },
         FxState {
             guid: "fx-comp".into(),
@@ -91,6 +92,7 @@ fn song() -> SessionModel {
             enabled: false,
             offline: false,
             state: None,
+            ..FxState::default()
         },
     ];
     kick.sends = vec![SendState {
@@ -101,6 +103,7 @@ fn song() -> SessionModel {
         muted: false,
         from: 2,
         to: 0,
+        ..SendState::default()
     }];
     kick.envelopes.insert(
         "fx:fx-gate:3".into(),
@@ -122,6 +125,7 @@ fn song() -> SessionModel {
                     tension: 0.0,
                 },
             ],
+            ..EnvelopeState::default()
         },
     );
     let slice = m.items.get_mut("i-kick").unwrap();
@@ -152,6 +156,7 @@ fn song() -> SessionModel {
             pitch: 36,
             velocity: 110,
             channel: 9,
+            muted: false,
         },
         NoteState {
             start: 1.0,
@@ -159,6 +164,7 @@ fn song() -> SessionModel {
             pitch: 38,
             velocity: 90,
             channel: 9,
+            muted: true,
         },
     ];
     m.items.insert("i-midi".into(), midi);

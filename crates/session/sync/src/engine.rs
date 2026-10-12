@@ -14,9 +14,10 @@ use daw_proto::{FadeShape, TrackRef};
 
 use crate::diff::{Change, ItemField, TrackField};
 use crate::model::{
-    EnvelopePointState, EnvelopeState, FxState, GainPoint, HitState, ItemState, LaneState,
-    MarkerState, NoteState, RegionState, SendState, SessionModel, Sources, StretchPoint,
-    TakeMarkerState, TakeState, TempoPoint, TrackState,
+    CompAreaState, CompingState, EnvelopePointState, EnvelopeState, FxState, GainPoint, HitState,
+    ItemState, ItemTiming, LaneState, MarkerState, NoteState, ProjectSettings, RegionState,
+    SendState, SessionModel, Sources, StretchPoint, TakeMarkerState, TakeState, TempoPoint,
+    TrackState,
 };
 
 /// Where an FX's state is kept: put its bytes, get its name back (a
@@ -136,6 +137,11 @@ impl MediaRoot {
 /// Everything the engine holds that the doc shares. `chart` is left
 /// empty: the chart is not engine state.
 ///
+/// What the facade cannot show (a track's channel count, an FX's
+/// parameters, every take, MIDI beyond notes, the project's own
+/// settings) is read from daw-standalone's own state when the engine is
+/// one in this process ([`Direct::standalone`], [`crate::whole`]).
+///
 /// # Errors
 /// When a daw call fails.
 pub async fn read(
@@ -163,12 +169,20 @@ pub async fn read_keeping(
     direct: Option<&dyn Direct>,
     tracks: Option<Vec<TrackState>>,
 ) -> daw_control::Result<SessionModel> {
+    let fresh = tracks.is_none();
     let tracks = match tracks {
         Some(tracks) => tracks,
         None => read_tracks(project, blobs, ids).await?,
     };
     let items = read_items(project, media, ids, direct).await?;
-    let take_markers = read_take_markers(project, &items, ids).await?;
+    let standalone = direct.and_then(Direct::standalone);
+    // daw-standalone's own state holds every recording's markers, which
+    // [`crate::whole`] reads at once.
+    let take_markers = if standalone.is_some() {
+        BTreeMap::new()
+    } else {
+        read_take_markers(project, &items, ids).await?
+    };
 
     let markers = project
         .markers()
@@ -235,7 +249,7 @@ pub async fn read_keeping(
         });
     }
 
-    Ok(SessionModel {
+    let mut model = SessionModel {
         tracks,
         items,
         markers,
@@ -243,7 +257,16 @@ pub async fn read_keeping(
         tempo,
         chart: String::new(),
         take_markers,
-    })
+        project: ProjectSettings::default(),
+    };
+    // The master's and the monitoring chain's FX, as a track's are read.
+    model.project.monitoring_fx = read_chain(&project.monitoring_fx(), blobs, ids).await?;
+    model.project.master.fx =
+        read_chain(&project.tracks().master().await?.fx_chain(), blobs, ids).await?;
+    if let Some(sa) = standalone {
+        crate::whole::read_into(sa, project.guid(), &mut model, media, ids, fresh);
+    }
+    Ok(model)
 }
 
 /// Every recording's markers, keyed as the doc keeps them: read once a
@@ -273,7 +296,7 @@ async fn read_take_markers(
 }
 
 /// A take marker as the doc keeps it, on the recording `source` names.
-fn take_marker_state(source: &str, m: daw_proto::TakeMarker) -> TakeMarkerState {
+pub(crate) fn take_marker_state(source: &str, m: daw_proto::TakeMarker) -> TakeMarkerState {
     TakeMarkerState {
         source: source.to_owned(),
         // A backend that keeps no ids (REAPER) is keyed by place.
@@ -309,7 +332,7 @@ fn take_marker_state(source: &str, m: daw_proto::TakeMarker) -> TakeMarkerState 
 }
 
 /// A doc take marker as the engine takes it.
-fn proto_take_marker(m: &TakeMarkerState) -> daw_proto::TakeMarker {
+pub(crate) fn proto_take_marker(m: &TakeMarkerState) -> daw_proto::TakeMarker {
     daw_proto::TakeMarker {
         index: 0,
         id: m.id.clone(),
@@ -392,6 +415,16 @@ async fn read_tracks(
                 play_mask: t.lane_play_mask,
             },
             grouping: grouping_map(&t.grouping),
+            armed: t.armed,
+            automation_mode: mode_name(t.automation_mode).to_owned(),
+            monitor: monitor_name(t.input_monitor).to_owned(),
+            record_input: record_input_name(t.record_input),
+            // The facade has no reader for it; daw-standalone's own state
+            // does ([`crate::whole`]).
+            channels: 2,
+            height: t.height,
+            width: t.width,
+            lane_display: lane_display_name(t.lane_display).to_owned(),
             guid: t.guid,
             ..TrackState::default()
         };
@@ -402,6 +435,16 @@ async fn read_tracks(
                 .into_iter()
                 .map(|e| (e.key, e.value))
                 .collect();
+            // Only a track with lanes has comping to read: on REAPER the
+            // read is a state chunk's.
+            if t.lane_count > 0 {
+                state.comping = handle
+                    .comping()
+                    .await
+                    .ok()
+                    .as_ref()
+                    .map_or_else(CompingState::default, comping_state);
+            }
             read_track_parts(&handle, &mut state, blobs, ids).await?;
         }
         tracks.push(state);
@@ -470,7 +513,7 @@ const CURVE_PAD: f64 = 1.0;
 /// [`CURVE_PAD`] either side, with the nearest beyond each end kept so
 /// the curve is what it was at the edges: a drum slice keeps its own
 /// stretch of a whole take's leveling, not all of it.
-fn over_item(points: &[GainPoint], length: f64) -> Vec<GainPoint> {
+pub(crate) fn over_item(points: &[GainPoint], length: f64) -> Vec<GainPoint> {
     let (from, to) = (-CURVE_PAD, length + CURVE_PAD);
     let first = points
         .iter()
@@ -517,21 +560,23 @@ pub fn item_state(item: daw_proto::Item, take: Option<TakeRead>, media: &MediaRo
                     .collect::<Vec<_>>(),
                 item.length.as_seconds(),
             ),
-            notes: notes
-                .into_iter()
-                .map(|n| NoteState {
-                    start: n.start_ppq,
-                    length: n.length_ppq,
-                    pitch: n.pitch,
-                    velocity: n.velocity,
-                    channel: n.channel,
-                })
-                .collect(),
+            notes: notes.iter().map(note_state).collect(),
             midi: take.is_midi,
+            color: take.color,
+            gain: take.volume,
+            pitch: take.pitch,
+            preserve_pitch: take.preserve_pitch,
+            channel_mode: take.channel_mode,
+            source_type: source_type_name(take.source_type).to_owned(),
+            source_length: take.source_length.map(|l| l.as_seconds()),
+            source_rate: take.source_sample_rate,
+            source_channels: take.source_channels,
+            note_count: take.midi_note_count,
             name: take.name,
             source: take.source_file_path.map(|p| media.to_doc(&p)),
             start_offset: take.start_offset.as_seconds(),
             playrate: take.play_rate,
+            ..TakeState::default()
         },
     );
     ItemState {
@@ -551,6 +596,27 @@ pub fn item_state(item: daw_proto::Item, take: Option<TakeRead>, media: &MediaRo
         take,
         fixed_lane: item.fixed_lane,
         loop_source: item.loop_source,
+        timing: ItemTiming {
+            beat_attach: beat_attach_name(item.beat_attach_mode).to_owned(),
+            auto_stretch: item.auto_stretch,
+            group: item.group_id,
+            start_offset: item.start_offset.as_seconds(),
+        },
+        // The others are daw-standalone's to tell ([`crate::whole`]).
+        other_takes: Vec::new(),
+        active_take: 0,
+    }
+}
+
+/// A MIDI note as the doc keeps it.
+pub(crate) const fn note_state(n: &daw_proto::MidiNote) -> NoteState {
+    NoteState {
+        start: n.start_ppq,
+        length: n.length_ppq,
+        pitch: n.pitch,
+        velocity: n.velocity,
+        channel: n.channel,
+        muted: n.muted,
     }
 }
 
@@ -574,9 +640,14 @@ pub trait Direct:
     + Send
     + Sync
 {
+    /// The engine itself, when it is daw-standalone: what the rest of a
+    /// project — everything the facade does not show — is read from and
+    /// written to ([`crate::whole`]).
+    fn standalone(&self) -> Option<&daw_standalone::sync::Standalone>;
 }
 
-impl<T> Direct for T where
+impl<T> Direct for T
+where
     T: daw_proto::Items
         + daw_proto::Takes
         + daw_proto::Midi
@@ -584,7 +655,12 @@ impl<T> Direct for T where
         + daw_proto::automation::Automation
         + Send
         + Sync
+        + 'static,
 {
+    fn standalone(&self) -> Option<&daw_standalone::sync::Standalone> {
+        let any: &dyn std::any::Any = self;
+        any.downcast_ref()
+    }
 }
 
 /// Apply `changes` (from [`crate::diff`]) to the engine. `target` is the
@@ -682,23 +758,128 @@ pub async fn apply(
             Change::TakeMarkersSet { source, markers } => {
                 set_take_markers(project, target, ids, (source, markers)).await?;
             }
+            Change::ProjectChanged(settings) => {
+                apply_project(project, settings, blobs, ids).await?;
+            }
         }
     }
     if structure {
         apply_structure(project, &target.tracks).await?;
     }
-    for (track, fields) in &parts {
+    apply_parts(project, &parts, blobs, ids).await?;
+    // What the facade cannot set, set in daw-standalone's own state —
+    // last, over what the calls above made, so the engine holds exactly
+    // the doc's.
+    if let Some(d) = direct
+        && let Some(sa) = d.standalone()
+    {
+        crate::whole::apply(sa, d, project.guid(), changes, target, ids, media)
+            .map_err(|e| engine_error(&e))?;
+    }
+    Ok(())
+}
+
+/// A track's FX chains, sends, hardware outputs and envelopes, once
+/// every track is in place.
+async fn apply_parts(
+    project: &Project,
+    parts: &[(&TrackState, Vec<TrackField>)],
+    blobs: &dyn Blobs,
+    ids: &mut EngineIds,
+) -> daw_control::Result<()> {
+    for (track, fields) in parts {
         if fields.contains(&TrackField::Fx) {
-            apply_fx(project, track, blobs, ids).await?;
+            apply_fx(project, track, false, blobs, ids).await?;
+        }
+        if fields.contains(&TrackField::InputFx) {
+            apply_fx(project, track, true, blobs, ids).await?;
         }
     }
-    for (track, fields) in &parts {
+    for (track, fields) in parts {
         if fields.contains(&TrackField::Sends) {
             apply_sends(project, track).await?;
+        }
+        if fields.contains(&TrackField::HwOutputs) {
+            apply_hw_outputs(project, track).await?;
         }
         if fields.contains(&TrackField::Envelopes) {
             apply_envelopes(project, track, ids).await?;
         }
+    }
+    Ok(())
+}
+
+/// The project's settings through the facade: the master's and the
+/// monitoring chain's FX, and the transport's switches. The rest (the
+/// master's level, ext-state, ruler lanes) has no facade setter and is
+/// daw-standalone's ([`crate::whole`]).
+async fn apply_project(
+    project: &Project,
+    settings: &ProjectSettings,
+    blobs: &dyn Blobs,
+    ids: &mut EngineIds,
+) -> daw_control::Result<()> {
+    apply_chain(
+        &project.monitoring_fx(),
+        &settings.monitoring_fx,
+        blobs,
+        ids,
+    )
+    .await?;
+    let master = project.tracks().master().await?;
+    apply_chain(&master.fx_chain(), &settings.master.fx, blobs, ids).await?;
+    let transport = project.transport();
+    transport.set_loop(settings.looping).await?;
+    transport.set_metronome(settings.metronome).await?;
+    transport.set_playrate(settings.playrate).await?;
+    Ok(())
+}
+
+/// Make the engine's hardware outputs from `track` the doc's: every one
+/// removed and the doc's added in order.
+async fn apply_hw_outputs(project: &Project, track: &TrackState) -> daw_control::Result<()> {
+    let Some(handle) = project.tracks().by_guid(&track.guid).await? else {
+        return Ok(());
+    };
+    let outputs = handle.hardware_outputs();
+    for _ in outputs.all().await? {
+        if let Some(first) = outputs.by_index(0).await? {
+            first.remove().await?;
+        }
+    }
+    for out in &track.hw_outputs {
+        let route = outputs.add(out.dest.parse().unwrap_or(0)).await?;
+        set_route(&route, out, false).await?;
+    }
+    Ok(())
+}
+
+/// A new route's settings: level, pan, mute, channels — and, for a send
+/// (`is_send`), its mode: a hardware output has none.
+async fn set_route(
+    route: &daw_control::RouteHandle,
+    send: &SendState,
+    is_send: bool,
+) -> daw_control::Result<()> {
+    if is_send {
+        route.set_send_mode(send_mode_of(&send.mode)).await?;
+    }
+    route.set_volume(send.volume).await?;
+    route.set_pan(send.pan).await?;
+    if send.muted {
+        route.mute().await?;
+    }
+    route.set_mono(send.mono).await?;
+    route.set_phase_inverted(send.phase_inverted).await?;
+    if send.from != 0 || send.from_count != 0 {
+        route
+            .set_source_channels(send.from, send.from_count.max(1))
+            .await?;
+    }
+    if send.to != 0 || send.to_count != 0 {
+        route
+            .set_dest_channels(send.to, send.to_count.max(1))
+            .await?;
     }
     Ok(())
 }
@@ -843,6 +1024,18 @@ const ALL_TRACK_FIELDS: &[TrackField] = &[
     TrackField::Fx,
     TrackField::Sends,
     TrackField::Envelopes,
+    TrackField::Armed,
+    TrackField::AutomationMode,
+    TrackField::Monitor,
+    TrackField::RecordInput,
+    TrackField::Channels,
+    TrackField::Height,
+    TrackField::Width,
+    TrackField::LaneDisplay,
+    TrackField::Comping,
+    TrackField::ExtSections,
+    TrackField::InputFx,
+    TrackField::HwOutputs,
 ];
 
 async fn set_track_fields(
@@ -895,8 +1088,38 @@ async fn set_track_fields(
                     }
                 }
             }
-            // After the structure: see `apply`.
-            TrackField::Fx | TrackField::Sends | TrackField::Envelopes => {}
+            TrackField::Armed if track.armed => h.arm().await?,
+            TrackField::Armed => h.disarm().await?,
+            TrackField::AutomationMode => {
+                h.set_automation_mode(mode_of(&track.automation_mode))
+                    .await?;
+            }
+            TrackField::Monitor => h.set_input_monitor(monitor_of(&track.monitor)).await?,
+            TrackField::RecordInput => {
+                h.set_record_input(record_input_of(&track.record_input))
+                    .await?;
+            }
+            TrackField::Height => h.set_tcp_height(track.height.unwrap_or(0)).await?,
+            TrackField::Comping => {
+                h.set_comp_areas(comp_areas(&track.comping)).await?;
+                // The lane before it first, so it becomes the last one.
+                if track.comping.last_comp_lane.is_some() {
+                    h.set_active_comp(track.comping.last_comp_lane).await?;
+                }
+                h.set_active_comp(track.comping.comp_lane).await?;
+            }
+            // After the structure: see `apply`. Channels, width, lane
+            // display and named sections have no facade setter
+            // ([`crate::whole`]).
+            TrackField::Fx
+            | TrackField::Sends
+            | TrackField::Envelopes
+            | TrackField::InputFx
+            | TrackField::HwOutputs
+            | TrackField::Channels
+            | TrackField::Width
+            | TrackField::LaneDisplay
+            | TrackField::ExtSections => {}
         }
     }
     Ok(())
@@ -920,8 +1143,14 @@ async fn set_item_fields(
                     .await?;
             }
             ItemField::Length => h.set_length(Duration::from_seconds(item.length)).await?,
-            // No setter on the handle yet; rides along with position.
-            ItemField::SnapOffset => {}
+            // No setter on the handle for these; daw-standalone's own
+            // state takes them ([`crate::whole`]).
+            ItemField::SnapOffset
+            | ItemField::Timing
+            | ItemField::TakeSettings
+            | ItemField::TakeEnvelopes
+            | ItemField::Midi
+            | ItemField::Takes => {}
             ItemField::Muted if item.muted => h.mute().await?,
             ItemField::Muted => h.unmute().await?,
             ItemField::Locked if item.locked => h.lock().await?,
@@ -1145,7 +1374,7 @@ pub(crate) fn fade_shape(name: &str) -> FadeShape {
 // ── a track's parts ─────────────────────────────────────────────────────
 
 /// A track's group masks by family, the non-zero ones.
-fn grouping_map(g: &daw_proto::track::TrackGrouping) -> BTreeMap<String, u128> {
+pub(crate) fn grouping_map(g: &daw_proto::track::TrackGrouping) -> BTreeMap<String, u128> {
     [
         ("volume_lead", g.volume_lead),
         ("volume_follow", g.volume_follow),
@@ -1167,11 +1396,183 @@ fn grouping_map(g: &daw_proto::track::TrackGrouping) -> BTreeMap<String, u128> {
         ("vca_follow", g.vca_follow),
         ("media_edit_lead", g.media_edit_lead),
         ("media_edit_follow", g.media_edit_follow),
+        ("volume_reverse", g.volume_reverse),
+        ("pan_reverse", g.pan_reverse),
+        ("width_reverse", g.width_reverse),
+        ("no_lead_when_follow", g.no_lead_when_follow),
+        ("vca_prefx_follow", g.vca_prefx_follow),
     ]
     .into_iter()
     .filter(|(_, mask)| *mask != 0)
     .map(|(family, mask)| (family.to_owned(), mask))
     .collect()
+}
+
+/// A track's group masks from the doc's map: [`grouping_map`] undone.
+pub(crate) fn grouping_of(map: &BTreeMap<String, u128>) -> daw_proto::track::TrackGrouping {
+    let m = |family: &str| map.get(family).copied().unwrap_or(0);
+    daw_proto::track::TrackGrouping {
+        volume_lead: m("volume_lead"),
+        volume_follow: m("volume_follow"),
+        pan_lead: m("pan_lead"),
+        pan_follow: m("pan_follow"),
+        mute_lead: m("mute_lead"),
+        mute_follow: m("mute_follow"),
+        solo_lead: m("solo_lead"),
+        solo_follow: m("solo_follow"),
+        recarm_lead: m("recarm_lead"),
+        recarm_follow: m("recarm_follow"),
+        polarity_lead: m("polarity_lead"),
+        polarity_follow: m("polarity_follow"),
+        automode_lead: m("automode_lead"),
+        automode_follow: m("automode_follow"),
+        volume_reverse: m("volume_reverse"),
+        pan_reverse: m("pan_reverse"),
+        no_lead_when_follow: m("no_lead_when_follow"),
+        width_reverse: m("width_reverse"),
+        width_lead: m("width_lead"),
+        width_follow: m("width_follow"),
+        vca_lead: m("vca_lead"),
+        vca_follow: m("vca_follow"),
+        vca_prefx_follow: m("vca_prefx_follow"),
+        media_edit_lead: m("media_edit_lead"),
+        media_edit_follow: m("media_edit_follow"),
+    }
+}
+
+// ── names the doc keeps the engine's enums by ──────────────────────────
+
+pub(crate) const fn monitor_name(m: daw_proto::InputMonitoringMode) -> &'static str {
+    use daw_proto::InputMonitoringMode as M;
+    match m {
+        M::Off => "off",
+        M::Normal => "normal",
+        M::NotWhenPlaying => "not_when_playing",
+    }
+}
+
+pub(crate) fn monitor_of(name: &str) -> daw_proto::InputMonitoringMode {
+    use daw_proto::InputMonitoringMode as M;
+    match name {
+        "normal" => M::Normal,
+        "not_when_playing" => M::NotWhenPlaying,
+        _ => M::Off,
+    }
+}
+
+pub(crate) const fn lane_display_name(d: daw_proto::LaneDisplay) -> &'static str {
+    use daw_proto::LaneDisplay as D;
+    match d {
+        D::Small => "small",
+        D::Big => "big",
+        D::One => "one",
+    }
+}
+
+pub(crate) fn lane_display_of(name: &str) -> daw_proto::LaneDisplay {
+    use daw_proto::LaneDisplay as D;
+    match name {
+        "big" => D::Big,
+        "one" => D::One,
+        _ => D::Small,
+    }
+}
+
+/// `none`, `audio:<channel>`, `midi:<device>:<channel>` (`*` for all),
+/// `raw:<n>`.
+pub(crate) fn record_input_name(input: daw_proto::RecordInput) -> String {
+    use daw_proto::RecordInput as R;
+    let any = |v: Option<u8>| v.map_or_else(|| "*".to_owned(), |v| v.to_string());
+    match input {
+        R::None => "none".to_owned(),
+        R::Audio { channel } => format!("audio:{channel}"),
+        R::Midi { device_id, channel } => format!("midi:{}:{}", any(device_id), any(channel)),
+        R::Raw(n) => format!("raw:{n}"),
+    }
+}
+
+pub(crate) fn record_input_of(name: &str) -> daw_proto::RecordInput {
+    use daw_proto::RecordInput as R;
+    let any = |v: &str| v.parse::<u8>().ok();
+    let mut parts = name.split(':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some("audio"), Some(channel), None) => R::Audio {
+            channel: channel.parse().unwrap_or(0),
+        },
+        (Some("midi"), Some(device), Some(channel)) => R::Midi {
+            device_id: any(device),
+            channel: any(channel),
+        },
+        (Some("raw"), Some(n), None) => n.parse().map_or(R::None, R::Raw),
+        _ => R::None,
+    }
+}
+
+pub(crate) const fn beat_attach_name(mode: daw_proto::BeatAttachMode) -> &'static str {
+    use daw_proto::BeatAttachMode as B;
+    match mode {
+        B::Time => "time",
+        B::Beats => "beats",
+        B::BeatsPositionOnly => "beats_position",
+    }
+}
+
+pub(crate) fn beat_attach_of(name: &str) -> daw_proto::BeatAttachMode {
+    use daw_proto::BeatAttachMode as B;
+    match name {
+        "beats" => B::Beats,
+        "beats_position" => B::BeatsPositionOnly,
+        _ => B::Time,
+    }
+}
+
+pub(crate) const fn source_type_name(kind: daw_proto::SourceType) -> &'static str {
+    use daw_proto::SourceType as S;
+    match kind {
+        S::Audio => "audio",
+        S::Midi => "midi",
+        S::Empty => "empty",
+        S::Video => "video",
+        S::Unknown => "unknown",
+    }
+}
+
+pub(crate) fn source_type_of(name: &str) -> daw_proto::SourceType {
+    use daw_proto::SourceType as S;
+    match name {
+        "midi" => S::Midi,
+        "empty" => S::Empty,
+        "video" => S::Video,
+        "unknown" => S::Unknown,
+        _ => S::Audio,
+    }
+}
+
+/// `<from>><to>`: a channel number, or `*` (every channel; as it was).
+pub(crate) fn midi_mapping_name(m: &daw_proto::MidiChannelMapping) -> String {
+    let from = match m.source {
+        daw_proto::MidiSourceChannel::All => "*".to_owned(),
+        daw_proto::MidiSourceChannel::Channel(c) => c.to_string(),
+    };
+    let to = match m.destination {
+        daw_proto::MidiDestinationChannel::Original => "*".to_owned(),
+        daw_proto::MidiDestinationChannel::Channel(c) => c.to_string(),
+    };
+    format!("{from}>{to}")
+}
+
+pub(crate) fn midi_mapping_of(name: &str) -> daw_proto::MidiChannelMapping {
+    let (from, to) = name.split_once('>').unwrap_or(("*", "*"));
+    daw_proto::MidiChannelMapping {
+        source: from.parse().map_or(
+            daw_proto::MidiSourceChannel::All,
+            daw_proto::MidiSourceChannel::Channel,
+        ),
+        destination: to.parse().map_or(
+            daw_proto::MidiDestinationChannel::Original,
+            daw_proto::MidiDestinationChannel::Channel,
+        ),
+    }
 }
 
 /// Each group family, by the name its masks are kept under.
@@ -1200,6 +1601,8 @@ fn envelope_key(e: &daw_proto::automation::Envelope, ids: &EngineIds) -> Option<
         T::Width => "width".to_owned(),
         T::WidthPrefx => "width_prefx".to_owned(),
         T::Mute => "mute".to_owned(),
+        T::PlayRate => "playrate".to_owned(),
+        T::Pitch => "pitch".to_owned(),
         T::FxParam => format!(
             "fx:{}:{}",
             ids.fx.doc(e.fx_guid.as_deref()?),
@@ -1209,9 +1612,28 @@ fn envelope_key(e: &daw_proto::automation::Envelope, ids: &EngineIds) -> Option<
     })
 }
 
-/// The envelope a key names, on the engine (FX ids its own).
-fn envelope_ref(key: &str, ids: &EngineIds) -> Option<daw_proto::automation::EnvelopeRef> {
-    use daw_proto::automation::{EnvelopeRef as R, EnvelopeType as T};
+/// The envelope a key names, on the engine (FX ids its own): a track's
+/// own, an FX parameter's (`fx:<fx>:<param>`), a send's
+/// (`send:<n>:<volume|pan|mute>`) or a named one (`named:<name>`).
+pub(crate) fn envelope_ref(
+    key: &str,
+    ids: &EngineIds,
+) -> Option<daw_proto::automation::EnvelopeRef> {
+    use daw_proto::automation::{EnvelopeRef as R, EnvelopeType as T, SendEnvelopeKind as K};
+    if let Some(name) = key.strip_prefix("named:") {
+        return Some(R::ByName(name.to_owned()));
+    }
+    if let Some(send) = key.strip_prefix("send:") {
+        let (index, kind) = send.split_once(':')?;
+        return Some(R::Send {
+            send_index: index.parse().ok()?,
+            kind: match kind {
+                "pan" => K::Pan,
+                "mute" => K::Mute,
+                _ => K::Volume,
+            },
+        });
+    }
     Some(match key {
         "volume" => R::Type(T::Volume),
         "volume_prefx" => R::Type(T::VolumePrefx),
@@ -1220,6 +1642,8 @@ fn envelope_ref(key: &str, ids: &EngineIds) -> Option<daw_proto::automation::Env
         "width" => R::Type(T::Width),
         "width_prefx" => R::Type(T::WidthPrefx),
         "mute" => R::Type(T::Mute),
+        "playrate" => R::Type(T::PlayRate),
+        "pitch" => R::Type(T::Pitch),
         other => {
             let (fx, param) = other.strip_prefix("fx:")?.rsplit_once(':')?;
             R::FxParam {
@@ -1230,7 +1654,7 @@ fn envelope_ref(key: &str, ids: &EngineIds) -> Option<daw_proto::automation::Env
     })
 }
 
-const fn mode_name(mode: daw_proto::primitives::AutomationMode) -> &'static str {
+pub(crate) const fn mode_name(mode: daw_proto::primitives::AutomationMode) -> &'static str {
     use daw_proto::primitives::AutomationMode as M;
     match mode {
         M::TrimRead => "trim",
@@ -1243,7 +1667,7 @@ const fn mode_name(mode: daw_proto::primitives::AutomationMode) -> &'static str 
     }
 }
 
-fn mode_of(name: &str) -> daw_proto::primitives::AutomationMode {
+pub(crate) fn mode_of(name: &str) -> daw_proto::primitives::AutomationMode {
     use daw_proto::primitives::AutomationMode as M;
     match name {
         "read" => M::Read,
@@ -1256,7 +1680,7 @@ fn mode_of(name: &str) -> daw_proto::primitives::AutomationMode {
     }
 }
 
-const fn shape_number(shape: daw_proto::automation::EnvelopeShape) -> u8 {
+pub(crate) const fn shape_number(shape: daw_proto::automation::EnvelopeShape) -> u8 {
     use daw_proto::automation::EnvelopeShape as S;
     match shape {
         S::Linear => 0,
@@ -1268,7 +1692,7 @@ const fn shape_number(shape: daw_proto::automation::EnvelopeShape) -> u8 {
     }
 }
 
-const fn shape_of(n: u8) -> daw_proto::automation::EnvelopeShape {
+pub(crate) const fn shape_of(n: u8) -> daw_proto::automation::EnvelopeShape {
     use daw_proto::automation::EnvelopeShape as S;
     match n {
         1 => S::Square,
@@ -1280,7 +1704,7 @@ const fn shape_of(n: u8) -> daw_proto::automation::EnvelopeShape {
     }
 }
 
-const fn send_mode_name(mode: daw_proto::routing::SendMode) -> &'static str {
+pub(crate) const fn send_mode_name(mode: daw_proto::routing::SendMode) -> &'static str {
     use daw_proto::routing::SendMode as M;
     match mode {
         M::PreFx => "pre_fx",
@@ -1289,7 +1713,7 @@ const fn send_mode_name(mode: daw_proto::routing::SendMode) -> &'static str {
     }
 }
 
-fn send_mode_of(name: &str) -> daw_proto::routing::SendMode {
+pub(crate) fn send_mode_of(name: &str) -> daw_proto::routing::SendMode {
     use daw_proto::routing::SendMode as M;
     match name {
         "pre_fx" => M::PreFx,
@@ -1305,38 +1729,16 @@ async fn read_track_parts(
     blobs: &dyn Blobs,
     ids: &EngineIds,
 ) -> daw_control::Result<()> {
-    let chain = handle.fx_chain();
-    for fx in chain.all().await? {
-        let saved = match chain.by_guid(&fx.guid).await? {
-            Some(h) => h.state_chunk().await.ok().flatten(),
-            None => None,
-        };
-        state.fx.push(FxState {
-            guid: ids.fx.doc(&fx.guid),
-            plugin: if fx.plugin_name.is_empty() {
-                fx.name.clone()
-            } else {
-                fx.plugin_name.clone()
-            },
-            name: fx.name,
-            enabled: fx.enabled,
-            offline: fx.offline,
-            state: saved.map(|bytes| blobs.put(&bytes)),
-        });
-    }
+    state.fx = read_chain(&handle.fx_chain(), blobs, ids).await?;
+    state.input_fx = read_chain(&handle.input_fx_chain(), blobs, ids).await?;
     for route in handle.sends().all().await? {
-        let Some(dest) = route.dest_track_guid else {
-            continue;
-        };
-        state.sends.push(SendState {
-            dest,
-            mode: send_mode_name(route.send_mode).to_owned(),
-            volume: route.volume,
-            pan: route.pan,
-            muted: route.muted,
-            from: route.source_channels.start_channel,
-            to: route.dest_channels.start_channel,
-        });
+        if let Some(dest) = route.dest_track_guid.clone() {
+            state.sends.push(route_state(&route, dest));
+        }
+    }
+    for route in handle.hardware_outputs().all().await? {
+        let dest = route.hw_output_index.unwrap_or(0).to_string();
+        state.hw_outputs.push(route_state(&route, dest));
     }
     let envelopes = handle.envelopes();
     for e in envelopes.all().await? {
@@ -1365,27 +1767,138 @@ async fn read_track_parts(
                         tension: p.tension,
                     })
                     .collect(),
+                own_lane: e.in_own_lane,
+                lane_height: e.lane_height,
+                // Its automation items are daw-standalone's to tell
+                // ([`crate::whole`]).
+                items: Vec::new(),
             },
         );
     }
     Ok(())
 }
 
-/// Make the engine's chain on `track` the doc's: what is missing added
-/// (with its state), what is gone removed, each one's switches set, all
-/// in the doc's order. New FX are bound in `ids`.
+/// A chain's FX as the doc keeps them, their state into `blobs`. Their
+/// parameters, preset and named config are daw-standalone's to tell
+/// ([`crate::whole`]).
+async fn read_chain(
+    chain: &daw_control::FxChain,
+    blobs: &dyn Blobs,
+    ids: &EngineIds,
+) -> daw_control::Result<Vec<FxState>> {
+    let mut out = Vec::new();
+    for fx in chain.all().await? {
+        let saved = match chain.by_guid(&fx.guid).await? {
+            Some(h) => h.state_chunk().await.ok().flatten(),
+            None => None,
+        };
+        out.push(FxState {
+            guid: ids.fx.doc(&fx.guid),
+            plugin: if fx.plugin_name.is_empty() {
+                fx.name.clone()
+            } else {
+                fx.plugin_name.clone()
+            },
+            name: fx.name,
+            enabled: fx.enabled,
+            offline: fx.offline,
+            state: saved.map(|bytes| blobs.put(&bytes)),
+            param_count: fx.parameter_count,
+            preset_name: fx.preset_name,
+            ..FxState::default()
+        });
+    }
+    Ok(out)
+}
+
+/// A send or hardware output as the doc keeps it, `dest` its far end.
+pub(crate) fn route_state(route: &daw_proto::TrackRoute, dest: String) -> SendState {
+    SendState {
+        dest,
+        mode: send_mode_name(route.send_mode).to_owned(),
+        volume: route.volume,
+        pan: route.pan,
+        muted: route.muted,
+        from: route.source_channels.start_channel,
+        to: route.dest_channels.start_channel,
+        mono: route.mono,
+        phase_inverted: route.phase_inverted,
+        automation_mode: mode_name(route.automation_mode).to_owned(),
+        from_count: route.source_channels.num_channels,
+        to_count: route.dest_channels.num_channels,
+        midi: route.midi_channel_mapping.as_ref().map(midi_mapping_name),
+        label: route
+            .dest_track_name
+            .clone()
+            .or_else(|| route.hw_output_name.clone()),
+    }
+}
+
+/// A track's comping as the doc keeps it.
+pub(crate) fn comping_state(c: &daw_proto::LaneComping) -> CompingState {
+    CompingState {
+        record_lane: c.record_lane,
+        comp_lane: c.comp_lane,
+        last_comp_lane: c.last_comp_lane,
+        areas: c
+            .areas
+            .iter()
+            .map(|a| CompAreaState {
+                start: a.start.as_seconds(),
+                end: a.end.as_seconds(),
+                source_lane: a.source_lane,
+                comp_lane: a.comp_lane,
+                fade_in: a.fade_in.as_seconds(),
+                fade_out: a.fade_out.as_seconds(),
+            })
+            .collect(),
+    }
+}
+
+/// The doc's comp areas as the engine takes them.
+pub(crate) fn comp_areas(c: &CompingState) -> Vec<daw_proto::CompArea> {
+    c.areas
+        .iter()
+        .map(|a| daw_proto::CompArea {
+            start: PositionInSeconds::from_seconds(a.start),
+            end: PositionInSeconds::from_seconds(a.end),
+            source_lane: a.source_lane,
+            comp_lane: a.comp_lane,
+            fade_in: Duration::from_seconds(a.fade_in),
+            fade_out: Duration::from_seconds(a.fade_out),
+        })
+        .collect()
+}
+
+/// Make the engine's chain on `track` the doc's (see [`apply_chain`]).
 async fn apply_fx(
     project: &Project,
     track: &TrackState,
+    input: bool,
     blobs: &dyn Blobs,
     ids: &mut EngineIds,
 ) -> daw_control::Result<()> {
     let Some(handle) = project.tracks().by_guid(&track.guid).await? else {
         return Ok(());
     };
-    let chain = handle.fx_chain();
+    if input {
+        apply_chain(&handle.input_fx_chain(), &track.input_fx, blobs, ids).await
+    } else {
+        apply_chain(&handle.fx_chain(), &track.fx, blobs, ids).await
+    }
+}
+
+/// Make the engine's `chain` the doc's `fx`: what is missing added (with
+/// its state), what is gone removed, each one's switches set, all in the
+/// doc's order. New FX are bound in `ids`.
+async fn apply_chain(
+    chain: &daw_control::FxChain,
+    fx: &[FxState],
+    blobs: &dyn Blobs,
+    ids: &mut EngineIds,
+) -> daw_control::Result<()> {
     let wanted: std::collections::HashSet<String> =
-        track.fx.iter().map(|f| ids.fx.engine(&f.guid)).collect();
+        fx.iter().map(|f| ids.fx.engine(&f.guid)).collect();
     for fx in chain.all().await? {
         if !wanted.contains(&fx.guid)
             && let Some(h) = chain.by_guid(&fx.guid).await?
@@ -1393,7 +1906,7 @@ async fn apply_fx(
             h.remove().await?;
         }
     }
-    for (index, fx) in track.fx.iter().enumerate() {
+    for (index, fx) in fx.iter().enumerate() {
         let at = u32::try_from(index).unwrap_or(u32::MAX);
         let guid = ids.fx.engine(&fx.guid);
         let h = if let Some(h) = chain.by_guid(&guid).await? {
@@ -1451,18 +1964,7 @@ async fn apply_sends(project: &Project, track: &TrackState) -> daw_control::Resu
     }
     for send in &track.sends {
         let route = sends.add_to(&send.dest).await?;
-        route.set_send_mode(send_mode_of(&send.mode)).await?;
-        route.set_volume(send.volume).await?;
-        route.set_pan(send.pan).await?;
-        if send.muted {
-            route.mute().await?;
-        }
-        if send.from != 0 {
-            route.set_source_channels(send.from, 2).await?;
-        }
-        if send.to != 0 {
-            route.set_dest_channels(send.to, 2).await?;
-        }
+        set_route(&route, send, true).await?;
     }
     Ok(())
 }
@@ -1504,6 +2006,11 @@ async fn apply_envelopes(
         h.set_automation_mode(mode_of(&envelope.mode)).await?;
         h.set_visible(envelope.visible).await?;
         h.set_armed(envelope.armed).await?;
+        if envelope.own_lane {
+            h.show_in_lane(envelope.lane_height).await?;
+        } else {
+            h.overlay().await?;
+        }
     }
     Ok(())
 }
