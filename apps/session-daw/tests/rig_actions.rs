@@ -45,7 +45,11 @@ fn a_rig_loaded_names_its_track_and_its_tones_are_set_and_switched() {
     assert_eq!(loaded["profile"], "Worship", "{loaded}");
     let stack = loaded["stack"].as_str().expect("a stack plays").to_owned();
     let name = format!("Guitar {stack}");
-    assert_eq!(loaded["track"], name.as_str(), "named for its stack: {loaded}");
+    assert_eq!(
+        loaded["track"],
+        name.as_str(),
+        "named for its stack: {loaded}"
+    );
     let patches: Vec<String> = loaded["patches"]
         .as_array()
         .expect("its patches")
@@ -60,7 +64,10 @@ fn a_rig_loaded_names_its_track_and_its_tones_are_set_and_switched() {
         .find(|p| loaded["patch"].as_str() != Some(p.as_str()))
         .expect("another patch")
         .clone();
-    let set = run("TONE_SET", &serde_json::json!({ "track": name, "patch": other }));
+    let set = run(
+        "TONE_SET",
+        &serde_json::json!({ "track": name, "patch": other }),
+    );
     assert_eq!(set["patch"], other.as_str(), "{set}");
 
     // A Shift-click: a switch put into the song at bar 2.

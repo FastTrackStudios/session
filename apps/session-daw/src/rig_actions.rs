@@ -78,13 +78,10 @@ fn rig_on(
     project: &ProjectContext,
     guid: &str,
 ) -> Option<(String, RigState)> {
-    let fx = daw::service::Effects::list(
-        daw,
-        project.clone(),
-        FxChainContext::Track(guid.to_owned()),
-    )
-    .into_iter()
-    .find(|f| f.name.eq_ignore_ascii_case(signal_fx::SIGNAL_RIG))?;
+    let fx =
+        daw::service::Effects::list(daw, project.clone(), FxChainContext::Track(guid.to_owned()))
+            .into_iter()
+            .find(|f| f.name.eq_ignore_ascii_case(signal_fx::SIGNAL_RIG))?;
     let state = daw
         .save_plugin_state(&fx.guid)
         .ok()
@@ -149,11 +146,17 @@ fn named_for_its_stack(all: &[daw_proto::Track], track: &daw_proto::Track, word:
         || name
             .get(..word.len())
             .is_some_and(|w| w.eq_ignore_ascii_case(word))
-            && name.get(word.len()..).is_some_and(|rest| rest.starts_with(' '));
+            && name
+                .get(word.len()..)
+                .is_some_and(|rest| rest.starts_with(' '));
     let siblings = all
         .iter()
         .filter(|t| t.guid != track.guid && t.parent_guid == track.parent_guid)
-        .any(|t| t.name.to_ascii_lowercase().starts_with(&word.to_ascii_lowercase()));
+        .any(|t| {
+            t.name
+                .to_ascii_lowercase()
+                .starts_with(&word.to_ascii_lowercase())
+        });
     named && !siblings
 }
 
@@ -196,7 +199,11 @@ fn load(
     daw.apply_plugin_state(&fx, state.to_string().as_bytes())
         .map_err(|e| format!("the signal rig would not load: {e}"))?;
     let out = said(daw, project, guid)?;
-    let word = if instrument == "bass" { "Bass" } else { "Guitar" };
+    let word = if instrument == "bass" {
+        "Bass"
+    } else {
+        "Guitar"
+    };
     if let Some(stack) = &out.stack
         && named_for_its_stack(&all, &track, word)
     {
@@ -257,4 +264,83 @@ pub(crate) fn register(list: &architect::action::ActionList) {
         crate::actions::list().changed("signal.tone", "a tone switch was put in");
         said(daw, &project, &guid)
     });
+}
+
+/// What the browser shows for a track: its rig's profiles, stacks and
+/// patches — or, with no rig yet, the profiles its instrument's library
+/// has to load.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RigView {
+    /// `guitar` or `bass`.
+    pub instrument: String,
+    /// Whether a rig is on the track.
+    pub loaded: bool,
+    /// The profile playing (empty with no rig).
+    pub profile: String,
+    pub profiles: Vec<String>,
+    /// Each stack and its patches, each with whether it plays.
+    pub stacks: Vec<(String, Vec<(String, bool)>)>,
+}
+
+/// What the browser shows for track `guid`, read from its rig (or its
+/// instrument's library). `None` for a track that is no guitar or bass.
+#[must_use]
+pub fn browse(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    guid: &str,
+) -> Option<RigView> {
+    let track = Tracks::all(daw, project.clone())
+        .into_iter()
+        .find(|t| t.guid == guid)?;
+    if let Ok(playing) = playing_on(daw, project, guid) {
+        use signal_fx::signal_guitar::proto::rig::Rig as _;
+        let mut stacks: Vec<(String, Vec<(String, bool)>)> = Vec::new();
+        for p in playing.service_patches() {
+            let stack = if p.stack.is_empty() {
+                "Patches".to_owned()
+            } else {
+                p.stack
+            };
+            match stacks.iter_mut().find(|(s, _)| *s == stack) {
+                Some((_, patches)) => patches.push((p.name, p.active)),
+                None => stacks.push((stack, vec![(p.name, p.active)])),
+            }
+        }
+        return Some(RigView {
+            instrument: playing.instrument.id().to_owned(),
+            loaded: true,
+            profile: playing.playing().0,
+            profiles: playing
+                .service
+                .library()
+                .profiles
+                .into_iter()
+                .map(|p| p.name)
+                .collect(),
+            stacks,
+        });
+    }
+    let lower = track.name.to_ascii_lowercase();
+    if !(lower.contains("guitar") || lower.contains("gtr") || lower.contains("bass")) {
+        return None;
+    }
+    let instrument =
+        signal_fx::signal_guitar::instrument::Instrument::from_id(instrument_of(&track.name));
+    let home = signal_fx::signal_guitar::RigHome::new(
+        instrument,
+        signal_fx::signal_rig::library_dir(instrument),
+    );
+    Some(RigView {
+        instrument: instrument.id().to_owned(),
+        loaded: false,
+        profile: String::new(),
+        profiles: home
+            .load_or_bootstrap()
+            .profiles
+            .into_iter()
+            .map(|p| p.name)
+            .collect(),
+        stacks: Vec::new(),
+    })
 }

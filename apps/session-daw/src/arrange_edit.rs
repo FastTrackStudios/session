@@ -1461,6 +1461,7 @@ impl Editor {
             | Action::ToggleFx
             | Action::FxFull
             | Action::Save
+            | Action::ToggleBrowser
             | Action::Undo
             | Action::Redo => {
                 return false;

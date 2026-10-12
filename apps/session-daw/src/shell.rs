@@ -183,6 +183,9 @@ pub struct Pins {
     pub inspector: Signal<bool>,
     /// The navigator down the window's left ([`NavigatorColumn`]).
     pub navigator: Signal<bool>,
+    /// The browser down the window's left: what to load on the selected
+    /// track (`b`, [`crate::browser::BrowserColumn`]).
+    pub browser: Signal<bool>,
     /// The Quantize panel over the arrangement's right
     /// (`crate::quantize_panel`).
     pub quantize: Signal<bool>,
@@ -357,6 +360,7 @@ impl Pins {
             lock: Signal::new(!cfg!(test) && crate::touch::detected()),
             inspector: Signal::new(true),
             navigator: Signal::new(false),
+            browser: Signal::new(false),
             quantize: Signal::new(false),
         }
     }

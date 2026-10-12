@@ -180,6 +180,7 @@ pub mod drum_edit;
 pub mod drum_lanes;
 pub mod drum_level;
 pub mod drum_reference;
+pub mod browser;
 #[cfg(feature = "signal")]
 pub mod drum_samples;
 pub mod drum_settings;

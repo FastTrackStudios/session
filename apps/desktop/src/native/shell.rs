@@ -405,6 +405,7 @@ pub fn Shell() -> Element {
             div {
                 style: "flex:1; min-height:0; display:flex;",
                 session_daw::shell::NavigatorColumn { on_pick: pick }
+                session_daw::browser::BrowserColumn {}
                 div {
                     style: "position:relative; flex:1; min-width:0; display:flex; flex-direction:column;",
                     if let Some(song) = current.clone() {

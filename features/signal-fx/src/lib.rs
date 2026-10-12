@@ -29,6 +29,10 @@ pub mod profile;
 pub mod rig;
 pub mod signal_rig;
 
+/// signal's rig crate, for what drives a rig from outside: its service's
+/// calls, its homes and instruments.
+pub use signal_guitar;
+
 use daw_standalone::plugin::{FxFactory, PluginInstance};
 
 /// The bass rig's name.

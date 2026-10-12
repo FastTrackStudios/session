@@ -110,6 +110,8 @@ pub enum Action {
     ToggleEditor,
     /// Show or hide the FX (`f`): the selected track's effects as devices.
     ToggleFx,
+    /// Show or hide the browser (`b`): what to load on the selected track.
+    ToggleBrowser,
     /// The FX's own view, full size (`F`): several tracks' chains.
     FxFull,
     /// Show the session as a scene (`v v` Overview, `v t` Overview TOP),
@@ -187,6 +189,7 @@ pub fn action_of(id: &str) -> Action {
         "40030" => Action::Redo,
         "FTS_EXPRESSION_EDITOR_OPEN" => Action::ToggleEditor,
         "FTS_TOGGLE_FX" => Action::ToggleFx,
+        "FTS_BROWSER" => Action::ToggleBrowser,
         "FTS_FX_FULL" => Action::FxFull,
         "FTS_SCENE_OVERVIEW" => Action::ToggleScene("overview"),
         "FTS_SCENE_OVERVIEW_TOP" => Action::ToggleScene("overview-top"),
@@ -451,6 +454,7 @@ const BUILTIN: &str = r#"{
       "s": "40757",
       "d": "40006",
       "e": "FTS_EXPRESSION_EDITOR_OPEN",
+      "b": "FTS_BROWSER",
       "q": "FTS_QUANTIZE_DRUMS",
       "Shift+q": "FTS_QUANTIZE_PANEL",
       "Alt+q": "FTS_REVERT_DRUMS",
@@ -809,6 +813,7 @@ pub fn use_window_transport_keys() {
     let mixer = dioxus::prelude::try_use_context::<crate::shell::MixerToggle>();
     let fx = dioxus::prelude::try_use_context::<crate::shell::FxToggle>();
     let editor = dioxus::prelude::try_use_context::<crate::shell::EditorPane>();
+    let pins = dioxus::prelude::try_use_context::<crate::shell::Pins>();
     let held = dioxus::prelude::use_hook(|| Rc::new(Cell::new(Modifiers::NONE)));
     dioxus_native::use_window_event(move |event, _| match event {
         WindowEvent::ModifiersChanged(modifiers) => {
@@ -888,6 +893,14 @@ pub fn use_window_transport_keys() {
                     Action::FxFull => {
                         if let Some(fx) = fx {
                             fx.press_full();
+                        }
+                    }
+                    Action::ToggleBrowser => {
+                        if let Some(pins) = pins {
+                            use dioxus::prelude::{ReadableExt as _, WritableExt as _};
+                            let mut browser = pins.browser;
+                            let open = *browser.peek();
+                            browser.set(!open);
                         }
                     }
                     _ => {}

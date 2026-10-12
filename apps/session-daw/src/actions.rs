@@ -140,6 +140,7 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         Action::Undo | Action::Redo => return None,
         Action::ToggleEditor => (TOGGLE_EDITOR.id, String::new()),
         Action::ToggleFx => (TOGGLE_FX.id, String::new()),
+        Action::ToggleBrowser => (crate::browser::BROWSER.id, String::new()),
         Action::FxFull => (FX_FULL.id, String::new()),
         Action::ToggleScene(slug) => (SCENE.id, format!(r#"{{"scene":"{slug}"}}"#)),
         Action::Visibility(crate::keys::Visibility::Toggle(group)) => (
@@ -566,6 +567,10 @@ fn register_window(list: &ActionList) {
             Action::Visibility(crate::keys::Visibility::ShowAll),
         ),
     ];
+    list.register(&crate::browser::BROWSER, Effect::Mutating, |(): ()| {
+        crate::browser::request_toggle();
+        Ok(())
+    });
     for (meta, effect, action) in plain {
         list.register(meta, effect, move |(): ()| {
             queue(action.clone());
