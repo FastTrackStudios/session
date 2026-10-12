@@ -67,17 +67,17 @@ pub fn library() -> &'static Library {
     static LIBRARY: OnceLock<Library> = OnceLock::new();
     LIBRARY.get_or_init(|| {
         let dir = library_dir();
-        // This process's rig library is the bass's, in Session's own
-        // folder — set before signal reads anything.
-        signal_guitar::instrument::set(signal_guitar::instrument::Instrument::Bass);
-        if !signal_guitar::library::use_rig_dir(dir.clone()) {
-            tracing::warn!("bass rig: the rig library was already chosen for this process");
-        }
-        let library = signal_guitar::library::RigLibrary::load_or_bootstrap();
+        // The bass's library in Session's own folder — a home of its own,
+        // so a guitar rig beside it keeps its own, and the process's
+        // instrument and library are left as they are.
+        let home = signal_guitar::RigHome::new(signal_guitar::instrument::Instrument::Bass, &dir);
+        let library = home.load_or_bootstrap();
         let profiles = library
             .profiles
             .iter()
-            .map(|def| signal_guitar::nodes::profile_from_library(def, &library.drive_presets))
+            .map(|def| {
+                signal_guitar::nodes::profile_from_library_in(&home, def, &library.drive_presets)
+            })
             .collect();
         Library { dir, profiles }
     })
