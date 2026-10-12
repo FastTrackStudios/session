@@ -176,8 +176,19 @@ impl StudioSession {
         let raw = daw_ui::studio::project::fetch_of(handle.clone())
             .await
             .ok_or_else(|| eyre::eyre!("could not read {name} back"))?;
+        // Its automation lanes: from this process's engine, or through
+        // the facade from wherever the engine is.
         #[cfg(feature = "native")]
-        crate::automation::refresh_in(project, &raw.tracks);
+        let local = crate::open::local_engine().is_some();
+        #[cfg(not(feature = "native"))]
+        let local = false;
+        if local {
+            #[cfg(feature = "native")]
+            crate::automation::refresh_in(project, &raw.tracks);
+        } else {
+            let (lanes, takes) = crate::automation::read_remote(&raw.tracks).await;
+            crate::automation::adopt_remote(lanes, takes);
+        }
         let planner = Planner {
             raw: Arc::new(raw),
             scene: Some(SCENE),
@@ -421,7 +432,13 @@ pub fn fetch() -> Option<daw_ui::studio::project::Project> {
         .build()
         .ok()?;
     let project = rt.block_on(daw_ui::studio::project::fetch())?;
-    crate::automation::refresh(&project.tracks);
+    if crate::open::local_engine().is_some() {
+        crate::automation::refresh(&project.tracks);
+    } else {
+        // The engine is elsewhere: its lanes through the facade.
+        let (lanes, takes) = rt.block_on(crate::automation::read_remote(&project.tracks));
+        crate::automation::adopt_remote(lanes, takes);
+    }
     Some(project)
 }
 

@@ -1553,6 +1553,10 @@ impl ArrangementWidget {
             if !unread.is_empty() {
                 previews.fill(unread).await;
             }
+            // The lanes, read through the facade before the rows are
+            // planned around them.
+            let (lanes, takes) = crate::automation::read_remote(&fresh.tracks).await;
+            crate::automation::adopt_remote(lanes, takes);
             *slot.borrow_mut() = Some(fresh);
         });
     }

@@ -656,6 +656,152 @@ pub fn refresh(tracks: &[daw_proto::Track]) {
     }
 }
 
+/// The lanes and the item volume curves of `tracks`, read through the daw
+/// facade.
+///
+/// What [`read`] and [`read_takes`] read from an engine in this process,
+/// for a window whose engine is elsewhere (a browser, a remote desktop).
+/// Empty where the facade is not up. The vocal leveler's lanes are this
+/// process's engine's only.
+pub async fn read_remote(
+    tracks: &[daw_proto::Track],
+) -> (HashMap<String, Vec<Lane>>, HashMap<String, TakeCurve>) {
+    let mut lanes = HashMap::new();
+    let mut takes = HashMap::new();
+    let Some(daw) = daw::rpc::Daw::try_get() else {
+        return (lanes, takes);
+    };
+    let Ok(project) = daw.current_project().await else {
+        return (lanes, takes);
+    };
+    for track in tracks {
+        let Ok(Some(handle)) = project.tracks().by_guid(&track.guid).await else {
+            continue;
+        };
+        let mine = remote_lanes(&handle, &track.guid).await;
+        if !mine.is_empty() {
+            lanes.insert(track.guid.clone(), mine);
+        }
+        takes.extend(remote_takes(&project, &handle, &track.guid).await);
+    }
+    (lanes, takes)
+}
+
+/// One track's shown lanes, through the facade.
+async fn remote_lanes(handle: &daw_control::TrackHandle, track: &str) -> Vec<Lane> {
+    let fxs = handle.fx_chain().all().await.unwrap_or_default();
+    let mut mine = Vec::new();
+    for e in handle.envelopes().all().await.unwrap_or_default() {
+        if !e.visible || e.name.starts_with("Send ") {
+            continue;
+        }
+        let target = match (&e.fx_guid, e.param_index) {
+            (Some(fx_guid), Some(param_index)) => EnvelopeRef::FxParam {
+                fx_guid: fx_guid.clone(),
+                param_index,
+            },
+            _ => EnvelopeRef::Type(e.envelope_type),
+        };
+        let envelope = handle.envelopes().of(target.clone());
+        let points = envelope.points().await.unwrap_or_default();
+        let mut items = Vec::new();
+        for item in envelope.automation_items().await.unwrap_or_default() {
+            let curve = envelope
+                .automation_item_points(item.index)
+                .await
+                .unwrap_or_default();
+            items.push((item, curve));
+        }
+        let kind = Kind::of(e.envelope_type);
+        let (name, rest, fx_name) = match &target {
+            EnvelopeRef::FxParam {
+                fx_guid,
+                param_index,
+            } => {
+                let fx = fxs.iter().find(|f| f.guid == *fx_guid);
+                let params = match handle.fx_chain().by_guid(fx_guid).await {
+                    Ok(Some(fx)) => fx.parameters().await.unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                let fx_name = fx.map_or_else(|| "FX".to_owned(), |f| f.name.clone());
+                let short = fx_name.strip_prefix("FTS ").unwrap_or(&fx_name).to_owned();
+                match params.iter().find(|p| p.index == *param_index) {
+                    Some(p) => (format!("{short}: {}", p.name), p.value, Some(fx_name)),
+                    None => (format!("{short}: #{param_index}"), 0.5, Some(fx_name)),
+                }
+            }
+            _ => (e.name.clone(), neutral(kind), None),
+        };
+        let height = f64::from(e.lane_height);
+        let mut lane = Lane {
+            track: track.to_owned(),
+            target,
+            name,
+            kind,
+            height: if height >= LANE_MIN_H { height } else { LANE_H },
+            mode: e.automation_mode,
+            points,
+            items,
+            played: Vec::new(),
+            rest,
+            fx_name,
+            leveled: Vec::new(),
+        };
+        lane.replay();
+        mine.push(lane);
+    }
+    mine.sort_by_key(order);
+    mine
+}
+
+/// One track's item volume curves, through the facade, where the track
+/// shows them.
+async fn remote_takes(
+    project: &daw_control::Project,
+    handle: &daw_control::TrackHandle,
+    track: &str,
+) -> Vec<(String, TakeCurve)> {
+    let shown = handle
+        .ext_state()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .any(|e| e.key == TAKE_LINES_KEY && e.value == "1");
+    let mut out = Vec::new();
+    if !shown {
+        return out;
+    }
+    for item in handle.items().all().await.unwrap_or_default() {
+        let Ok(Some(item_handle)) = project.items().by_guid(&item.guid).await else {
+            continue;
+        };
+        let Ok(envelopes) = item_handle.active_take().envelopes().await else {
+            continue;
+        };
+        let points = envelopes.volume().points().await.unwrap_or_default();
+        if !points.is_empty() {
+            out.push((
+                item.guid,
+                TakeCurve {
+                    track: track.to_owned(),
+                    points,
+                },
+            ));
+        }
+    }
+    out
+}
+
+/// Put lanes and item curves read through the facade ([`read_remote`])
+/// in place of the window's.
+pub fn adopt_remote(
+    lanes: impl IntoIterator<Item = (String, Vec<Lane>)>,
+    takes: impl IntoIterator<Item = (String, TakeCurve)>,
+) {
+    adopt(lanes);
+    *take_store().lock().unwrap_or_else(PoisonError::into_inner) = takes.into_iter().collect();
+}
+
 /// Where a lane stacks: volume, pan, width, mute, then the plugins' in
 /// chain order.
 fn order(lane: &Lane) -> (u8, String) {
