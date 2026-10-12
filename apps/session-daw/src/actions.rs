@@ -643,7 +643,7 @@ static TRACKS: ActionMeta = ActionMeta {
         "SESSION_TRACKS",
         "tracks",
         "Tracks",
-        "Every track in the open song: GUID, name, its folder path, folder or not, mute, solo, fader (dB), pan, how many items, its FX. `filter` keeps the tracks whose path contains it.",
+        "Every track in the open song: GUID, name, its folder path, folder or not, mute, solo, fader (dB), pan, how many items, its FX, its lanes, whether it is armed and what it records from (`record_input`: none, `audio N`, midi), and for a folder whether the window shows it open (`open`; false: folded to its row). `filter` keeps the tracks whose path contains it.",
         "Data",
         "",
     )
@@ -689,6 +689,50 @@ struct TrackRow {
     /// Its fixed lanes, when it has them, named lanes and the playing
     /// one first — then the rest only by count.
     lanes: Vec<LaneRow>,
+    /// Armed to record.
+    armed: bool,
+    /// What it records from: `none`, `audio 1` (an input, from 1), `midi`
+    /// or `raw N`.
+    record_input: String,
+    /// A folder: whether the window shows what is in it (`false`: folded
+    /// to its own row). None for a track.
+    open: Option<bool>,
+}
+
+/// What `input` says, as [`TrackRow::record_input`] reads.
+fn record_input_of(input: daw_proto::track::RecordInput) -> String {
+    use daw_proto::track::RecordInput;
+    match input {
+        RecordInput::None => "none".to_owned(),
+        RecordInput::Audio { channel } => format!("audio {}", channel.saturating_add(1)),
+        RecordInput::Midi { .. } => "midi".to_owned(),
+        RecordInput::Raw(raw) => format!("raw {raw}"),
+    }
+}
+
+/// Which folders the window shows open, by GUID: every track planned as
+/// the window plans its rows ([`crate::folds::apply`]), a folder open
+/// when the row after it is one of its own.
+fn open_folders(tracks: &[daw_proto::Track]) -> std::collections::HashSet<String> {
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let depth = |track: &daw_proto::Track| {
+        let mut depth = 0_u32;
+        let mut at = track.parent_guid.as_deref();
+        while let Some(parent) = at.and_then(|p| by_guid.get(p)) {
+            depth = depth.saturating_add(1);
+            at = parent.parent_guid.as_deref();
+        }
+        depth
+    };
+    let rows: Vec<(daw_proto::Track, u32)> = tracks.iter().map(|t| (t.clone(), depth(t))).collect();
+    let shown = crate::folds::apply(rows);
+    shown
+        .iter()
+        .enumerate()
+        .filter(|(i, (track, _))| track.is_folder && !crate::folds::shut(&shown, *i))
+        .map(|(_, (track, _))| track.guid.clone())
+        .collect()
 }
 
 /// One fixed lane.
@@ -781,6 +825,14 @@ static MODE_REQUEST: Mutex<Option<session::modes::Mode>> = Mutex::new(None);
 /// The mode asked for since the window last looked, if any.
 pub fn take_mode_request() -> Option<session::modes::Mode> {
     MODE_REQUEST.lock().ok()?.take()
+}
+
+/// Ask the window for `mode`, as `SESSION_MODE` does — for an action that
+/// leaves the window in a mode of its own (New Project opens in Organize).
+pub(crate) fn request_mode(mode: session::modes::Mode) {
+    if let Ok(mut slot) = MODE_REQUEST.lock() {
+        *slot = Some(mode);
+    }
 }
 
 static VIEW: ActionMeta = meta(
@@ -997,6 +1049,12 @@ fn register_data(list: &ActionList) {
     crate::automation_actions::register(list);
     #[cfg(feature = "native")]
     crate::comp::register(list);
+    #[cfg(feature = "native")]
+    crate::record::register(list);
+    crate::grow::register(list);
+    crate::project_new::register(list);
+    crate::instrument_tracks::register(list);
+    crate::timeline_actions::register(list);
     #[cfg(feature = "signal")]
     crate::rig_actions::register(list);
 }
@@ -2130,8 +2188,15 @@ fn register_save(list: &ActionList) {
         let ProjectContext::Project(guid) = &project else {
             return Err("no song open".to_owned());
         };
+        // A new song has no file yet: its first save names it.
+        let untitled = crate::project_new::untitled(daw, guid);
         let dir = if let Some(to) = a.to.clone() {
             std::path::PathBuf::from(to)
+        } else if untitled {
+            return Err(
+                "the song is untitled: save it with `to`, the file it goes in — its name becomes the song's"
+                    .to_owned(),
+            );
         } else {
             let from = std::path::PathBuf::from(
                 daw.read_project(guid, |p| p.info.path.clone())
@@ -2143,8 +2208,11 @@ fn register_save(list: &ActionList) {
                 from.with_extension("session")
             }
         };
-        let own = a.to.is_none();
+        let own = a.to.is_none() || untitled;
         let at = crate::session_file::save_session(daw, guid, &dir)?;
+        if untitled {
+            crate::project_new::named(daw, guid, &dir, &at);
+        }
         if own {
             // The song itself, saved: nothing unsaved now. (A copy saved
             // elsewhere leaves the song as unsaved as it was.)
@@ -2549,6 +2617,7 @@ fn register_tracks(list: &ActionList) {
         let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
             tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
         let filter = a.filter.map(|f| f.to_lowercase());
+        let open = open_folders(&tracks);
         Ok(tracks
             .iter()
             .map(|t| (t, crate::gain_stage::path_of(t, &by_guid).join("/")))
@@ -2567,6 +2636,9 @@ fn register_tracks(list: &ActionList) {
             })
             .map(|(t, path, items)| TrackRow {
                 lanes: lane_rows(t, &items),
+                armed: t.armed,
+                record_input: record_input_of(t.record_input),
+                open: t.is_folder.then(|| open.contains(&t.guid)),
                 guid: t.guid.clone(),
                 name: t.name.clone(),
                 path,

@@ -902,3 +902,25 @@ pub fn publish(edit: Edit) {
 pub fn current() -> Option<Edit> {
     CURRENT.lock().ok().and_then(|slot| *slot)
 }
+
+/// An edit state asked for from outside the arrangement, until it takes
+/// it ([`take_asked`]).
+static ASKED: std::sync::Mutex<Option<Edit>> = std::sync::Mutex::new(None);
+
+/// Put the arrangement's edit cursor and time selection at `edit`.
+///
+/// What an action that sets them (`TIME_SELECTION_SET`, an insert that moves
+/// the cursor on) asks. It is [`current`] at once, and the arrangement
+/// takes it on its next frame.
+pub fn ask(edit: Edit) {
+    publish(edit);
+    if let Ok(mut slot) = ASKED.lock() {
+        *slot = Some(edit);
+    }
+}
+
+/// The edit state asked for since the arrangement last looked, once.
+#[must_use]
+pub fn take_asked() -> Option<Edit> {
+    ASKED.lock().ok().and_then(|mut slot| slot.take())
+}

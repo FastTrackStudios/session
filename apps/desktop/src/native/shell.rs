@@ -603,7 +603,8 @@ fn use_live_advance(mut setlist: Signal<session_daw::setlist::Setlist>, mode: Si
 
 /// The arrangement, with the mixer docked under it on `x` (or from the
 /// start, `docked`, in the Overview). In Organize the Organize toolbar sits
-/// over it — markers, sections, time signatures — in whichever view it is.
+/// over it — markers, sections, time signatures — in whichever view it is,
+/// and the instruments (Drums, Bass, Guitar) down its left.
 /// The transport is in the top bar.
 #[component]
 fn Arrangement(#[props(default)] docked: bool) -> Element {
@@ -615,8 +616,15 @@ fn Arrangement(#[props(default)] docked: bool) -> Element {
                 session_daw::organize::OrganizeToolbar {}
             }
             div {
-                style: "position:relative; flex:1; min-height:0;",
-                session_daw::mixer_panel::DawPanels { docked, mode: Some(mode()) }
+                style: "position:relative; flex:1; min-height:0; display:flex;",
+                // Organize's instruments down the left: Drums, Bass, Guitar.
+                if mode() == Mode::Organize {
+                    session_daw::instrument_tracks::InstrumentRail {}
+                }
+                div {
+                    style: "position:relative; flex:1; min-width:0;",
+                    session_daw::mixer_panel::DawPanels { docked, mode: Some(mode()) }
+                }
             }
         }
     }

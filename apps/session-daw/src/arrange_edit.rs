@@ -1443,7 +1443,9 @@ impl Editor {
                     effects.push(Effect::Transport(Move::Seek, to));
                 }
             }
-            Action::ToggleRecord => tracing::info!("record is not wired to the transport yet"),
+            // The record key: the transport's record, which runs
+            // `TRANSPORT_RECORD` (`crate::engine::transport`).
+            Action::ToggleRecord => effects.push(Effect::Transport(Move::ToggleRecord, 0.0)),
             // The view's, not the session's: the widget sends these to
             // the panel before the editor is asked.
             Action::View(_)
@@ -1459,9 +1461,9 @@ impl Editor {
             | Action::ToggleMixer
             | Action::ToggleEditor
             | Action::ToggleFx
+            | Action::ToggleBrowser
             | Action::FxFull
             | Action::Save
-            | Action::ToggleBrowser
             | Action::Undo
             | Action::Redo => {
                 return false;

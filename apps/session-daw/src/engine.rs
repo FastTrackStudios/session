@@ -880,6 +880,17 @@ pub fn transport(command: Move, seconds: f64) {
     if !matches!(command, Move::ToggleLoop | Move::ToggleRecord) {
         crate::collab::transport_pressed();
     }
+    // Record is an action (`TRANSPORT_RECORD`): the button and the key
+    // run what a model runs — off the event loop, as the rest are, since
+    // a stop writes the takes. A window with no song of its own (a
+    // remote) sends it to the engine it talks to.
+    #[cfg(feature = "native")]
+    if matches!(command, Move::ToggleRecord) && crate::open::local_engine().is_some() {
+        let _ = std::thread::Builder::new()
+            .name("session-daw-record".into())
+            .spawn(crate::record::toggle_through_the_list);
+        return;
+    }
     transport_following(command, seconds);
 }
 

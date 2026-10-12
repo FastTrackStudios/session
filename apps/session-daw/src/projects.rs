@@ -257,6 +257,13 @@ pub fn open_from_outside(path: PathBuf) {
     BACK.store(true, std::sync::atomic::Ordering::Release);
 }
 
+/// Ask the window to go back out of the song, to the start screen — for
+/// what the start screen then opens itself (a new song,
+/// `crate::project_new`).
+pub fn go_back() {
+    BACK.store(true, std::sync::atomic::Ordering::Release);
+}
+
 /// Whether the window should go back out of the song now — once.
 pub fn take_back() -> bool {
     BACK.swap(false, std::sync::atomic::Ordering::AcqRel)

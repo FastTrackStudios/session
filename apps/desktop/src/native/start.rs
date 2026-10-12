@@ -301,6 +301,16 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
             }),
         );
     };
+    // A song from nothing (`SESSION_NEW`): untitled, in Organize mode, its
+    // count-in, start and guide placed.
+    let mut new_project = move || {
+        open_set(
+            Progress::Opening {
+                title: session_daw::project_new::UNTITLED.to_owned(),
+            },
+            Box::new(|_| session_daw::project_new::setlist(Some(true))),
+        );
+    };
 
     // What the launch chose, opened as the window opens.
     let OpenFirst(first) = use_context();
@@ -312,7 +322,16 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
         // the app was launched with went straight back into it.
         let launch =
             first.filter(|_| !LAUNCH_OPENED.swap(true, std::sync::atomic::Ordering::AcqRel));
-        if let Some(path) = session_daw::projects::take_next().or(launch) {
+        if let Some(guid) = session_daw::project_new::take_made() {
+            // A new song made from inside another (`SESSION_NEW`), which
+            // came back out here to open it: it is in the engine already.
+            open_set(
+                Progress::Opening {
+                    title: session_daw::project_new::UNTITLED.to_owned(),
+                },
+                Box::new(move |_| session_daw::project_new::setlist_of(guid)),
+            );
+        } else if let Some(path) = session_daw::projects::take_next().or(launch) {
             open_path(path);
         }
     });
@@ -718,6 +737,13 @@ fn Start(opened: Signal<Option<Setlist>>) -> Element {
                     on_press: move |()| join_demo(DEMO_LINK.to_owned()),
                     Radio { size: 30, color: ART_INK }
                 }
+            }
+            // A song from nothing.
+            Shortcut {
+                title: "New Project".to_owned(),
+                detail: "An untitled song, in Organize, the click ready".to_owned(),
+                on_press: move |()| new_project(),
+                Plus { size: 18, color: ACCENT }
             }
             // Joining by link: a set someone shared, or a REAPER's bridge.
             div {

@@ -3823,7 +3823,11 @@ impl ArrangementWidget {
         // A rename open is a text field holding the keyboard: the window's
         // transport keys stand aside while it is (a space in a name).
         crate::keys::set_typing(self.renaming.is_some());
-        // Where the edit cursor and selection are, for the toolbar's inserts.
+        // Where an action put the edit cursor and selection, taken up;
+        // then where they are, for the toolbar's inserts.
+        if let Some(asked) = crate::cursor::take_asked() {
+            self.editor.cursor = asked;
+        }
         crate::cursor::publish(self.editor.cursor);
         crate::ghosts::local_selection(&self.editor.selected, &self.rows);
         crate::ghosts::local_shown(&self.rows, &self.scene);

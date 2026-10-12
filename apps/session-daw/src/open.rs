@@ -117,6 +117,49 @@ pub fn open_silent(path: &Path) -> eyre::Result<Opened> {
     open_with_audio(path, false, Media::All)
 }
 
+/// A new, empty song in the process's engine, made current: `name`, with
+/// no file behind it until it is first saved. What New Project opens
+/// (`crate::project_new`).
+///
+/// `audio` says whether the window plays, as the first open does; `None`
+/// keeps what it is — a song made from inside the window plays if the
+/// window does.
+///
+/// # Errors
+///
+/// The window drives another system and has no engine of its own, or the
+/// engine would not make a project.
+pub fn open_untitled(name: &str, audio: Option<bool>) -> eyre::Result<Opened> {
+    let state = mode();
+    if !state.owns_project() {
+        eyre::bail!(
+            "a new song is made in this window's own engine, and this window is in {} mode",
+            state.requested.name()
+        );
+    }
+    let daw = engine();
+    // The facade and its runtime first: making a project spawns on it.
+    bootstrap(daw)?;
+    let _inside = engine_runtime()?.enter();
+    let info = daw::service::Projects::create(daw)
+        .ok_or_else(|| eyre::eyre!("the engine made no project"))?;
+    daw.write_project(&info.guid, |p| name.clone_into(&mut p.info.name));
+    if let Some(audio) = audio {
+        AUDIBLE.store(audio, std::sync::atomic::Ordering::Relaxed);
+    }
+    let audio = AUDIBLE.load(std::sync::atomic::Ordering::Relaxed);
+    switch_to(daw, &info.guid, audio);
+    if audio {
+        serve_actions();
+    }
+    Ok(Opened {
+        daw: daw.clone(),
+        name: name.to_owned(),
+        project_guid: info.guid,
+        track_count: 0,
+    })
+}
+
 fn open_with_audio(path: &Path, audio: bool, media: Media) -> eyre::Result<Opened> {
     refuse_unless_local(path)?;
     let began = std::time::Instant::now();
