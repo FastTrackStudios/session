@@ -71,6 +71,11 @@ pub struct Settings {
     /// the decay before it — the last resort; none, never.
     pub stretch_gaps_ms: Option<f64>,
     pub fills: Fills,
+    /// The piece whose timing wins where strokes are moved as one gesture
+    /// (a kick into a snare, a double kick around a backbeat): its stroke
+    /// put on its line, the rest moved with it — the snare in a breakdown,
+    /// over the sixteenth kicks. None: the loudest.
+    pub lead: Option<String>,
 }
 
 impl Default for Settings {
@@ -88,6 +93,7 @@ impl Default for Settings {
             xfade_ms: 5.0,
             stretch_gaps_ms: None,
             fills: Fills::Skip,
+            lead: None,
         }
     }
 }
@@ -108,6 +114,8 @@ pub struct Patch {
     /// 0 (or less): never.
     pub stretch_gaps_ms: Option<f64>,
     pub fills: Option<Fills>,
+    /// A piece's name (`Snare`); empty: none, the loudest decides.
+    pub lead: Option<String>,
 }
 
 impl Settings {
@@ -137,6 +145,11 @@ impl Settings {
                 None => self.stretch_gaps_ms,
             },
             fills: patch.fills.unwrap_or(self.fills),
+            lead: match patch.lead.as_deref().map(str::trim) {
+                Some("") => None,
+                Some(piece) => Some(piece.to_owned()),
+                None => self.lead.clone(),
+            },
         }
     }
 }

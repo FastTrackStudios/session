@@ -2861,7 +2861,7 @@ static EDIT_SETTINGS: ActionMeta = meta(
     "DRUMS_EDIT_SETTINGS",
     "drums_edit_settings",
     "Drum edit settings",
-    "The quantize settings as they stand — sticky: what QUANTIZE uses when a call gives none, kept across restarts. `grid` (a whole note's division: 16, 12 for 8th triplets, 24 for 16th triplets), `grid_scan` (one hit per grid line, the loudest within `grid_tolerance_ms`), `target` (Guided: the drum MIDI says which line, else the nearest when within `sure_ms`; Reference; Grid), `window_ms`, `sure_ms`, `tolerance_ms`, `strength`, `lead_ms`, `xfade_ms`, `stretch_gaps_ms`, `fills` (Skip, Include, Only). How the hits are found is HITS_SETTINGS'.",
+    "The quantize settings as they stand — sticky: what QUANTIZE uses when a call gives none, kept across restarts. `grid` (a whole note's division: 16, 12 for 8th triplets, 24 for 16th triplets), `grid_scan` (one hit per grid line, the loudest within `grid_tolerance_ms`), `target` (Guided: the drum MIDI says which line, else the nearest line in reach — `sure_ms` on the grid, twice that a grid coarser, down to the sixteenths: a double kick's stroke 24 ms off its sixteenth is the sixteenth's; Reference; Grid), `window_ms`, `sure_ms`, `tolerance_ms`, `strength`, `lead_ms`, `xfade_ms`, `stretch_gaps_ms`, `fills` (Skip, Include, Only), `lead` (a piece whose timing wins where strokes are moved together — `Snare` in a breakdown, so the backbeat is on its line and the sixteenth kicks move with it; empty: the loudest). Any of them can be given to one QUANTIZE call, or to one step of its `plan` (a section). How the hits are found is HITS_SETTINGS'.",
     "Drums",
     "",
 );
@@ -2995,6 +2995,27 @@ struct Moment {
     relative_db: f64,
 }
 
+/// How much each moment counts when moments are moved as one gesture
+/// ([`hold_gestures`]): its loudness — and, holding the lead piece
+/// ([`crate::drum_settings::Settings::lead`]), above every other.
+fn weights(moments: &[Moment], settings: &crate::drum_settings::Settings) -> Vec<f64> {
+    /// Past any difference in loudness a kit has, dB.
+    const LEADS: f64 = 1_000.0;
+    let lead = settings.lead.as_deref().map(str::trim);
+    moments
+        .iter()
+        .map(|m| {
+            let leads =
+                lead.is_some_and(|lead| m.pieces.iter().any(|p| p.eq_ignore_ascii_case(lead)));
+            if leads {
+                m.relative_db + LEADS
+            } else {
+                m.relative_db
+            }
+        })
+        .collect()
+}
+
 /// The kit's moments: one hit per grid line (the loudest), or every hit
 /// with flams merged to their first.
 fn moments(kit: &[KitPiece], scan: Option<(&dyn Fn(f64) -> f64, f64)>) -> Vec<Moment> {
@@ -3055,6 +3076,46 @@ fn grid_line(
     let step = 240.0 / daw.get_tempo_at(project.clone(), h).max(1.0) / f64::from(division.max(1));
     (h / step).round() * step
 }
+
+/// The line a stroke with no note of its own goes to: of the grid asked
+/// for (`division`, a line of it from `line_of`) and each coarser one down
+/// to the sixteenths (the eighth triplets on a triplet grid), the one it
+/// sits nearest for that grid's reach — `sure` on the grid asked for,
+/// twice it a grid coarser, and so on; a tie to the coarser line. `None`
+/// when it is in reach of none.
+///
+/// On a thirty-second grid the second stroke of a double kick played 70 ms
+/// after the first sat 23 ms from a thirty-second and 24 ms from its
+/// sixteenth — past `sure` (15 ms) of either, and left as played, the
+/// roll ragged (Unbreakable, bar 63). In reach of the sixteenth it is the
+/// sixteenth's; a stroke played tight on a thirty-second stays on it.
+fn grid_choice(line_of: impl Fn(u32) -> f64, felt: f64, division: u32, sure: f64) -> Option<f64> {
+    let floor = if division.is_multiple_of(3) { 12 } else { 16 };
+    let mut best: Option<(f64, f64)> = None;
+    let mut level = division.max(1);
+    loop {
+        let line = line_of(level);
+        let reach = sure * f64::from(division.max(1)) / f64::from(level.max(1));
+        let fit = (line - felt).abs() / reach.max(f64::EPSILON);
+        // Coarser levels come later: a tie goes to them.
+        if fit <= 1.0 && best.is_none_or(|(was, _)| fit <= was + 1e-9) {
+            best = Some((fit, line));
+        }
+        let coarser = level / 2;
+        if !level.is_multiple_of(2) || coarser < floor {
+            break;
+        }
+        level = coarser;
+    }
+    best.map(|(_, line)| line)
+}
+
+/// How near a grid line a stroke must be played to be on it, seconds: its
+/// line is the drummer's, past the chart's say (see `targets`). On
+/// Unbreakable the chart moved kicks played dead on their sixteenths a
+/// whole sixteenth (bar 105) and onto triplets (bar 63), and kicks played
+/// near theirs 60–75 ms onto the chart's eighths (bars 100, 136, 164).
+const PLAYED_ON_A_LINE: f64 = 0.005;
 
 /// How far a written note may be from a thirty-second or a sixteenth
 /// triplet and still be on it, seconds.
@@ -3239,6 +3300,28 @@ fn targets(
                 m.time
             };
             let within = |t: f64| (t - m.time).abs() <= step + FURTHEST_PAST;
+            // The playing says which line where it is clear: a stroke
+            // played on a line keeps it against a written line further than
+            // `sure` (a triplet charted against a sixteenth played, a chart
+            // a sixteenth out); one in reach of a line ([`grid_choice`])
+            // keeps that against a written line more than half a sixteenth
+            // off — moving it there rewrites the drummer, not the timing.
+            let played_on = grid_line(daw, project, felt, settings.grid);
+            let on_a_line = (played_on - felt).abs() <= PLAYED_ON_A_LINE;
+            let own_line = if on_a_line {
+                Some(played_on)
+            } else {
+                grid_choice(
+                    |division| grid_line(daw, project, felt, division),
+                    felt,
+                    settings.grid,
+                    sure,
+                )
+            };
+            let keeps_its_line = |line: f64| {
+                let off = (line - felt).abs();
+                own_line.is_some() && off > sure && (on_a_line || off > step / 2.0)
+            };
             if let Some(note) = note {
                 // A fill plays a written figure with the pieces swapped —
                 // a kick where the chart has a snare. Nearer another
@@ -3248,6 +3331,9 @@ fn targets(
                 let line = nearest_kit(felt)
                     .filter(|w| (w - felt).abs() < (note - felt).abs())
                     .unwrap_or(note);
+                if within(line) && keeps_its_line(line) {
+                    return (m.time, own_line, Placed::Line);
+                }
                 if within(line) {
                     return (m.time, Some(line), Placed::Written);
                 }
@@ -3255,17 +3341,21 @@ fn targets(
             // No note of its own: a line the chart writes something on,
             // near.
             if inside
-                && let Some(line) = nearest_written(felt)
-                    .filter(|w| (w - felt).abs() <= NEAR_WRITTEN * step && within(*w))
+                && let Some(line) = nearest_written(felt).filter(|w| {
+                    (w - felt).abs() <= NEAR_WRITTEN * step && within(*w) && !keeps_its_line(*w)
+                })
             {
                 return (m.time, Some(line), Placed::Near);
             }
-            let line = grid_line(daw, project, felt, settings.grid);
-            if (line - felt).abs() <= sure {
+            grid_choice(
+                |division| grid_line(daw, project, felt, division),
+                felt,
+                settings.grid,
+                sure,
+            )
+            .map_or((m.time, None, Placed::Nothing), |line| {
                 (m.time, Some(line), Placed::Line)
-            } else {
-                (m.time, None, Placed::Nothing)
-            }
+            })
         })
         .collect())
 }
@@ -3656,7 +3746,7 @@ fn detect(
         .grid_tolerance_ms
         .map_or(f64::INFINITY, |ms| ms / 1_000.0);
     let moments = moments(&kit, settings.grid_scan.then_some((by_line, tolerance)));
-    let loudness: Vec<f64> = moments.iter().map(|m| m.relative_db).collect();
+    let loudness = weights(&moments, settings);
     let by = targets(daw, project, settings, (&kit, &moments), span)?;
     let mut placed: Vec<(f64, Option<f64>)> = by.iter().map(|(h, t, _)| (*h, *t)).collect();
     let mut by_groove = Vec::new();
@@ -4270,7 +4360,66 @@ fn wait_for_slip(
 
 #[cfg(test)]
 mod gesture_tests {
-    use super::{Placed, hold_gestures, one_stroke_a_line};
+    use super::{Placed, grid_choice, hold_gestures, one_stroke_a_line};
+
+    /// A line of `division` per 1.5 s bar (160 bpm), nearest `t`.
+    fn line(division: u32, t: f64) -> f64 {
+        let step = 1.5 / f64::from(division);
+        (t / step).round() * step
+    }
+
+    /// A kick into a snare a gesture apart, the kick louder: moved by the
+    /// kick's shift — unless the snare leads, then by the snare's.
+    #[test]
+    fn the_lead_piece_decides_a_gesture() {
+        use super::{Moment, weights};
+        let moments = [
+            Moment {
+                time: 1.0,
+                pieces: vec!["Kick".into()],
+                relative_db: 0.0,
+            },
+            Moment {
+                time: 1.02,
+                pieces: vec!["Snare".into()],
+                relative_db: -6.0,
+            },
+        ];
+        let pairs = [(1.0, Some(1.01)), (1.02, Some(1.0))];
+        let mut settings = crate::drum_settings::Settings::default();
+        let by_kick = hold_gestures(&pairs, &weights(&moments, &settings));
+        assert!(
+            (by_kick[1].1.expect("moved") - 1.03).abs() < 1e-9,
+            "{by_kick:?}"
+        );
+        settings.lead = Some("snare".into());
+        let by_snare = hold_gestures(&pairs, &weights(&moments, &settings));
+        assert!(
+            (by_snare[1].1.expect("moved") - 1.0).abs() < 1e-9,
+            "the snare on its line: {by_snare:?}"
+        );
+        assert!(
+            (by_snare[0].1.expect("moved") - 0.98).abs() < 1e-9,
+            "the kick with it"
+        );
+    }
+
+    /// Unbreakable bar 63: a double kick's second stroke 70 ms after the
+    /// first (on beat 3.5), 22.9 ms from the thirty-second at 3.625 and
+    /// 24 ms from its sixteenth at 3.75 — the sixteenth's, on a
+    /// thirty-second grid; a stroke tight on a thirty-second stays on it;
+    /// one in reach of no line is left.
+    #[test]
+    fn an_unwritten_stroke_goes_to_the_coarsest_line_in_reach() {
+        let felt = 95.507_271;
+        let got = grid_choice(|d| line(d, felt), felt, 32, 0.015).expect("a line");
+        assert!((got - 95.531_25).abs() < 1e-9, "the sixteenth: {got}");
+        let tight = 95.486;
+        let got = grid_choice(|d| line(d, tight), tight, 32, 0.015).expect("a line");
+        assert!((got - 95.484_375).abs() < 1e-9, "its thirty-second: {got}");
+        let lost = 95.4375 + 0.035;
+        assert_eq!(grid_choice(|d| line(d, lost), lost, 16, 0.015), None);
+    }
 
     /// Unbreakable's outro, bar 175: a double kick on sixteenths (93.75 ms)
     /// with a stroke the chart does not have. The written strokes either
@@ -4466,7 +4615,7 @@ fn locked_targets(
             (m.time, to)
         })
         .collect();
-    let loudness: Vec<f64> = found.moments.iter().map(|m| m.relative_db).collect();
+    let loudness = weights(&found.moments, settings);
     Ok(hold_gestures(&uncrossed(raw), &loudness))
 }
 
