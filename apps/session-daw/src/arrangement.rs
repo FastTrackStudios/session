@@ -452,9 +452,12 @@ fn wave_gain(wave: &crate::midi::Wave) -> f64 {
     }
 }
 
-/// A pixel short of the lane at full scale, and never thinner than a hair
-/// either side of the middle.
-const HAIR: f64 = 0.6;
+/// How far from the middle silence is drawn: nowhere. The waveform is
+/// recorded in the session's units and replayed under the vertical zoom,
+/// so any floor here was a floor times the zoom — 0.6 a side became a
+/// ten-pixel band through every silence on a track framed tall. The item's
+/// body and outline still show where a silent item is.
+const HAIR: f64 = 0.0;
 
 /// The part of `lane`'s waveform between `left` and `right` (seconds), at
 /// about a point for each of `pps` pixels a second: the envelope's points
