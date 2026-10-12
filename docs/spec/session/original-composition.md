@@ -1181,6 +1181,13 @@ asserts nothing, and phase 15 is a follow-on.
 
 ## Open questions
 
+**Decided (user, 2026-10-12):**
+- **Q1:** the double's tracks are **Main** and **DBL**, under one folder that carries the rig, panned left and right into it (the Channel behaviour, with the user's names). "Add layer" and "double track" are that one action.
+- **Q2:** a part is named for its stack while it is the only arrangement; adding an arrangement renames it to its **role** (Rhythm), the new one takes the given name (Lead).
+- **Q6:** drawn drum MIDI lives on **one `Drums/MIDI` track**, feeding each piece's Sample track.
+- **Q11:** the Drums button adds the **full golden kit**, folded, even with nothing recorded.
+
+
 **Q1. The double: "Main/DBL" or "L/R"?**
 - The narrative says "add layer" makes `Main` and `DBL`, and "double
   track" on Harmony also makes `Main` and `DBL`.
