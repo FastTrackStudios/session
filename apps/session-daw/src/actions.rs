@@ -3372,10 +3372,16 @@ fn targets(
             // In a part with a grid of its own, a written note off that
             // grid is not the part: a triplet charted in a part of
             // sixteenths is the chart's, not the drummer's.
+            // Distrusted only across the feel: a triplet note in a straight
+            // part or a straight one in a triplet part. A sixteenth written
+            // in a part of quarters (a snare's backbeat part) is still one.
             let on_the_part = |n: f64| {
                 parts
                     .grid(&m.pieces, m.time, sixteenth(daw, project, m.time))
-                    .is_none_or(|part| (grid_line(daw, project, n, part) - n).abs() <= ON_ITS_LINE)
+                    .is_none_or(|part| {
+                        let fine = if part.is_multiple_of(3) { 48 } else { 32 };
+                        (grid_line(daw, project, n, fine) - n).abs() <= ON_ITS_LINE
+                    })
             };
             let note = note.filter(|n| on_the_part(*n));
             if let Some(note) = note {
@@ -3411,11 +3417,12 @@ fn targets(
             // unless the part says sixteenths. Only a grid finer than the
             // sixteenths (or their triplets) asks how sure the stroke is.
             if grid <= 16 || grid == 24 {
-                return (
-                    m.time,
-                    Some(grid_line(daw, project, felt, grid)),
-                    Placed::Line,
-                );
+                // Within a sixteenth: a part of quarters (the snare's in a
+                // breakdown) does not drag a roll's strokes an eighth.
+                let line = grid_line(daw, project, felt, grid);
+                if (line - felt).abs() <= step {
+                    return (m.time, Some(line), Placed::Line);
+                }
             }
             grid_choice(
                 |division| grid_line(daw, project, felt, division),
@@ -3723,6 +3730,11 @@ const GESTURE: f64 = 0.040;
 /// How far apart two strokes of one drum must be played, and sent, to be a
 /// double — two strokes — rather than one stroke and its echo, seconds.
 const DOUBLE_STROKE: f64 = 0.020;
+
+/// How far apart strokes of two drums must be played to be two strokes —
+/// a kick into the snare — rather than one gesture (a flam, a drag),
+/// seconds.
+const TWO_STROKES: f64 = 0.025;
 
 /// What a seam takes before a hit: its lead and its crossfade, seconds.
 const SEAM_ROOM: f64 = 0.010;
@@ -4100,8 +4112,9 @@ fn detect(
     // audio scrambled (Unbreakable bar 40).
     let step_of = |i: usize| {
         let m = moments.get(i)?;
-        let grid = parts
-            .grid(&m.pieces, m.time, sixteenth(daw, project, m.time))
+        let grid = overrides
+            .division(daw, project, m.time)
+            .or_else(|| parts.grid(&m.pieces, m.time, sixteenth(daw, project, m.time)))
             .unwrap_or(settings.grid);
         if grid < 16 {
             return None;
@@ -4126,10 +4139,12 @@ fn detect(
         else {
             return false;
         };
-        prev.pieces.len() == 1
-            && prev.pieces == next.pieces
-            && next.time - prev.time >= DOUBLE_STROKE
-            && b - a >= DOUBLE_STROKE
+        let gap = next.time - prev.time;
+        let own = prev.pieces.len() == 1 && prev.pieces == next.pieces;
+        // One drum's two strokes a double's way apart; or two drums far
+        // enough apart to be two strokes, not a flam — a kick into the
+        // snare on the next sixteenth, each on its own line.
+        (gap >= if own { DOUBLE_STROKE } else { TWO_STROKES }) && b - a >= DOUBLE_STROKE
     };
     let targets = hold_gestures_by(&placed, &loudness, apart);
     let fills = find_fills(daw, project, &kit, span);
