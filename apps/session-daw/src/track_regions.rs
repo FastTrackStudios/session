@@ -370,23 +370,115 @@ pub fn fresh_id() -> String {
     new_id()
 }
 
-/// The grid a kit region sets at `time`, if one does: the innermost (the
-/// shortest) that holds it.
-///
-/// A region holds the hits played a little either side of its edges too —
-/// up to half its grid's step, a sixteenth (`sixteenth` seconds) at most:
-/// a figure's first stroke pushed early, or its last landing on the bar
-/// line the region ends on, is the figure's.
+/// Whether a Grid region is a figure — a bar or less (a sixteenth being
+/// `sixteenth` seconds): its stretch's hits are on its grid, whatever
+/// else says. Longer, it is a part's grid ([`part_grid_at`]).
+#[must_use]
+pub fn is_figure(region: &TrackRegion, sixteenth: f64) -> bool {
+    region.end - region.start <= sixteenth.mul_add(16.0, 1e-6)
+}
+
+/// The grid a figure sets at `time`, if one does ([`figure_at`]).
 #[must_use]
 pub fn grid_at(regions: &[TrackRegion], time: f64, sixteenth: f64) -> Option<u32> {
+    figure_at(regions, time, sixteenth).and_then(|r| r.division)
+}
+
+/// The figure (a Grid region of a bar or less) that puts the hit at
+/// `time` on its grid: the innermost that holds it.
+///
+/// It holds the hits played a little either side of its edges too — up to
+/// half its grid's step, a sixteenth (`sixteenth` seconds) at most: a
+/// figure's first stroke pushed early, or its last landing on the bar line
+/// it ends on, is the figure's.
+#[must_use]
+pub fn figure_at(regions: &[TrackRegion], time: f64, sixteenth: f64) -> Option<&TrackRegion> {
     let reach = |r: &TrackRegion| {
         let step = sixteenth * 16.0 / f64::from(r.division.unwrap_or(16).max(1));
         (step / 2.0).min(sixteenth)
     };
     regions
         .iter()
-        .filter(|r| r.kind == RegionKind::Grid && r.counts())
+        .filter(|r| r.kind == RegionKind::Grid && r.counts() && r.division.is_some())
+        .filter(|r| is_figure(r, sixteenth))
         .filter(|r| time >= r.start - reach(r) && time < r.end + reach(r))
+        .min_by(|a, b| (a.end - a.start).total_cmp(&(b.end - b.start)))
+}
+
+/// The kit's parts' grids, by drum.
+///
+/// Each Grid region longer than a bar (a part's), with the drums it is
+/// for — every one, on the kit's folder;
+/// a drum's, on its own tracks (the snare on quarters through a double-
+/// kick breakdown, the kick on sixteenths).
+#[derive(Debug, Default)]
+pub struct PartGrids {
+    /// `(the drums it is for, the region)`.
+    regions: Vec<(Vec<String>, TrackRegion)>,
+}
+
+impl PartGrids {
+    /// Read the kit's.
+    #[must_use]
+    pub fn of(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Self {
+        let (kit, _) = crate::hits::kit(daw, project);
+        let regions = kit_marks(daw, project)
+            .into_iter()
+            .filter(|(_, r)| r.kind == RegionKind::Grid && r.counts() && r.division.is_some())
+            .map(|(track, r)| {
+                let covers = under(daw, project, &track);
+                let drums = kit
+                    .iter()
+                    .filter(|p| p.tracks().any(|t| covers.contains(t)))
+                    .map(|p| p.name.clone())
+                    .collect();
+                (drums, r)
+            })
+            .collect();
+        Self { regions }
+    }
+
+    /// The grid strokes of `drums` at `time` go to, by their parts: each
+    /// drum's own region where it has one, else the kit's — the most
+    /// particular (fewest drums), then the shortest — and of the drums
+    /// struck together, the coarsest (a snare on its quarter takes the
+    /// kick under it there). `None`: no part says.
+    #[must_use]
+    pub fn grid(&self, drums: &[String], time: f64, sixteenth: f64) -> Option<u32> {
+        drums
+            .iter()
+            .filter_map(|drum| {
+                self.regions
+                    .iter()
+                    .filter(|(for_drums, r)| {
+                        for_drums.contains(drum)
+                            && !is_figure(r, sixteenth)
+                            && time >= r.start
+                            && time < r.end
+                    })
+                    .min_by(|(a, ra), (b, rb)| {
+                        a.len()
+                            .cmp(&b.len())
+                            .then((ra.end - ra.start).total_cmp(&(rb.end - rb.start)))
+                    })
+                    .and_then(|(_, r)| r.division)
+            })
+            .min()
+    }
+}
+
+/// A part's own grid at `time`.
+///
+/// A Grid region longer than a bar (a verse of sixteenths) — the grid a
+/// stroke nothing else places goes to there,
+/// in place of the quantize's (eighths); a written note still says its own
+/// line. The innermost that holds it.
+#[must_use]
+pub fn part_grid_at(regions: &[TrackRegion], time: f64, sixteenth: f64) -> Option<u32> {
+    regions
+        .iter()
+        .filter(|r| r.kind == RegionKind::Grid && r.counts() && !is_figure(r, sixteenth))
+        .filter(|r| time >= r.start && time < r.end)
         .min_by(|a, b| (a.end - a.start).total_cmp(&(b.end - b.start)))
         .and_then(|r| r.division)
 }
@@ -972,6 +1064,38 @@ pub fn triplet_stretches(
 mod tests {
     use super::*;
 
+    /// A drum's own part grid beats the kit's for it, and struck together
+    /// the coarser wins.
+    #[test]
+    fn a_drums_own_part_grid_beats_the_kits() {
+        let region = |start: f64, end: f64, division: u32| TrackRegion {
+            id: String::new(),
+            start,
+            end,
+            kind: RegionKind::Grid,
+            division: Some(division),
+            origin: Origin::Manual,
+            note: String::new(),
+        };
+        let drums = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        let parts = PartGrids {
+            regions: vec![
+                (drums(&["Kick", "Snare"]), region(0.0, 30.0, 16)),
+                (drums(&["Snare"]), region(0.0, 30.0, 4)),
+            ],
+        };
+        let sixteenth = 0.1;
+        assert_eq!(parts.grid(&drums(&["Kick"]), 5.0, sixteenth), Some(16));
+        assert_eq!(parts.grid(&drums(&["Snare"]), 5.0, sixteenth), Some(4));
+        assert_eq!(
+            parts.grid(&drums(&["Kick", "Snare"]), 5.0, sixteenth),
+            Some(4),
+            "struck together, the snare's quarter"
+        );
+        assert_eq!(parts.grid(&drums(&["Tom 1"]), 5.0, sixteenth), None);
+        assert_eq!(parts.grid(&drums(&["Kick"]), 31.0, sixteenth), None);
+    }
+
     #[test]
     fn grids_are_named_as_note_values() {
         assert_eq!(grid_name(16), "1/16");
@@ -1004,22 +1128,36 @@ mod tests {
             region(14.0, 15.0, 3, Origin::Manual),
             region(30.0, 31.0, 24, Origin::Rejected),
         ];
-        // A sixteenth of 0.1 s: an eighth triplet's step is 0.133 s.
-        let sixteenth = 0.1;
+        // A sixteenth of 1 s, a bar of 16 s: every region here a figure;
+        // an eighth triplet's step is 1.33 s, the reach two thirds of it.
+        let sixteenth = 1.0;
         assert_eq!(grid_at(&regions, 12.0, sixteenth), Some(12));
         assert_eq!(grid_at(&regions, 14.5, sixteenth), Some(3), "the inner one");
         assert_eq!(
-            grid_at(&regions, 9.95, sixteenth),
+            grid_at(&regions, 9.5, sixteenth),
             Some(12),
-            "a stroke pushed early is the region's"
+            "a stroke pushed early is the figure's"
         );
         assert_eq!(
-            grid_at(&regions, 20.05, sixteenth),
+            grid_at(&regions, 20.5, sixteenth),
             Some(12),
             "one landing on its end is too"
         );
-        assert_eq!(grid_at(&regions, 20.2, sixteenth), None, "further is not");
+        assert_eq!(grid_at(&regions, 21.0, sixteenth), None, "further is not");
         assert_eq!(grid_at(&regions, 30.5, sixteenth), None, "turned down");
+        // A sixteenth of 0.1 s, a bar of 1.6 s: the 10 s region a part's
+        // grid, not a figure.
+        assert_eq!(grid_at(&regions, 12.0, 0.1), None, "a part is no figure");
+        assert_eq!(
+            part_grid_at(&regions, 12.0, 0.1),
+            Some(12),
+            "its grid is the part's"
+        );
+        assert_eq!(
+            part_grid_at(&regions, 20.0, 0.1),
+            None,
+            "its end is not in it"
+        );
     }
 
     /// Quarter-note triplets written in a bar of straight time are proposed

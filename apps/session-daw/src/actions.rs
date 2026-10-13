@@ -3209,13 +3209,21 @@ fn targets(
     span: (f64, f64),
 ) -> Result<Vec<(f64, Option<f64>, Placed)>, String> {
     use crate::drum_settings::Target;
+    // A part's own grid (a Grid region longer than a bar over it) in
+    // place of the setting: what a stroke nothing else places goes to.
+    let parts = crate::track_regions::PartGrids::of(daw, project);
+    let grid_of = |m: &Moment| {
+        parts
+            .grid(&m.pieces, m.time, sixteenth(daw, project, m.time))
+            .unwrap_or(settings.grid)
+    };
     if settings.target == Target::Grid {
         return Ok(moments
             .iter()
             .map(|m| {
                 (
                     m.time,
-                    Some(grid_line(daw, project, m.time, settings.grid)),
+                    Some(grid_line(daw, project, m.time, grid_of(m))),
                     Placed::Line,
                 )
             })
@@ -3310,6 +3318,7 @@ fn targets(
     Ok(moments
         .iter()
         .map(|m| {
+            let grid = grid_of(m);
             // Its pieces' notes; where they disagree, the one most of
             // them say.
             let mut said: Vec<f64> = written
@@ -3339,7 +3348,7 @@ fn targets(
             // a sixteenth out); one in reach of a line ([`grid_choice`])
             // keeps that against a written line more than half a sixteenth
             // off — moving it there rewrites the drummer, not the timing.
-            let played_on = grid_line(daw, project, felt, settings.grid);
+            let played_on = grid_line(daw, project, felt, grid);
             let on_a_line = (played_on - felt).abs() <= PLAYED_ON_A_LINE;
             let own_line = if on_a_line {
                 Some(played_on)
@@ -3347,15 +3356,11 @@ fn targets(
                 grid_choice(
                     |division| grid_line(daw, project, felt, division),
                     felt,
-                    settings.grid,
+                    grid,
                     sure,
                 )
             };
-            let coarse = if settings.grid.is_multiple_of(3) {
-                12
-            } else {
-                16
-            };
+            let coarse = if grid.is_multiple_of(3) { 12 } else { 16 };
             let keeps_its_line = |line: f64| {
                 keeps_own_line(
                     (felt, line),
@@ -3392,7 +3397,7 @@ fn targets(
             grid_choice(
                 |division| grid_line(daw, project, felt, division),
                 felt,
-                settings.grid,
+                grid,
                 sure,
             )
             .map_or((m.time, None, Placed::Nothing), |line| {
@@ -4904,14 +4909,32 @@ fn quantize_span(
         })
     };
     // A Grid region of the kit's own says how its stretch goes: its hits
-    // on its grid, a fill or not (a no-quantize one still wins).
+    // on its grid (a no-quantize one still wins). Over a fill only when it
+    // is about that stretch — shorter than the fill: a part's own grid
+    // leaves the fills marked in it as played, where a region drawn over a
+    // fill's last beats edits them.
     let regions = crate::track_regions::kit_regions(daw, project);
-    let gridded = |h: f64| crate::track_regions::grid_at(&regions, h, sixteenth(daw, project, h));
+    let region_at =
+        |h: f64| crate::track_regions::figure_at(&regions, h, sixteenth(daw, project, h));
+    let gridded = |h: f64| region_at(h).and_then(|r| r.division);
+    let fill_length = |h: f64| {
+        zones
+            .iter()
+            .filter(|z| {
+                z.kind == crate::hits::ZoneKind::Fill
+                    && z.origin != crate::hits::ZoneOrigin::Rejected
+                    && h >= z.start - edge(daw, project, z.start)
+                    && h < z.end - edge(daw, project, z.end)
+            })
+            .map(|z| z.end - z.start)
+            .fold(f64::INFINITY, f64::min)
+    };
+    let grid_over_fill = |h: f64| region_at(h).is_some_and(|r| r.end - r.start < fill_length(h));
     let held = |h: f64| {
         excepted(h)
             || match settings.fills {
                 crate::drum_settings::Fills::Skip => {
-                    in_fill(h) && !in_written_fill(h) && gridded(h).is_none()
+                    in_fill(h) && !in_written_fill(h) && !grid_over_fill(h)
                 }
                 crate::drum_settings::Fills::Include => false,
                 crate::drum_settings::Fills::Only => !in_fill(h),
@@ -5167,6 +5190,7 @@ fn register_place(list: &ActionList) {
         let judge_ms = began.elapsed().as_millis();
         let mut slip_ms = judge_ms;
         if result.applied {
+            crate::hits::mark_placed(daw, &project, &a.id);
             slip_now(daw, &project, &settings, cuts);
             slip_ms = began.elapsed().as_millis();
             wait_for_slip(
@@ -5191,7 +5215,6 @@ fn register_place(list: &ActionList) {
             place.judge_ms = judge_ms,
             place.slip_ms = slip_ms,
             place.wait_ms = wait_ms,
-            crate::hits::mark_placed(daw, &project, &a.id);
             place.total_ms = began.elapsed().as_millis(),
             "a hit placed"
         );

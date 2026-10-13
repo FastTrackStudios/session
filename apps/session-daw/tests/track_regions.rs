@@ -77,8 +77,9 @@ fn the_kits_own_regions_say_how_a_stretch_is_edited() {
         );
     }
 
-    // Two bars of half-note triplets in the middle of the section.
-    let (grid_from, grid_to) = (from + bar, from + 3.0 * bar);
+    // A bar of half-note triplets in the middle of the section: a figure,
+    // its hits on its grid whatever the MIDI says.
+    let (grid_from, grid_to) = (from + bar, from + 2.0 * bar);
     let id = run(
         "TRACK_REGION_ADD",
         &serde_json::json!({
