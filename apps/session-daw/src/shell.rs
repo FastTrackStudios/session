@@ -352,7 +352,8 @@ impl Pins {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            progress: Signal::new(false),
+            // The song's progress over every view from the start.
+            progress: Signal::new(true),
             transport: Signal::new(false),
             // Locked where the pointer is a finger, where a drag meant
             // to scroll is the common case; unlocked at a desk, where
@@ -399,7 +400,7 @@ pub fn PinnedProgress(view: View) -> Element {
     }
     rsx! {
         div {
-            style: "flex:none; padding:8px 10px 0;",
+            style: "flex:none; padding:0 10px;",
             crate::progress::ProgressBar { height: "3rem".to_owned() }
         }
     }

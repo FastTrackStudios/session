@@ -345,12 +345,9 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     let ui = use_hook(|| Rc::new(Cell::new(crate::touch::arrange_zoom(touch, 0.0))));
     crate::ruler::set_slim(touch);
     let shape = use_signal(|| compact.get());
-    // On by default: in a service the view should always show where the
-    // song is.
-    // Off until asked for: a view that pages itself away from where
-    // someone is looking (or scrolling, on a touchscreen) is a view they
-    // cannot work in while the song plays.
-    let follow = use_hook(|| Rc::new(Cell::new(false)));
+    // On by default: the view shows where the song is while it plays —
+    // and only then (`follow_cursor`): stopped, it stays where it was.
+    let follow = use_hook(|| Rc::new(Cell::new(true)));
     let followed_at = use_hook(|| Rc::new(Cell::new(0.0_f64)));
     let history = use_hook(|| Rc::new(RefCell::new(crate::zoom::History::default())));
     let which_shown = use_signal(|| None::<crate::which_key::WhichKey>);
