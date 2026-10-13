@@ -109,6 +109,23 @@ pub fn grid_regions(tracks: &[String]) -> Vec<crate::ruler::GridRegion> {
     out
 }
 
+/// The grids `tracks`' regions quantize by — each Grid region's and each
+/// fill's with a grid of its own — for the grid in force
+/// ([`crate::grid_in_force`]).
+#[must_use]
+pub fn quantize_regions(tracks: &[String]) -> Vec<crate::ruler::GridRegion> {
+    let Some(snapshot) = current() else {
+        return Vec::new();
+    };
+    tracks
+        .iter()
+        .filter_map(|t| snapshot.marks.get(t))
+        .flat_map(|m| m.regions.iter())
+        .filter(|r| matches!(r.kind, RegionKind::Grid | RegionKind::Fill) && r.counts())
+        .filter_map(|r| Some((r.start, r.end, r.division?)))
+        .collect()
+}
+
 /// The spans of `tracks`' regions that hold `time` — a Grid region's
 /// (`grid`) or every other's — for a double-click to select.
 #[must_use]

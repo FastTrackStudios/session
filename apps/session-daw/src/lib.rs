@@ -195,12 +195,14 @@ pub mod drum_samples;
 pub mod drum_settings;
 pub mod fundamental;
 pub mod gain_stage;
+pub mod grid_in_force;
 pub mod groove;
 pub mod hit_overlay;
 #[cfg(feature = "native")]
 pub mod hits;
 #[cfg(test)]
 mod hook_rules;
+pub mod kit_gate;
 #[cfg(feature = "native")]
 pub mod mcp_server;
 pub mod mix_chains;

@@ -145,7 +145,8 @@ static BUSY: AtomicBool = AtomicBool::new(false);
 static AGAIN: AtomicBool = AtomicBool::new(false);
 
 /// Read the markers again, off the window's thread, and publish them —
-/// after anything that moves a hit or a slice. Asked for while a read
+/// after anything that moves a hit or a slice — and the tracks' waveform
+/// detail with them. Asked for while a read
 /// runs, one more runs after it; never two at once.
 pub fn refresh() {
     #[cfg(feature = "native")]
@@ -164,6 +165,13 @@ pub fn refresh() {
                 if let Ok((daw, project)) = crate::actions::song() {
                     publish(crate::hits::overlay(daw, &project));
                 }
+                // What moved the hits moved the audio: the tracks' detail
+                // is read again from the engine. An action (a quantize run
+                // over MCP) edits the engine directly, past the window's
+                // edit worker; a track read while its edits were landing
+                // was held half-edited — the take as played drawn under
+                // hits that had moved, for good.
+                crate::wave_detail::engine_changed();
                 BUSY.store(false, Ordering::Release);
                 if !AGAIN.load(Ordering::Acquire) || BUSY.swap(true, Ordering::AcqRel) {
                     break;

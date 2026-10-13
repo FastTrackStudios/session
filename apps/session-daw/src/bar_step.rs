@@ -318,6 +318,18 @@ fn run(args: serde_json::Value) {
 /// have stepped), ms.
 const READ_EVERY_MS: u64 = 150;
 
+/// The quantize grid at the play cursor while editing (` · Grid 1/16`),
+/// nothing otherwise ([`crate::grid_in_force`]).
+fn grid_here() -> String {
+    crate::grid_in_force::current().map_or_else(String::new, |in_force| {
+        let at = crate::engine::Transport::shared().map_or(0.0, |t| t.read().0);
+        format!(
+            " · Grid {}",
+            crate::track_regions::grid_name(in_force.at(at))
+        )
+    })
+}
+
 /// The stepper in the transport bar: the page before, the page size and
 /// instrument (a menu), the next page. `big` for a finger.
 #[component]
@@ -325,12 +337,17 @@ pub fn Stepper(big: bool) -> Element {
     use crate::shell::{DIM, RULE, SCRIM, TEXT};
     use dioxus::prelude::*;
     let mut step = use_signal(get);
+    let mut grid = use_signal(grid_here);
     let mut menu = use_signal(|| false);
     use_future(move || async move {
         loop {
             let now = get();
             if *step.peek() != now {
                 step.set(now);
+            }
+            let here = grid_here();
+            if *grid.peek() != here {
+                grid.set(here);
             }
             architect::platform::sleep(std::time::Duration::from_millis(READ_EVERY_MS)).await;
         }
@@ -380,7 +397,7 @@ pub fn Stepper(big: bool) -> Element {
                         font-family:ui-monospace, monospace;",
                 title: "Step through the song a page of bars at a time: the page size and what fills the view",
                 onclick: move |_| menu.set(true),
-                "{now.bars} bars · {label}{page}"
+                "{now.bars} bars · {label}{page}{grid}"
             }
             button {
                 style: "{arrow}",

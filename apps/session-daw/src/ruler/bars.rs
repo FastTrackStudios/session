@@ -91,7 +91,23 @@ pub fn grid(
     // A Grid region's stretch is drawn on its own grid: its lines, at a
     // beat's weight, in place of the beats and the subdivisions there.
     let regions = grid_regions();
-    if let Some(division) = adaptive.fit(finest, measure_px) {
+    if let Some(in_force) = crate::grid_in_force::current() {
+        // Editing: the quantize's grid where it is in force, not what the
+        // zoom fits — four bars across fit 32nds no part plays.
+        for (start, end, division) in in_force.between(from, to) {
+            let step = bars.secs_per_beat * 4.0 / f64::from(division.max(1));
+            if step < bars.secs_per_beat - 1e-9 && step * view.pps >= GRID_SUB_ROOM {
+                line_every(
+                    painter,
+                    view,
+                    (step, start, end),
+                    (palette.grid_sub, 1.0),
+                    origin,
+                    &regions,
+                );
+            }
+        }
+    } else if let Some(division) = adaptive.fit(finest, measure_px) {
         let step = division * 4.0 * bars.secs_per_beat;
         // Finer than a beat: its own lines, under the beats'.
         if step > 0.0 && step < bars.secs_per_beat - 1e-9 {
@@ -373,6 +389,9 @@ pub(super) const BAR_ROOM: f64 = 36.0;
 
 /// How far apart a subdivision's ticks must be, px.
 pub(super) const SUB_ROOM: f64 = 7.0;
+
+/// The least room between the grid's lines in force, pixels.
+const GRID_SUB_ROOM: f64 = 4.0;
 
 /// How many bars between numbered bars, for a bar this wide.
 #[must_use]

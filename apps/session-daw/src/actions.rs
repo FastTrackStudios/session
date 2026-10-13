@@ -3536,7 +3536,7 @@ impl Overrides {
 fn to_lines_either_side(
     placed: &mut [(f64, Option<f64>)],
     by: &[Placed],
-    step_of: impl Fn(usize) -> Option<f64>,
+    (step_of, on_a_beat): (impl Fn(usize) -> Option<f64>, impl Fn(f64) -> bool),
 ) {
     let rank = |p: Option<&Placed>| match p {
         Some(Placed::Written) => 0_u8,
@@ -3584,6 +3584,20 @@ fn to_lines_either_side(
         // pushing back what is on the line they take; those after it on a
         // line each, short of the next moment's line. `None`: does not fit.
         let plan = |keeper: usize| -> Option<Vec<(usize, f64)>> {
+            // A stroke played on a beat keeps it: never pushed a step off
+            // for one played beside it (a kick 1.5 ms before the one, a
+            // tom's grace 35 ms before that: the kick went a sixteenth
+            // late, Unbreakable 77.1 and 83.1). Off the beat it can go —
+            // a double's first stroke near the "a" belongs on the "&".
+            let on_it = |k: usize| {
+                on_a_beat(line)
+                    && placed
+                        .get(k)
+                        .is_some_and(|(h, _)| (h - line).abs() < step * ON_THE_LINE)
+            };
+            if (i..end).any(|k| k != keeper && on_it(k)) {
+                return None;
+            }
             let mut moves: Vec<(usize, f64)> = Vec::new();
             let mut want = line;
             let mut k = keeper;
@@ -3735,6 +3749,9 @@ const DOUBLE_STROKE: f64 = 0.020;
 /// a kick into the snare — rather than one gesture (a flam, a drag),
 /// seconds.
 const TWO_STROKES: f64 = 0.025;
+
+/// How near a beat, as a grid step's fraction, a stroke is played on it.
+const ON_THE_LINE: f64 = 0.25;
 
 /// What a seam takes before a hit: its lead and its crossfade, seconds.
 const SEAM_ROOM: f64 = 0.010;
@@ -4121,7 +4138,8 @@ fn detect(
         }
         Some(240.0 / daw.get_tempo_at(project.clone(), m.time).max(1.0) / f64::from(grid.max(1)))
     };
-    to_lines_either_side(&mut placed, &by_kind, step_of);
+    let on_a_beat = |t: f64| (grid_line(daw, project, t, 4) - t).abs() <= ON_ITS_LINE;
+    to_lines_either_side(&mut placed, &by_kind, (step_of, on_a_beat));
     one_stroke_a_line(&mut placed, &by_kind);
     // Two strokes of one drum alone, a double kick's, sent to lines of
     // their own are two strokes: not one gesture moved by one shift, which
@@ -4760,6 +4778,20 @@ mod gesture_tests {
     #[test]
     fn a_double_kick_into_the_snare_takes_the_lines_before_it() {
         use super::to_lines_either_side;
+        // A tom 35 ms before the one, a kick on it, the lines before taken:
+        // the kick keeps the one, never pushed on (Unbreakable 77.1).
+        let mut end = vec![
+            (3.476, Some(3.5)),
+            (3.715, Some(3.75)),
+            (3.965, Some(4.0)),
+            (3.9985, Some(4.0)),
+        ];
+        to_lines_either_side(
+            &mut end,
+            &[Placed::Line; 4],
+            (|_| Some(0.25), |t: f64| (t - t.round()).abs() < 1e-9),
+        );
+        assert_eq!(end[3].1, Some(4.0), "the kick on the one keeps it: {end:?}");
         // Both kicks nearest the "a", the snare on 2 next: the second keeps
         // the "a", the first goes back to the "&" (Unbreakable 73.1 again,
         // from where a first quantize left it).
@@ -4767,7 +4799,7 @@ mod gesture_tests {
         to_lines_either_side(
             &mut both,
             &[Placed::Line, Placed::Line, Placed::Written],
-            |_| Some(0.25),
+            (|_| Some(0.25), |t: f64| (t - t.round()).abs() < 1e-9),
         );
         assert_eq!(
             both.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
@@ -4776,14 +4808,22 @@ mod gesture_tests {
         // A sixteenth of 0.25 s: the beat counted in seconds.
         let mut placed = vec![(1.776, Some(1.75)), (1.884, Some(2.0)), (2.0, Some(2.0))];
         let by = [Placed::Line, Placed::Line, Placed::Written];
-        to_lines_either_side(&mut placed, &by, |_| Some(0.25));
+        to_lines_either_side(
+            &mut placed,
+            &by,
+            (|_| Some(0.25), |t: f64| (t - t.round()).abs() < 1e-9),
+        );
         assert_eq!(
             placed.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
             vec![Some(1.5), Some(1.75), Some(2.0)]
         );
         // Too far to go — a step and a quarter — and it is left alone.
         let mut far = vec![(1.86, Some(1.75)), (1.95, Some(2.0)), (2.0, Some(2.0))];
-        to_lines_either_side(&mut far, &by, |_| Some(0.25));
+        to_lines_either_side(
+            &mut far,
+            &by,
+            (|_| Some(0.25), |t: f64| (t - t.round()).abs() < 1e-9),
+        );
         assert_eq!(far[1].1, Some(2.0), "left to be moved between");
     }
 

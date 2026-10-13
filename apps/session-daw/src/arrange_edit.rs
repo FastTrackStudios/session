@@ -2337,12 +2337,15 @@ fn seams(
                 let own = at + (attack_of(piece, cut.pre_roll) - from);
                 let i = cut.attacks.partition_point(|t| *t < own - SEAM_GUARD);
                 let latest = i.checked_sub(1).and_then(|i| cut.attacks.get(i))?;
+                // A hit the slip did not cut on is often this moment's own
+                // (another drum heard a few ms sooner): past its first
+                // instant only.
                 Some(from + (latest - at) + SEAM_GUARD)
             });
             let floor = before
                 .last()
                 .filter(|_| joined)
-                .map(|prev| attack_of(prev, cut.pre_roll) + SEAM_GUARD)
+                .map(|prev| attack_of(prev, cut.pre_roll) + RING_GUARD)
                 .into_iter()
                 .chain(uncut)
                 .reduce(f64::max)
@@ -2579,9 +2582,17 @@ fn draw_out_to(item: &mut daw_proto::Item, to: f64, least: f64) -> Option<Vec<(f
     ])
 }
 
-/// How far after the hit before it a slice reaching back over a gap must
-/// still start, seconds: past its attack's first instant.
+/// How near a hit's attack another counts as before it, seconds.
 const SEAM_GUARD: f64 = 0.002;
+
+/// How far after the hit before it a slice reaching back over a gap must
+/// still start, seconds: past its attack's body, the loud first of it,
+/// not just its first instant. Two kicks played 40 ms apart and sent a
+/// sixteenth apart, the second's slice reached back to 2 ms after the
+/// first — and played the first kick again between them (Unbreakable
+/// 73.1); the snare's slice after it played the second kick again. What
+/// is left of the gap the slice before draws out over.
+const RING_GUARD: f64 = STRETCH_KEEP;
 
 /// The crossfade across a quantize's seams, with auto-crossfade on.
 pub const QUANTIZE_CROSSFADE: f64 = 0.005;
@@ -4447,6 +4458,50 @@ mod tests {
             "the slice before meets the one after across the crossfade: ends {ends:.4}, \
              the next starts {:.4}",
             after.position.as_seconds()
+        );
+    }
+
+    /// Two kicks played 40 ms apart, sent a sixteenth (94 ms) apart: the
+    /// second's slice reaches back no further than past the first's
+    /// attack — reached back to just after it, it played the first kick
+    /// again between the two (Unbreakable 73.1) — and the first's tail is
+    /// drawn out over the rest, no gap.
+    #[test]
+    fn a_double_pulled_apart_never_plays_its_first_stroke_twice() {
+        let slice = |guid: &str, at: f64, length: f64, offset: f64| daw_proto::Item {
+            guid: guid.to_owned(),
+            position: PositionInSeconds::from_seconds(at),
+            length: Duration::from_seconds(length),
+            start_offset: Duration::from_seconds(offset),
+            snap_offset: Duration::from_seconds(0.005),
+            ..daw_proto::Item::default()
+        };
+        // Cut 5 ms before each kick (at 10.000 and 10.040 in the take).
+        let mut first = slice("k-split@1", 19.995, 0.040, 9.995);
+        let mut second = slice("k-split@2", 20.089, 0.100, 10.035);
+        let cut = SlipCut {
+            pre_roll: 0.005,
+            crossfade: 0.005,
+            ..SlipCut::default()
+        };
+        let mut effects = Vec::new();
+        super::seams(
+            &mut [&mut first, &mut second],
+            (&cut, 0.005, &std::collections::HashMap::new()),
+            &mut effects,
+        );
+        let from = second.start_offset.as_seconds();
+        assert!(
+            // Past the loud first 25 ms of the first kick, at least.
+            from >= 10.025,
+            "the second kick's slice reaches back to {from:.4}, into the first kick at 10.000"
+        );
+        let ends = first.position.as_seconds() + first.length.as_seconds();
+        assert!(
+            ends >= second.position.as_seconds() + 0.005 - 1e-9,
+            "the first meets the second across the crossfade: ends {ends:.4}, the second \
+             starts {:.4}",
+            second.position.as_seconds()
         );
     }
 

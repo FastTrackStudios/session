@@ -4339,6 +4339,14 @@ impl ArrangementWidget {
             .iter()
             .partition(|(a, b, _)| b - a <= sixteenth.mul_add(16.0, 1e-6));
         ruler::set_grid_regions(figures.clone());
+        // Editing, the grid lines are the quantize's grid where they are:
+        // the kit's default, a part's, a fill's.
+        crate::grid_in_force::set(self.editing.get().then(|| {
+            crate::grid_in_force::InForce::new(
+                crate::drum_settings::current().grid,
+                &crate::marks_strip::quantize_regions(&edited),
+            )
+        }));
         ruler::grid(
             &mut out,
             &self.palette,

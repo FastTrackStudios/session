@@ -312,6 +312,9 @@ struct LaneWave {
     /// children under it — read again finer when zoomed in past it
     /// ([`crate::wave_detail`]).
     sources: Vec<crate::wave_detail::Source>,
+    /// The drum this is a shut kit's layer of: drawn whole around its own
+    /// hits and faint between ([`crate::kit_gate`]).
+    role: Option<LaneRole>,
 }
 
 /// A waveform folded to one zoom's resolution: every run of `fold` points
@@ -322,6 +325,8 @@ struct LaneWave {
 /// thousands of points under a long item again every frame.
 struct Runs {
     fold: usize,
+    /// The hit markers' version its drum's gate was made from.
+    gated: u64,
     /// Seconds between one run and the next.
     pitch: f64,
     columns: Vec<(f64, f32, f32)>,
@@ -415,19 +420,28 @@ impl LaneWave {
     /// The envelope folded `fold` points to a run, folded now if the last
     /// zoom drawn was another.
     fn runs(&self, fold: usize) -> std::rc::Rc<Runs> {
+        let gated = crate::kit_gate::version(self.role);
         let mut kept = self.runs.borrow_mut();
-        if let Some(runs) = kept.as_ref().filter(|r| r.fold == fold) {
+        if let Some(runs) = kept.as_ref().filter(|r| r.fold == fold && r.gated == gated) {
             return std::rc::Rc::clone(runs);
         }
         let wave = &self.wave;
+        let gate = self.gate();
         let runs: Vec<(f64, f32, f32)> = wave
             .points
             .chunks(fold)
             .enumerate()
             .map(|(r, run)| {
-                let (max, min) = run.iter().fold((0.0_f32, 0.0_f32), |(mx, mn), &(a, b)| {
-                    (mx.max(a), mn.min(b))
-                });
+                let first = r.saturating_mul(fold);
+                let (max, min) =
+                    run.iter()
+                        .enumerate()
+                        .fold((0.0_f32, 0.0_f32), |(mx, mn), (i, &(a, b))| {
+                            let t = (crate::num::coord(first.saturating_add(i)) + 0.5)
+                                .mul_add(wave.step, self.x0);
+                            let g = shown(gate.as_deref(), t);
+                            (mx.max(a * g), mn.min(b * g))
+                        });
                 let at =
                     crate::num::coord(r.saturating_mul(fold)) + crate::num::coord(run.len()) / 2.0;
                 (
@@ -440,6 +454,7 @@ impl LaneWave {
         let chunks = std::cell::RefCell::new(vec![None; runs_len(&runs)]);
         let runs = std::rc::Rc::new(Runs {
             fold,
+            gated,
             pitch: wave.step * crate::num::coord(fold),
             columns: runs,
             chunks,
@@ -447,6 +462,20 @@ impl LaneWave {
         *kept = Some(std::rc::Rc::clone(&runs));
         runs
     }
+}
+
+impl LaneWave {
+    /// Its drum's gate, when it is a shut kit's drum layer.
+    fn gate(&self) -> Option<std::rc::Rc<crate::kit_gate::Gate>> {
+        self.role.and_then(crate::kit_gate::of)
+    }
+}
+
+/// How much of a gated layer shows at `t` (all of it, ungated).
+fn shown(gate: Option<&crate::kit_gate::Gate>, t: f64) -> f32 {
+    gate.map_or(1.0, |g| {
+        num_traits::ToPrimitive::to_f32(&g.at(t)).unwrap_or(1.0)
+    })
 }
 
 /// The display gain for `wave`: its loudest peak to the lane's edge, so a
@@ -570,6 +599,7 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
         return None;
     }
     let coarsest = details.iter().map(|(d, ..)| d.step).fold(0.0, f64::max);
+    let gate = lane.gate();
     let scaled = |scale: f64, v: f32| v * num_traits::ToPrimitive::to_f32(&scale).unwrap_or(1.0);
     // A line through the samples only once every item under it has them
     // across the span: a line can have no gaps.
@@ -587,7 +617,8 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
         for (detail, sa, sb, scale) in &details {
             let mut trace = BezPath::new();
             for (i, (t, (v, _))) in detail.between(*sa, *sb).enumerate() {
-                let y = mid - (f64::from(scaled(*scale, v)) * reach).clamp(-edge, edge);
+                let v = scaled(*scale, v) * shown(gate.as_deref(), t);
+                let y = mid - (f64::from(v) * reach).clamp(-edge, edge);
                 let at = place(transform, t, y);
                 if i == 0 {
                     trace.move_to(at);
@@ -624,11 +655,12 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
     };
     for (detail, sa, sb, scale) in &details {
         for (t, (max, min)) in detail.between(*sa, *sb) {
+            let g = shown(gate.as_deref(), t);
             take(
                 &mut cols,
                 t,
                 detail.step,
-                (scaled(*scale, max), scaled(*scale, min)),
+                (scaled(*scale, max) * g, scaled(*scale, min) * g),
             );
         }
     }
@@ -652,7 +684,8 @@ fn fine(lane: &LaneWave, left: f64, right: f64, pps: f64, transform: Affine) -> 
                 .skip(column(from))
             {
                 if col.is_none() {
-                    *col = Some(*point);
+                    let g = shown(gate.as_deref(), t);
+                    *col = Some((point.0 * g, point.1 * g));
                 }
             }
         }
@@ -1332,9 +1365,10 @@ impl Arrangement {
                     } else {
                         wave_gain(&whole)
                     };
-                    let lane = |wave, color, sources| LaneWave {
+                    let lane = |wave, color, sources, role| LaneWave {
                         runs: std::cell::RefCell::default(),
                         sources,
+                        role,
                         gain,
                         wave,
                         x0,
@@ -1344,12 +1378,12 @@ impl Arrangement {
                         color,
                     };
                     let drawn: Vec<LaneWave> = if held.layers.is_empty() {
-                        vec![lane(whole, color, held.sources)]
+                        vec![lane(whole, color, held.sources, None)]
                     } else {
                         held.layers
                             .into_iter()
                             .map(|(role, wave, sources)| {
-                                lane(wave, kit_color(role).unwrap_or(color), sources)
+                                lane(wave, kit_color(role).unwrap_or(color), sources, Some(role))
                             })
                             .collect()
                     };
@@ -3060,7 +3094,7 @@ fn folder_loudest<'a>(
         .folds
         .iter()
         .map(|(folder, fold)| {
-            let loudest = fold
+            let read = fold
                 .spans
                 .iter()
                 .flat_map(|span| span.from.iter())
@@ -3068,9 +3102,33 @@ fn folder_loudest<'a>(
                 .filter_map(|child| previews.wave(child))
                 .map(|wave| loudest_of(&wave))
                 .fold(0.0_f64, f64::max);
-            (folder.as_str(), loudest)
+            (folder.as_str(), remembered_loudest(folder, read))
         })
         .collect()
+}
+
+thread_local! {
+    /// Each shut folder's loudest as last read whole, by folder guid.
+    static FOLDER_LOUDEST: std::cell::RefCell<std::collections::HashMap<String, f64>> =
+        std::cell::RefCell::default();
+}
+
+/// A shut folder's loudest: what is `read` now, or what was read before
+/// when that was louder.
+///
+/// An edit leaves a kit hundreds of new slices whose peaks are read one by
+/// one; the loudest of the few read was a quiet one, the folder's gain at
+/// its cap, every drum blown up past the lane until the last was read — the
+/// waveforms "going crazy" after every edit. An edit moves audio, it does
+/// not make it quieter: the loudest once read holds.
+fn remembered_loudest(folder: &str, read: f64) -> f64 {
+    FOLDER_LOUDEST.with_borrow_mut(|kept| {
+        let loudest = kept.get(folder).copied().unwrap_or(0.0).max(read);
+        if loudest > 0.0 {
+            kept.insert(folder.to_owned(), loudest);
+        }
+        loudest
+    })
 }
 
 /// What a shut folder's row looks its children up in: every item by guid,
@@ -4173,6 +4231,7 @@ mod lane_wave_tests {
             gain: 1.0,
             runs: std::cell::RefCell::default(),
             sources: Vec::new(),
+            role: None,
         }
     }
 
