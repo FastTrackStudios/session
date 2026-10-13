@@ -221,6 +221,8 @@ pub fn reset_edit(
         }
     }
     if !dry {
+        // Nothing is placed by hand any more: every hit plays as played.
+        crate::hits::forget_placed(daw, project);
         daw::service::Projects::end_undo_block(
             daw,
             project.clone(),

@@ -75,7 +75,9 @@ impl TrackRegion {
                 format!("Grid {}", self.division.map_or_else(String::new, grid_name))
             }
             RegionKind::NoQuantize => "No quantize".to_owned(),
-            RegionKind::Fill => "Fill".to_owned(),
+            RegionKind::Fill => self
+                .division
+                .map_or_else(|| "Fill".to_owned(), |d| format!("Fill {}", grid_name(d))),
             RegionKind::Note => String::new(),
         };
         let who = match self.origin {

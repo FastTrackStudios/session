@@ -1691,6 +1691,18 @@ pub fn mark_placed(daw: &daw::standalone::Standalone, project: &ProjectContext, 
     }
 }
 
+/// Forget which hits a hand placed: the edit started over.
+pub fn forget_placed(daw: &daw::standalone::Standalone, project: &ProjectContext) {
+    let Some(folder) = crate::track_regions::kit_folder(daw, project) else {
+        return;
+    };
+    if let Err(e) =
+        Tracks::set_ext_state(daw, project.clone(), TrackRef::Guid(folder), PLACED_KEY, "")
+    {
+        tracing::warn!(hits.error = %e, "the placed hits could not be forgotten");
+    }
+}
+
 /// The kit as the slip edit reads it, from the hit markers.
 ///
 /// Each piece's hits where they play now, each against its piece's
@@ -2040,6 +2052,9 @@ pub struct Zone {
     pub origin: ZoneOrigin,
     /// Why it was found, or anything said about it.
     pub note: String,
+    /// A fill quantized on a grid of its own (a whole note's division):
+    /// its hits put on it. `None`: left as played.
+    pub grid: Option<u32>,
 }
 
 /// A zone's name on the ruler: `Fill`, `Fill (auto)`, `Fill (approved)`,
@@ -2097,6 +2112,7 @@ pub fn zones(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec
                 kind,
                 origin,
                 note,
+                grid: None,
             })
         })
         .collect();
@@ -2119,6 +2135,7 @@ pub fn zones(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec
                     kind,
                     origin: zone_origin(r.origin),
                     note: r.note,
+                    grid: r.division.filter(|_| kind == ZoneKind::Fill),
                 })
             }),
     );
@@ -2392,7 +2409,7 @@ static ZONES_EDIT: ActionMeta = meta(
     "ZONES_EDIT",
     "zones_edit",
     "Edit an edit zone",
-    "Change the zone `guid`: `origin` (Approved to keep a found one, Rejected to turn it down — kept so finding again does not bring it back), `kind`, `start`/`end`, `note`; or `remove` it.",
+    "Change the zone `guid`: `origin` (Approved to keep a found one, Rejected to turn it down — kept so finding again does not bring it back), `kind`, `start`/`end`, `note`, `grid` (a fill quantized on a grid of its own — `1/16`, `1/8T` — its hits put on it whatever the quantize skips; `none`: left as played again); or `remove` it.",
     "Drums",
     "",
 );
@@ -2420,6 +2437,8 @@ struct ZoneEditArg {
     end: Option<f64>,
     note: Option<String>,
     remove: Option<bool>,
+    /// A fill quantized on this grid (`1/16`, `1/8T`); `none` as played.
+    grid: Option<String>,
 }
 
 #[derive(Facet, Default)]
@@ -2635,6 +2654,33 @@ fn register_zones(list: &ActionList) {
             .into_iter()
             .find(|z| z.guid == a.guid)
             .ok_or_else(|| format!("no zone {}", a.guid))?;
+        // A grid asked of a zone on the ruler: it is moved onto the kit's
+        // folder, where a region keeps one.
+        let grid = match a.grid.as_deref().map(str::trim) {
+            None => None,
+            Some("" | "none" | "as played") => Some(None),
+            Some(text) => Some(Some(crate::track_regions::parse_grid(text)?)),
+        };
+        if grid.is_some() && track_zone(&a.guid).is_none() {
+            remove_zone(daw, &project, &a.guid)?;
+            let moved = add_zone(
+                daw,
+                &project,
+                (a.start.unwrap_or(zone.start), a.end.unwrap_or(zone.end)),
+                (
+                    a.kind.unwrap_or(zone.kind),
+                    a.origin.unwrap_or(zone.origin),
+                    a.note.as_deref().unwrap_or(&zone.note),
+                ),
+            )?;
+            if let Some((track, id)) = track_zone(&moved) {
+                crate::track_regions::change(daw, &project, (track, id), |mut r| {
+                    r.division = grid.flatten();
+                    Some(r)
+                })?;
+            }
+            return Ok(zones(daw, &project).into_iter().find(|z| z.guid == moved));
+        }
         // Kept on a kit track: changed there.
         if let Some((track, id)) = track_zone(&a.guid) {
             if a.remove == Some(true) {
@@ -2649,6 +2695,9 @@ fn register_zones(list: &ActionList) {
                 r.origin = region_origin(a.origin.unwrap_or(zone.origin));
                 if let Some(note) = &a.note {
                     r.note.clone_from(note);
+                }
+                if let Some(grid) = grid {
+                    r.division = grid;
                 }
                 Some(r)
             })?;

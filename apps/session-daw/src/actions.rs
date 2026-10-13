@@ -3407,6 +3407,91 @@ fn targets(
         .collect())
 }
 
+/// What the kit's own regions say of a hit's line: a figure's grid (a
+/// Grid region of a bar or less), or a fill's own (`ZONES_EDIT` `grid`).
+struct Overrides {
+    regions: Vec<crate::track_regions::TrackRegion>,
+    zones: Vec<crate::hits::Zone>,
+}
+
+impl Overrides {
+    fn of(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Self {
+        Self {
+            regions: crate::track_regions::kit_regions(daw, project),
+            zones: crate::hits::zones(daw, project),
+        }
+    }
+
+    /// The fills (not turned down) holding `h`, a hit half a sixteenth
+    /// before one's end being the next's.
+    fn fills_at<'a>(
+        &'a self,
+        daw: &'a daw::standalone::Standalone,
+        project: &'a ProjectContext,
+        h: f64,
+    ) -> impl Iterator<Item = &'a crate::hits::Zone> + 'a {
+        self.zones.iter().filter(move |z| {
+            z.kind == crate::hits::ZoneKind::Fill
+                && z.origin != crate::hits::ZoneOrigin::Rejected
+                && h >= z.start - edge(daw, project, z.start)
+                && h < z.end - edge(daw, project, z.end)
+        })
+    }
+
+    /// The figure that holds `h`, if one does.
+    fn figure(
+        &self,
+        daw: &daw::standalone::Standalone,
+        project: &ProjectContext,
+        h: f64,
+    ) -> Option<&crate::track_regions::TrackRegion> {
+        crate::track_regions::figure_at(&self.regions, h, sixteenth(daw, project, h))
+    }
+
+    /// Whether a figure says where `h` goes over the fill it is in: one
+    /// shorter than the fill (or in none) is about that stretch.
+    fn figure_over_fill(
+        &self,
+        daw: &daw::standalone::Standalone,
+        project: &ProjectContext,
+        h: f64,
+    ) -> bool {
+        let fill = self
+            .fills_at(daw, project, h)
+            .map(|z| z.end - z.start)
+            .fold(f64::INFINITY, f64::min);
+        self.figure(daw, project, h)
+            .is_some_and(|r| r.end - r.start < fill)
+    }
+
+    /// The grid of the innermost fill holding `h` quantized on one.
+    fn fill_grid(
+        &self,
+        daw: &daw::standalone::Standalone,
+        project: &ProjectContext,
+        h: f64,
+    ) -> Option<u32> {
+        self.fills_at(daw, project, h)
+            .filter_map(|z| z.grid.map(|g| (z.end - z.start, g)))
+            .min_by(|x, y| x.0.total_cmp(&y.0))
+            .map(|(_, g)| g)
+    }
+
+    /// The grid `h` goes to: a figure's over its fill, else the fill's own.
+    fn division(
+        &self,
+        daw: &daw::standalone::Standalone,
+        project: &ProjectContext,
+        h: f64,
+    ) -> Option<u32> {
+        if self.figure_over_fill(daw, project, h) {
+            self.figure(daw, project, h).and_then(|r| r.division)
+        } else {
+            self.fill_grid(daw, project, h)
+        }
+    }
+}
+
 /// One stroke to a line: where moments a gesture apart are sent to the
 /// same line, the one placed by its own note keeps it (else the one
 /// nearer it), and each other is moved between its neighbours — by as
@@ -3846,7 +3931,19 @@ fn detect(
             *to = None;
         }
     }
-    let by_kind: Vec<Placed> = by.iter().map(|(_, _, b)| *b).collect();
+    let mut by_kind: Vec<Placed> = by.iter().map(|(_, _, b)| *b).collect();
+    // A figure, or a fill quantized on a grid of its own, puts its hits on
+    // its grid — before strokes sent to one line are settled and gestures
+    // held together, so two strokes of a fast fill sent to one sixteenth
+    // are not two slices on top of each other. What it places is placed
+    // as surely as a written note.
+    let overrides = Overrides::of(daw, project);
+    for ((h, to), kind) in placed.iter_mut().zip(by_kind.iter_mut()) {
+        if let Some(division) = overrides.division(daw, project, *h) {
+            *to = Some(grid_line(daw, project, *h, division));
+            *kind = Placed::Written;
+        }
+    }
     one_stroke_a_line(&mut placed, &by_kind);
     let targets = hold_gestures(&placed, &loudness);
     let fills = find_fills(daw, project, &kit, span);
@@ -4908,33 +5005,15 @@ fn quantize_span(
                 && h < z.end - edge(daw, project, z.end)
         })
     };
-    // A Grid region of the kit's own says how its stretch goes: its hits
-    // on its grid (a no-quantize one still wins). Over a fill only when it
-    // is about that stretch — shorter than the fill: a part's own grid
-    // leaves the fills marked in it as played, where a region drawn over a
-    // fill's last beats edits them.
-    let regions = crate::track_regions::kit_regions(daw, project);
-    let region_at =
-        |h: f64| crate::track_regions::figure_at(&regions, h, sixteenth(daw, project, h));
-    let gridded = |h: f64| region_at(h).and_then(|r| r.division);
-    let fill_length = |h: f64| {
-        zones
-            .iter()
-            .filter(|z| {
-                z.kind == crate::hits::ZoneKind::Fill
-                    && z.origin != crate::hits::ZoneOrigin::Rejected
-                    && h >= z.start - edge(daw, project, z.start)
-                    && h < z.end - edge(daw, project, z.end)
-            })
-            .map(|z| z.end - z.start)
-            .fold(f64::INFINITY, f64::min)
-    };
-    let grid_over_fill = |h: f64| region_at(h).is_some_and(|r| r.end - r.start < fill_length(h));
+    let overrides = Overrides::of(daw, project);
     let held = |h: f64| {
         excepted(h)
             || match settings.fills {
                 crate::drum_settings::Fills::Skip => {
-                    in_fill(h) && !in_written_fill(h) && !grid_over_fill(h)
+                    in_fill(h)
+                        && !in_written_fill(h)
+                        && !overrides.figure_over_fill(daw, project, h)
+                        && overrides.fill_grid(daw, project, h).is_none()
                 }
                 crate::drum_settings::Fills::Include => false,
                 crate::drum_settings::Fills::Only => !in_fill(h),
@@ -4950,11 +5029,6 @@ fn quantize_span(
             if *by != Placed::Written && in_written_fill(*h) {
                 *to = None;
             }
-        }
-    }
-    for (h, to) in &mut targets {
-        if let Some(division) = gridded(*h) {
-            *to = Some(grid_line(daw, project, *h, division));
         }
     }
     let pairs: Vec<(f64, Option<f64>)> = targets
@@ -5222,7 +5296,111 @@ fn register_place(list: &ActionList) {
     });
 }
 
+static REQUANTIZE: ActionMeta = meta(
+    "DRUMS_REQUANTIZE",
+    "drums_requantize",
+    "Start the drum edit over and quantize it",
+    "Clear every drum edit (the EDIT lanes copied from COMP again) and quantize the whole song fresh, as QUANTIZE does with `plan` (each step its sections or span and settings — the snare leading in a breakdown) — the plan kept with the song, so a call without one uses the last given (none: the whole song on the sticky settings). The parts', figures' and fills' grids and the zones are read as always. `keep_manual`: the hits a hand placed (HITS_PLACE) are put back where they were placed afterwards. Says the quantize's check and how many hand placements were put back.",
+    "Drums",
+    "",
+);
+
+/// How to start the drum edit over.
+#[derive(Facet)]
+struct RequantizeArg {
+    keep_manual: Option<bool>,
+    #[facet(default)]
+    plan: Vec<PlanStep>,
+}
+
+/// What starting the drum edit over did.
+#[derive(Facet)]
+struct Requantized {
+    /// The spans quantized and the hits moved.
+    spans: u32,
+    moved: u32,
+    /// The check over the whole song: none lost, none doubled, no gap.
+    ok: bool,
+    problems: Vec<String>,
+    /// Hand placements put back (`keep_manual`).
+    placed_back: u32,
+}
+
+/// Where the plan a whole-song quantize was last given is kept: on the
+/// kit's folder, with the song.
+const PLAN_KEY: &str = "fts.quantize_plan";
+
+fn register_requantize(list: &ActionList) {
+    list.register(&REQUANTIZE, Effect::Mutating, |a: RequantizeArg| {
+        let (daw, project) = song()?;
+        let folder = crate::track_regions::kit_folder(daw, &project).ok_or("no kit")?;
+        let at = daw::service::TrackRef::Guid(folder);
+        // The plan: the one given, kept; else the one kept.
+        let plan = if a.plan.is_empty() {
+            Tracks::ext_state(daw, project.clone(), at)
+                .into_iter()
+                .find(|e| e.key == PLAN_KEY)
+                .map_or_else(|| "[]".to_owned(), |e| e.value)
+        } else {
+            let text = facet_json::to_string(&a.plan).map_err(|e| e.to_string())?;
+            Tracks::set_ext_state(daw, project.clone(), at, PLAN_KEY, &text)
+                .map_err(|e| e.to_string())?;
+            text
+        };
+        // Where the hands put each hit they placed, to put back.
+        let keep: Vec<(String, f64)> = if a.keep_manual.unwrap_or(false) {
+            let placed = crate::hits::placed(daw, &project);
+            crate::hits::playback(daw, &project)
+                .into_iter()
+                .filter(|p| placed.contains(&p.id))
+                .map(|p| (p.id, p.time))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        crate::drum_lanes::reset_edit(daw, &project, false)?;
+        let said = self::list()
+            .run_json(
+                QUANTIZE.id,
+                format!(r#"{{"brief":true,"plan":{plan}}}"#).as_bytes(),
+            )
+            .map_err(|e| e.to_string())?;
+        let spans: Vec<serde_json::Value> = serde_json::from_slice(&said).unwrap_or_default();
+        let moved = spans
+            .iter()
+            .filter_map(|s| s.get("result")?.get("moved")?.as_u64())
+            .sum::<u64>();
+        let check = spans
+            .iter()
+            .rev()
+            .find_map(|s| s.get("check").filter(|c| !c.is_null()));
+        let mut placed_back = 0_u32;
+        for (id, to) in keep {
+            let args = format!(r#"{{"id":"{id}","to":{to},"snap":false}}"#);
+            if self::list().run_json(PLACE.id, args.as_bytes()).is_ok() {
+                placed_back = placed_back.saturating_add(1);
+            }
+        }
+        Ok(Requantized {
+            spans: u32::try_from(spans.len()).unwrap_or(u32::MAX),
+            moved: u32::try_from(moved).unwrap_or(u32::MAX),
+            ok: check
+                .is_some_and(|c| c.get("ok").and_then(serde_json::Value::as_bool) == Some(true)),
+            problems: check
+                .and_then(|c| c.get("problems")?.as_array())
+                .map(|p| {
+                    p.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            placed_back,
+        })
+    });
+}
+
 fn register_quantize(list: &ActionList) {
+    register_requantize(list);
     register_place(list);
     register_revert(list);
     list.register(&QUANTIZE, Effect::Mutating, |a: QuantizeArg| {
