@@ -114,6 +114,9 @@ pub enum Action {
     ToggleBrowser,
     /// The view a page of bars on, or back (`]`, `[`): `SESSION_STEP`.
     BarStep(i32),
+    /// The window into a mode (`Alt+1` … `Alt+9`, `Alt+0`, and the
+    /// `Alt+m` tree): `SESSION_MODE`, by the mode's name.
+    Mode(&'static str),
     /// The FX's own view, full size (`F`): several tracks' chains.
     FxFull,
     /// Show the session as a scene (`v v` Overview, `v t` Overview TOP),
@@ -193,6 +196,16 @@ pub fn action_of(id: &str) -> Action {
         "FTS_TOGGLE_FX" => Action::ToggleFx,
         "FTS_BROWSER" => Action::ToggleBrowser,
         "FTS_STEP_NEXT" => Action::BarStep(1),
+        "_FTS_SESSION_MODE_ORGANIZE" => Action::Mode("Organize"),
+        "_FTS_SESSION_MODE_WRITE" => Action::Mode("Write"),
+        "_FTS_SESSION_MODE_PRODUCE" => Action::Mode("Produce"),
+        "_FTS_SESSION_MODE_RECORD" => Action::Mode("Record"),
+        "_FTS_SESSION_MODE_EDIT" => Action::Mode("Edit"),
+        "_FTS_SESSION_MODE_MIX" => Action::Mode("Mix"),
+        "_FTS_SESSION_MODE_MASTER" => Action::Mode("Master"),
+        "_FTS_SESSION_MODE_LIVE" => Action::Mode("Live"),
+        "_FTS_SESSION_MODE_VIDEO" => Action::Mode("Video"),
+        "_FTS_SESSION_MODE_SCORING" => Action::Mode("Scoring"),
         "FTS_STEP_PREV" => Action::BarStep(-1),
         "FTS_FX_FULL" => Action::FxFull,
         "FTS_SCENE_OVERVIEW" => Action::ToggleScene("overview"),
@@ -490,6 +503,30 @@ const BUILTIN: &str = r#"{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Alt` and a number puts the window in a mode, and `Alt+m` then a
+    /// letter does too.
+    #[test]
+    fn alt_and_a_number_switches_the_mode() {
+        let mut keys = Keys::load();
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::NONE
+        };
+        for (digit, mode) in [
+            ("5", "Edit"),
+            ("6", "Mix"),
+            ("1", "Organize"),
+            ("0", "Scoring"),
+        ] {
+            let got = keys.press(KeyCode::Character(digit.into()), alt);
+            keys.release(KeyCode::Character(digit.into()), alt);
+            assert_eq!(got, vec![Action::Mode(mode)], "Alt+{digit}");
+        }
+        keys.press(KeyCode::Character("m".into()), alt);
+        let got = keys.press(KeyCode::Character("r".into()), alt);
+        assert_eq!(got, vec![Action::Mode("Record")], "Alt+m r");
+    }
 
     /// `z` opens the zoom tree with the profile's own labels, and the
     /// next key completes it into a zoom.

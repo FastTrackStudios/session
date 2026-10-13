@@ -142,6 +142,7 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         Action::ToggleFx => (TOGGLE_FX.id, String::new()),
         Action::ToggleBrowser => (crate::browser::BROWSER.id, String::new()),
         Action::BarStep(n) => (crate::bar_step::STEP_ACTION.id, by(*n)),
+        Action::Mode(name) => (MODE.id, format!(r#"{{"mode":"{name}"}}"#)),
         Action::FxFull => (FX_FULL.id, String::new()),
         Action::ToggleScene(slug) => (SCENE.id, format!(r#"{{"scene":"{slug}"}}"#)),
         Action::Visibility(crate::keys::Visibility::Toggle(group)) => (
