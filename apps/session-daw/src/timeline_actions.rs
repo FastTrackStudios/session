@@ -221,7 +221,163 @@ fn regenerate_guide(daw: &daw::standalone::Standalone) {
     }
 }
 
+static WHAT_IS_SELECTED: ActionMeta = crate::actions::meta(
+    "SESSION_SELECTION",
+    "selection",
+    "What is selected",
+    "What the person has selected in the window, to know exactly what they mean: the time selection (seconds, and bars as the ruler writes them, with the sections it overlaps), the edit cursor, the selected tracks (paths) and items (track, where, how long; the first 100), the kit's hits inside the time selection by drum, and the track regions it overlaps. Read-only.",
+    "Session",
+    "",
+);
+
+/// A stretch of time, said both ways.
+#[derive(Facet)]
+struct StretchOut {
+    from: f64,
+    to: f64,
+    seconds: f64,
+    /// Where it starts and ends, as the ruler writes them: `78.3 – 79.1`.
+    bars: String,
+    sections: Vec<String>,
+}
+
+/// A selected item.
+#[derive(Facet)]
+struct SelectedItem {
+    guid: String,
+    track: String,
+    at: f64,
+    length: f64,
+}
+
+/// One drum's hits in the time selection.
+#[derive(Facet)]
+struct HitsIn {
+    piece: String,
+    hits: u32,
+}
+
+/// A track region the time selection overlaps.
+#[derive(Facet)]
+struct RegionIn {
+    track: String,
+    label: String,
+    bars: String,
+}
+
+/// What is selected.
+#[derive(Facet)]
+struct SelectionOut {
+    time_selection: Option<StretchOut>,
+    cursor: f64,
+    cursor_bar: String,
+    tracks: Vec<String>,
+    items: Vec<SelectedItem>,
+    items_selected: u32,
+    hits: Vec<HitsIn>,
+    regions: Vec<RegionIn>,
+}
+
+/// The most selected items said one by one.
+const MOST_ITEMS: usize = 100;
+
+fn selection(daw: &daw::standalone::Standalone, project: &ProjectContext) -> SelectionOut {
+    use daw::service::{Items as _, Tracks};
+    let edit = edit_now(daw, project);
+    let tracks = Tracks::all(daw, project.clone());
+    let by_guid: std::collections::HashMap<&str, &daw_proto::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    let path = |guid: &str| {
+        by_guid
+            .get(guid)
+            .map(|t| crate::gain_stage::path_of(t, &by_guid).join("/"))
+            .unwrap_or_default()
+    };
+    let span = edit.selection.map(|sel| (sel.start, sel.end));
+    let time_selection = span.map(|(from, to)| StretchOut {
+        from,
+        to,
+        seconds: to - from,
+        bars: format!(
+            "{} – {}",
+            crate::track_regions::bar_of(daw, project, from),
+            crate::track_regions::bar_of(daw, project, to)
+        ),
+        sections: crate::actions::sections(daw, project)
+            .into_iter()
+            .filter(|s| s.start < to && s.end > from)
+            .map(|s| s.name)
+            .collect(),
+    });
+    let selected: Vec<daw_proto::Item> = daw
+        .get_all_items(project.clone())
+        .into_iter()
+        .filter(|i| i.selected)
+        .collect();
+    let items = selected
+        .iter()
+        .take(MOST_ITEMS)
+        .map(|i| SelectedItem {
+            guid: i.guid.clone(),
+            track: path(&i.track_guid),
+            at: i.position.as_seconds(),
+            length: i.length.as_seconds(),
+        })
+        .collect();
+    let mut hits: Vec<HitsIn> = Vec::new();
+    let mut regions = Vec::new();
+    if let Some((from, to)) = span {
+        for hit in crate::hits::playback(daw, project)
+            .iter()
+            .filter(|h| h.time >= from && h.time < to)
+        {
+            match hits.iter_mut().find(|h| h.piece == hit.piece) {
+                Some(h) => h.hits = h.hits.saturating_add(1),
+                None => hits.push(HitsIn {
+                    piece: hit.piece.clone(),
+                    hits: 1,
+                }),
+            }
+        }
+        for (track, marks) in crate::track_regions::all(daw, project) {
+            for r in marks
+                .regions
+                .iter()
+                .filter(|r| r.start < to && r.end > from)
+            {
+                regions.push(RegionIn {
+                    track: path(&track),
+                    label: r.label(),
+                    bars: format!(
+                        "{} – {}",
+                        crate::track_regions::bar_of(daw, project, r.start),
+                        crate::track_regions::bar_of(daw, project, r.end)
+                    ),
+                });
+            }
+        }
+    }
+    SelectionOut {
+        time_selection,
+        cursor: edit.at,
+        cursor_bar: crate::track_regions::bar_of(daw, project, edit.at),
+        tracks: tracks
+            .iter()
+            .filter(|t| t.selected)
+            .map(|t| path(&t.guid))
+            .collect(),
+        items,
+        items_selected: u32::try_from(selected.len()).unwrap_or(u32::MAX),
+        hits,
+        regions,
+    }
+}
+
 pub fn register(list: &ActionList) {
+    list.register(&WHAT_IS_SELECTED, Effect::ReadOnly, |(): ()| {
+        let (daw, project) = crate::actions::song()?;
+        Ok(selection(daw, &project))
+    });
     list.register(&TEMPO, Effect::Mutating, |a: TempoArg| {
         if !BPM.contains(&a.bpm) {
             return Err(format!(
