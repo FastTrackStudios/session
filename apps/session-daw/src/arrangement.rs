@@ -1250,10 +1250,17 @@ impl Arrangement {
                 // full colour: the item is read by its waveform, and a
                 // solid block of colour was a waveform you could not
                 // see through.
+                // A shut folder's body fainter still: its waveform is a
+                // summary of every track under it, read against the lane.
+                let alpha = if daw_ui::studio::folded::parse_guid(&item.guid).is_some() {
+                    body_alpha() * FOLDER_BODY
+                } else {
+                    body_alpha()
+                };
                 lanes.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
-                    color.multiply_alpha(body_alpha()),
+                    color.multiply_alpha(alpha),
                     None,
                     &Rect::new(x0, y + inset, x1, y + body - inset),
                 );
@@ -2377,6 +2384,9 @@ pub fn hit_drag_overlay(painter: &mut impl PaintScene, palette: &Palette, view: 
 
 /// An item body's strength: faint when items are drawn outlined
 /// ([`crate::options::OUTLINED`]), so the waveform carries the colour.
+/// How much of an item's body alpha a shut folder's item has.
+const FOLDER_BODY: f32 = 0.4;
+
 fn body_alpha() -> f32 {
     if crate::options::OUTLINED.get() {
         0.12
