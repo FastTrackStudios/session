@@ -88,24 +88,45 @@ pub fn grid(
     // each read for what they are: the subdivisions faint, the beats
     // plainer, the bars strongest and wider.
     let beat_px = bars.secs_per_beat * view.pps;
+    // A Grid region's stretch is drawn on its own grid: its lines, at a
+    // beat's weight, in place of the beats and the subdivisions there.
+    let regions = grid_regions();
     if let Some(division) = adaptive.fit(finest, measure_px) {
         let step = division * 4.0 * bars.secs_per_beat;
         // Finer than a beat: its own lines, under the beats'.
         if step > 0.0 && step < bars.secs_per_beat - 1e-9 {
-            line_every(painter, view, step, from, to, palette.grid_sub, 1.0, origin);
+            line_every(
+                painter,
+                view,
+                (step, from, to),
+                (palette.grid_sub, 1.0),
+                origin,
+                &regions,
+            );
         }
     }
     if beat_px >= GRID_BEAT_ROOM {
         line_every(
             painter,
             view,
-            bars.secs_per_beat,
-            from,
-            to,
-            palette.grid_beat,
-            1.0,
+            (bars.secs_per_beat, from, to),
+            (palette.grid_beat, 1.0),
             origin,
+            &regions,
         );
+    }
+    for &(start, end, division) in &regions {
+        let step = bars.secs_per_beat * 4.0 / f64::from(division.max(1));
+        if step * view.pps >= GRID_BEAT_ROOM / 2.0 {
+            line_every(
+                painter,
+                view,
+                (step, from.max(start), to.min(end)),
+                (palette.grid_beat, 1.0),
+                origin,
+                &[],
+            );
+        }
     }
     // Bar lines always, and brightest: they are what the numbers above
     // count, so they have to survive whatever the division does.
@@ -117,12 +138,10 @@ pub fn grid(
     line_every(
         painter,
         view,
-        bars.secs_per_bar(),
-        from,
-        to,
-        palette.grid,
-        bar_width,
+        (bars.secs_per_bar(), from, to),
+        (palette.grid, bar_width),
         origin,
+        &[],
     );
 }
 
@@ -163,11 +182,7 @@ pub fn ruler(
     // them and the lanes over that.
     let oy = oy + ruler_h() - bars_h();
     // A slim ruler's numbers are small, close under its sections.
-    let (number_y, number_size, tick) = if slim() {
-        (10.0, 8.5, 5.0)
-    } else {
-        (14.0, 11.0, 9.0)
-    };
+    let (number_y, number_size) = if slim() { (10.0, 8.5) } else { (14.0, 11.0) };
 
     let (from, to) = view.secs();
     // Every beat up to the right edge, counted through the tempo map
@@ -179,8 +194,8 @@ pub fn ruler(
     // and there is then nothing to draw — and `view.secs()` at that
     // zoom asks for a range measured in centuries, which is a walk
     // that never returns.
-    let start = Bars::at_time(tempo, from.max(0.0));
-    let bar_px = start.secs_per_bar() * view.pps;
+    let start_bars = Bars::at_time(tempo, from.max(0.0));
+    let bar_px = start_bars.secs_per_bar() * view.pps;
     if bar_px < 2.0 {
         return;
     }
@@ -214,6 +229,9 @@ pub fn ruler(
             Rect::new(ox + x, oy + height - tall, ox + x + width, oy + height),
         );
     };
+    // A Grid region's stretch ticked on its own grid, its beats' and
+    // subdivisions' ticks left out (its bars kept).
+    let regions = grid_regions();
     for beat in &beats {
         if beat.at > to {
             break;
@@ -223,8 +241,9 @@ pub fn ruler(
         }
         if let Some(n) = subs {
             for k in 1..n {
-                let x = x_of((f64::from(k) / f64::from(n)).mul_add(beat.secs_per_beat, beat.at));
-                if shown(x) {
+                let t = (f64::from(k) / f64::from(n)).mul_add(beat.secs_per_beat, beat.at);
+                let x = x_of(t);
+                if shown(x) && !in_grid_region(&regions, t) {
                     tick(
                         painter,
                         x,
@@ -265,7 +284,7 @@ pub fn ruler(
                     number_size + 1.5,
                 );
             }
-        } else if beat_px >= 4.0 {
+        } else if beat_px >= 4.0 && !in_grid_region(&regions, beat.at) {
             tick(painter, x, height * BEAT_TICK, palette.ruler_fg2, 1.0);
             if beat_numbers {
                 crate::tcp::glyphs(
@@ -280,7 +299,28 @@ pub fn ruler(
             }
         }
     }
+    for &(start, end, division) in &regions {
+        let step = start_bars.secs_per_beat * 4.0 / f64::from(division.max(1));
+        if step * view.pps < SUB_ROOM {
+            continue;
+        }
+        let first = (start.max(from) / step).ceil();
+        let lines = ((end.min(to) / step).ceil() - first).max(0.0);
+        for n in counts(
+            num_traits::ToPrimitive::to_usize(&lines)
+                .unwrap_or(0)
+                .min(MAX_TICKS),
+        ) {
+            let x = x_of((first + n) * step);
+            if shown(x) {
+                tick(painter, x, height * BEAT_TICK, palette.accent, 1.0);
+            }
+        }
+    }
 }
+
+/// The most ticks a Grid region draws: a screen's worth.
+const MAX_TICKS: usize = 2048;
 
 /// How tall a beat's line is on the ruler, of its height.
 const BEAT_TICK: f64 = 0.45;

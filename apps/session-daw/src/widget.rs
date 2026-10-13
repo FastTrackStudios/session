@@ -510,6 +510,9 @@ pub struct ArrangementWidget {
     detection_seen: Cell<u64>,
     /// The fine waveforms' generation last drawn ([`crate::wave_detail`]).
     detail_seen: Cell<u64>,
+    /// The tracks' markers and regions as last laid out
+    /// ([`crate::marks_strip::version`]).
+    marks_seen: Cell<u64>,
     /// The scroll and zoom last drawn: moved by the panel without an
     /// event here (a zoom a model asked for), the picture is due again.
     view_drawn: Cell<(f64, f64, f64, f64)>,
@@ -720,6 +723,7 @@ impl ArrangementWidget {
             editing: Rc::new(Cell::new(false)),
             detection_seen: Cell::new(0),
             detail_seen: Cell::new(0),
+            marks_seen: Cell::new(0),
             view_drawn: Cell::new((0.0, 0.0, 0.0, 0.0)),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
@@ -902,6 +906,36 @@ impl ArrangementWidget {
         let top = boxes.iter().map(|b| b.0).reduce(f64::min)?;
         let bottom = boxes.iter().map(|b| b.0 + b.1).fold(top, f64::max);
         Some((top, bottom))
+    }
+
+    /// The track being edited and every folder above it, nearest first:
+    /// the selected one (the first, when several are) — or, nothing
+    /// selected, the kit's folder.
+    fn edited_tracks(&self) -> Vec<String> {
+        let chosen = self.selected_and_above();
+        if !chosen.is_empty() {
+            return chosen;
+        }
+        self.kit_rows()
+            .and_then(|kit| self.rows.get(kit.start))
+            .map(|(t, _)| vec![t.guid.clone()])
+            .unwrap_or_default()
+    }
+
+    /// The selected track (the first, when several are) and every folder
+    /// above it, nearest first; none with nothing selected.
+    fn selected_and_above(&self) -> Vec<String> {
+        let tracks = &self.project.tracks;
+        let mut out = Vec::new();
+        let mut at = tracks.iter().find(|t| t.selected).map(|t| t.guid.clone());
+        while let Some(guid) = at {
+            at = tracks
+                .iter()
+                .find(|t| t.guid == guid)
+                .and_then(|t| t.parent_guid.clone());
+            out.push(guid);
+        }
+        out
     }
 
     /// The rows of the kit: the top-level `Drums` folder's and every row
@@ -2966,6 +3000,7 @@ impl Widget for ArrangementWidget {
         self.dirty.get()
             || window_queued()
             || crate::hit_overlay::version() != self.detection_seen.get()
+            || crate::marks_strip::version() != self.marks_seen.get()
             || quantize_asked()
             // Edits made and not yet sent: the panel sends them at the
             // top of a frame, and this one is owed.
@@ -3092,6 +3127,7 @@ impl ArrangementWidget {
             }
             let _ = self.apply_actions(crate::actions::take_window());
         }
+        self.marks_seen.set(crate::marks_strip::version());
         self.settle_stage();
         self.dirty.set(false);
         let generation = self.previews.generation();
@@ -4079,6 +4115,14 @@ impl ArrangementWidget {
             crate::engine::Transport::shared().map_or(0.0, |t| t.read().0),
         );
         spent.panel = since(&mut mark);
+        // Editing, the grid is drawn by the edited track's Grid regions.
+        let edited = self.edited_tracks();
+        let grids = if self.editing.get() {
+            crate::marks_strip::grid_regions(&edited)
+        } else {
+            Vec::new()
+        };
+        ruler::set_grid_regions(grids.clone());
         ruler::grid(
             &mut out,
             &self.palette,
@@ -4096,14 +4140,26 @@ impl ArrangementWidget {
             (self.scene.tempo(), self.scene.song_start()),
             (0.0, 0.0),
         );
-        ruler::tempo(
-            &mut out,
-            &self.palette,
-            &self.font,
-            view,
-            (0.0, 0.0),
-            self.scene.tempo(),
-        );
+        // Editing, the TEMPO lane is the GRID lane: the grids in force.
+        if self.editing.get() {
+            ruler::grid_lane(
+                &mut out,
+                &self.palette,
+                &self.font,
+                view,
+                (0.0, 0.0),
+                &grids,
+            );
+        } else {
+            ruler::tempo(
+                &mut out,
+                &self.palette,
+                &self.font,
+                view,
+                (0.0, 0.0),
+                self.scene.tempo(),
+            );
+        }
         // The song's own shape over the timeline: the section bands and
         // the marker flags, and the lines they drop through the lanes.
         ruler::lanes(
@@ -4115,6 +4171,18 @@ impl ArrangementWidget {
             self.scene.sections(),
             self.scene.markers(),
         );
+        // The selected track's own markers and regions, and its folders',
+        // in the MARKS lane: the marks of what is being edited.
+        match crate::marks_strip::current() {
+            Some(_) => crate::marks_strip::paint(
+                &mut out,
+                (&self.palette, &self.font),
+                view,
+                (0.0, 0.0),
+                &edited,
+            ),
+            None => crate::marks_strip::refresh(),
+        }
         ruler::chord_lane(
             &mut out,
             &self.palette,

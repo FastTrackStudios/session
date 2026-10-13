@@ -69,6 +69,7 @@ pub mod live;
 pub mod loading;
 pub mod lyrics_panel;
 pub mod macros;
+pub mod marks_strip;
 pub mod mcp;
 pub mod midi;
 #[cfg(any(feature = "native", feature = "web"))]
@@ -106,6 +107,7 @@ pub mod stream_set;
 pub mod task_account;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod task_set;
+pub mod track_regions;
 #[cfg(feature = "native")]
 pub mod versions;
 #[cfg(feature = "native")]

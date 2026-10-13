@@ -102,3 +102,66 @@ pub fn reading(change: &daw_ui::studio::project::TempoChange) -> String {
     };
     format!("{bpm} {}/{}", change.beats_per_bar, change.beat_unit)
 }
+
+/// The GRID lane, in the TEMPO lane's place while editing.
+///
+/// Each Grid region of the track being edited (and its folders') as a
+/// band named for its grid (`1/2T`) — the grid the lines under it are
+/// drawn on and a quantize puts its hits on.
+pub fn grid_lane(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    view: Viewport,
+    origin: (f64, f64),
+    regions: &[GridRegion],
+) {
+    const SIZE: f32 = 8.0;
+    if slim() {
+        return;
+    }
+    let (ox, oy) = origin;
+    let top = oy + ruler_h() - bars_h() - TEMPO_H;
+    let left = ox + view.panel_w;
+    let right = ox + view.width;
+    fill(
+        painter,
+        palette.tcp_rule,
+        Rect::new(left - LABEL_W, top + TEMPO_H - 1.0, right, top + TEMPO_H),
+    );
+    label(
+        painter,
+        font,
+        palette.text_faint,
+        left,
+        "GRID",
+        top + TEMPO_H - 3.0,
+        SIZE,
+    );
+    let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
+    for &(start, end, division) in regions {
+        let (a, b) = (x_of(start).max(left), x_of(end).min(right));
+        if b <= a {
+            continue;
+        }
+        fill(
+            painter,
+            palette.accent.multiply_alpha(0.35),
+            Rect::new(a, top + 1.0, b, top + TEMPO_H - 1.0),
+        );
+        fill(
+            painter,
+            palette.accent,
+            Rect::new(a, top + 1.0, a + 1.0, top + TEMPO_H - 1.0),
+        );
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text,
+            &crate::track_regions::grid_name(division),
+            a + 3.0,
+            top + TEMPO_H - 3.0,
+            SIZE,
+        );
+    }
+}

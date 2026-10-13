@@ -2011,8 +2011,76 @@ pub fn zones(daw: &daw::standalone::Standalone, project: &ProjectContext) -> Vec
             })
         })
         .collect();
+    // And the kit's own: its folder's regions (and its tracks') that say
+    // how a stretch is edited.
+    out.extend(
+        crate::track_regions::kit_marks(daw, project)
+            .into_iter()
+            .filter_map(|(track, r)| {
+                let kind = match r.kind {
+                    crate::track_regions::RegionKind::Fill => ZoneKind::Fill,
+                    crate::track_regions::RegionKind::NoQuantize => ZoneKind::Exception,
+                    crate::track_regions::RegionKind::Grid
+                    | crate::track_regions::RegionKind::Note => return None,
+                };
+                Some(Zone {
+                    guid: format!("{TRACK_ZONE}{track}:{}", r.id),
+                    start: r.start,
+                    end: r.end,
+                    kind,
+                    origin: zone_origin(r.origin),
+                    note: r.note,
+                })
+            }),
+    );
     out.sort_by(|a, b| a.start.total_cmp(&b.start));
     out
+}
+
+/// A zone kept as a region of a kit track's own: `track:<track>:<id>`.
+const TRACK_ZONE: &str = "track:";
+
+/// The track and region id of a zone kept on a track.
+fn track_zone(guid: &str) -> Option<(&str, &str)> {
+    guid.strip_prefix(TRACK_ZONE)?.rsplit_once(':')
+}
+
+const fn zone_origin(origin: crate::track_regions::Origin) -> ZoneOrigin {
+    match origin {
+        crate::track_regions::Origin::Manual => ZoneOrigin::Manual,
+        crate::track_regions::Origin::Auto => ZoneOrigin::Auto,
+        crate::track_regions::Origin::Approved => ZoneOrigin::Approved,
+        crate::track_regions::Origin::Rejected => ZoneOrigin::Rejected,
+    }
+}
+
+const fn region_origin(origin: ZoneOrigin) -> crate::track_regions::Origin {
+    match origin {
+        ZoneOrigin::Manual => crate::track_regions::Origin::Manual,
+        ZoneOrigin::Auto => crate::track_regions::Origin::Auto,
+        ZoneOrigin::Approved => crate::track_regions::Origin::Approved,
+        ZoneOrigin::Rejected => crate::track_regions::Origin::Rejected,
+    }
+}
+
+const fn region_kind(kind: ZoneKind) -> crate::track_regions::RegionKind {
+    match kind {
+        ZoneKind::Fill => crate::track_regions::RegionKind::Fill,
+        ZoneKind::Exception => crate::track_regions::RegionKind::NoQuantize,
+    }
+}
+
+/// Remove the zone `guid`, wherever it is kept.
+fn remove_zone(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    guid: &str,
+) -> Result<(), String> {
+    if let Some((track, id)) = track_zone(guid) {
+        return crate::track_regions::change(daw, project, (track, id), |_| None);
+    }
+    let id = zone_region(daw, project, guid).ok_or_else(|| format!("no zone {guid}"))?;
+    daw::service::Regions::remove(daw, project.clone(), id).map_err(|e| e.to_string())
 }
 
 /// Whether a zone that holds hits (anything but a rejected one) holds
@@ -2029,13 +2097,31 @@ pub fn zone_holds(zones: &[Zone], time: f64, beat_length: f64) -> bool {
     })
 }
 
-/// Put a zone on the ruler. Its region's id.
+/// Put a zone on the kit: a region of its folder's own (the song's ruler
+/// when there is no kit folder). Its guid.
 pub(crate) fn add_zone(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     (start, end): (f64, f64),
     (kind, origin, note): (ZoneKind, ZoneOrigin, &str),
-) -> Result<u32, String> {
+) -> Result<String, String> {
+    if let Some(folder) = crate::track_regions::kit_folder(daw, project) {
+        let id = crate::track_regions::add(
+            daw,
+            project,
+            &folder,
+            crate::track_regions::TrackRegion {
+                id: crate::track_regions::fresh_id(),
+                start,
+                end,
+                kind: region_kind(kind),
+                division: None,
+                origin: region_origin(origin),
+                note: note.to_owned(),
+            },
+        )?;
+        return Ok(format!("{TRACK_ZONE}{folder}:{id}"));
+    }
     let id = daw::service::Regions::add(
         daw,
         project.clone(),
@@ -2053,7 +2139,19 @@ pub(crate) fn add_zone(
         (ZoneKind::Exception, _) => 0x00C0_4040,
     };
     daw::service::Regions::set_color(daw, project.clone(), id, color).map_err(|e| e.to_string())?;
-    Ok(id)
+    Ok(zone_guid(daw, project, id).unwrap_or_default())
+}
+
+/// The guid of the ruler region `id`.
+fn zone_guid(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    id: u32,
+) -> Option<String> {
+    daw::service::Regions::all(daw, project.clone())
+        .into_iter()
+        .find(|r| r.id == Some(id))
+        .and_then(|r| r.guid)
 }
 
 /// The region id of the zone `guid`.
@@ -2087,9 +2185,7 @@ pub fn find_zones(
         .iter()
         .filter(|z| z.origin == ZoneOrigin::Auto && z.start < span.1 && z.end > span.0)
     {
-        if let Some(id) = zone_region(daw, project, &z.guid) {
-            daw::service::Regions::remove(daw, project.clone(), id).map_err(|e| e.to_string())?;
-        }
+        remove_zone(daw, project, &z.guid)?;
     }
     let decided: Vec<&Zone> = now
         .iter()
@@ -2450,6 +2546,25 @@ fn register_zones(list: &ActionList) {
             .into_iter()
             .find(|z| z.guid == a.guid)
             .ok_or_else(|| format!("no zone {}", a.guid))?;
+        // Kept on a kit track: changed there.
+        if let Some((track, id)) = track_zone(&a.guid) {
+            if a.remove == Some(true) {
+                remove_zone(daw, &project, &a.guid)?;
+                return Ok(None);
+            }
+            let (start, end) = (a.start.unwrap_or(zone.start), a.end.unwrap_or(zone.end));
+            crate::track_regions::change(daw, &project, (track, id), |mut r| {
+                r.start = start;
+                r.end = end;
+                r.kind = region_kind(a.kind.unwrap_or(zone.kind));
+                r.origin = region_origin(a.origin.unwrap_or(zone.origin));
+                if let Some(note) = &a.note {
+                    r.note.clone_from(note);
+                }
+                Some(r)
+            })?;
+            return Ok(zones(daw, &project).into_iter().find(|z| z.guid == a.guid));
+        }
         let id =
             zone_region(daw, &project, &a.guid).ok_or_else(|| format!("no zone {}", a.guid))?;
         let failed = |e: daw_proto::DawError| e.to_string();

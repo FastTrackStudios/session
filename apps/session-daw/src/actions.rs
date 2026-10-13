@@ -1057,6 +1057,7 @@ fn register_data(list: &ActionList) {
     crate::instrument_tracks::register(list);
     crate::timeline_actions::register(list);
     crate::bar_step::register(list);
+    crate::track_regions::register(list);
     #[cfg(feature = "signal")]
     crate::rig_actions::register(list);
 }
@@ -2018,6 +2019,7 @@ fn register_undo(list: &ActionList) {
             return Ok("nothing to undo".to_owned());
         }
         samples_follow(daw, &project);
+        crate::marks_strip::refresh();
         crate::studio::request_resync();
         crate::actions::list().changed("items", "undo");
         Ok(format!(
@@ -2035,6 +2037,7 @@ fn register_undo(list: &ActionList) {
             return Ok("nothing to redo".to_owned());
         }
         samples_follow(daw, &project);
+        crate::marks_strip::refresh();
         crate::studio::request_resync();
         crate::actions::list().changed("items", "redo");
         Ok(format!(
@@ -2087,6 +2090,7 @@ fn undo_through_doc(
         Undone::Nothing => Some(none.to_owned()),
         Undone::Step(name) => {
             samples_follow(daw, project);
+            crate::marks_strip::refresh();
             crate::studio::request_resync();
             crate::actions::list().changed("items", if back { "undo" } else { "redo" });
             Some(format!("{verb} {name}"))
@@ -4826,10 +4830,16 @@ fn quantize_span(
                 && h < z.end - edge(daw, project, z.end)
         })
     };
+    // A Grid region of the kit's own says how its stretch goes: its hits
+    // on its grid, a fill or not (a no-quantize one still wins).
+    let regions = crate::track_regions::kit_regions(daw, project);
+    let gridded = |h: f64| crate::track_regions::grid_at(&regions, h);
     let held = |h: f64| {
         excepted(h)
             || match settings.fills {
-                crate::drum_settings::Fills::Skip => in_fill(h) && !in_written_fill(h),
+                crate::drum_settings::Fills::Skip => {
+                    in_fill(h) && !in_written_fill(h) && gridded(h).is_none()
+                }
                 crate::drum_settings::Fills::Include => false,
                 crate::drum_settings::Fills::Only => !in_fill(h),
             }
@@ -4844,6 +4854,11 @@ fn quantize_span(
             if *by != Placed::Written && in_written_fill(*h) {
                 *to = None;
             }
+        }
+    }
+    for (h, to) in &mut targets {
+        if let Some(division) = gridded(*h) {
+            *to = Some(grid_line(daw, project, *h, division));
         }
     }
     let pairs: Vec<(f64, Option<f64>)> = targets

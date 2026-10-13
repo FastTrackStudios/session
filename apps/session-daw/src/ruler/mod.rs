@@ -261,12 +261,10 @@ fn fill(painter: &mut impl PaintScene, color: Color, rect: Rect) {
 fn line_every(
     painter: &mut impl PaintScene,
     view: Viewport,
-    step: f64,
-    from: f64,
-    to: f64,
-    color: Color,
-    width: f64,
+    (step, from, to): (f64, f64, f64),
+    (color, width): (Color, f64),
     origin: (f64, f64),
+    skip: &[GridRegion],
 ) {
     let (ox, oy) = origin;
     // A screen of lines is the most that can ever be visible; anything
@@ -280,6 +278,9 @@ fn line_every(
         if t > to {
             break;
         }
+        if t < from - 1e-9 || in_grid_region(skip, t) {
+            continue;
+        }
         let x = t.mul_add(view.pps, view.panel_w - view.scroll_x);
         if x >= view.panel_w {
             painter.fill(
@@ -291,6 +292,34 @@ fn line_every(
             );
         }
     }
+}
+
+/// A stretch on a grid of its own (a Grid region of the edited track's):
+/// `(start, end, division)`, seconds and a whole note's division.
+pub type GridRegion = (f64, f64, u32);
+
+thread_local! {
+    /// The grid regions the ruler and the grid draw by this frame.
+    static GRID_REGIONS: std::cell::RefCell<Vec<GridRegion>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Draw the grid by `regions` from now on: inside each, its own lines in
+/// place of the beats and the subdivisions.
+pub fn set_grid_regions(regions: Vec<GridRegion>) {
+    GRID_REGIONS.with(|r| *r.borrow_mut() = regions);
+}
+
+/// The grid regions in force.
+fn grid_regions() -> Vec<GridRegion> {
+    GRID_REGIONS.with(|r| r.borrow().clone())
+}
+
+/// Whether `t` is inside one of `regions` (its end not).
+fn in_grid_region(regions: &[GridRegion], t: f64) -> bool {
+    regions
+        .iter()
+        .any(|(a, b, _)| t >= *a - 1e-9 && t < *b - 1e-9)
 }
 
 // ─── What the pointer is on ─────────────────────────────────────────
