@@ -3584,7 +3584,12 @@ fn to_lines_either_side(
         {
             end = end.saturating_add(1);
         }
-        if end.saturating_sub(i) < 2 {
+        // Strokes of different drums played a gesture apart are one
+        // gesture on one line — a kick 32 ms before the snare on 2 — not
+        // two to spread: spread, the kick pushed the double before it a
+        // line back (Unbreakable 71.1).
+        let one_gesture = (i..end.saturating_sub(1)).all(|k| with_next(k, k.saturating_add(1)));
+        if end.saturating_sub(i) < 2 || one_gesture {
             i = end;
             continue;
         }
@@ -4817,6 +4822,23 @@ mod gesture_tests {
     #[test]
     fn a_double_kick_into_the_snare_takes_the_lines_before_it() {
         use super::to_lines_either_side;
+        // The kick sent with the snare on 2 it is played with: one
+        // gesture, the double before it left alone.
+        // (Unbreakable 67.1: kicks at 1.70 and 1.88, the snare at 1.95.)
+        let mut with = vec![(1.70, Some(1.75)), (1.88, Some(2.0)), (1.95, Some(2.0))];
+        to_lines_either_side(
+            &mut with,
+            &[Placed::Written, Placed::Line, Placed::Written],
+            (
+                |_| Some(0.25),
+                |t: f64| (t - t.round()).abs() < 1e-9,
+                |k: usize, next: usize| k == 1 && next == 2,
+            ),
+        );
+        assert_eq!(
+            with.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
+            vec![Some(1.75), Some(2.0), Some(2.0)]
+        );
         // A kick near the "a", another just before the snare on 2 and
         // played with it: the first keeps the "a", the second joins the
         // snare's line (Unbreakable 71.1) — not the double pushed back.
