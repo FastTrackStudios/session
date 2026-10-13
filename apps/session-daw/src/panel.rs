@@ -969,7 +969,10 @@ impl ArrangementPanel {
     /// zoom where a view sliding under the cursor is not.
     fn follow_cursor(&self, r: (f64, f64, f64, f64), play_at: f64) {
         let moved = (self.followed_at.replace(play_at) - play_at).abs() > 1e-6;
-        if !self.follow.get() || !moved {
+        // Only while the song plays: stopped, the cursor going back to
+        // where play began leaves the view where it was — on what was
+        // playing when it stopped.
+        if !self.follow.get() || !moved || !crate::engine::moving() {
             return;
         }
         let (zoom_x, zoom_y) = *self.zoom.peek();
