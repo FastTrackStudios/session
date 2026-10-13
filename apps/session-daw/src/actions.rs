@@ -2414,6 +2414,22 @@ struct ItemRow {
     plays: bool,
     fade_in_ms: f64,
     fade_out_ms: f64,
+    /// Drawn out: the slowest rate its stretch markers play any of it at
+    /// (1 as recorded, 0.5 half speed — an octave down, as the engine
+    /// stretches by rate). `None`: not stretched.
+    slowest: Option<f64>,
+}
+
+/// The slowest rate between `markers`' neighbours; `None` without two.
+fn slowest_rate(markers: &[daw_proto::StretchMarker]) -> Option<f64> {
+    markers
+        .windows(2)
+        .filter_map(|pair| {
+            let (a, b) = (pair.first()?, pair.get(1)?);
+            let played = b.position - a.position;
+            (played > 1e-9).then(|| (b.source_position - a.source_position) / played)
+        })
+        .reduce(f64::min)
 }
 
 fn register_items(list: &ActionList) {
@@ -2453,6 +2469,12 @@ fn register_items(list: &ActionList) {
                         source_offset: i.start_offset.as_seconds(),
                         fade_in_ms: i.fade_in_length.as_seconds() * 1_000.0,
                         fade_out_ms: i.fade_out_length.as_seconds() * 1_000.0,
+                        slowest: slowest_rate(&daw_proto::StretchMarkers::get_stretch_markers(
+                            daw,
+                            project.clone(),
+                            daw_proto::ItemRef::Guid(i.guid.clone()),
+                            daw_proto::TakeRef::Active,
+                        )),
                     })
                 })
                 .collect();
