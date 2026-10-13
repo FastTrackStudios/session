@@ -109,6 +109,22 @@ pub fn grid_regions(tracks: &[String]) -> Vec<crate::ruler::GridRegion> {
     out
 }
 
+/// The spans of `tracks`' regions that hold `time` — a Grid region's
+/// (`grid`) or every other's — for a double-click to select.
+#[must_use]
+pub fn spans_at(tracks: &[String], time: f64, grid: bool) -> Vec<(f64, f64)> {
+    let Some(snapshot) = current() else {
+        return Vec::new();
+    };
+    tracks
+        .iter()
+        .filter_map(|t| snapshot.marks.get(t))
+        .flat_map(|m| m.regions.iter())
+        .filter(|r| (r.kind == RegionKind::Grid) == grid && time >= r.start && time < r.end)
+        .map(|r| (r.start, r.end))
+        .collect()
+}
+
 /// The selected track's own markers and regions, and its folders', in the
 /// ruler's MARKS lane.
 ///

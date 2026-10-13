@@ -114,7 +114,7 @@ pub fn grid_lane(
     font: &Font,
     view: Viewport,
     origin: (f64, f64),
-    regions: &[GridRegion],
+    (figures, parts): (&[GridRegion], &[GridRegion]),
 ) {
     const SIZE: f32 = 8.0;
     if slim() {
@@ -139,19 +139,22 @@ pub fn grid_lane(
         SIZE,
     );
     let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
-    for &(start, end, division) in regions {
+    // A part's grid quiet under the figures, which are in the accent.
+    let quiet = parts.iter().map(|r| (r, palette.text_faint));
+    let loud = figures.iter().map(|r| (r, palette.accent));
+    for (&(start, end, division), tint) in quiet.chain(loud) {
         let (a, b) = (x_of(start).max(left), x_of(end).min(right));
         if b <= a {
             continue;
         }
         fill(
             painter,
-            palette.accent.multiply_alpha(0.35),
+            tint.multiply_alpha(0.3),
             Rect::new(a, top + 1.0, b, top + TEMPO_H - 1.0),
         );
         fill(
             painter,
-            palette.accent,
+            tint,
             Rect::new(a, top + 1.0, a + 1.0, top + TEMPO_H - 1.0),
         );
         crate::tcp::glyphs(

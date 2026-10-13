@@ -567,6 +567,9 @@ pub struct ArrangementWidget {
     last_name: Option<(usize, web_time::Instant)>,
     /// A hit marker taken by its flag (Edit mode), mid-drag.
     hit_drag: Option<HitDrag>,
+    /// The band on the ruler last clicked and when: the first half of the
+    /// double-click that selects its time.
+    last_band: Option<((f64, f64), web_time::Instant)>,
     /// A swipe along a take's lane, on a row showing its lanes: the
     /// stretch comped onto the comp lane when let go ([`crate::swipe`]).
     swipe: Option<crate::swipe::Swipe>,
@@ -739,6 +742,7 @@ impl ArrangementWidget {
             scene_before: None,
             last_name: None,
             hit_drag: None,
+            last_band: None,
             swipe: None,
             last_strip: None,
             turning: None,
@@ -920,6 +924,65 @@ impl ArrangementWidget {
             .and_then(|kit| self.rows.get(kit.start))
             .map(|(t, _)| vec![t.guid.clone()])
             .unwrap_or_default()
+    }
+
+    /// A double-click on a band on the ruler — a section, a zone, the
+    /// edited track's own region in the MARKS lane, a Grid region in the
+    /// GRID lane — makes its time the time selection, the edit cursor at
+    /// its start: what Q quantizes and Backspace puts back. The innermost
+    /// band under the pointer. The first click goes on to the editor.
+    fn band_gesture(&mut self, event: &UiEvent) -> bool {
+        let UiEvent::PointerDown(e) = event else {
+            return false;
+        };
+        if e.button != MouseEventButton::Main {
+            return false;
+        }
+        let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+        if y >= ruler::ruler_h() || x < self.scene.tcp.width() {
+            return false;
+        }
+        let view = self.viewport(self.size.0, self.size.1);
+        let t = self.seconds_at(x, view);
+        let row = ruler::lane_at(y, 0.0);
+        let mut spans: Vec<(f64, f64)> = self
+            .scene
+            .sections()
+            .iter()
+            .filter(|s| row == Some(ruler::lane_row(s.lane)) && t >= s.start && t < s.end)
+            .map(|s| (s.start, s.end))
+            .collect();
+        let edited = self.edited_tracks();
+        if row == Some(ruler::MARKS_ROW) {
+            spans.extend(crate::marks_strip::spans_at(&edited, t, false));
+        }
+        let grid_row = ruler::ruler_h() - ruler::bars_h() - ruler::TEMPO_H;
+        if self.editing.get() && row.is_none() && y >= grid_row && y < grid_row + ruler::TEMPO_H {
+            spans.extend(crate::marks_strip::spans_at(&edited, t, true));
+        }
+        let Some(span) = spans
+            .into_iter()
+            .min_by(|a, b| (a.1 - a.0).total_cmp(&(b.1 - b.0)))
+        else {
+            return false;
+        };
+        let now = web_time::Instant::now();
+        let again = self.last_band.is_some_and(|(was, when)| {
+            (was.0 - span.0).abs() < 1e-9
+                && (was.1 - span.1).abs() < 1e-9
+                && now.saturating_duration_since(when) <= crate::gesture::DOUBLE
+        });
+        if !again {
+            self.last_band = Some((span, now));
+            return false;
+        }
+        self.last_band = None;
+        self.editor.cursor = crate::cursor::Edit {
+            at: span.0,
+            selection: Some(crate::cursor::Span::between(span.0, span.1)),
+        };
+        crate::cursor::publish(self.editor.cursor);
+        true
     }
 
     /// The selected track (the first, when several are) and every folder
@@ -1290,7 +1353,9 @@ impl ArrangementWidget {
     /// span or the time selection (`DRUMS_REVERT`) — the edit undone
     /// there, the hit markers kept to edit by hand, a no-quantize zone
     /// over it — off the frame, as [`Self::quantize_drums`] does.
-    fn revert_drums(&self) -> bool {
+    /// `hold`: a no-quantize zone over it (Alt+Q), so a quantize leaves it
+    /// as played; without (Backspace), Q quantizes it again — to compare.
+    fn revert_drums(&self, hold: bool) -> bool {
         let Some((from, to)) = self.drum_span() else {
             *self
                 .staged
@@ -1306,7 +1371,7 @@ impl ArrangementWidget {
             };
             let said = std::sync::Arc::clone(&self.staged);
             runtime.spawn_blocking(move || {
-                let args = format!(r#"{{"from":{from},"to":{to}}}"#);
+                let args = format!(r#"{{"from":{from},"to":{to},"hold":{hold}}}"#);
                 let out = crate::actions::list().run_json("DRUMS_REVERT", args.as_bytes());
                 let text = match &out {
                     Ok(json) if String::from_utf8_lossy(json).contains(r#""ok":false"#) => {
@@ -2473,7 +2538,17 @@ impl ArrangementWidget {
                 continue;
             }
             if action == crate::keys::Action::RevertDrums {
-                handled |= self.revert_drums();
+                handled |= self.revert_drums(true);
+                continue;
+            }
+            // Editing, Backspace with a stretch of time selected takes the
+            // drum edit there off — the kit as played, nothing held — so Q
+            // over the same stretch puts it back: the two to compare.
+            if action == crate::keys::Action::DeleteSelectedItems
+                && self.editing.get()
+                && self.editor.cursor.selection.is_some()
+            {
+                handled |= self.revert_drums(false);
                 continue;
             }
             if let crate::keys::Action::Frame { time, tracks } = &action {
@@ -3076,6 +3151,11 @@ impl ArrangementWidget {
         // A hit marker's flag, in Edit mode, before the mouse map: a hand
         // on a hit is the hit's, not the item's under it.
         if self.hit_gesture(event) {
+            self.dirty.set(true);
+            return;
+        }
+        // A double-click on a band on the ruler selects its time.
+        if self.band_gesture(event) {
             self.dirty.set(true);
             return;
         }
@@ -4029,7 +4109,11 @@ impl ArrangementWidget {
         // Edit mode, the cuts on a shut folder's row — quiet under the
         // kit's hit markers, which are what is being worked on there.
         let quiet = self.editing.get() && crate::hit_overlay::current().is_some();
-        if crate::options::OUTLINED.get() {
+        // The comping's picture — each item ringed in the take it came
+        // from, every cut drawn — is Record mode's, where takes are comped;
+        // editing, it is clutter over the hit markers.
+        let comping = self.recording.get();
+        if crate::options::OUTLINED.get() && comping {
             crate::arrangement::outlines_overlay(
                 &mut out,
                 &self.palette,
@@ -4038,7 +4122,7 @@ impl ArrangementWidget {
                 lanes_at,
                 quiet,
             );
-        } else if self.editing.get() && crate::folds::cuts_shown() {
+        } else if comping && self.editing.get() && crate::folds::cuts_shown() {
             crate::arrangement::cuts_overlay(
                 &mut out,
                 &self.palette,
@@ -4122,7 +4206,14 @@ impl ArrangementWidget {
         } else {
             Vec::new()
         };
-        ruler::set_grid_regions(grids.clone());
+        // A figure (a bar or less) is drawn on its own grid, its lines
+        // numbered; a part's grid (a section of sixteenths) is the grid
+        // drawn as ever, nothing special to point out.
+        let sixteenth = self.bars.secs_per_beat / 4.0;
+        let (figures, parts): (Vec<_>, Vec<_>) = grids
+            .iter()
+            .partition(|(a, b, _)| b - a <= sixteenth.mul_add(16.0, 1e-6));
+        ruler::set_grid_regions(figures.clone());
         ruler::grid(
             &mut out,
             &self.palette,
@@ -4148,7 +4239,7 @@ impl ArrangementWidget {
                 &self.font,
                 view,
                 (0.0, 0.0),
-                &grids,
+                (&figures, &parts),
             );
         } else {
             ruler::tempo(
