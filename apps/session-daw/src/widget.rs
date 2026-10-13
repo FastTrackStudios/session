@@ -1466,7 +1466,29 @@ impl ArrangementWidget {
     /// `hold`: a no-quantize zone over it (Alt+Q), so a quantize leaves it
     /// as played; without (Backspace), Q quantizes it again — to compare.
     fn revert_drums(&self, hold: bool) -> bool {
-        let Some((from, to)) = self.drum_span() else {
+        self.revert_span(self.drum_span(), hold)
+    }
+
+    /// The stretch the selected hit markers span, as they play now (a
+    /// hair either side, so the first and last are in it); `None` with
+    /// none selected.
+    fn selected_hits_span(&self) -> Option<(f64, f64)> {
+        /// Either side of the first and the last, seconds.
+        const AROUND: f64 = 0.004;
+        let hits = crate::hit_overlay::current()?;
+        let selected = &self.hit_selected;
+        hits.marks
+            .iter()
+            .filter(|m| selected.contains(&m.id))
+            .fold(None, |span: Option<(f64, f64)>, m| {
+                Some(span.map_or((m.time, m.time), |(a, b)| (a.min(m.time), b.max(m.time))))
+            })
+            .map(|(a, b)| (a - AROUND, b + AROUND))
+    }
+
+    /// [`Self::revert_drums`] over `span`.
+    fn revert_span(&self, span: Option<(f64, f64)>, hold: bool) -> bool {
+        let Some((from, to)) = span else {
             *self
                 .staged
                 .lock()
@@ -2649,6 +2671,17 @@ impl ArrangementWidget {
             }
             if action == crate::keys::Action::RevertDrums {
                 handled |= self.revert_drums(true);
+                continue;
+            }
+            // Editing, Backspace or Delete with hit markers selected puts
+            // them back as played — the stretch from the first to the last,
+            // nothing held: Q over them puts the quantize back, to compare.
+            if action == crate::keys::Action::DeleteSelectedItems
+                && self.editing.get()
+                && let Some(span) = self.selected_hits_span()
+            {
+                handled |= self.revert_span(Some(span), false);
+                self.hit_selected.clear();
                 continue;
             }
             // Editing, Backspace with a stretch of time selected takes the
