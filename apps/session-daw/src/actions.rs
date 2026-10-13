@@ -142,6 +142,8 @@ fn id_and_args(action: &Action) -> Option<(&'static str, String)> {
         Action::ToggleFx => (TOGGLE_FX.id, String::new()),
         Action::ToggleBrowser => (crate::browser::BROWSER.id, String::new()),
         Action::BarStep(n) => (crate::bar_step::STEP_ACTION.id, by(*n)),
+        Action::PoiStep(n) => (crate::poi::STEP.id, by(*n)),
+        Action::PoiToggle => (crate::poi::TOGGLE.id, String::new()),
         Action::Mode(name) => (MODE.id, format!(r#"{{"mode":"{name}"}}"#)),
         Action::FxFull => (FX_FULL.id, String::new()),
         Action::ToggleScene(slug) => (SCENE.id, format!(r#"{{"scene":"{slug}"}}"#)),
@@ -1058,6 +1060,7 @@ fn register_data(list: &ActionList) {
     crate::instrument_tracks::register(list);
     crate::timeline_actions::register(list);
     crate::bar_step::register(list);
+    crate::poi::register(list);
     crate::track_regions::register(list);
     #[cfg(feature = "signal")]
     crate::rig_actions::register(list);

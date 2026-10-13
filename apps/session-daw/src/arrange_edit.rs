@@ -1464,6 +1464,8 @@ impl Editor {
             | Action::ToggleBrowser
             | Action::FxFull
             | Action::BarStep(_)
+            | Action::PoiStep(_)
+            | Action::PoiToggle
             | Action::Mode(_)
             | Action::Save
             | Action::Undo

@@ -515,6 +515,8 @@ pub struct ArrangementWidget {
     /// The tracks' markers and regions as last laid out
     /// ([`crate::marks_strip::version`]).
     marks_seen: Cell<u64>,
+    /// The points of interest drawn ([`crate::poi::version`]).
+    poi_seen: Cell<u64>,
     /// The scroll and zoom last drawn: moved by the panel without an
     /// event here (a zoom a model asked for), the picture is due again.
     view_drawn: Cell<(f64, f64, f64, f64)>,
@@ -735,6 +737,7 @@ impl ArrangementWidget {
             detection_seen: Cell::new(0),
             detail_seen: Cell::new(0),
             marks_seen: Cell::new(0),
+            poi_seen: Cell::new(0),
             view_drawn: Cell::new((0.0, 0.0, 0.0, 0.0)),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
@@ -3183,6 +3186,7 @@ impl Widget for ArrangementWidget {
             || window_queued()
             || crate::hit_overlay::version() != self.detection_seen.get()
             || crate::marks_strip::version() != self.marks_seen.get()
+            || crate::poi::version() != self.poi_seen.get()
             || quantize_asked()
             // Edits made and not yet sent: the panel sends them at the
             // top of a frame, and this one is owed.
@@ -3315,6 +3319,7 @@ impl ArrangementWidget {
             let _ = self.apply_actions(crate::actions::take_window());
         }
         self.marks_seen.set(crate::marks_strip::version());
+        self.poi_seen.set(crate::poi::version());
         self.settle_stage();
         self.dirty.set(false);
         let generation = self.previews.generation();
@@ -4419,6 +4424,8 @@ impl ArrangementWidget {
             ),
             None => crate::marks_strip::refresh(),
         }
+        // The places marked to check, over the lane.
+        crate::poi::paint(&mut out, (&self.palette, &self.font), view, (0.0, 0.0));
         ruler::chord_lane(
             &mut out,
             &self.palette,

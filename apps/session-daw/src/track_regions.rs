@@ -512,7 +512,7 @@ fn new_id() -> String {
 
 /// Where `text` is, seconds: a bar as the ruler writes it (`78.3`, `78:3`,
 /// `79`), a time (`12.5s`) or a section.
-fn moment(
+pub(crate) fn moment(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
     text: &str,

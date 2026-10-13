@@ -114,6 +114,12 @@ pub enum Action {
     ToggleBrowser,
     /// The view a page of bars on, or back (`]`, `[`): `SESSION_STEP`.
     BarStep(i32),
+    /// To the next point of interest or the one before (`}`, `{`):
+    /// `POI_STEP`.
+    PoiStep(i32),
+    /// The point of interest stepped to ticked off, or open again (`|`):
+    /// `POI_TOGGLE`.
+    PoiToggle,
     /// The window into a mode (`Alt+1` … `Alt+9`, `Alt+0`, and the
     /// `Alt+m` tree): `SESSION_MODE`, by the mode's name.
     Mode(&'static str),
@@ -196,6 +202,9 @@ pub fn action_of(id: &str) -> Action {
         "FTS_TOGGLE_FX" => Action::ToggleFx,
         "FTS_BROWSER" => Action::ToggleBrowser,
         "FTS_STEP_NEXT" => Action::BarStep(1),
+        "FTS_POI_NEXT" => Action::PoiStep(1),
+        "FTS_POI_PREV" => Action::PoiStep(-1),
+        "FTS_POI_TOGGLE" => Action::PoiToggle,
         "_FTS_SESSION_MODE_ORGANIZE" => Action::Mode("Organize"),
         "_FTS_SESSION_MODE_WRITE" => Action::Mode("Write"),
         "_FTS_SESSION_MODE_PRODUCE" => Action::Mode("Produce"),
@@ -474,6 +483,9 @@ const BUILTIN: &str = r#"{
       "b": "FTS_BROWSER",
       "[": "FTS_STEP_PREV",
       "]": "FTS_STEP_NEXT",
+      "Shift+{": "FTS_POI_PREV",
+      "Shift+}": "FTS_POI_NEXT",
+      "Shift+|": "FTS_POI_TOGGLE",
       "q": "FTS_QUANTIZE_DRUMS",
       "Shift+q": "FTS_QUANTIZE_PANEL",
       "Alt+q": "FTS_REVERT_DRUMS",
@@ -506,6 +518,27 @@ mod tests {
 
     /// `Alt` and a number puts the window in a mode, and `Alt+m` then a
     /// letter does too.
+    #[test]
+    fn braces_step_through_the_points_of_interest_and_the_bar_ticks_one_off() {
+        let mut keys = Keys::load();
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        };
+        let control = keys.press(KeyCode::Character("]".into()), Modifiers::NONE);
+        keys.release(KeyCode::Character("]".into()), Modifiers::NONE);
+        assert_eq!(control, vec![Action::BarStep(1)], "]");
+        for (key, action) in [
+            ("{", Action::PoiStep(-1)),
+            ("}", Action::PoiStep(1)),
+            ("|", Action::PoiToggle),
+        ] {
+            let got = keys.press(KeyCode::Character(key.into()), shift);
+            keys.release(KeyCode::Character(key.into()), shift);
+            assert_eq!(got, vec![action], "Shift+{key}");
+        }
+    }
+
     #[test]
     fn alt_and_a_number_switches_the_mode() {
         let mut keys = Keys::load();
