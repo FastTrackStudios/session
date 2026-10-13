@@ -47,6 +47,36 @@ pub struct Step {
 
 static STEP: std::sync::Mutex<Option<Step>> = std::sync::Mutex::new(None);
 
+/// The page framed last: its bars' seconds, and what was put on screen
+/// (the bars and a beat either side).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Page {
+    pub from: f64,
+    pub to: f64,
+    pub shown: (f64, f64),
+}
+
+static PAGE: std::sync::Mutex<Option<Page>> = std::sync::Mutex::new(None);
+
+/// The page framed last, if one has been.
+#[must_use]
+pub fn page() -> Option<Page> {
+    PAGE.lock().ok().and_then(|p| *p)
+}
+
+/// A page asked for by playback and not yet framed: one ask at a time.
+static TURNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Playback at `at` has left the page on screen: the page holding it,
+/// as `]` would turn to it — the view goes in steps with the song rather
+/// than scrolling. Once until that page is framed.
+pub fn turn_to(at: f64) {
+    if TURNING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return;
+    }
+    run(serde_json::json!({ "at": at }));
+}
+
 /// The stepping as it is now.
 #[must_use]
 pub fn get() -> Step {
@@ -70,7 +100,7 @@ pub static STEP_ACTION: ActionMeta = crate::actions::meta(
     "SESSION_STEP",
     "step",
     "Step through the song",
-    "Fill the view with a page of bars of one instrument's tracks and step it on: `by` pages (+1 the next, −1 the one before, 0 or left out the page the edit cursor is in); `bars` a page (1, 2, 4, 8, 16 — sticky, 4 to begin with); `group` the visibility manager's group framed down the view (`drums`, `bass`, `guitars`, `vocals`; empty for every track — sticky, drums to begin with); `bar` to go straight to the page holding that bar. Pages are counted from bar 1. While stopped the edit cursor goes to the page's start, so Play plays it. Says the page.",
+    "Fill the view with a page of bars of one instrument's tracks and step it on: `by` pages (+1 the next, −1 the one before, 0 or left out the page the edit cursor is in); `bars` a page (1, 2, 4, 8, 16 — sticky, 4 to begin with); `group` the visibility manager's group framed down the view (`drums`, `bass`, `guitars`, `vocals`; empty for every track — sticky, drums to begin with); `bar` to go straight to the page holding that bar, `at` the page holding that moment (seconds). Pages are counted from bar 1. While stopped the edit cursor goes to the page's start, so Play plays it; while playing with follow on, the view turns to the next page as the song reaches it. Says the page.",
     "View",
     "[ / ]",
 );
@@ -82,6 +112,7 @@ struct StepArg {
     bars: Option<i32>,
     group: Option<String>,
     bar: Option<i32>,
+    at: Option<f64>,
 }
 
 /// The page shown.
@@ -209,6 +240,8 @@ pub fn register(list: &ActionList) {
         let by = a.by.unwrap_or(0);
         let first = if let Some(bar) = a.bar {
             page_of(bar, step.bars)
+        } else if let Some(at) = a.at {
+            page_of(crate::song_bars::musical(daw, &project, at).0, step.bars)
         } else if let (Some(first), true, false) = (step.first, by != 0, a.bars.is_some()) {
             add_bars(page_of(first, step.bars), by.saturating_mul(step.bars))
         } else {
@@ -243,9 +276,14 @@ pub fn register(list: &ActionList) {
         // A little of the bars either side: a hit on the page's first
         // downbeat, or the next page's, is seen whole.
         let margin = (to - from) / f64::from(step.bars) * EDGE_OF_A_BAR;
+        let shown = ((from - margin).max(0.0), to + margin);
+        if let Ok(mut page) = PAGE.lock() {
+            *page = Some(Page { from, to, shown });
+        }
+        TURNING.store(false, std::sync::atomic::Ordering::Release);
         let us = |s: f64| num_traits::ToPrimitive::to_i64(&(s * 1_000_000.0).round()).unwrap_or(0);
         crate::actions::queue(crate::keys::Action::Frame {
-            time: Some((us((from - margin).max(0.0)), us(to + margin))),
+            time: Some((us(shown.0), us(shown.1))),
             tracks,
         });
         Ok(StepOut {
@@ -269,6 +307,7 @@ fn run(args: serde_json::Value) {
             {
                 tracing::warn!(step.error = %e, "the step was refused");
             }
+            TURNING.store(false, std::sync::atomic::Ordering::Release);
         });
     }
     #[cfg(not(feature = "native"))]

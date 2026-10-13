@@ -975,6 +975,16 @@ impl ArrangementPanel {
         let (zoom_x, zoom_y) = *self.zoom.peek();
         let pps = PPS * zoom_x;
         let (width, _) = self.frame(r);
+        // On a page of bars (`[` / `]`) at its zoom: the view goes in steps
+        // with the song, the next page as it reaches it, not a scroll.
+        if let Some(page) = crate::bar_step::page()
+            && on_the_page(page, width, pps)
+        {
+            if play_at >= page.to || play_at < page.from {
+                crate::bar_step::turn_to(play_at);
+            }
+            return;
+        }
         // Read into a local first: a `peek()` in the `if let` below would
         // hold its borrow for the whole block, and `set` inside it then
         // panics with the signal already borrowed.
@@ -1011,6 +1021,18 @@ impl ArrangementPanel {
         crate::studio::Edits(Rc::clone(&self.edits))
     }
 }
+
+/// Whether the view is still showing `page` at its own zoom — not zoomed
+/// or framed elsewhere since — so following the song turns its pages.
+fn on_the_page(page: crate::bar_step::Page, width: f64, pps: f64) -> bool {
+    let (a, b) = page.shown;
+    let fits = width / pps.max(f64::EPSILON);
+    (fits - (b - a)).abs() <= (b - a) * PAGE_ZOOM_SLACK
+}
+
+/// How far the view's span may be from a page's for it to be that page's
+/// zoom still, of the span.
+const PAGE_ZOOM_SLACK: f64 = 0.02;
 
 /// What is drawn over the widget: the main toolbar, the which-key popup,
 /// and the two scrollbars. Ordinary DOM, the same under either host.
