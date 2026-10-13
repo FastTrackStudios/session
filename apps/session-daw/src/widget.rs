@@ -4229,7 +4229,7 @@ impl ArrangementWidget {
                 lanes_at,
                 quiet,
             );
-        } else if comping && self.editing.get() && crate::folds::cuts_shown() {
+        } else if self.editing.get() && crate::folds::cuts_shown() {
             crate::arrangement::cuts_overlay(
                 &mut out,
                 &self.palette,
@@ -4239,6 +4239,18 @@ impl ArrangementWidget {
                 &self.rows,
                 &self.project,
                 quiet,
+            );
+        }
+        // Editing, where a track under a shut folder plays nothing: a gap
+        // the folded row would hide.
+        if self.editing.get() {
+            crate::arrangement::gaps_overlay(
+                &mut out,
+                &self.scene,
+                view,
+                lanes_at,
+                &self.rows,
+                &self.project,
             );
         }
         // In Edit mode, the kit's hit markers, each on its own piece.

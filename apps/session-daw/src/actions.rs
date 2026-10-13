@@ -3558,7 +3558,11 @@ impl Overrides {
 fn to_lines_either_side(
     placed: &mut [(f64, Option<f64>)],
     by: &[Placed],
-    (step_of, on_a_beat): (impl Fn(usize) -> Option<f64>, impl Fn(f64) -> bool),
+    (step_of, on_a_beat, with_next): (
+        impl Fn(usize) -> Option<f64>,
+        impl Fn(f64) -> bool,
+        impl Fn(usize, usize) -> bool,
+    ),
 ) {
     let rank = |p: Option<&Placed>| match p {
         Some(Placed::Written) => 0_u8,
@@ -3647,9 +3651,16 @@ fn to_lines_either_side(
                 }
                 moves.push((k, want));
             }
+            // Short of the next moment's line — or on it, played with it: a
+            // kick 22 ms before the snare on 2 is the snare's flam, not a
+            // stroke to push the double back for (Unbreakable 67.1, 71.1).
             let next = placed.get(end).and_then(|(_, to)| *to);
-            next.is_none_or(|next| moves.iter().all(|(_, t)| *t < next - 0.002))
-                .then_some(moves)
+            next.is_none_or(|next| {
+                moves.iter().all(|(k, t)| {
+                    *t < next - 0.002 || ((t - next).abs() < 0.002 && with_next(*k, end))
+                })
+            })
+            .then_some(moves)
         };
         // The surest keeps it if the rest fit; else the last (the rest
         // back — a double played into a snare on the next line); else the
@@ -4161,7 +4172,13 @@ fn detect(
         Some(240.0 / daw.get_tempo_at(project.clone(), m.time).max(1.0) / f64::from(grid.max(1)))
     };
     let on_a_beat = |t: f64| (grid_line(daw, project, t, 4) - t).abs() <= ON_ITS_LINE;
-    to_lines_either_side(&mut placed, &by_kind, (step_of, on_a_beat));
+    // Played with the moment after: another drum, a gesture before it.
+    let with_next = |k: usize, next: usize| {
+        moments.get(k).zip(moments.get(next)).is_some_and(|(m, n)| {
+            n.time - m.time < GESTURE && !m.pieces.iter().any(|p| n.pieces.contains(p))
+        })
+    };
+    to_lines_either_side(&mut placed, &by_kind, (step_of, on_a_beat, with_next));
     one_stroke_a_line(&mut placed, &by_kind);
     // Two strokes of one drum alone, a double kick's, sent to lines of
     // their own are two strokes: not one gesture moved by one shift, which
@@ -4800,6 +4817,23 @@ mod gesture_tests {
     #[test]
     fn a_double_kick_into_the_snare_takes_the_lines_before_it() {
         use super::to_lines_either_side;
+        // A kick near the "a", another just before the snare on 2 and
+        // played with it: the first keeps the "a", the second joins the
+        // snare's line (Unbreakable 71.1) — not the double pushed back.
+        let mut flam = vec![(1.80, Some(1.75)), (1.96, Some(1.75)), (2.05, Some(2.0))];
+        to_lines_either_side(
+            &mut flam,
+            &[Placed::Written, Placed::Near, Placed::Written],
+            (
+                |_| Some(0.25),
+                |t: f64| (t - t.round()).abs() < 1e-9,
+                |k: usize, next: usize| k == 1 && next == 2,
+            ),
+        );
+        assert_eq!(
+            flam.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
+            vec![Some(1.75), Some(2.0), Some(2.0)]
+        );
         // A tom 35 ms before the one, a kick on it, the lines before taken:
         // the kick keeps the one, never pushed on (Unbreakable 77.1).
         let mut end = vec![
@@ -4811,7 +4845,11 @@ mod gesture_tests {
         to_lines_either_side(
             &mut end,
             &[Placed::Line; 4],
-            (|_| Some(0.25), |t: f64| (t - t.round()).abs() < 1e-9),
+            (
+                |_| Some(0.25),
+                |t: f64| (t - t.round()).abs() < 1e-9,
+                |_, _| false,
+            ),
         );
         assert_eq!(end[3].1, Some(4.0), "the kick on the one keeps it: {end:?}");
         // Both kicks nearest the "a", the snare on 2 next: the second keeps
@@ -4821,7 +4859,11 @@ mod gesture_tests {
         to_lines_either_side(
             &mut both,
             &[Placed::Line, Placed::Line, Placed::Written],
-            (|_| Some(0.25), |t: f64| (t - t.round()).abs() < 1e-9),
+            (
+                |_| Some(0.25),
+                |t: f64| (t - t.round()).abs() < 1e-9,
+                |_, _| false,
+            ),
         );
         assert_eq!(
             both.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
@@ -4833,7 +4875,11 @@ mod gesture_tests {
         to_lines_either_side(
             &mut placed,
             &by,
-            (|_| Some(0.25), |t: f64| (t - t.round()).abs() < 1e-9),
+            (
+                |_| Some(0.25),
+                |t: f64| (t - t.round()).abs() < 1e-9,
+                |_, _| false,
+            ),
         );
         assert_eq!(
             placed.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
@@ -4844,7 +4890,11 @@ mod gesture_tests {
         to_lines_either_side(
             &mut far,
             &by,
-            (|_| Some(0.25), |t: f64| (t - t.round()).abs() < 1e-9),
+            (
+                |_| Some(0.25),
+                |t: f64| (t - t.round()).abs() < 1e-9,
+                |_, _| false,
+            ),
         );
         assert_eq!(far[1].1, Some(2.0), "left to be moved between");
     }
@@ -5252,11 +5302,15 @@ fn quantize_span(
         if zones.is_empty() {
             in_a_fill(daw, project, &found.fills, h)
         } else {
-            crate::hits::zone_holds(
-                &zones,
-                h,
-                60.0 / daw.get_tempo_at(project.clone(), h).max(1.0),
-            )
+            // On the same edge as every other zone here: a hit half a
+            // sixteenth before a fill's end is the next bar's downbeat. A
+            // narrower edge held the kick 43 ms before 113.1 as the fill's
+            // while the fill's grid left it to the bar — nobody moved it.
+            zones.iter().any(|z| {
+                z.origin != crate::hits::ZoneOrigin::Rejected
+                    && h >= z.start - edge(daw, project, z.start)
+                    && h < z.end - edge(daw, project, z.end)
+            })
         }
     };
     // What stays as played: the fills, unless they are asked for (a fill

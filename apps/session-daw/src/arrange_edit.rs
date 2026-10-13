@@ -2401,15 +2401,17 @@ fn seams(
             }
             // Still short — two hits a gap apart, each side slipped as far
             // as it can without playing an attack twice — the slice before
-            // drawn out over what is left, its decay slowed, never below
-            // [`STRETCH_LEAST_RATE`]: slower, the overheads' high end went
-            // with it (the engine stretches by rate), heard as a dropout.
-            // As far as that reaches, where it cannot reach all the way.
+            // drawn out over what is left, its decay slowed: never below
+            // [`STRETCH_LEAST_RATE`] near its hit (slower, the overheads'
+            // high end went with it — the engine stretches by rate), and
+            // where that cannot reach, slower only in the space between
+            // hits, its far tail ([`draw_out_between`]).
             if let Some(prev) = before.last_mut() {
                 let meets = piece.position.as_seconds() + fade;
                 let ends = prev.position.as_seconds() + prev.length.as_seconds();
                 let drawn = if meets - ends > 1e-6 {
-                    draw_out_to(prev, meets.min(farthest_drawn(prev)), STRETCH_LEAST_RATE)
+                    draw_out_to(prev, meets, STRETCH_LEAST_RATE)
+                        .or_else(|| draw_out_between(prev, meets))
                 } else {
                     None
                 };
@@ -2536,12 +2538,44 @@ pub const STRETCH_KEEP: f64 = 0.030;
 /// a quarter of its speed took the overheads' high end with it.
 pub const STRETCH_LEAST_RATE: f64 = 0.85;
 
-/// Where `item` ends drawn out as far as [`STRETCH_LEAST_RATE`] allows:
-/// its first [`STRETCH_KEEP`] as it was, the rest at that rate.
-fn farthest_drawn(item: &daw_proto::Item) -> f64 {
+/// How much of a slice's decay after its attack ([`STRETCH_KEEP`]) is
+/// still the hit, seconds of its take: drawn out no slower than
+/// [`STRETCH_LEAST_RATE`].
+pub const STRETCH_BODY: f64 = 0.030;
+
+/// The slowest the space between hits — a slice's far tail, past its
+/// hit — is drawn out, as a rate: past this there is too little left to
+/// draw, and the gap stays.
+pub const TAIL_LEAST_RATE: f64 = 0.1;
+
+/// `item` drawn out to end at `to` (or as near as it can), where
+/// [`STRETCH_LEAST_RATE`] cannot reach all the way: its attack as it was,
+/// the hit's body after it ([`STRETCH_BODY`], at most half the decay) at
+/// that rate, and only the far tail — the space before the next hit —
+/// slowed past it, as slow as it takes down to [`TAIL_LEAST_RATE`]. The
+/// markers that say so; `None`, and the item left, when it has no decay
+/// to draw.
+fn draw_out_between(item: &mut daw_proto::Item, to: f64) -> Option<Vec<(f64, f64)>> {
+    use daw_proto::primitives::Duration;
     let length = item.length.as_seconds();
     let keep = STRETCH_KEEP.min(length / 2.0);
-    item.position.as_seconds() + keep + (length - keep) / STRETCH_LEAST_RATE
+    let decay = length - keep;
+    let body = STRETCH_BODY.min(decay / 2.0);
+    let tail = decay - body;
+    let body_played = body / STRETCH_LEAST_RATE;
+    let farthest = keep + body_played + tail / TAIL_LEAST_RATE;
+    let longer = (to - item.position.as_seconds()).min(farthest);
+    if tail <= 0.0 || longer <= keep + body_played + tail {
+        return None;
+    }
+    let offset = item.start_offset.as_seconds();
+    item.length = Duration::from_seconds(longer);
+    Some(vec![
+        (0.0, offset),
+        (keep, offset + keep),
+        (keep + body_played, offset + keep + body),
+        (longer, offset + length),
+    ])
 }
 
 /// `item` drawn out to end at `to`: its first [`STRETCH_KEEP`] as it was,
@@ -4398,6 +4432,38 @@ mod tests {
     }
 
     /// A slice too short to slow that far is not stretched.
+    /// Too far for 0.85 all the way: the attack as played, the hit's body
+    /// at 0.85, only the far tail slower — and it reaches.
+    #[test]
+    fn only_the_space_between_hits_is_drawn_out_slower() {
+        let mut item = daw_proto::Item {
+            position: PositionInSeconds::from_seconds(1.0),
+            length: Duration::from_seconds(0.08),
+            start_offset: Duration::from_seconds(5.0),
+            ..daw_proto::Item::default()
+        };
+        let markers = super::draw_out_between(&mut item, 1.2).expect("drawn out");
+        assert!((item.length.as_seconds() - 0.2).abs() < 1e-9, "it reaches");
+        let rates: Vec<f64> = markers
+            .windows(2)
+            .map(|p| (p[1].1 - p[0].1) / (p[1].0 - p[0].0))
+            .collect();
+        assert!(
+            (rates[0] - 1.0).abs() < 1e-9,
+            "the attack as played: {rates:?}"
+        );
+        assert!(
+            (rates[1] - super::STRETCH_LEAST_RATE).abs() < 1e-9,
+            "the hit's body no slower than the floor: {rates:?}"
+        );
+        assert!(
+            rates[2] < super::STRETCH_LEAST_RATE && rates[2] >= super::TAIL_LEAST_RATE,
+            "only the tail slower: {rates:?}"
+        );
+        // And the take ends where it did, every marker in order.
+        assert!((markers.last().map_or(0.0, |m| m.1) - 5.08).abs() < 1e-9);
+    }
+
     #[test]
     fn a_short_slice_is_not_drawn_out_past_its_rate() {
         let mut item = daw_proto::Item {
@@ -4423,7 +4489,7 @@ mod tests {
     /// stroke after), and what is left — 24 ms — is too much to draw out
     /// gently. It is drawn out slower rather than left a 26 ms dropout.
     #[test]
-    fn strokes_pulled_apart_are_drawn_out_no_slower_than_the_floor() {
+    fn strokes_pulled_apart_leave_no_gap() {
         let slice = |guid: &str, at: f64, length: f64, offset: f64| daw_proto::Item {
             guid: guid.to_owned(),
             position: PositionInSeconds::from_seconds(at),
@@ -4444,15 +4510,15 @@ mod tests {
             (&cut, 0.005, &std::collections::HashMap::new()),
             &mut effects,
         );
-        // Drawn out, no slower than the floor: past it, the overheads'
-        // high end goes.
+        // Met across the crossfade: no gap, only the far tail slowed past
+        // the floor.
         let ends = before.position.as_seconds() + before.length.as_seconds();
-        assert!(ends > 94.674_771 + 0.066_958, "drawn out: ends {ends:.4}");
         assert!(
-            slowest_sent(&effects) >= super::STRETCH_LEAST_RATE - 1e-9,
-            "no slower than the floor: {}",
-            slowest_sent(&effects)
+            ends >= after.position.as_seconds() + 0.005 - 1e-9,
+            "the slice before meets the one after: ends {ends:.4}, the next starts {:.4}",
+            after.position.as_seconds()
         );
+        assert!(slowest_sent(&effects) >= super::TAIL_LEAST_RATE - 1e-9);
     }
 
     /// Two kicks played 40 ms apart, sent a sixteenth (94 ms) apart: the
@@ -4490,14 +4556,14 @@ mod tests {
             from >= 10.025,
             "the second kick's slice reaches back to {from:.4}, into the first kick at 10.000"
         );
-        // The first drawn out toward the second, never below the floor.
+        // The first drawn out to meet the second: no gap.
         let ends = first.position.as_seconds() + first.length.as_seconds();
-        assert!(ends > 19.995 + 0.040, "the first drawn out: ends {ends:.4}");
         assert!(
-            slowest_sent(&effects) >= super::STRETCH_LEAST_RATE - 1e-9,
-            "no slower than the floor: {}",
-            slowest_sent(&effects)
+            ends >= second.position.as_seconds() + 0.005 - 1e-9,
+            "the first meets the second: ends {ends:.4}, the second starts {:.4}",
+            second.position.as_seconds()
         );
+        assert!(slowest_sent(&effects) >= super::TAIL_LEAST_RATE - 1e-9);
     }
 
     /// The slowest rate any stretch in `effects` plays at (1 with none).

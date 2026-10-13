@@ -2693,6 +2693,86 @@ pub fn cuts_overlay(
     }
 }
 
+/// Every gap under a shut folder's row (Edit mode): where a track under
+/// it plays nothing between one of its slices and the next, shaded.
+///
+/// The row folds every track under it into one: a mic dropping out for
+/// 20 ms between two slices hides under the others still playing, and is
+/// heard — the kick's close mic cutting out where a quantize pulled two
+/// strokes apart. A slice's crossfade into the next is no gap, and not
+/// drawn; a gap is shaded at least a couple of pixels wide, so it shows at
+/// any zoom.
+pub fn gaps_overlay(
+    painter: &mut impl PaintScene,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    rows: &[(daw_proto::Track, u32)],
+    project: &daw_ui::studio::project::Project,
+) {
+    /// Ends this close are one edge.
+    const TOUCH: f64 = 1e-3;
+    /// The least a gap is drawn, pixels.
+    const LEAST: f64 = 2.0;
+    let ink = Color::from_rgba8(0xef, 0x44, 0x44, 0x8c);
+    let (ox, oy) = origin;
+    let pps = view.pps.max(f64::EPSILON);
+    let (from, to) = ((view.panel_w - ox) / pps, (view.width - ox) / pps);
+    for index in scene.visible_rows(view) {
+        let Some((track, _)) = rows.get(index) else {
+            continue;
+        };
+        let Some(fold) = project.folds.get(&track.guid) else {
+            continue;
+        };
+        let Some((top, h)) = scene.row_box(index) else {
+            continue;
+        };
+        let y0 = top.mul_add(view.zoom_y, oy).max(crate::ruler::ruler_h());
+        let y1 = (top + h).mul_add(view.zoom_y, oy).min(view.height);
+        if y1 <= y0 {
+            continue;
+        }
+        // What the row is folded from, where it is on screen.
+        let children: std::collections::HashSet<&str> = fold
+            .spans
+            .iter()
+            .filter(|s| s.end >= from && s.start <= to)
+            .flat_map(|s| s.from.iter().map(String::as_str))
+            .collect();
+        if children.is_empty() {
+            continue;
+        }
+        for items in project.items.values() {
+            let mut mine: Vec<(f64, f64)> = items
+                .iter()
+                .filter(|i| children.contains(i.guid.as_str()))
+                .map(|i| {
+                    let at = i.position.as_seconds();
+                    (at, at + i.length.as_seconds())
+                })
+                .collect();
+            mine.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut reach = f64::NEG_INFINITY;
+            for (start, end) in mine {
+                if start > reach + TOUCH && reach.is_finite() {
+                    let (x0, x1) = (reach.mul_add(pps, ox), start.mul_add(pps, ox));
+                    let mid = f64::midpoint(x0, x1);
+                    let half = ((x1 - x0) / 2.0).max(LEAST / 2.0);
+                    painter.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        ink,
+                        None,
+                        &Rect::new(mid - half, y0, mid + half, y1),
+                    );
+                }
+                reach = reach.max(end);
+            }
+        }
+    }
+}
+
 pub fn selection_overlay(
     painter: &mut impl PaintScene,
     palette: &Palette,
