@@ -372,12 +372,21 @@ pub fn fresh_id() -> String {
 
 /// The grid a kit region sets at `time`, if one does: the innermost (the
 /// shortest) that holds it.
+///
+/// A region holds the hits played a little either side of its edges too —
+/// up to half its grid's step, a sixteenth (`sixteenth` seconds) at most:
+/// a figure's first stroke pushed early, or its last landing on the bar
+/// line the region ends on, is the figure's.
 #[must_use]
-pub fn grid_at(regions: &[TrackRegion], time: f64) -> Option<u32> {
+pub fn grid_at(regions: &[TrackRegion], time: f64, sixteenth: f64) -> Option<u32> {
+    let reach = |r: &TrackRegion| {
+        let step = sixteenth * 16.0 / f64::from(r.division.unwrap_or(16).max(1));
+        (step / 2.0).min(sixteenth)
+    };
     regions
         .iter()
         .filter(|r| r.kind == RegionKind::Grid && r.counts())
-        .filter(|r| time >= r.start && time < r.end)
+        .filter(|r| time >= r.start - reach(r) && time < r.end + reach(r))
         .min_by(|a, b| (a.end - a.start).total_cmp(&(b.end - b.start)))
         .and_then(|r| r.division)
 }
@@ -995,10 +1004,22 @@ mod tests {
             region(14.0, 15.0, 3, Origin::Manual),
             region(30.0, 31.0, 24, Origin::Rejected),
         ];
-        assert_eq!(grid_at(&regions, 12.0), Some(12));
-        assert_eq!(grid_at(&regions, 14.5), Some(3), "the inner one");
-        assert_eq!(grid_at(&regions, 20.0), None, "its end is not in it");
-        assert_eq!(grid_at(&regions, 30.5), None, "turned down");
+        // A sixteenth of 0.1 s: an eighth triplet's step is 0.133 s.
+        let sixteenth = 0.1;
+        assert_eq!(grid_at(&regions, 12.0, sixteenth), Some(12));
+        assert_eq!(grid_at(&regions, 14.5, sixteenth), Some(3), "the inner one");
+        assert_eq!(
+            grid_at(&regions, 9.95, sixteenth),
+            Some(12),
+            "a stroke pushed early is the region's"
+        );
+        assert_eq!(
+            grid_at(&regions, 20.05, sixteenth),
+            Some(12),
+            "one landing on its end is too"
+        );
+        assert_eq!(grid_at(&regions, 20.2, sixteenth), None, "further is not");
+        assert_eq!(grid_at(&regions, 30.5, sixteenth), None, "turned down");
     }
 
     /// Quarter-note triplets written in a bar of straight time are proposed

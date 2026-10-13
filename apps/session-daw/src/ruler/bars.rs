@@ -311,11 +311,48 @@ pub fn ruler(
                 .unwrap_or(0)
                 .min(MAX_TICKS),
         ) {
-            let x = x_of((first + n) * step);
-            if shown(x) {
-                tick(painter, x, height * BEAT_TICK, palette.accent, 1.0);
+            let t = (first + n) * step;
+            let x = x_of(t);
+            if !shown(x) {
+                continue;
+            }
+            tick(painter, x, height * BEAT_TICK, palette.accent, 1.0);
+            // Numbered as the ruler numbers a position — `78.3`,
+            // `78.3.667` — where the lines leave room, a bar's own line
+            // already numbered above.
+            let at = beats.partition_point(|b| b.at <= t + 1e-6);
+            let Some(beat) = at.checked_sub(1).and_then(|i| beats.get(i)) else {
+                continue;
+            };
+            let fraction = (t - beat.at) / beat.secs_per_beat.max(f64::EPSILON);
+            let on_the_bar = beat.beat == 1 && fraction < 1e-3;
+            if step * view.pps >= REGION_NUMBER_ROOM && !on_the_bar {
+                crate::tcp::glyphs(
+                    painter,
+                    font,
+                    palette.accent,
+                    &position(from_song(beat.measure, bar_one), beat.beat, fraction),
+                    ox + x + 2.0,
+                    oy + number_y,
+                    number_size - 1.5,
+                );
             }
         }
+    }
+}
+
+/// How far apart a Grid region's lines must be for each to be numbered,
+/// px.
+const REGION_NUMBER_ROOM: f64 = 56.0;
+
+/// A position as the ruler writes one: `78.3`, a fraction of a beat on in
+/// thousandths, `78.3.667`.
+fn position(bar: i64, beat: u32, fraction: f64) -> String {
+    let sub = (fraction * 1000.0).round();
+    if (0.5..999.5).contains(&sub) {
+        format!("{bar}.{beat}.{sub:03.0}")
+    } else {
+        format!("{bar}.{beat}")
     }
 }
 

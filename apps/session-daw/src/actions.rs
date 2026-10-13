@@ -4833,7 +4833,7 @@ fn quantize_span(
     // A Grid region of the kit's own says how its stretch goes: its hits
     // on its grid, a fill or not (a no-quantize one still wins).
     let regions = crate::track_regions::kit_regions(daw, project);
-    let gridded = |h: f64| crate::track_regions::grid_at(&regions, h);
+    let gridded = |h: f64| crate::track_regions::grid_at(&regions, h, sixteenth(daw, project, h));
     let held = |h: f64| {
         excepted(h)
             || match settings.fills {
