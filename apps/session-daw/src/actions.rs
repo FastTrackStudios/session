@@ -5190,6 +5190,7 @@ fn register_place(list: &ActionList) {
             place.judge_ms = judge_ms,
             place.slip_ms = slip_ms,
             place.wait_ms = wait_ms,
+            crate::hits::mark_placed(daw, &project, &a.id);
             place.total_ms = began.elapsed().as_millis(),
             "a hit placed"
         );

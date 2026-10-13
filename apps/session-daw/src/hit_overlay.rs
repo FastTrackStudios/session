@@ -24,6 +24,18 @@ pub enum Who {
     Approved,
 }
 
+/// What has been done to a hit's timing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Edited {
+    /// It plays where it was played.
+    #[default]
+    AsPlayed,
+    /// An edit moved it (a quantize).
+    Quantized,
+    /// A hand placed it (its flag dragged).
+    ByHand,
+}
+
 /// One hit, where it plays now.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mark {
@@ -38,6 +50,8 @@ pub struct Mark {
     pub ghost: bool,
     /// Bleed, or found with too little confidence: one to look at.
     pub doubt: bool,
+    /// Moved by an edit, by a hand, or neither.
+    pub edited: Edited,
 }
 
 /// A fill or exception zone, shaded over the kit.
@@ -171,6 +185,7 @@ mod tests {
             who: Who::Auto,
             ghost: false,
             doubt: false,
+            edited: Edited::AsPlayed,
         }
     }
 

@@ -2297,6 +2297,7 @@ pub fn hits_overlay(
     }
     let marks = overlay.between(from, to);
     let thin = vello::kurbo::Stroke::new(1.0);
+    let heavy = vello::kurbo::Stroke::new(1.75);
     // A row showing its lanes: the hits are where they play, on the lane
     // that plays — its strip, not every take's.
     let marks_span = |row: usize| {
@@ -2331,18 +2332,34 @@ pub fn hits_overlay(
             gap(k.checked_sub(1)).min(gap(k.checked_add(1))) >= CLEAR
         };
         for (k, m) in mine.iter().enumerate() {
+            use crate::hit_overlay::Edited;
             let colour = if m.doubt { palette.meter_warn } else { drum };
+            // What has been done to it, at a glance: as played, the drum's
+            // colour a little dimmed; quantized, brighter; placed by hand,
+            // brighter still and heavier — its flag white or amber.
+            let white = Color::from_rgba8(0xff, 0xff, 0xff, 0xff);
+            let (colour, line, flag_colour) = match m.edited {
+                Edited::AsPlayed => (colour.multiply_alpha(0.7), &thin, None),
+                Edited::Quantized => (crate::tcp::mix(colour, white, 0.3), &thin, Some(white)),
+                Edited::ByHand => (
+                    crate::tcp::mix(colour, white, 0.55),
+                    &heavy,
+                    Some(Color::from_rgba8(0xfb, 0xbf, 0x24, 0xff)),
+                ),
+            };
             let clear = spaced(k);
             let colour = colour.multiply_alpha(if clear { 0.85 } else { 0.45 });
             let x = x_of(m.time).round() + 0.5;
             let foot = if m.ghost { f64::midpoint(y0, y1) } else { y1 };
             painter.stroke(
-                &thin,
+                line,
                 Affine::IDENTITY,
                 colour,
                 None,
                 &vello::kurbo::Line::new((x, y0), (x, foot)),
             );
+            let colour =
+                flag_colour.map_or(colour, |c| c.multiply_alpha(if clear { 0.95 } else { 0.5 }));
             if clear && y1 - y0 > 10.0 {
                 let mut flag = vello::kurbo::BezPath::new();
                 flag.move_to((x - 3.5, y0));

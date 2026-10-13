@@ -20,7 +20,7 @@
 //! The work runs on the caller's thread — an MCP call's, never the
 //! window's — and spreads across cores inside `drum_hits`.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use architect::action::{ActionList, ActionMeta, Effect};
 use daw::service::{Items as _, Projects, Takes as _, Tracks};
@@ -199,7 +199,7 @@ pub struct KitPiece {
 
 impl KitPiece {
     /// Every track whose recordings carry the piece's hits.
-    fn tracks(&self) -> impl Iterator<Item = &String> {
+    pub fn tracks(&self) -> impl Iterator<Item = &String> {
         self.mics.iter().chain(std::iter::once(&self.trigger))
     }
 }
@@ -1459,8 +1459,12 @@ pub fn overlay(
     daw: &daw::standalone::Standalone,
     project: &ProjectContext,
 ) -> crate::hit_overlay::Overlay {
-    use crate::hit_overlay::{Mark, Shade, Who};
+    use crate::hit_overlay::{Edited, Mark, Shade, Who};
     let (kit, _) = kit(daw, project);
+    // Where each hit was played, and which a hand placed: what has been
+    // done to it, by how far it plays from there.
+    let recorded = recorded_times(daw, project, &kit);
+    let by_hand = placed(daw, project);
     let mut pieces: Vec<String> = kit.iter().map(|p| p.name.clone()).collect();
     let mut tracks: Vec<Vec<String>> = kit
         .iter()
@@ -1489,6 +1493,16 @@ pub fn overlay(
                 },
                 ghost: p.mark.ghost,
                 doubt: auto && (p.mark.bleed || p.mark.confidence < UNSURE),
+                edited: match recorded.get(&p.id) {
+                    Some(was) if (p.time - was).abs() > MOVED => {
+                        if by_hand.contains(&p.id) {
+                            Edited::ByHand
+                        } else {
+                            Edited::Quantized
+                        }
+                    }
+                    _ => Edited::AsPlayed,
+                },
             }
         })
         .collect();
@@ -1600,6 +1614,81 @@ pub fn playback(daw: &daw::standalone::Standalone, project: &ProjectContext) -> 
     }
     out.sort_by(|a, b| a.time.total_cmp(&b.time));
     out
+}
+
+/// How far from where it was played a hit must play to have been moved,
+/// seconds.
+const MOVED: f64 = 0.001;
+
+/// Where the kit's hits are kept as placed by hand: on its folder.
+const PLACED_KEY: &str = "fts.hits_placed";
+
+/// Each hit's time as recorded, by id: the first mic of each piece.
+fn recorded_times(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    kit: &[KitPiece],
+) -> HashMap<String, f64> {
+    let mut out = HashMap::new();
+    for piece in kit {
+        let Some(mic) = piece.mics.first() else {
+            continue;
+        };
+        for r in recordings(daw, project, mic) {
+            for m in daw.get_take_markers(
+                project.clone(),
+                ItemRef::Guid(r.item.clone()),
+                TakeRef::Active,
+            ) {
+                if m.hit.as_ref().is_some_and(|h| h.piece == piece.name) {
+                    out.insert(m.id, r.origin + m.source_position_seconds);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The hits a hand has placed (`HITS_PLACE`: a flag dragged).
+#[must_use]
+pub fn placed(daw: &daw::standalone::Standalone, project: &ProjectContext) -> HashSet<String> {
+    let Some(folder) = crate::track_regions::kit_folder(daw, project) else {
+        return HashSet::new();
+    };
+    Tracks::ext_state(daw, project.clone(), TrackRef::Guid(folder))
+        .into_iter()
+        .find(|e| e.key == PLACED_KEY)
+        .map(|e| {
+            e.value
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Remember that a hand placed hit `id`: kept on the kit's folder, so it
+/// is saved with the song and undone with the edit.
+pub fn mark_placed(daw: &daw::standalone::Standalone, project: &ProjectContext, id: &str) {
+    let Some(folder) = crate::track_regions::kit_folder(daw, project) else {
+        return;
+    };
+    let mut ids: Vec<String> = placed(daw, project).into_iter().collect();
+    if ids.iter().any(|i| i == id) {
+        return;
+    }
+    ids.push(id.to_owned());
+    ids.sort();
+    if let Err(e) = Tracks::set_ext_state(
+        daw,
+        project.clone(),
+        TrackRef::Guid(folder),
+        PLACED_KEY,
+        &ids.join(","),
+    ) {
+        tracing::warn!(hits.error = %e, "a placed hit could not be remembered");
+    }
 }
 
 /// The kit as the slip edit reads it, from the hit markers.

@@ -917,7 +917,7 @@ pub fn row_tint(palette: &Palette, track: &Track) -> Color {
 }
 
 /// Blend `b` into `a` by `t`.
-fn mix(a: Color, b: Color, t: f32) -> Color {
+pub(crate) fn mix(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
     let [ar, ag, ab, aa] = a.components;
     let [br, bg, bb, _] = b.components;

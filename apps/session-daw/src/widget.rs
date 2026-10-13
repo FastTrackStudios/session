@@ -4642,6 +4642,7 @@ mod tests {
                 who: crate::hit_overlay::Who::Auto,
                 ghost: false,
                 doubt: false,
+                edited: crate::hit_overlay::Edited::AsPlayed,
             }],
             zones: Vec::new(),
         });
