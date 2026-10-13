@@ -123,8 +123,17 @@ fn read_track(
     t.channels = ext.map_or(2, |e| e.num_channels);
     t.comping = ext.map_or_else(CompingState::default, |e| comping_state(&e.comping));
     t.ext_sections = BTreeMap::new();
+    t.ext = BTreeMap::new();
     for ((track, section, key), value) in &p.track_ext_state {
-        if *track == t.guid && !section.is_empty() {
+        if *track != t.guid {
+            continue;
+        }
+        // A key of no section is the track's own (`P_EXT`): what the
+        // window keeps on a track — its markers and regions, a leveled
+        // vocal's lanes — and what an undo must take back with the rest.
+        if section.is_empty() {
+            t.ext.insert(key.clone(), value.clone());
+        } else {
             t.ext_sections
                 .entry(section.clone())
                 .or_default()
@@ -568,6 +577,14 @@ fn write_track(
             last_comp_lane: t.comping.last_comp_lane,
             areas: crate::engine::comp_areas(&t.comping),
         };
+    }
+    if has(TrackField::Ext) {
+        p.track_ext_state
+            .retain(|(track, section, _), _| *track != t.guid || !section.is_empty());
+        for (key, value) in &t.ext {
+            p.track_ext_state
+                .insert((t.guid.clone(), String::new(), key.clone()), value.clone());
+        }
     }
     if has(TrackField::ExtSections) {
         p.track_ext_state

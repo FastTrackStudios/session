@@ -571,6 +571,17 @@ async fn undo_each_kind(
     });
     undoes(me, &before, "Project ext").await?;
 
+    // A track's own key (no section): what the window keeps on a track —
+    // its markers and regions, a leveled vocal's lanes.
+    let before = shown(me);
+    edit(standalone, |p| {
+        p.track_ext_state.insert(
+            ("{KICK}".into(), String::new(), "fts.marks".into()),
+            "{\"regions\":[]}".into(),
+        );
+    });
+    undoes(me, &before, "Track ext").await?;
+
     let before = shown(me);
     edit(standalone, |p| {
         if let Some(lane) = p.ruler_lanes.get_mut(&1) {
