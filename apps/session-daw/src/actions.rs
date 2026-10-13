@@ -2867,7 +2867,7 @@ static EDIT_SETTINGS: ActionMeta = meta(
     "DRUMS_EDIT_SETTINGS",
     "drums_edit_settings",
     "Drum edit settings",
-    "The quantize settings as they stand — sticky: what QUANTIZE uses when a call gives none, kept across restarts. `grid` (a whole note's division: 16, 12 for 8th triplets, 24 for 16th triplets), `grid_scan` (one hit per grid line, the loudest within `grid_tolerance_ms`), `target` (Guided: the drum MIDI says which line, else the nearest line in reach — `sure_ms` on the grid, twice that a grid coarser, down to the sixteenths: a double kick's stroke 24 ms off its sixteenth is the sixteenth's; Reference; Grid), `window_ms`, `sure_ms`, `tolerance_ms`, `strength`, `lead_ms`, `xfade_ms`, `stretch_gaps_ms`, `fills` (Skip, Include, Only), `lead` (a piece whose timing wins where strokes are moved together — `Snare` in a breakdown, so the backbeat is on its line and the sixteenth kicks move with it; empty: the loudest). Any of them can be given to one QUANTIZE call, or to one step of its `plan` (a section). How the hits are found is HITS_SETTINGS'.",
+    "The quantize settings as they stand — sticky: what QUANTIZE uses when a call gives none, kept across restarts. `grid` (a whole note's division for the strokes nothing else places — 8, eighths, unless set; finer only where it is known: a written note's own line, or a Grid region over a part, TRACK_REGION_ADD; 16, 12 for 8th triplets, 24 for 16th triplets), `grid_scan` (one hit per grid line, the loudest within `grid_tolerance_ms`), `target` (Guided: the drum MIDI says which line, else the nearest line in reach — `sure_ms` on the grid, twice that a grid coarser, down to the sixteenths: a double kick's stroke 24 ms off its sixteenth is the sixteenth's; Reference; Grid), `window_ms`, `sure_ms`, `tolerance_ms`, `strength`, `lead_ms`, `xfade_ms`, `stretch_gaps_ms`, `fills` (Skip, Include, Only), `lead` (a piece whose timing wins where strokes are moved together — `Snare` in a breakdown, so the backbeat is on its line and the sixteenth kicks move with it; empty: the loudest). Any of them can be given to one QUANTIZE call, or to one step of its `plan` (a section). How the hits are found is HITS_SETTINGS'.",
     "Drums",
     "",
 );
@@ -3116,6 +3116,32 @@ fn grid_choice(line_of: impl Fn(u32) -> f64, felt: f64, division: u32, sure: f64
     best.map(|(_, line)| line)
 }
 
+/// Whether a stroke played at `felt` keeps its own line rather than going
+/// to `line` (a written one): played on its own line (`on_a_line`), past
+/// `sure` of the written one; in reach of it, past half a sixteenth
+/// (`step`) — and then only a line at the sixteenth or coarser (`own` is
+/// `(its line, that line's nearest sixteenth)`).
+///
+/// In reach of a thirty-second is no line of the drummer's: on a 32nd
+/// grid nearly every stroke is within reach of one, and the 89.1 kick
+/// Unbreakable's drummer pushed 68 ms ahead sat 15 ms from 88.4.875 —
+/// kept there against its own note on 89.1, a downbeat a 32nd early.
+fn keeps_own_line(
+    (felt, line): (f64, f64),
+    own: Option<(f64, f64)>,
+    on_a_line: bool,
+    (sure, step): (f64, f64),
+) -> bool {
+    let Some((own, coarse)) = own else {
+        return false;
+    };
+    let off = (line - felt).abs();
+    if on_a_line {
+        return off > sure;
+    }
+    (own - coarse).abs() < 1e-4 && off > sure && off > step / 2.0
+}
+
 /// How near a grid line a stroke must be played to be on it, seconds: its
 /// line is the drummer's, past the chart's say (see `targets`). On
 /// Unbreakable the chart moved kicks played dead on their sixteenths a
@@ -3324,9 +3350,18 @@ fn targets(
                     sure,
                 )
             };
+            let coarse = if settings.grid.is_multiple_of(3) {
+                12
+            } else {
+                16
+            };
             let keeps_its_line = |line: f64| {
-                let off = (line - felt).abs();
-                own_line.is_some() && off > sure && (on_a_line || off > step / 2.0)
+                keeps_own_line(
+                    (felt, line),
+                    own_line.map(|own| (own, grid_line(daw, project, own, coarse))),
+                    on_a_line,
+                    (sure, step),
+                )
             };
             if let Some(note) = note {
                 // A fill plays a written figure with the pieces swapped —
@@ -4415,6 +4450,43 @@ mod gesture_tests {
     /// 24 ms from its sixteenth at 3.75 — the sixteenth's, on a
     /// thirty-second grid; a stroke tight on a thirty-second stays on it;
     /// one in reach of no line is left.
+    #[test]
+    fn a_pushed_downbeat_goes_to_its_note_not_a_thirty_second() {
+        use super::keeps_own_line;
+        // 160 bpm: a sixteenth is 93.75 ms.
+        let (sure, step) = (0.015, 0.093_75);
+        // The 89.1 kick: 68 ms before its note, 15 ms from a 32nd.
+        let note = 133.5;
+        let felt = note - 0.068;
+        let thirty_second = note - step / 2.0;
+        assert!(
+            !keeps_own_line(
+                (felt, note),
+                Some((thirty_second, note - step)),
+                false,
+                (sure, step)
+            ),
+            "a 32nd in reach is no line of the drummer's"
+        );
+        // A kick played 20 ms from its sixteenth, charted an eighth on:
+        // the sixteenth is the drummer's.
+        let sixteenth = 100.0;
+        let felt = sixteenth + 0.020;
+        assert!(keeps_own_line(
+            (felt, 2.0_f64.mul_add(step, sixteenth)),
+            Some((sixteenth, sixteenth)),
+            false,
+            (sure, step)
+        ));
+        // Played dead on a 32nd: kept against a written line past `sure`.
+        assert!(keeps_own_line(
+            (thirty_second + 0.002, note),
+            Some((thirty_second, note - step)),
+            true,
+            (sure, step)
+        ));
+    }
+
     #[test]
     fn an_unwritten_stroke_goes_to_the_coarsest_line_in_reach() {
         let felt = 95.507_271;

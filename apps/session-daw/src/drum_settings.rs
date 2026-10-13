@@ -46,7 +46,12 @@ pub enum Fills {
 /// Every setting.
 #[derive(Facet, Clone, Debug, PartialEq)]
 pub struct Settings {
-    /// The grid: a whole note's division (32: thirty-seconds).
+    /// The grid a stroke nothing else places goes to: a whole note's
+    /// division — eighths (8) unless asked. Finer only where it is known
+    /// what is there: a written note sends its stroke to its own line (a
+    /// sixteenth, a triplet), a Grid region (`crate::track_regions`) its
+    /// stretch's strokes to its grid — the way to give a part (a section)
+    /// a grid of its own.
     pub grid: u32,
     /// One hit per grid line, the loudest near it.
     pub grid_scan: bool,
@@ -81,7 +86,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            grid: 32,
+            grid: 8,
             grid_scan: false,
             grid_tolerance_ms: None,
             target: Target::Guided,
