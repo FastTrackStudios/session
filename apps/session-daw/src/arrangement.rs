@@ -1323,7 +1323,12 @@ impl Arrangement {
                     let gain = if held.layers.is_empty() && !is_folder {
                         item.volume.max(0.0)
                     } else if let Some(&loudest) = shared_loudest {
-                        gain_for(loudest)
+                        // The folder's loudest — but never past this
+                        // piece's own: right after an edit the new slices'
+                        // peaks are still being read, and the loudest of
+                        // what has arrived can be a quiet one, every piece
+                        // then blown up past the band.
+                        gain_for(loudest.max(loudest_of(&whole)))
                     } else {
                         wave_gain(&whole)
                     };
@@ -2252,7 +2257,10 @@ pub fn hits_overlay(
     view: Viewport,
     origin: (f64, f64),
     (kit, rows): (std::ops::Range<usize>, &[(usize, usize)]),
-    overlay: &crate::hit_overlay::Overlay,
+    (overlay, selected): (
+        &crate::hit_overlay::Overlay,
+        &std::collections::HashSet<String, impl std::hash::BuildHasher>,
+    ),
 ) {
     use crate::hit_overlay::Who;
     /// Hits nearer than this many pixels draw no flag, and fainter.
@@ -2347,6 +2355,12 @@ pub fn hits_overlay(
                     Some(Color::from_rgba8(0xfb, 0xbf, 0x24, 0xff)),
                 ),
             };
+            // Selected (to drag together): the accent, whatever it is.
+            let (colour, line, flag_colour) = if selected.contains(&m.id) {
+                (palette.accent, &heavy, Some(palette.accent))
+            } else {
+                (colour, line, flag_colour)
+            };
             let clear = spaced(k);
             let colour = colour.multiply_alpha(if clear { 0.85 } else { 0.45 });
             let x = x_of(m.time).round() + 0.5;
@@ -2374,6 +2388,29 @@ pub fn hits_overlay(
             }
         }
     }
+}
+
+/// A marquee being drawn over the kit's rows, from `a` to `b`.
+pub fn hit_marquee_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    (a, b): ((f64, f64), (f64, f64)),
+) {
+    let rect = Rect::new(a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1));
+    painter.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.accent.multiply_alpha(0.12),
+        None,
+        &rect,
+    );
+    painter.stroke(
+        &vello::kurbo::Stroke::new(1.0),
+        Affine::IDENTITY,
+        palette.accent.multiply_alpha(0.8),
+        None,
+        &rect,
+    );
 }
 
 /// A hit marker's flag being dragged: where it will go, a line in the

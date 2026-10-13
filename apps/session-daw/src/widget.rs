@@ -252,6 +252,8 @@ const FLAG_SLOP: f64 = 2.0;
 /// A hit marker being dragged by its flag.
 struct HitDrag {
     id: String,
+    /// Every hit dragged: the selection the flag taken is in, else it.
+    ids: Vec<String>,
     from_x: f64,
     x: f64,
     /// Ctrl held at the press: the marker alone moves — where the hit
@@ -567,6 +569,12 @@ pub struct ArrangementWidget {
     last_name: Option<(usize, web_time::Instant)>,
     /// A hit marker taken by its flag (Edit mode), mid-drag.
     hit_drag: Option<HitDrag>,
+    /// The hit markers selected (Edit mode): a marquee drawn over the
+    /// kit's rows, or the flag last taken — dragged together.
+    hit_selected: std::collections::HashSet<String>,
+    /// A marquee being drawn over the kit's rows: where it began and where
+    /// the pointer is now, in the widget's coordinates.
+    hit_marquee: Option<((f64, f64), (f64, f64))>,
     /// The band on the ruler last clicked and when: the first half of the
     /// double-click that selects its time.
     last_band: Option<((f64, f64), web_time::Instant)>,
@@ -742,6 +750,8 @@ impl ArrangementWidget {
             scene_before: None,
             last_name: None,
             hit_drag: None,
+            hit_selected: std::collections::HashSet::new(),
+            hit_marquee: None,
             last_band: None,
             swipe: None,
             last_strip: None,
@@ -1073,6 +1083,64 @@ impl ArrangementWidget {
         })
     }
 
+    /// Whether `(x, y)` is on the kit's rows' lanes, editing.
+    fn on_kit(&self, x: f64, y: f64) -> bool {
+        if !self.editing.get() {
+            return false;
+        }
+        let Some(kit) = self.kit_rows() else {
+            return false;
+        };
+        let view = self.viewport(self.size.0, self.size.1);
+        if x < view.panel_w || y < ruler::ruler_h() {
+            return false;
+        }
+        let oy = ruler::ruler_h() - view.scroll_y;
+        kit.into_iter().any(|row| {
+            self.scene.row_box(row).is_some_and(|(top, height)| {
+                let top = top.mul_add(view.zoom_y, oy);
+                y >= top && y < height.mul_add(view.zoom_y, top)
+            })
+        })
+    }
+
+    /// The hits a marquee from `a` to `b` covers: on the kit's piece rows
+    /// it crosses, between the times its sides are at. A marquee too small
+    /// to be one (a click) covers none — it clears the selection.
+    fn hits_within(&self, a: (f64, f64), b: (f64, f64)) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        if (a.0 - b.0).abs() < FLAG_SLOP && (a.1 - b.1).abs() < FLAG_SLOP {
+            return out;
+        }
+        let (Some(hits), Some(kit)) = (crate::hit_overlay::current(), self.kit_rows()) else {
+            return out;
+        };
+        let view = self.viewport(self.size.0, self.size.1);
+        let oy = ruler::ruler_h() - view.scroll_y;
+        let (t0, t1) = {
+            let (x, y) = (self.seconds_at(a.0, view), self.seconds_at(b.0, view));
+            (x.min(y), x.max(y))
+        };
+        let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+        let pieces: Vec<usize> = self
+            .piece_rows(kit, &hits)
+            .into_iter()
+            .filter(|(row, _)| {
+                self.scene.row_box(*row).is_some_and(|(top, height)| {
+                    let top = top.mul_add(view.zoom_y, oy);
+                    top < y1 && height.mul_add(view.zoom_y, top) > y0
+                })
+            })
+            .map(|(_, piece)| piece)
+            .collect();
+        for m in hits.between(t0, t1) {
+            if pieces.contains(&m.piece) {
+                out.insert(m.id.clone());
+            }
+        }
+        out
+    }
+
     /// A hit taken by hand on its flag, in Edit mode: dragged, it moves
     /// (`HITS_MOVE`, by as much as it was dragged — the slice it is in
     /// moves whole, so a drag is the same anywhere); Alt-clicked, it is
@@ -1088,6 +1156,12 @@ impl ArrangementWidget {
             {
                 let (x, y) = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
                 let Some(spot) = self.flag_at(x, y) else {
+                    // Editing, the kit's items are not moved by hand: a
+                    // press on its rows draws a marquee over its hits.
+                    if self.on_kit(x, y) {
+                        self.hit_marquee = Some(((x, y), (x, y)));
+                        return true;
+                    }
                     return false;
                 };
                 let held = mods(e.mods);
@@ -1104,8 +1178,16 @@ impl ArrangementWidget {
                         true
                     }
                     Some(id) => {
+                        // A flag in the selection takes the selection; any
+                        // other, itself alone.
+                        if !self.hit_selected.contains(&id) {
+                            self.hit_selected = std::iter::once(id.clone()).collect();
+                        }
+                        let mut ids: Vec<String> = self.hit_selected.iter().cloned().collect();
+                        ids.sort();
                         self.hit_drag = Some(HitDrag {
                             id,
+                            ids,
                             from_x: x,
                             x,
                             marker_only: held.ctrl,
@@ -1127,18 +1209,34 @@ impl ArrangementWidget {
                             return true;
                         }
                         self.last_strip = Some((x, now));
-                        false
+                        // Anywhere else on a piece's row: a marquee.
+                        self.hit_marquee = Some(((x, y), (x, y)));
+                        true
                     }
                 }
             }
             UiEvent::PointerMove(e) => {
+                let at = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+                if let Some((_, to)) = self.hit_marquee.as_mut() {
+                    *to = at;
+                    return true;
+                }
                 let Some(drag) = self.hit_drag.as_mut() else {
                     return false;
                 };
-                drag.x = f64::from(e.coords.client_x);
+                drag.x = at.0;
                 true
             }
             UiEvent::PointerUp(e) | UiEvent::PointerCancel(e) => {
+                if let Some((from, _)) = self.hit_marquee.take() {
+                    let to = (f64::from(e.coords.client_x), f64::from(e.coords.client_y));
+                    self.hit_selected = if matches!(event, UiEvent::PointerUp(_)) {
+                        self.hits_within(from, to)
+                    } else {
+                        std::collections::HashSet::new()
+                    };
+                    return true;
+                }
                 let Some(drag) = self.hit_drag.take() else {
                     return false;
                 };
@@ -1153,12 +1251,21 @@ impl ArrangementWidget {
                         .pps
                         .max(f64::EPSILON);
                     let ms = (x - drag.from_x) / pps * 1_000.0;
-                    let id = if drag.marker_only {
-                        "HITS_MOVE"
+                    if drag.ids.len() > 1 && !drag.marker_only {
+                        // The selection moved together, the kit with it.
+                        let ids = serde_json::Value::from(drag.ids);
+                        run_hit_action(
+                            "HITS_PLACE",
+                            format!(r#"{{"ids":{ids},"by_ms":{ms},"snap":false}}"#),
+                        );
                     } else {
-                        "HITS_PLACE"
-                    };
-                    run_hit_action(id, format!(r#"{{"id":"{}","by_ms":{ms}}}"#, drag.id));
+                        let id = if drag.marker_only {
+                            "HITS_MOVE"
+                        } else {
+                            "HITS_PLACE"
+                        };
+                        run_hit_action(id, format!(r#"{{"id":"{}","by_ms":{ms}}}"#, drag.id));
+                    }
                 }
                 true
             }
@@ -4149,14 +4256,32 @@ impl ArrangementWidget {
                         view,
                         lanes_at,
                         (kit, &rows),
-                        &hits,
+                        (&hits, &self.hit_selected),
                     );
                 }
                 // Not read yet since the window opened.
                 None => crate::hit_overlay::refresh(),
             }
             if let Some(drag) = &self.hit_drag {
-                crate::arrangement::hit_drag_overlay(&mut out, &self.palette, view, drag.x);
+                // Every hit dragged, where it will go.
+                let dx = drag.x - drag.from_x;
+                let marks = crate::hit_overlay::current();
+                let xs: Vec<f64> = marks.map_or_else(
+                    || vec![drag.x],
+                    |hits| {
+                        hits.marks
+                            .iter()
+                            .filter(|m| drag.ids.contains(&m.id))
+                            .map(|m| m.time.mul_add(view.pps, lanes_at.0) + dx)
+                            .collect()
+                    },
+                );
+                for x in xs {
+                    crate::arrangement::hit_drag_overlay(&mut out, &self.palette, view, x);
+                }
+            }
+            if let Some((a, b)) = self.hit_marquee {
+                crate::arrangement::hit_marquee_overlay(&mut out, &self.palette, (a, b));
             }
         }
         // The lanes' names on the rows showing them, and a swipe being made

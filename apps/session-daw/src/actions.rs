@@ -3369,6 +3369,15 @@ fn targets(
                     (sure, step),
                 )
             };
+            // In a part with a grid of its own, a written note off that
+            // grid is not the part: a triplet charted in a part of
+            // sixteenths is the chart's, not the drummer's.
+            let on_the_part = |n: f64| {
+                parts
+                    .grid(&m.pieces, m.time, sixteenth(daw, project, m.time))
+                    .is_none_or(|part| (grid_line(daw, project, n, part) - n).abs() <= ON_ITS_LINE)
+            };
+            let note = note.filter(|n| on_the_part(*n));
             if let Some(note) = note {
                 // A fill plays a written figure with the pieces swapped —
                 // a kick where the chart has a snare. Nearer another
@@ -3389,10 +3398,24 @@ fn targets(
             // near.
             if inside
                 && let Some(line) = nearest_written(felt).filter(|w| {
-                    (w - felt).abs() <= NEAR_WRITTEN * step && within(*w) && !keeps_its_line(*w)
+                    (w - felt).abs() <= NEAR_WRITTEN * step
+                        && within(*w)
+                        && !keeps_its_line(*w)
+                        && on_the_part(*w)
                 })
             {
                 return (m.time, Some(line), Placed::Near);
+            }
+            // Nothing written: the part's grid is what is known to be
+            // there, so the stroke goes to its nearest line — an eighth
+            // unless the part says sixteenths. Only a grid finer than the
+            // sixteenths (or their triplets) asks how sure the stroke is.
+            if grid <= 16 || grid == 24 {
+                return (
+                    m.time,
+                    Some(grid_line(daw, project, felt, grid)),
+                    Placed::Line,
+                );
             }
             grid_choice(
                 |division| grid_line(daw, project, felt, division),
@@ -3489,6 +3512,114 @@ impl Overrides {
         } else {
             self.fill_grid(daw, project, h)
         }
+    }
+}
+
+/// Where strokes are sent to one line (`placed`, in time order), the one
+/// placed surest (`by`) — else the one nearest it — keeps it, and the
+/// others take the grid's lines (`step_of(i)` apart) either side in order:
+/// those before it the lines before, those after the lines after. A stroke
+/// already on the line it would take is pushed on in turn. Only as far as
+/// a stroke may go — a step and a quarter from where it was played — and
+/// never past the stroke beyond; else it is left to [`one_stroke_a_line`].
+///
+/// Unbreakable 73.1: kicks played at 1.776 and 1.884, the snare on 2. The
+/// second kick was sent to 2 with the snare and moved between — 32 ms off
+/// any line; the hand put the two on the "&" and the "a".
+fn to_lines_either_side(
+    placed: &mut [(f64, Option<f64>)],
+    by: &[Placed],
+    step_of: impl Fn(usize) -> Option<f64>,
+) {
+    let rank = |p: Option<&Placed>| match p {
+        Some(Placed::Written) => 0_u8,
+        Some(Placed::Near) => 1,
+        Some(Placed::Line) => 2,
+        Some(Placed::Nothing) | None => 3,
+    };
+    let same = |a: f64, b: f64| (a - b).abs() < 0.002;
+    let mut i = 0_usize;
+    while i < placed.len() {
+        let Some(&(_, Some(line))) = placed.get(i) else {
+            i = i.saturating_add(1);
+            continue;
+        };
+        let mut end = i.saturating_add(1);
+        while placed
+            .get(end)
+            .is_some_and(|(_, to)| to.is_some_and(|t| same(t, line)))
+        {
+            end = end.saturating_add(1);
+        }
+        if end.saturating_sub(i) < 2 {
+            i = end;
+            continue;
+        }
+        let keeper = (i..end).min_by(|x, y| {
+            let off = |k: usize| {
+                placed
+                    .get(k)
+                    .map_or(f64::INFINITY, |(h, _)| (h - line).abs())
+            };
+            rank(by.get(*x))
+                .cmp(&rank(by.get(*y)))
+                .then(off(*x).total_cmp(&off(*y)))
+        });
+        let (Some(keeper), Some(step)) = (keeper, step_of(i)) else {
+            i = end;
+            continue;
+        };
+        let reach = step * 1.25;
+        let fits = |k: usize, to: f64| -> bool {
+            placed.get(k).is_some_and(|(h, _)| (to - h).abs() <= reach)
+        };
+        // With `keeper` keeping the line: those before it back a line each,
+        // pushing back what is on the line they take; those after it on a
+        // line each, short of the next moment's line. `None`: does not fit.
+        let plan = |keeper: usize| -> Option<Vec<(usize, f64)>> {
+            let mut moves: Vec<(usize, f64)> = Vec::new();
+            let mut want = line;
+            let mut k = keeper;
+            while let Some(prev) = k.checked_sub(1) {
+                want -= step;
+                let &(_, to) = placed.get(prev)?;
+                let in_group = prev >= i;
+                let on_it = to.is_some_and(|t| t > want - 0.002);
+                if !in_group && !on_it {
+                    break;
+                }
+                if !fits(prev, want) {
+                    return None;
+                }
+                moves.push((prev, want));
+                k = prev;
+            }
+            let mut want = line;
+            let mut k = keeper;
+            while k.saturating_add(1) < end {
+                want += step;
+                k = k.saturating_add(1);
+                if !fits(k, want) {
+                    return None;
+                }
+                moves.push((k, want));
+            }
+            let next = placed.get(end).and_then(|(_, to)| *to);
+            next.is_none_or(|next| moves.iter().all(|(_, t)| *t < next - 0.002))
+                .then_some(moves)
+        };
+        // The surest keeps it if the rest fit; else the last (the rest
+        // back — a double played into a snare on the next line); else the
+        // first (the rest on).
+        let last = end.saturating_sub(1);
+        if let Some(moves) = plan(keeper).or_else(|| plan(last)).or_else(|| plan(i)) {
+            for (k, to) in moves {
+                if let Some(slot) = placed.get_mut(k) {
+                    slot.1 = Some(to);
+                }
+            }
+        }
+        i = end;
     }
 }
 
@@ -3589,6 +3720,10 @@ const NEIGHBOUR_REACH: f64 = 0.25;
 /// drummer's 32nds stay their own.
 const GESTURE: f64 = 0.040;
 
+/// How far apart two strokes of one drum must be played, and sent, to be a
+/// double — two strokes — rather than one stroke and its echo, seconds.
+const DOUBLE_STROKE: f64 = 0.020;
+
 /// What a seam takes before a hit: its lead and its crossfade, seconds.
 const SEAM_ROOM: f64 = 0.010;
 
@@ -3603,6 +3738,17 @@ const SEAM_ROOM: f64 = 0.010;
 /// plays that hit's attack again: a kick 19 ms before a snare, the snare
 /// sent 18.8 ms later on its own, was heard twice on Unbreakable.
 fn hold_gestures(pairs: &[(f64, Option<f64>)], loudness: &[f64]) -> Vec<(f64, Option<f64>)> {
+    hold_gestures_by(pairs, loudness, |_| false)
+}
+
+/// [`hold_gestures`], with `apart(k)` saying the moments `k - 1` and `k`
+/// are two strokes whatever the gesture rules say — a double kick, its two
+/// kicks sent to lines of their own.
+fn hold_gestures_by(
+    pairs: &[(f64, Option<f64>)],
+    loudness: &[f64],
+    apart: impl Fn(usize) -> bool,
+) -> Vec<(f64, Option<f64>)> {
     let mut out: Vec<(f64, Option<f64>)> = Vec::with_capacity(pairs.len());
     let mut start = 0_usize;
     while start < pairs.len() {
@@ -3621,7 +3767,7 @@ fn hold_gestures(pairs: &[(f64, Option<f64>)], loudness: &[f64]) -> Vec<(f64, Op
             // the first twice. Together they keep their spacing.
             let shift = |(h, t): &(f64, Option<f64>)| t.map_or(0.0, |t| t - h);
             let reaches = shift(next) - shift(prev) > next.0 - prev.0 - SEAM_ROOM;
-            if next.0 - prev.0 >= GESTURE && !collide && !reaches {
+            if apart(end) || (next.0 - prev.0 >= GESTURE && !collide && !reaches) {
                 break;
             }
             end = end.saturating_add(1);
@@ -3944,8 +4090,48 @@ fn detect(
             *kind = Placed::Written;
         }
     }
+    // Strokes sent to one line take the lines either side of it, in order,
+    // where they can: a double kick played into the snare on 2 is the "&"
+    // and the "a" before it, not one stroke between the others.
+    let parts = crate::track_regions::PartGrids::of(daw, project);
+    // Only on a grid of sixteenths or finer: a double is two sixteenths.
+    // On eighths (strokes played between them, two sent to one) the lines
+    // either side are an eighth away — the strokes shoved 200 ms, a bar's
+    // audio scrambled (Unbreakable bar 40).
+    let step_of = |i: usize| {
+        let m = moments.get(i)?;
+        let grid = parts
+            .grid(&m.pieces, m.time, sixteenth(daw, project, m.time))
+            .unwrap_or(settings.grid);
+        if grid < 16 {
+            return None;
+        }
+        Some(240.0 / daw.get_tempo_at(project.clone(), m.time).max(1.0) / f64::from(grid.max(1)))
+    };
+    to_lines_either_side(&mut placed, &by_kind, step_of);
     one_stroke_a_line(&mut placed, &by_kind);
-    let targets = hold_gestures(&placed, &loudness);
+    // Two strokes of one drum alone, a double kick's, sent to lines of
+    // their own are two strokes: not one gesture moved by one shift, which
+    // kept a double played 40 ms apart 40 ms apart, off every line. The
+    // seams keep the first's attack from being played twice.
+    let apart = |k: usize| {
+        let (Some(prev), Some(next)) = (
+            k.checked_sub(1).and_then(|p| moments.get(p)),
+            moments.get(k),
+        ) else {
+            return false;
+        };
+        let (Some((_, Some(a))), Some((_, Some(b)))) =
+            (k.checked_sub(1).and_then(|p| placed.get(p)), placed.get(k))
+        else {
+            return false;
+        };
+        prev.pieces.len() == 1
+            && prev.pieces == next.pieces
+            && next.time - prev.time >= DOUBLE_STROKE
+            && b - a >= DOUBLE_STROKE
+    };
+    let targets = hold_gestures_by(&placed, &loudness, apart);
     let fills = find_fills(daw, project, &kit, span);
     Ok(Detected {
         kit,
@@ -4553,6 +4739,39 @@ mod gesture_tests {
     /// 24 ms from its sixteenth at 3.75 — the sixteenth's, on a
     /// thirty-second grid; a stroke tight on a thirty-second stays on it;
     /// one in reach of no line is left.
+    /// A double kick played into the snare on 2 (Unbreakable 73.1): the
+    /// second kick sent to 2 with the snare takes the "a", and the first,
+    /// on the "a" already, is pushed back to the "&".
+    #[test]
+    fn a_double_kick_into_the_snare_takes_the_lines_before_it() {
+        use super::to_lines_either_side;
+        // Both kicks nearest the "a", the snare on 2 next: the second keeps
+        // the "a", the first goes back to the "&" (Unbreakable 73.1 again,
+        // from where a first quantize left it).
+        let mut both = vec![(1.75, Some(1.75)), (1.864, Some(1.75)), (2.0, Some(2.0))];
+        to_lines_either_side(
+            &mut both,
+            &[Placed::Line, Placed::Line, Placed::Written],
+            |_| Some(0.25),
+        );
+        assert_eq!(
+            both.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
+            vec![Some(1.5), Some(1.75), Some(2.0)]
+        );
+        // A sixteenth of 0.25 s: the beat counted in seconds.
+        let mut placed = vec![(1.776, Some(1.75)), (1.884, Some(2.0)), (2.0, Some(2.0))];
+        let by = [Placed::Line, Placed::Line, Placed::Written];
+        to_lines_either_side(&mut placed, &by, |_| Some(0.25));
+        assert_eq!(
+            placed.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
+            vec![Some(1.5), Some(1.75), Some(2.0)]
+        );
+        // Too far to go — a step and a quarter — and it is left alone.
+        let mut far = vec![(1.86, Some(1.75)), (1.95, Some(2.0)), (2.0, Some(2.0))];
+        to_lines_either_side(&mut far, &by, |_| Some(0.25));
+        assert_eq!(far[1].1, Some(2.0), "left to be moved between");
+    }
+
     #[test]
     fn a_pushed_downbeat_goes_to_its_note_not_a_thirty_second() {
         use super::keeps_own_line;
@@ -5090,7 +5309,11 @@ static PLACE: ActionMeta = meta(
 /// Which hit, and where.
 #[derive(Facet)]
 struct PlaceArg {
-    id: String,
+    id: Option<String>,
+    /// Several hits, moved together (a fill taken earlier): `to`/`by_ms`
+    /// say where the earliest goes.
+    #[facet(default)]
+    ids: Vec<String>,
     to: Option<f64>,
     by_ms: Option<f64>,
     snap: Option<bool>,
@@ -5223,14 +5446,20 @@ fn register_place(list: &ActionList) {
         let began = std::time::Instant::now();
         let before = crate::hits::playback(daw, &project);
         let read_ms = began.elapsed().as_millis();
-        let hit = before
+        let ids: Vec<String> = a.id.iter().cloned().chain(a.ids.iter().cloned()).collect();
+        let chosen: Vec<f64> = before
             .iter()
-            .find(|p| p.id == a.id)
-            .ok_or_else(|| format!("no hit {} plays now", a.id))?;
-        let now = hit.time;
+            .filter(|p| ids.contains(&p.id))
+            .map(|p| p.time)
+            .collect();
+        if chosen.is_empty() {
+            return Err(format!("none of {ids:?} plays now: say `id` or `ids`"));
+        }
+        let earliest = chosen.iter().copied().fold(f64::INFINITY, f64::min);
+        let latest = chosen.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let mut to = match (a.to, a.by_ms) {
             (Some(to), _) => to,
-            (None, Some(ms)) => now + ms / 1_000.0,
+            (None, Some(ms)) => earliest + ms / 1_000.0,
             (None, None) => return Err("say where: `to` or `by_ms`".to_owned()),
         };
         if a.snap.unwrap_or(true) {
@@ -5242,47 +5471,45 @@ fn register_place(list: &ActionList) {
                 to = line;
             }
         }
+        let shift = to - earliest;
         let settings = crate::drum_settings::current();
-        // The kit's moments either side stay: only this hit's slice moves.
+        // Every moment of the kit from the earliest hit to the latest moves by
+        // as much, together — a fill taken earlier whole — and the
+        // moments either side stay where they play.
         let kit = kit(daw, &project);
         let times: Vec<f64> = moments(&kit, None).iter().map(|m| m.time).collect();
-        let at = times.partition_point(|t| *t < now - KIT_MERGE);
-        let neighbours: Vec<f64> = [at.checked_sub(1), Some(at.saturating_add(1))]
+        let group: Vec<(f64, Option<f64>)> = times
+            .iter()
+            .filter(|t| **t >= earliest - KIT_MERGE && **t <= latest + KIT_MERGE)
+            .map(|t| (*t, Some(*t + shift)))
+            .collect();
+        let pairs: Vec<(f64, Option<f64>)> = if group.is_empty() {
+            vec![(earliest, Some(to))]
+        } else {
+            group
+        };
+        let lo = times.partition_point(|t| *t < earliest - KIT_MERGE);
+        let hi = times.partition_point(|t| *t <= latest + KIT_MERGE);
+        let neighbours: Vec<f64> = [lo.checked_sub(1), Some(hi)]
             .into_iter()
             .flatten()
             .filter_map(|i| times.get(i).copied())
-            .filter(|t| (t - now).abs() > KIT_MERGE)
             .collect();
         let kit_ms = began.elapsed().as_millis();
-        let (result, cuts) = judge(
-            daw,
-            &project,
-            &settings,
-            (&[(now, Some(to))], &neighbours),
-            false,
-        );
+        let (result, cuts) = judge(daw, &project, &settings, (&pairs, &neighbours), false);
         let judge_ms = began.elapsed().as_millis();
         let mut slip_ms = judge_ms;
+        let span = (earliest.min(to) - 1.0, (latest + shift).max(latest) + 1.0);
         if result.applied {
-            crate::hits::mark_placed(daw, &project, &a.id);
+            for id in &ids {
+                crate::hits::mark_placed(daw, &project, id);
+            }
             slip_now(daw, &project, &settings, cuts);
             slip_ms = began.elapsed().as_millis();
-            wait_for_slip(
-                daw,
-                &project,
-                (&before, &[(now, Some(to))]),
-                (now.min(to) - 1.0, now.max(to) + 1.0),
-            );
+            wait_for_slip(daw, &project, (&before, &pairs), span);
         }
         let wait_ms = began.elapsed().as_millis();
-        let span = (now.min(to) - 1.0, now.max(to) + 1.0);
-        let out = checked(
-            daw,
-            &project,
-            (&settings, &[(now, Some(to))]),
-            &before,
-            span,
-        );
+        let out = checked(daw, &project, (&settings, &pairs), &before, span);
         tracing::info!(
             place.read_ms = read_ms,
             place.kit_ms = kit_ms,
