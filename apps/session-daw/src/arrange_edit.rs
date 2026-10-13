@@ -2397,21 +2397,27 @@ fn seams(
             }
             // Still short — two hits a gap apart, each side stopped at an
             // attack — the last resort: the slice before drawn out over
-            // what is left, its decay slowed a little, rather than the
-            // kit dropping out.
+            // what is left, its decay slowed, rather than the kit dropping
+            // out: a slowed tail is heard as the drum ringing, a gap as a
+            // dropout. Gently where it can be; as slow as it takes where
+            // it cannot (two strokes a flam apart in the take, sent a
+            // sixteenth apart, have nothing between them to play).
             if let Some(prev) = before.last_mut() {
                 let meets = piece.position.as_seconds() + fade;
                 let short = meets - (prev.position.as_seconds() + prev.length.as_seconds());
-                // A few milliseconds are worth a slower tail; more is a
-                // gap to see, not to hide.
                 let least = if short <= RESIDUAL {
                     RESIDUAL_LEAST_RATE
                 } else {
                     STRETCH_LEAST_RATE
                 };
-                if short > 1e-6
-                    && let Some(markers) = draw_out_to(prev, meets, least)
-                {
+                // A draw refused leaves the slice as it was.
+                let drawn = if short > 1e-6 {
+                    draw_out_to(prev, meets, least)
+                        .or_else(|| draw_out_to(prev, meets, GAP_LEAST_RATE))
+                } else {
+                    None
+                };
+                if let Some(markers) = drawn {
                     effects.push(Effect::Send(Edit::TrimItem(
                         prev.guid.clone(),
                         prev.position.as_seconds(),
@@ -2540,6 +2546,10 @@ const RESIDUAL: f64 = 0.012;
 /// …is drawn over at down to this rate: a short tail slowed is not heard,
 /// a dropout is.
 const RESIDUAL_LEAST_RATE: f64 = 0.5;
+
+/// The slowest a slice's tail is drawn out to close a gap nothing else
+/// can: past this the gap stays (a slice with almost no decay to give).
+const GAP_LEAST_RATE: f64 = 0.1;
 
 /// `item` drawn out to end at `to`: its first [`STRETCH_KEEP`] as it was,
 /// the rest slowed to reach — the markers that say so, `(take time,
@@ -4401,6 +4411,42 @@ mod tests {
             "and left as it was"
         );
         assert!(super::draw_out(&mut item, 1.09).is_some());
+    }
+
+    /// Unbreakable bar 63: two strokes 15 ms apart in the take, sent 93
+    /// ms apart. The slice after reaches back only as far as the stroke
+    /// before allows, the slice before cannot run on (its take passes the
+    /// stroke after), and what is left — 24 ms — is too much to draw out
+    /// gently. It is drawn out slower rather than left a 26 ms dropout.
+    #[test]
+    fn strokes_pulled_apart_leave_no_gap() {
+        let slice = |guid: &str, at: f64, length: f64, offset: f64| daw_proto::Item {
+            guid: guid.to_owned(),
+            position: PositionInSeconds::from_seconds(at),
+            length: Duration::from_seconds(length),
+            start_offset: Duration::from_seconds(offset),
+            ..daw_proto::Item::default()
+        };
+        let mut before = slice("a-split@1", 94.674_771, 0.066_958, 96.251_459);
+        let mut after = slice("a-split@2", 94.768_313, 0.101_687, 96.266_188);
+        let cut = SlipCut {
+            pre_roll: 0.005,
+            crossfade: 0.005,
+            ..SlipCut::default()
+        };
+        let mut effects = Vec::new();
+        super::seams(
+            &mut [&mut before, &mut after],
+            (&cut, 0.005, &std::collections::HashMap::new()),
+            &mut effects,
+        );
+        let ends = before.position.as_seconds() + before.length.as_seconds();
+        assert!(
+            ends >= after.position.as_seconds() + 0.005 - 1e-9,
+            "the slice before meets the one after across the crossfade: ends {ends:.4}, \
+             the next starts {:.4}",
+            after.position.as_seconds()
+        );
     }
 
     #[test]
