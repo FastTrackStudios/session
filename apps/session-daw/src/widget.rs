@@ -4301,7 +4301,7 @@ impl ArrangementWidget {
                     let rows = self.piece_rows(kit.clone(), &hits);
                     crate::arrangement::hits_overlay(
                         &mut out,
-                        &self.palette,
+                        (&self.palette, &self.font),
                         &self.scene,
                         view,
                         lanes_at,
@@ -4921,6 +4921,7 @@ mod tests {
                 edited: crate::hit_overlay::Edited::AsPlayed,
             }],
             zones: Vec::new(),
+            stretches: Vec::new(),
         });
         widget
     }

@@ -63,6 +63,19 @@ pub struct Shade {
     pub found: bool,
 }
 
+/// A stretch of a piece's slices played slower or faster than recorded
+/// — a slice drawn out over a gap — where it plays now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stretch {
+    /// Its piece: an index into [`Overlay::pieces`].
+    pub piece: usize,
+    /// Project seconds.
+    pub start: f64,
+    pub end: f64,
+    /// How fast it plays its take: 1 as recorded, 0.5 half speed.
+    pub rate: f64,
+}
+
 /// What is drawn.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Overlay {
@@ -74,6 +87,8 @@ pub struct Overlay {
     /// In time order.
     pub marks: Vec<Mark>,
     pub zones: Vec<Shade>,
+    /// Each piece's stretched stretches, in time order.
+    pub stretches: Vec<Stretch>,
 }
 
 impl Overlay {
@@ -204,6 +219,7 @@ mod tests {
             tracks: vec![Vec::new()],
             marks: vec![mark(0, 1.0), mark(0, 2.0), mark(0, 3.0), mark(0, 4.0)],
             zones: Vec::new(),
+            stretches: Vec::new(),
         };
         let times: Vec<f64> = overlay.between(1.5, 3.0).iter().map(|m| m.time).collect();
         assert_eq!(times, [2.0, 3.0]);

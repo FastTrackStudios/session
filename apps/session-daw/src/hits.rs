@@ -1515,12 +1515,66 @@ pub fn overlay(
             found: z.origin == ZoneOrigin::Auto,
         })
         .collect();
+    let stretches = stretches(daw, project, &kit);
     crate::hit_overlay::Overlay {
         pieces,
         tracks,
         marks,
         zones,
+        stretches,
     }
+}
+
+/// Played this near its recorded speed, a stretch is not drawn.
+const AT_SPEED: f64 = 0.005;
+
+/// Each piece's stretched stretches where they play now — its first mic's
+/// slices, between each pair of stretch markers played slower or faster
+/// than recorded — in time order.
+fn stretches(
+    daw: &daw::standalone::Standalone,
+    project: &ProjectContext,
+    kit: &[KitPiece],
+) -> Vec<crate::hit_overlay::Stretch> {
+    let mut out = Vec::new();
+    for (piece, kp) in kit.iter().enumerate() {
+        let Some(mic) = kp.mics.first() else {
+            continue;
+        };
+        let Some(track) = Tracks::get(daw, project.clone(), TrackRef::Guid(mic.clone())) else {
+            continue;
+        };
+        for item in daw.get_items(project.clone(), TrackRef::Guid(mic.clone())) {
+            if item.muted || !crate::drum_edit::is_edited(&track, &item) {
+                continue;
+            }
+            let markers = daw_proto::StretchMarkers::get_stretch_markers(
+                daw,
+                project.clone(),
+                ItemRef::Guid(item.guid.clone()),
+                TakeRef::Active,
+            );
+            let at = item.position.as_seconds();
+            for pair in markers.windows(2) {
+                let [a, b] = pair else { continue };
+                let played = b.position - a.position;
+                if played <= 0.0 {
+                    continue;
+                }
+                let rate = (b.source_position - a.source_position) / played;
+                if (rate - 1.0).abs() > AT_SPEED {
+                    out.push(crate::hit_overlay::Stretch {
+                        piece,
+                        start: at + a.position,
+                        end: at + b.position,
+                        rate,
+                    });
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a.start.total_cmp(&b.start));
+    out
 }
 
 /// Where in its take `source` plays, through `markers` (by position): `None`

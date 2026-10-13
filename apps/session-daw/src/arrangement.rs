@@ -2286,7 +2286,7 @@ pub fn marquee_overlay(
 /// [`Overlay::pieces`]: crate::hit_overlay::Overlay::pieces
 pub fn hits_overlay(
     painter: &mut impl PaintScene,
-    palette: &Palette,
+    (palette, font): (&Palette, &crate::text::Font),
     scene: &Arrangement,
     view: Viewport,
     origin: (f64, f64),
@@ -2354,6 +2354,33 @@ pub fn hits_overlay(
         let y1 = b1.mul_add(h, y).mul_add(view.zoom_y, oy).min(view.height);
         (y1 > y0).then_some((y0, y1))
     };
+    // Each row's stretched stretches along its foot, once a row: a shut
+    // kit's row is every piece's, and their slices are stretched as one.
+    let mut shown_rows: Vec<usize> = Vec::new();
+    for &(row, _) in rows {
+        if shown_rows.contains(&row) {
+            continue;
+        }
+        shown_rows.push(row);
+        let Some((y0, y1)) = marks_span(row) else {
+            continue;
+        };
+        let pieces: Vec<usize> = rows
+            .iter()
+            .filter(|(r, _)| *r == row)
+            .map(|(_, p)| *p)
+            .collect();
+        stretch_strip(
+            painter,
+            font,
+            (y0, y1),
+            (x_of, (from, to)),
+            overlay
+                .stretches
+                .iter()
+                .filter(|s| pieces.contains(&s.piece)),
+        );
+    }
     for &(row, piece) in rows {
         let Some((y0, y1)) = marks_span(row) else {
             continue;
@@ -2421,6 +2448,111 @@ pub fn hits_overlay(
                 }
             }
         }
+    }
+}
+
+/// A stretch's colour by its rate: red at half speed or slower (or twice
+/// as fast), amber past [`crate::arrange_edit::STRETCH_LEAST_RATE`] —
+/// a stretch to listen to — and a faint blue within it.
+fn stretch_tint(rate: f64) -> Color {
+    if rate <= 0.5 || rate >= 2.0 {
+        Color::from_rgba8(0xef, 0x44, 0x44, 0xff)
+    } else if !(crate::arrange_edit::STRETCH_LEAST_RATE - 1e-6
+        ..=1.0 / crate::arrange_edit::STRETCH_LEAST_RATE + 1e-6)
+        .contains(&rate)
+    {
+        Color::from_rgba8(0xf5, 0x9e, 0x0b, 0xff)
+    } else {
+        Color::from_rgba8(0x60, 0xa5, 0xfa, 0xff)
+    }
+}
+
+/// A row's stretched stretches along its foot, between `y0` and `y1`: a
+/// bar over each — a faint blue played near its speed (0.85 or faster),
+/// amber slower, red at half speed or slower, where the stretch has been
+/// heard as a stretch. Each drawn-out slice (its stretches end to end)
+/// says its slowest rate just above them, in that rate's colour
+/// (`0.12×`), where there is room before the next. The same stretch on
+/// several pieces' slices drawn once.
+fn stretch_strip<'a>(
+    painter: &mut impl PaintScene,
+    font: &crate::text::Font,
+    (y0, y1): (f64, f64),
+    (x_of, (from, to)): (impl Fn(f64) -> f64, (f64, f64)),
+    stretches: impl Iterator<Item = &'a crate::hit_overlay::Stretch>,
+) {
+    /// The strip's height, pixels; the least row it is drawn on is three.
+    const STRIP: f64 = 8.0;
+    /// The rate's size, and the room it takes, pixels.
+    const SIZE: f32 = 9.0;
+    const ROOM: f64 = 30.0;
+    /// Stretches nearer than this end to end are one slice's, seconds.
+    const JOINED: f64 = 0.000_5;
+    if y1 - y0 < STRIP * 3.0 {
+        return;
+    }
+    let (strip_top, base) = (y1 - STRIP - 1.0, y1 - 1.0);
+    // In view, each once, by start.
+    let mut shown: Vec<&crate::hit_overlay::Stretch> = Vec::new();
+    for s in stretches.filter(|s| s.end >= from && s.start <= to) {
+        if !shown
+            .iter()
+            .any(|d| (d.start - s.start).abs() < JOINED && (d.end - s.end).abs() < JOINED)
+        {
+            shown.push(s);
+        }
+    }
+    shown.sort_by(|a, b| a.start.total_cmp(&b.start));
+    for s in &shown {
+        let tint = stretch_tint(s.rate);
+        let (x0, x1) = (x_of(s.start), x_of(s.end).max(x_of(s.start) + 1.0));
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            tint.multiply_alpha(0.45),
+            None,
+            &Rect::new(x0, strip_top, x1, base),
+        );
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            tint,
+            None,
+            &Rect::new(x0, base - 2.0, x1, base),
+        );
+    }
+    // Each slice's slowest, at its start, above the strip.
+    let mut k = 0_usize;
+    while let Some(first) = shown.get(k) {
+        let mut end = k.saturating_add(1);
+        while let (Some(prev), Some(next)) = (shown.get(end.saturating_sub(1)), shown.get(end)) {
+            if next.start - prev.end > JOINED {
+                break;
+            }
+            end = end.saturating_add(1);
+        }
+        let slowest = shown
+            .get(k..end)
+            .unwrap_or_default()
+            .iter()
+            .map(|s| s.rate)
+            .min_by(f64::total_cmp)
+            .unwrap_or(1.0);
+        let room = shown
+            .get(end)
+            .map_or(f64::INFINITY, |next| x_of(next.start) - x_of(first.start));
+        if room >= ROOM {
+            crate::tcp::glyphs(
+                painter,
+                font,
+                stretch_tint(slowest),
+                &format!("{slowest:.2}×"),
+                x_of(first.start),
+                strip_top - 2.0,
+                SIZE,
+            );
+        }
+        k = end;
     }
 }
 
@@ -4584,6 +4716,23 @@ mod dial_tests {
     /// A hit marker is drawn in its drum's colour, found from the piece's
     /// name as the hit overlay names it: the kick red, the snare blue, a
     /// tom purple, as their waveforms are.
+    /// Blue within the floor, amber past it, red at half speed.
+    #[test]
+    fn a_stretch_is_coloured_by_how_far_it_is_from_its_speed() {
+        let (blue, amber, red) = (
+            super::stretch_tint(0.9),
+            super::stretch_tint(0.6),
+            super::stretch_tint(0.3),
+        );
+        assert!(blue != amber && amber != red && blue != red);
+        assert_eq!(
+            super::stretch_tint(super::super::arrange_edit::STRETCH_LEAST_RATE),
+            blue
+        );
+        assert_eq!(super::stretch_tint(0.84), amber);
+        assert_eq!(super::stretch_tint(0.5), red);
+    }
+
     #[test]
     fn a_hit_marker_wears_its_drums_colour() {
         let colour =
