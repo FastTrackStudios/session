@@ -9,6 +9,8 @@
 //! - [`sync`] (feature `sync`): playback sync with realtime guarantees.
 //! - [`doc`] (feature `architect`): the session as an Architect (Loro)
 //!   document.
+//! - [`service`] (feature `service`): what a runtime extension may do to
+//!   the session, answered the same way by every host.
 //!
 //! See `docs/design/session.md`.
 
@@ -22,6 +24,8 @@ pub mod value;
 
 #[cfg(feature = "architect")]
 pub mod doc;
+#[cfg(feature = "service")]
+pub mod service;
 #[cfg(feature = "sync")]
 pub mod sync;
 

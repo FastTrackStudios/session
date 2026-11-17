@@ -8,7 +8,8 @@
     clippy::missing_panics_doc,
     clippy::similar_names,
     clippy::while_float,
-    clippy::suboptimal_flops
+    clippy::suboptimal_flops,
+    clippy::panic
 )]
 
 mod extensions;
@@ -18,6 +19,8 @@ mod time;
 mod doc;
 #[cfg(feature = "sync")]
 mod follow;
+#[cfg(feature = "service")]
+mod service;
 
 /// Close enough, for f64 arithmetic over a tempo map.
 #[track_caller]

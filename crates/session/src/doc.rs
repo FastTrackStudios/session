@@ -212,6 +212,150 @@ impl SessionDoc {
         session
     }
 
+    // ── one record at a time ────────────────────────────────────────────
+    //
+    // What an edit does (one cue moved, one region renamed), as opposed to
+    // `write`'s whole-session reconcile. Each commits.
+
+    /// Every lane.
+    #[must_use]
+    pub fn lanes(&self) -> BTreeMap<LaneId, Lane> {
+        read_records(&self.doc.get_map(LANES), read_lane)
+    }
+
+    /// Every item.
+    #[must_use]
+    pub fn items(&self) -> BTreeMap<ItemId, Item> {
+        read_records(&self.doc.get_map(ITEMS), read_item)
+    }
+
+    /// The tempo map (the default one, before anyone set it).
+    #[must_use]
+    pub fn tempo(&self) -> TempoMap {
+        value_of(&self.doc.get_map(TEMPO), "map")
+            .and_then(|v| tempo_from_loro(&v))
+            .unwrap_or_default()
+    }
+
+    /// The lane `id`.
+    #[must_use]
+    pub fn lane(&self, id: &LaneId) -> Option<Lane> {
+        get_record(&self.doc.get_map(LANES), id.as_str(), read_lane)
+    }
+
+    /// Puts lane `id` (creating or updating it, field by field).
+    ///
+    /// # Errors
+    ///
+    /// Loro refused a write.
+    pub fn put_lane(&self, id: &LaneId, lane: &Lane) -> DocResult<()> {
+        self.put(LANES, id.as_str(), lane, write_lane)
+    }
+
+    /// Removes lane `id` (its items stay; the caller decides).
+    ///
+    /// # Errors
+    ///
+    /// Loro refused the delete.
+    pub fn remove_lane(&self, id: &LaneId) -> DocResult<()> {
+        self.remove(LANES, id.as_str())
+    }
+
+    /// The item `id`.
+    #[must_use]
+    pub fn item(&self, id: &ItemId) -> Option<Item> {
+        get_record(&self.doc.get_map(ITEMS), id.as_str(), read_item)
+    }
+
+    /// Puts item `id` (creating or updating it; a map payload key by key).
+    ///
+    /// # Errors
+    ///
+    /// Loro refused a write.
+    pub fn put_item(&self, id: &ItemId, item: &Item) -> DocResult<()> {
+        self.put(ITEMS, id.as_str(), item, write_item)
+    }
+
+    /// Removes item `id`.
+    ///
+    /// # Errors
+    ///
+    /// Loro refused the delete.
+    pub fn remove_item(&self, id: &ItemId) -> DocResult<()> {
+        self.remove(ITEMS, id.as_str())
+    }
+
+    /// Puts marker `id`.
+    ///
+    /// # Errors
+    ///
+    /// Loro refused a write.
+    pub fn put_marker(&self, id: &MarkId, marker: &Marker) -> DocResult<()> {
+        self.put(MARKERS, id.as_str(), marker, write_marker)
+    }
+
+    /// Removes marker `id`.
+    ///
+    /// # Errors
+    ///
+    /// Loro refused the delete.
+    pub fn remove_marker(&self, id: &MarkId) -> DocResult<()> {
+        self.remove(MARKERS, id.as_str())
+    }
+
+    /// Puts region `id`.
+    ///
+    /// # Errors
+    ///
+    /// Loro refused a write.
+    pub fn put_region(&self, id: &MarkId, region: &Region) -> DocResult<()> {
+        self.put(REGIONS, id.as_str(), region, write_region)
+    }
+
+    /// Removes region `id`.
+    ///
+    /// # Errors
+    ///
+    /// Loro refused the delete.
+    pub fn remove_region(&self, id: &MarkId) -> DocResult<()> {
+        self.remove(REGIONS, id.as_str())
+    }
+
+    /// Sets the whole tempo map (one value: last writer wins).
+    ///
+    /// # Errors
+    ///
+    /// Loro refused the write.
+    pub fn set_tempo(&self, tempo: &TempoMap) -> DocResult<()> {
+        self.doc
+            .get_map(TEMPO)
+            .insert("map", tempo_to_loro(tempo))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    fn put<R>(
+        &self,
+        root: &str,
+        id: &str,
+        record: &R,
+        write: fn(&LoroMap, &R) -> DocResult<()>,
+    ) -> DocResult<()> {
+        let root = self.doc.get_map(root);
+        write(&record_node(&root, id)?, record)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    fn remove(&self, root: &str, id: &str) -> DocResult<()> {
+        let root = self.doc.get_map(root);
+        if root.get(id).is_some() {
+            root.delete(id)?;
+            self.doc.commit();
+        }
+        Ok(())
+    }
+
     /// Extension `id`'s namespace, to write in place: what an extension
     /// does for each edit (one cue added, one key set, a few characters
     /// typed), so concurrent edits merge as finely as its entries allow.
@@ -649,15 +793,26 @@ fn write_records<K: AsRef<str> + Ord, R>(
     write: fn(&LoroMap, &R) -> DocResult<()>,
 ) -> DocResult<()> {
     for (id, record) in records {
-        // Ids are minted by whoever makes the record, so no two peers make
-        // the same one: a plain child container is enough.
-        let node = match root.get(id.as_ref()) {
-            Some(ValueOrContainer::Container(loro::Container::Map(node))) => node,
-            _ => root.insert_container(id.as_ref(), LoroMap::new())?,
-        };
-        write(&node, record)?;
+        write(&record_node(root, id.as_ref())?, record)?;
     }
     delete_absent(root, |k| records.keys().any(|id| id.as_ref() == k))
+}
+
+/// Record `id`'s map under `root`, made if new. Ids are minted by whoever
+/// makes the record, so no two peers make the same one: a plain child
+/// container is enough (but see the design, §8).
+fn record_node(root: &LoroMap, id: &str) -> DocResult<LoroMap> {
+    Ok(match root.get(id) {
+        Some(ValueOrContainer::Container(loro::Container::Map(node))) => node,
+        _ => root.insert_container(id, LoroMap::new())?,
+    })
+}
+
+fn get_record<R>(root: &LoroMap, id: &str, read: fn(&LoroMap) -> Option<R>) -> Option<R> {
+    match root.get(id)? {
+        ValueOrContainer::Container(loro::Container::Map(node)) => read(&node),
+        _ => None,
+    }
 }
 
 fn read_records<K: From<String> + Ord, R>(

@@ -253,12 +253,13 @@ Presence and the transport are never in it.
   `map_set`, `text_edit`, `items_put` and `items_remove`, each scoped to
   the calling extension's id as the host names it. The precedent is
   `architect.playhead`'s own-source rule
-  (`architect:features/playhead/src/deck.rs` `Caller`). Not built here:
-  it belongs to the host, and its shape is open (§7 Q1).
+  (`architect:features/playhead/src/deck.rs` `Caller`). The rules are
+  built (`session::service`, §7); the transport is the host's until
+  Architect's crates split.
 - **No per-namespace permission.** `DocRegistry` checks read or write on
   the whole document. A linked extension that can write the session can
   write any namespace at the CRDT level; only the service above can scope
-  a runtime one. **Architect gap 3.**
+  a runtime one (`session::service` does). **Architect gap 3.**
 - **No per-extension undo.** `History` is one stack per document and
   peer, so "undo the last lighting change" is not possible. Loro's
   `UndoManager` can exclude origins; `History` does not expose that. Undo
@@ -367,7 +368,7 @@ audio thread.
 (`studio:crates/daw/standalone/src/transport_engine/tempo_map.rs`
 `DynamicTempoMap`) is **stepped**, while `TempoMapEngine` integrates
 linear and bezier ramps. A ramp drawn in the session plays as steps
-(§7 Q3).
+(§7, open question 1).
 
 ## 4. The consumers, concretely
 
@@ -587,27 +588,41 @@ per module, because Studio's workspace lints are not clippy-clean on
 them. The one deliberate divergence is `sync::Position`, which is now
 `Transport` with the same fields and methods.
 
-## 7. Open questions for the owner
+## 7. Questions for the owner
 
-1. **Who serves an extension its namespace?** Runtime extensions need a
-   host service scoped by the caller (§2.4). *Recommendation:* the
-   session host provides `fts.session` as an Architect `[provides]`
-   service, implemented in a `session` feature (`service`) so every host
-   (Studio, Keyflow's app, Ignition's) serves the same one, and Architect
-   adds per-namespace scoping to its document permissions later.
-2. **Does `crdt` split?** (§2.4) *Recommendation:* yes. A `crdt-core`
-   without the workspace-hack (kinds, history, file, presence values), so
-   `session` can use `DocKind` and `History` instead of matching their
-   stamp.
-3. **Ramps in the engine.** The engine's `DynamicTempoMap` steps; the
+Decided on 2026-11-17:
+
+- **Who serves an extension its namespace:** as recommended. The rules
+  are `session::service` (feature `service`): one `handle(doc, caller,
+  grants, request)` every host answers with, so a runtime extension gets
+  the same answer from Studio, Keyflow's app or Ignition's. The host names
+  the caller and passes its grants. The extension reads and writes its own
+  namespace only, and edits only the lanes and items it owns (it may put
+  its items on another's lane). Everyone reads every lane and item's kind
+  and time, while another extension's payload reads as null. The song's
+  structure (tempo, markers, regions) is written only with
+  `Grants::structure`. There is no transport in it: the host wraps
+  `handle` in the `#[architect::rpc]` service it `[provides]` as
+  `fts.session`, inside `crdt::History::transact` for a named undo step.
+  `architect` itself (the RPC macro's crate) pulls the workspace-hack too,
+  so the RPC wrapper can only move into `session` after the split below.
+- **`crdt` splits:** yes. A core without `architect-workspace-hack`
+  (kinds, history, file, presence values, and `architect`'s RPC surface
+  for the service above), so `session` uses `DocKind` and `History`
+  instead of matching their stamp. That is Architect's work; until it
+  lands, §2.4 stands.
+
+Still open:
+
+1. **Ramps in the engine.** The engine's `DynamicTempoMap` steps; the
    session's map ramps (§3.4). *Recommendation:* the engine evaluates the
    session's `TempoMapEngine`, precomputed for the audio thread
    (cumulative quarter notes per segment), and `DynamicTempoMap` goes.
-4. **Markers and regions: core or an extension?** The decision lists them
+2. **Markers and regions: core or an extension?** The decision lists them
    as the session's; REAPER's numbered markers and ruler flags are not.
    *Recommendation:* as built. Name, time, colour and ruler are core; the
    numbers and flags are `daw`'s.
-5. **A shared clock in Architect.** Presence promises one and has none
+3. **A shared clock in Architect.** Presence promises one and has none
    (§2.5). *Recommendation:* Architect serves the session host's clock
    beside presence, using `session::sync::ClockEstimator`, and
    `PlayState::at_ms` is stamped in it.
