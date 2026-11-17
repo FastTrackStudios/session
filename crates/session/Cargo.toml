@@ -12,9 +12,15 @@ default = []
 # Playback sync with realtime guarantees: the lock-free snapshot, clock
 # offset estimation, drift correction (from daw-transport-sync).
 sync = ["dep:web-time"]
+# The session as an Architect document: a Loro doc in the shape
+# `docs/design/session.md` gives, stamped as crdt's `DocKind` reads it.
+# Loro alone, not Architect's `crdt` crate: at v0.12.6 that pulls
+# Architect's workspace-hack (blitz, winit), which a primitive cannot.
+architect = ["dep:loro"]
 
 [dependencies]
 facet = { workspace = true }
+loro = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = { workspace = true, optional = true }
@@ -25,3 +31,7 @@ workspace = true
 [[test]]
 name = "sync_sim"
 required-features = ["sync"]
+
+[dev-dependencies]
+# The document tests drive Loro directly: two replicas, an undo manager.
+loro = { workspace = true }

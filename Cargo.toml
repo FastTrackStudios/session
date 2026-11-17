@@ -17,6 +17,9 @@ facet = { version = "0.50.0-rc.5" }
 # `std::time::Instant` panics in a browser; `web-time`'s is the same API
 # over `performance.now()`.
 web-time = "1"
+# The CRDT Architect documents are made of; the version Architect v0.12.6
+# and Studio pin.
+loro = { version = "1.12", default-features = false }
 
 [patch.crates-io]
 # The fleet's facet-core fork (Studio's root `[patch.crates-io]`).

@@ -1,3 +1,10 @@
+//! Playback sync with realtime guarantees (feature `sync`).
+//!
+//! Copied from daw-transport-sync (FastTrackStudio/studio
+//! `crates/daw/transport-sync`, at `6019839d0`) but for [`Position`],
+//! which is now [`crate::Transport`]; [`Tracker`] and [`Schedule`] are
+//! new. The original's documentation follows.
+//!
 //! Keep several transports playing as one — for any DAW backend.
 //!
 //! Two machines pressing play at "the same moment" are never in step: their
@@ -147,3 +154,10 @@ pub use estimate::{ClockEstimator, RollingWindow};
 pub use gate::PublishGate;
 pub use position::Position;
 pub use snapshot::{AudioSnapshot, ProjectId, SnapshotCell};
+
+// Written for the session (not copied).
+pub mod schedule;
+pub mod tracker;
+
+pub use schedule::Schedule;
+pub use tracker::Tracker;
