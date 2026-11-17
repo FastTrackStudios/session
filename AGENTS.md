@@ -15,7 +15,7 @@ builds on it. Read `docs/design/session.md` before changing the model.
   --all-features` must pass: the engine runs as wasm in an audio worklet on
   the web.
 - **Realtime.** What `docs/design/session.md` lists as audio-thread safe
-  (`sync::SnapshotCell`, `Transport::at`, `sync::Schedule`, `sync::Cursor`)
+  (`sync::SnapshotCell`, `Transport::at`, `sync::Schedule` reads)
   never locks, allocates or blocks. Keep it that way.
 - **Two kinds of sync, kept apart.** Project state is Architect's (the
   `architect` feature binds the model to a Loro document); playback is
