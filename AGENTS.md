@@ -25,15 +25,20 @@ builds on it. Read `docs/design/session.md` before changing the model.
 
 ## Build and test
 
+Dev shell: `devenv shell` (or direnv: `.envrc` loads devenv's direnvrc,
+then `use devenv`). It is the fleet's: `devenv.yaml` imports
+devenv-fleet's `rust` module at the pins every fleet repo uses, so rustc
+is the same store path as Studio's, Architect's and CI's, and kache shares
+their builds. `.cargo/config.toml` carries the fleet's rustflags flag for
+flag; change them in every fleet repo or in none. Move the pins only with
+devenv-fleet's `scripts/fleet-pins --write .`; `devenv shell --
+fleet-doctor` checks the shell. Never set `RUSTC_WRAPPER` or `CARGO_HOME`.
+
 ```bash
 cargo test --workspace --all-features
 cargo check -p session --target wasm32-unknown-unknown --all-features
 cargo clippy --workspace --all-features --all-targets
 ```
-
-Build inside the fleet's dev shell so kache shares the cache (this repo has
-no flake yet; Studio's `nix develop` gives the same Rust 1.99.1). Never set
-`RUSTC_WRAPPER` or `CARGO_HOME`.
 
 ## Process
 
