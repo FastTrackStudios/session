@@ -1,0 +1,27 @@
+[package]
+name = "session"
+description = "The primitive FastTrackStudio's music software agrees on: song structure, a generic timeline, per-extension data, transport as data and playback sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# Playback sync with realtime guarantees: the lock-free snapshot, clock
+# offset estimation, drift correction (from daw-transport-sync).
+sync = ["dep:web-time"]
+
+[dependencies]
+facet = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = { workspace = true, optional = true }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "sync_sim"
+required-features = ["sync"]

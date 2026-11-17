@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = ["crates/session"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+authors = ["FastTrackStudio"]
+repository = "https://github.com/FastTrackStudios/session"
+rust-version = "1.99"
+
+# Pins: the same versions Studio's root Cargo.toml pins, so a Cargo.lock that
+# holds both resolves each to one source.
+[workspace.dependencies]
+facet = { version = "0.50.0-rc.5" }
+# `std::time::Instant` panics in a browser; `web-time`'s is the same API
+# over `performance.now()`.
+web-time = "1"
+
+[patch.crates-io]
+# The fleet's facet-core fork (Studio's root `[patch.crates-io]`).
+facet-core = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.1" }
+
+# Studio's lints, as Studio's root Cargo.toml declares them.
+[workspace.lints.rust]
+dead_code = "warn"
+unused = "warn"
+unused_unsafe = "warn"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "allow"
+private_intra_doc_links = "allow"
+redundant_explicit_links = "allow"
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+unchecked_time_subtraction = "deny"
+todo = "deny"
+string_slice = "deny"
+panic_in_result_fn = "deny"
+panic = "deny"
+exit = "deny"
+as_conversions = "deny"
