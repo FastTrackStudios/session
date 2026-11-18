@@ -24,11 +24,11 @@ web-time = "1"
 loro = { version = "1.12", default-features = false }
 # Architect's documents: the kind and schema stamp, `History`, and (feature
 # `vox`, tests) the sync transport, and the shared clock presence is
-# stamped in (architect#845). Architect `main` until the release tag that
-# carries #845 exists; then that tag, and Studio pins it too.
-crdt = { git = "https://github.com/FastTrackStudios/architect", rev = "cc09cd790f6c7199916798b45a15eaf944f5781e", default-features = false }
-architect = { git = "https://github.com/FastTrackStudios/architect", rev = "cc09cd790f6c7199916798b45a15eaf944f5781e", default-features = false }
-architect-permissions = { git = "https://github.com/FastTrackStudios/architect", rev = "cc09cd790f6c7199916798b45a15eaf944f5781e" }
+# stamped in (architect#845), by the release tag that carries it; Studio
+# pins the same tag.
+crdt = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.14.0", default-features = false }
+architect = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.14.0", default-features = false }
+architect-permissions = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.14.0" }
 thiserror = "2"
 # Architect's pin (its root Cargo.toml).
 vox = { version = "0.10.0-rc.7", default-features = false, features = ["runtime"] }
