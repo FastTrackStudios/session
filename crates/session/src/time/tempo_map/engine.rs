@@ -7,7 +7,7 @@
 
 use crate::time::{TempoPoint, TimeSignature};
 
-const EPSILON: f64 = 1e-9;
+pub(crate) const EPSILON: f64 = 1e-9;
 
 /// REAPER tempo envelope interpolation shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,7 +248,7 @@ impl TempoMapEngine {
         prev_qn + target_from_cursor.max(0.0)
     }
 
-    fn time_signature_changes_qn(&self) -> Vec<(f64, SignatureMetric)> {
+    pub(crate) fn time_signature_changes_qn(&self) -> Vec<(f64, SignatureMetric)> {
         let mut changes: Vec<(f64, SignatureMetric)> = Vec::new();
         for point in &self.points {
             if let Some(ts) = point.time_signature {
@@ -267,7 +267,7 @@ impl TempoMapEngine {
     }
 }
 
-fn integrate_hold_tempo_segment(bpm: f64, from: f64, to: f64) -> f64 {
+pub(crate) fn integrate_hold_tempo_segment(bpm: f64, from: f64, to: f64) -> f64 {
     if to <= from {
         return 0.0;
     }
@@ -293,7 +293,7 @@ fn integrate_linear_tempo_segment(start: &TempoPoint, end: &TempoPoint, from: f6
     tempo_integral / 60.0
 }
 
-fn bezier_shape_antiderivative(u: f64, tension: f64) -> f64 {
+pub(crate) fn bezier_shape_antiderivative(u: f64, tension: f64) -> f64 {
     let u = u.clamp(0.0, 1.0);
     let t = tension.clamp(-0.999_999, 0.999_999);
     let raw = (1.0 + t.abs()) / (1.0 - t.abs());
@@ -328,7 +328,12 @@ fn integrate_bezier_tempo_segment(start: &TempoPoint, end: &TempoPoint, from: f6
     tempo_integral / 60.0
 }
 
-fn integrate_between_points(start: &TempoPoint, end: &TempoPoint, from: f64, to: f64) -> f64 {
+pub(crate) fn integrate_between_points(
+    start: &TempoPoint,
+    end: &TempoPoint,
+    from: f64,
+    to: f64,
+) -> f64 {
     if to <= from {
         return 0.0;
     }
@@ -339,7 +344,7 @@ fn integrate_between_points(start: &TempoPoint, end: &TempoPoint, from: f64, to:
     }
 }
 
-fn solve_segment_seconds(
+pub(crate) fn solve_segment_seconds(
     start: &TempoPoint,
     end: &TempoPoint,
     seg_from: f64,
@@ -368,16 +373,16 @@ fn solve_segment_seconds(
     }
 }
 
-#[derive(Clone, Copy)]
-struct MusicalCursor {
-    measure: i32,
-    quarter_offset: f64,
-    quarter_notes_per_measure: f64,
-    quarter_notes_per_display_beat: f64,
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MusicalCursor {
+    pub(crate) measure: i32,
+    pub(crate) quarter_offset: f64,
+    pub(crate) quarter_notes_per_measure: f64,
+    pub(crate) quarter_notes_per_display_beat: f64,
 }
 
 impl MusicalCursor {
-    fn new(metric: SignatureMetric) -> Self {
+    pub(crate) fn new(metric: SignatureMetric) -> Self {
         Self {
             measure: 0,
             quarter_offset: 0.0,
@@ -386,7 +391,7 @@ impl MusicalCursor {
         }
     }
 
-    fn advance(&mut self, quarter_notes: f64) {
+    pub(crate) fn advance(&mut self, quarter_notes: f64) {
         if quarter_notes <= 0.0 {
             return;
         }
@@ -400,7 +405,7 @@ impl MusicalCursor {
         }
     }
 
-    fn apply_time_signature(&mut self, metric: SignatureMetric) {
+    pub(crate) fn apply_time_signature(&mut self, metric: SignatureMetric) {
         if self.quarter_offset > EPSILON {
             self.measure += 1;
             self.quarter_offset = 0.0;
@@ -409,7 +414,7 @@ impl MusicalCursor {
         self.quarter_notes_per_display_beat = metric.quarter_notes_per_display_beat;
     }
 
-    fn as_parts(self) -> (i32, i32, f64) {
+    pub(crate) fn as_parts(self) -> (i32, i32, f64) {
         let display_beat_offset = self.quarter_offset / self.quarter_notes_per_display_beat;
         let beat_floor = display_beat_offset.floor();
         (
@@ -420,13 +425,13 @@ impl MusicalCursor {
     }
 }
 
-#[derive(Clone, Copy)]
-struct SignatureMetric {
-    quarter_notes_per_measure: f64,
-    quarter_notes_per_display_beat: f64,
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SignatureMetric {
+    pub(crate) quarter_notes_per_measure: f64,
+    pub(crate) quarter_notes_per_display_beat: f64,
 }
 
-fn signature_metric(time_signature: TimeSignature) -> SignatureMetric {
+pub(crate) fn signature_metric(time_signature: TimeSignature) -> SignatureMetric {
     let numerator = time_signature.numerator.max(1) as f64;
     let denominator = time_signature.denominator.max(1) as f64;
     let quarter_notes_per_display_beat = 4.0 / denominator;

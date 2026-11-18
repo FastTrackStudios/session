@@ -104,6 +104,14 @@ impl TempoMap {
         &self.engine
     }
 
+    /// The map compiled for the audio thread: every conversion a binary
+    /// search and arithmetic, with no allocation, ramps included. Build it
+    /// off the audio thread when the map changes; ask it from anywhere.
+    #[must_use]
+    pub fn plan(&self) -> crate::time::TempoPlan {
+        crate::time::TempoPlan::compile(&self.engine, self.default_bpm, self.default_meter)
+    }
+
     /// The tempo at `seconds`, BPM (quarter notes a minute).
     #[must_use]
     pub fn bpm_at(&self, seconds: f64) -> f64 {
