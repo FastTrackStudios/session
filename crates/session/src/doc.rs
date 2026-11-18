@@ -74,9 +74,11 @@ const REGIONS: &str = "regions";
 const LANES: &str = "lanes";
 const ITEMS: &str = "items";
 const EXTENSIONS: &str = "extensions";
-/// Where the session's transport is hosted (`host`: the node serving its
-/// presence and clock), session#192.
-const TRANSPORT: &str = "transport";
+/// Where the session's presence (its transport, and the clock its peers
+/// share) is hosted: `host`, the node serving it (session#192). The same
+/// root and key as Architect's `crdt::presence::presence_host`, which a
+/// node's relay reads to route an extension's presence there.
+const TRANSPORT: &str = "presence";
 
 /// Writing the document failed.
 #[derive(Debug)]
