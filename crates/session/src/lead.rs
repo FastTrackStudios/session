@@ -1,10 +1,11 @@
 //! The session host's transport, published: what a DAW engine (or any
 //! host) calls so every view on every machine follows it.
 //!
-//! [`Leader::serve`] serves the session's presence and the host's clock
-//! (`crate::clock::ClockHost`) over vox on a WebSocket, and joins that
-//! presence as peer `lead`. [`Leader::publish`] then puts the transport
-//! there as `lead/play`, stamped in the host's clock: Keyflow's chart,
+//! [`Leader::serve`] serves the session's presence over vox on a WebSocket
+//! (Architect's `PresenceHost`, which also serves the host's clock:
+//! `DocPresence::now`), and joins that presence as peer `lead`.
+//! [`Leader::publish`] then puts the transport there as `lead/play`,
+//! stamped in the host's clock (`Here::play_now`): Keyflow's chart,
 //! Ignition's room and cue list, and any `sync::Tracker` follow it
 //! (`crate::doc::transport_of`). The host's own audio clock stays the
 //! truth: publish on every move (play, stop, seek, rate) and now and then
@@ -15,15 +16,12 @@ use std::time::Duration;
 use architect::LayerRouter;
 use architect::connect::{Endpoint, pool};
 use architect::host::EngineHost;
-use crdt::presence::{Here, PeerState, PlayState};
+use crdt::presence::{Here, PeerState};
 use crdt::sync::{
     DocPresenceClient, DocPresenceDispatcher, PresenceHost, PresencePeer,
     doc_presence_service_descriptor,
 };
 use uuid::Uuid;
-
-use crate::clock::{ClockHost, serve as serve_clock, session_clock_rpc_service_descriptor};
-use crate::sync::clock::now_micros_f64;
 
 /// The peer name the transport is published under (`lead/play`).
 pub const LEAD: &str = "lead";
@@ -42,15 +40,10 @@ impl Leader {
     ///
     /// The endpoint could not be dialled once served.
     pub async fn serve(bind: &str, doc: Uuid) -> Result<Self, String> {
-        let router = LayerRouter::new()
-            .with(
-                doc_presence_service_descriptor(),
-                DocPresenceDispatcher::new(PresenceHost::new(doc, 30_000)),
-            )
-            .with(
-                session_clock_rpc_service_descriptor(),
-                serve_clock(ClockHost),
-            );
+        let router = LayerRouter::new().with(
+            doc_presence_service_descriptor(),
+            DocPresenceDispatcher::new(PresenceHost::new(doc, 30_000)),
+        );
         let port = bind.rsplit(':').next().unwrap_or("4142").to_owned();
         let bind = bind.to_owned();
         tokio::spawn(async move {
@@ -69,9 +62,20 @@ impl Leader {
             }
         };
         let (peer, mut driver) = PresencePeer::new(doc, 30_000);
+        let clock = peer.clock().clone();
         tokio::spawn(async move {
             let _ = driver.run(&client).await;
         });
+        // The driver's first ping gives the clock estimate `publish`
+        // stamps with: wait for it, so the first publish is not dropped.
+        let mut waited = 0_u32;
+        while clock.offset_ms().is_none() {
+            if waited >= 250 {
+                return Err("the host's clock gave no estimate in 5 s".to_owned());
+            }
+            waited = waited.saturating_add(1);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         let here = Here::new(peer, LEAD, PeerState::new(LEAD, "Transport"));
         Ok(Self { url: local, here })
     }
@@ -85,13 +89,10 @@ impl Leader {
 
     /// The transport now: playing or not, at `position_seconds` of the
     /// session, at `rate`. Stamped in this host's clock, which is the
-    /// shared clock.
-    pub fn publish(&self, playing: bool, position_seconds: f64, rate: f64) {
-        self.here.play(&PlayState {
-            playing,
-            position: position_seconds,
-            at_ms: now_micros_f64() / 1000.0,
-            rate,
-        });
+    /// shared clock. `false`, and nothing sent, while there is no clock
+    /// estimate (never once [`Self::serve`] has returned).
+    #[must_use]
+    pub fn publish(&self, playing: bool, position_seconds: f64, rate: f64) -> bool {
+        self.here.play_now(playing, position_seconds, rate)
     }
 }
