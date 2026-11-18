@@ -35,7 +35,7 @@ async fn a_follower_draws_where_the_leader_plays() {
 
     // A follower elsewhere: its presence, dialled (its driver pings the
     // host's clock into `PresencePeer::clock`).
-    let url = leader.url().to_owned();
+    let url = leader.url().expect("it serves its own presence").to_owned();
     let presence: DocPresenceClient = pool().client(&Endpoint::url(&url)).await.unwrap();
     let (peer, mut driver) = PresencePeer::new(doc, 30_000);
     let clock = peer.clock().clone();
@@ -67,4 +67,65 @@ async fn a_follower_draws_where_the_leader_plays() {
             .is_some_and(|t| !t.is_playing)
     })
     .await;
+}
+
+/// A leader on a presence its node hosts and drives ([`Leader::on`],
+/// session#192): it serves nothing of its own, and a follower of that
+/// presence hears it, stamped in the host's clock.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_leader_on_its_nodes_presence_is_followed() {
+    use architect::LayerRouter;
+    use architect::host::EngineHost;
+    use crdt::sync::{DocPresenceDispatcher, PresenceHost, doc_presence_service_descriptor};
+
+    let doc = Uuid::new_v4();
+    let port = 48_000 + (std::process::id() % 1000);
+    let router = LayerRouter::new().with(
+        doc_presence_service_descriptor(),
+        DocPresenceDispatcher::new(PresenceHost::new(doc, 30_000)),
+    );
+    let bind = format!("127.0.0.1:{port}");
+    tokio::spawn(async move {
+        let _ = EngineHost::ungated(router, bind).serve().await;
+    });
+    let url = format!("ws://127.0.0.1:{port}/vox");
+    let join = |url: String| async move {
+        let mut tries = 0_u32;
+        let client: DocPresenceClient = loop {
+            match pool().client(&Endpoint::url(&url)).await {
+                Ok(client) => break client,
+                Err(e) => {
+                    assert!(tries < 200, "never served: {e}");
+                    tries = tries.saturating_add(1);
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+        };
+        let (peer, mut driver) = PresencePeer::new(doc, 30_000);
+        tokio::spawn(async move {
+            let _ = driver.run(&client).await;
+        });
+        peer
+    };
+
+    let leader = Leader::on(join(url.clone()).await);
+    assert_eq!(leader.url(), None, "it serves nothing of its own");
+    let follower = join(url).await;
+    let clock = follower.clock().clone();
+    until("the leader's clock is estimated", || {
+        leader.publish(true, 12.0, 1.0)
+    })
+    .await;
+    let mut heard = None;
+    until("the follower hears the leader", || {
+        heard = follower.states().get("lead/play").and_then(transport_of);
+        heard.is_some() && clock.offset_ms().is_some()
+    })
+    .await;
+    let mut tracker = Tracker::default();
+    tracker.observe(heard.unwrap());
+    let shown = tracker
+        .position(now_micros_f64(), clock.offset_ms().unwrap() * 1000.0)
+        .unwrap();
+    assert!((12.0..12.5).contains(&shown), "shown {shown}");
 }

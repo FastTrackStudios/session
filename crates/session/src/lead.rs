@@ -28,7 +28,9 @@ pub const LEAD: &str = "lead";
 
 /// A session's transport, led from here.
 pub struct Leader {
-    url: String,
+    /// Where it serves its own presence ([`Leader::serve`]); `None` on a
+    /// presence someone else hosts ([`Leader::on`]).
+    url: Option<String>,
     here: Here<PresencePeer>,
 }
 
@@ -76,15 +78,34 @@ impl Leader {
             waited = waited.saturating_add(1);
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        let here = Here::new(peer, LEAD, PeerState::new(LEAD, "Transport"));
-        Ok(Self { url: local, here })
+        Ok(Self::on(peer).with_url(local))
     }
 
-    /// Where it is served on this machine (`ws://127.0.0.1:<port>/vox`):
-    /// another machine dials this host's address on the same port.
+    /// Leads on `peer`, a presence its owner drives: the node's own, which
+    /// hosts the session's presence and clock and is reached through the
+    /// org by its endpoint id (session#192; the leader names it in the
+    /// session document, `SessionDoc::set_transport_host`). [`Self::publish`]
+    /// sends nothing until `peer`'s clock has its first estimate.
     #[must_use]
-    pub fn url(&self) -> &str {
-        &self.url
+    pub fn on(peer: PresencePeer) -> Self {
+        Self {
+            url: None,
+            here: Here::new(peer, LEAD, PeerState::new(LEAD, "Transport")),
+        }
+    }
+
+    fn with_url(mut self, url: String) -> Self {
+        self.url = Some(url);
+        self
+    }
+
+    /// Where it is served on this machine (`ws://127.0.0.1:<port>/vox`),
+    /// when it serves its own presence ([`Self::serve`]): another machine
+    /// dials this host's address on the same port. `None` for a leader
+    /// [`Self::on`] a presence its node hosts.
+    #[must_use]
+    pub fn url(&self) -> Option<&str> {
+        self.url.as_deref()
     }
 
     /// The transport now: playing or not, at `position_seconds` of the
