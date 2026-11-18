@@ -1,7 +1,7 @@
 //! The session as an Architect document (feature `architect`).
 //!
-//! An Architect document is a Loro document with a kind and a schema stamp
-//! in its `meta` map (Architect's `crdt::DocKind`); everything else
+//! An Architect document is a Loro document of a `crdt::DocKind` ([`kind`]:
+//! its id and schema stamp in the `meta` map); everything else
 //! (the file, sync to the org, peer-to-peer links, presence, undo) is
 //! Architect's, over that `LoroDoc`. This module is the session's shape
 //! inside it:
@@ -36,7 +36,8 @@
 //!
 //! **What this does not do**: open, save or sync the document (that is
 //! `crdt::DocFile`, `OrgDocs`, `SyncedDoc` over [`SessionDoc::doc`]), or
-//! undo (`crdt::History` over the same doc). See the design, "Architect".
+//! undo (`crdt::History` over the same doc). `tests/sync_e2e.rs` syncs two
+//! peers through Architect's real path. See the design, "Architect".
 
 use std::collections::BTreeMap;
 
@@ -50,10 +51,20 @@ use crate::timeline::{Item, Lane, Marker, Region, TempoMap, Time};
 use crate::transport::Transport;
 use crate::value::Value;
 
-/// The kind id, as `crdt::DocKind::new(KIND, "Session")` names it.
+/// The kind id.
 pub const KIND: &str = "fts.session";
 /// The schema this build writes.
 pub const SCHEMA: u32 = 1;
+
+/// The session as an Architect document kind: register it in the app's
+/// `crdt::DocKinds`, so `DocFile` and the org driver open, stamp and
+/// migrate sessions like any other document. A `.session` file is one.
+#[must_use]
+pub fn kind() -> crdt::DocKind {
+    crdt::DocKind::new(KIND, "Session")
+        .extension("session")
+        .schema(SCHEMA, Vec::new())
+}
 
 const META: &str = "meta";
 const TEMPO: &str = "tempo";
@@ -97,16 +108,11 @@ impl Default for SessionDoc {
 }
 
 impl SessionDoc {
-    /// A new document, stamped as this kind and schema (as
-    /// `crdt::DocKind::stamp` would).
+    /// A new document, stamped as [`kind`] at this build's schema.
     #[must_use]
     pub fn new() -> Self {
         let doc = LoroDoc::new();
-        let meta = doc.get_map(META);
-        // A fresh document: these inserts cannot fail.
-        let _ = meta.insert("kind", KIND);
-        let _ = meta.insert("schema", i64::from(SCHEMA));
-        doc.commit();
+        kind().stamp(&doc);
         Self { doc }
     }
 
@@ -124,12 +130,10 @@ impl SessionDoc {
         &self.doc
     }
 
-    /// The kind the document says it is.
+    /// The kind the document says it is (`crdt::kinds::kind_of`).
     #[must_use]
     pub fn kind(&self) -> Option<String> {
-        value_of(&self.doc.get_map(META), "kind")
-            .and_then(|v| v.into_string().ok())
-            .map(|s| s.to_string())
+        crdt::kinds::kind_of(&self.doc)
     }
 
     /// Writes `session` into the document, recording only what differs
@@ -800,7 +804,7 @@ fn write_records<K: AsRef<str> + Ord, R>(
 
 /// Record `id`'s map under `root`, made if new. Ids are minted by whoever
 /// makes the record, so no two peers make the same one: a plain child
-/// container is enough (but see the design, §8).
+/// container is enough (but see the design, §10).
 fn record_node(root: &LoroMap, id: &str) -> DocResult<LoroMap> {
     Ok(match root.get(id) {
         Some(ValueOrContainer::Container(loro::Container::Map(node))) => node,

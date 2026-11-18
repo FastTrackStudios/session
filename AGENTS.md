@@ -22,6 +22,10 @@ builds on it. Read `docs/design/session.md` before changing the model.
   this crate's `sync`. Never put a playhead in the document.
 - Architect idiom and pins follow Studio's root `Cargo.toml`: the same
   architect tag, Rust 1.99.1 (`rust-toolchain.toml`), the same lints.
+- **Architect's workspace-hack stays patched out** (`vendor/no-workspace-hack`,
+  the root `[patch]`): without it cargo resolves the fleet's whole UI union
+  (Dioxus, Blitz, winit) whatever the cfg. Bump the architect tag, the
+  vox wire-fork pins and Loro together with Studio's.
 
 ## Build and test
 

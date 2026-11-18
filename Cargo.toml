@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/session"]
+exclude = ["vendor/no-workspace-hack"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,10 +21,25 @@ web-time = "1"
 # The CRDT Architect documents are made of; the version Architect v0.12.6
 # and Studio pin.
 loro = { version = "1.12", default-features = false }
+# Architect's documents: the kind and schema stamp, `History`, and (feature
+# `vox`, tests) the sync transport. The tag Studio pins; bump them together.
+crdt = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.12.6", default-features = false }
+architect = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.12.6", default-features = false }
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", default-features = false }
 
 [patch.crates-io]
-# The fleet's facet-core fork (Studio's root `[patch.crates-io]`).
+# The fleet's wire forks, as Studio's root `[patch.crates-io]` pins them,
+# so a Cargo.lock holding both has one copy of each (vox's schema exchange
+# runs over them).
 facet-core = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.1" }
+vox-phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.3.0" }
+phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.4.1" }
+phon-jit = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.2.3" }
+
+# Architect's workspace-hack, patched out: see vendor/no-workspace-hack.
+[patch."https://github.com/FastTrackStudios/architect"]
+architect-workspace-hack = { path = "vendor/no-workspace-hack" }
 
 # Studio's lints, as Studio's root Cargo.toml declares them.
 [workspace.lints.rust]

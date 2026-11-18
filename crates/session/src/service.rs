@@ -25,9 +25,9 @@
 //! Requests and responses are plain data (Facet), so a host carries them
 //! over whatever it serves: an `#[architect::rpc]` service it `[provides]`
 //! as `fts.session`, a WIT import, a web view's `call`. This module has no
-//! transport: Architect's RPC crate cannot be a dependency of the session
-//! until Architect's crates split from its workspace-hack (the design,
-//! §2.4). One request is one Loro transaction; a host wraps [`handle`] in
+//! transport yet: the `#[architect::rpc]` wrapper is the next step (the
+//! design, §9), now that `architect` resolves here with its workspace-hack
+//! patched out (§2.4). One request is one Loro transaction; a host wraps [`handle`] in
 //! `crdt::History::transact` to make it one named undo step, made as the
 //! extension.
 

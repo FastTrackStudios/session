@@ -1,0 +1,13 @@
+# Architect's workspace-hack, empty. Architect's members depend on
+# `architect-workspace-hack` (the fleet's feature union: Dioxus, Blitz,
+# winit, ...) behind a cfg gate, but cargo resolves every target table
+# whatever the cfg, so without this a crate outside the union resolves
+# all of it. The root `[patch]` puts this in its place; a fleet repo that
+# depends on `session` keeps its own union. Architect's
+# `skills/architect/references/xtask-tooling.md`, "Outside the union".
+[package]
+name = "architect-workspace-hack"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
