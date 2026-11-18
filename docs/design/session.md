@@ -205,7 +205,7 @@ ext:<id>:t:<name> : Text  a text entry
   percent-escaped: a root container's name may not hold `/` (Loro
   panics), and `:` separates ours.
 - Records (markers, lanes, items) are child maps by id. Their creator
-  mints the ids, so no two peers create the same one (but see §8).
+  mints the ids, so no two peers create the same one (but see §10).
 - `SessionDoc::write` reconciles: it writes only what differs (Loro skips
   a write of the value already there), so writing the same session twice
   records nothing. `ExtWriter` is the in-place path an extension uses per
@@ -231,22 +231,37 @@ Presence and the transport are never in it.
 
 ### 2.4 Where the binding stops, and why
 
-- **Loro, not `crdt`.** `crdt` at v0.12.6 depends on Architect's
-  `architect-workspace-hack`, which pulls in blitz and winit; outside
-  Architect's workspace it does not even resolve. A primitive that must
-  not depend on UI cannot take it. So the binding writes the same `meta`
-  stamp `crdt::DocKind` reads (`kind`, `schema`), and the app wraps
-  `SessionDoc::doc()` in `DocKind`, `History`, `DocFile` and the sync
-  drivers. **Architect gap 1:** split `crdt`'s core (kinds, history,
-  file, presence values) from the workspace-hack, so a primitive can
-  depend on it.
+- **`crdt`, with Architect's workspace-hack patched out.** The binding
+  is `crdt` itself: `session::doc::kind()` is a `crdt::DocKind`
+  (`fts.session`, extension `session`, schema 1), stamped by `DocKind`.
+  The app registers it in its `DocKinds`, wraps `SessionDoc::doc()` in
+  `History`, `DocFile` and the sync drivers, and the test syncs it through
+  `SyncedDoc` and presence. Why `crdt` once looked unusable here: every
+  Architect member depends on `architect-workspace-hack` (the fleet's
+  feature union: Dioxus, Blitz, winit) behind
+  `cfg(not(any(target_family = "wasm", no_workspace_hack)))`. A `cfg`
+  decides what is built, but Cargo resolves every target table whatever
+  the cfg, so a crate outside the union resolved the whole UI stack and
+  failed to resolve without Architect's and Studio's patch tables.
+  `--cfg no_workspace_hack` does not change resolution. With the hack
+  off, `crdt` is about 216 crates and `architect` 77, with no UI, and
+  Architect's `boundaries.toml` L0 rows already hold that. So nothing
+  needed splitting. The session's root `Cargo.toml` patches the hack
+  with an empty crate (`vendor/no-workspace-hack`), takes Studio's pins
+  for the vox wire forks, and changes no rustflags. A fleet repo that
+  depends on `session` (Studio) keeps its own union. Architect documents
+  the pattern ("Outside the union" in its
+  `skills/architect/references/xtask-tooling.md`, the PR beside this one).
+  The same holds for the RPC crate, `architect` (its `vox` feature is an
+  L0 row): nothing blocks the `fts.session` service wrapper moving into
+  `session`.
 - **No host service yet.** A linked (compiled-in) extension holds the
   `SessionDoc`. A **runtime** extension cannot. Architect's documents
   service is vault notes as text (`read_document`, `edit_document`), and
   an extension's `data`/`set_data` is a device-local file or
   `localStorage`, not synced and not in any document
   (`architect:skills/architect-extensions/references/host-api.md`,
-  "Documents" and "Files, settings and data"). **Architect gap 2:** a way
+  "Documents" and "Files, settings and data"). **Architect gap 1:** a way
   for an extension to read and write *its namespace* of a structured
   document. The shape that fits Architect today is a service. The host
   provides `fts.session` (`[provides]`) with methods `ext_get`, `ext_set`,
@@ -254,12 +269,12 @@ Presence and the transport are never in it.
   the calling extension's id as the host names it. The precedent is
   `architect.playhead`'s own-source rule
   (`architect:features/playhead/src/deck.rs` `Caller`). The rules are
-  built (`session::service`, §7); the transport is the host's until
-  Architect's crates split.
+  built (`session::service`, §7), and the `#[architect::rpc]` wrapper
+  can now live in `session` too (the first item of §9).
 - **No per-namespace permission.** `DocRegistry` checks read or write on
   the whole document. A linked extension that can write the session can
   write any namespace at the CRDT level; only the service above can scope
-  a runtime one (`session::service` does). **Architect gap 3.**
+  a runtime one (`session::service` does). **Architect gap 2.**
 - **No per-extension undo.** `History` is one stack per document and
   peer, so "undo the last lighting change" is not possible. Loro's
   `UndoManager` can exclude origins; `History` does not expose that. Undo
@@ -269,7 +284,7 @@ Presence and the transport are never in it.
 
 A person's playhead rides presence (`<peer>/play`, `PlayState`), and
 `play_state(&Transport)` writes exactly that encoding. **Architect gap
-4:** `PlayState::at_ms` is documented as being in "the clock the two
+3:** `PlayState::at_ms` is documented as being in "the clock the two
 sides share", but `crdt::presence::clock_ms` is each process's own
 monotonic clock. Architect has no shared clock. Studio built one
 (`studio:features/session/src/sync/clock.rs` `SessionClock` over
@@ -368,7 +383,7 @@ audio thread.
 (`studio:crates/daw/standalone/src/transport_engine/tempo_map.rs`
 `DynamicTempoMap`) is **stepped**, while `TempoMapEngine` integrates
 linear and bezier ramps. A ramp drawn in the session plays as steps
-(§7, open question 1).
+(§7.3).
 
 ## 4. The consumers, concretely
 
@@ -588,46 +603,111 @@ per module, because Studio's workspace lints are not clippy-clean on
 them. The one deliberate divergence is `sync::Position`, which is now
 `Transport` with the same fields and methods.
 
-## 7. Questions for the owner
+## 7. The owner's decisions
 
 Decided on 2026-11-17:
 
-- **Who serves an extension its namespace:** as recommended. The rules
-  are `session::service` (feature `service`): one `handle(doc, caller,
-  grants, request)` every host answers with, so a runtime extension gets
-  the same answer from Studio, Keyflow's app or Ignition's. The host names
-  the caller and passes its grants. The extension reads and writes its own
-  namespace only, and edits only the lanes and items it owns (it may put
-  its items on another's lane). Everyone reads every lane and item's kind
-  and time, while another extension's payload reads as null. The song's
-  structure (tempo, markers, regions) is written only with
-  `Grants::structure`. There is no transport in it: the host wraps
-  `handle` in the `#[architect::rpc]` service it `[provides]` as
-  `fts.session`, inside `crdt::History::transact` for a named undo step.
-  `architect` itself (the RPC macro's crate) pulls the workspace-hack too,
-  so the RPC wrapper can only move into `session` after the split below.
-- **`crdt` splits:** yes. A core without `architect-workspace-hack`
-  (kinds, history, file, presence values, and `architect`'s RPC surface
-  for the service above), so `session` uses `DocKind` and `History`
-  instead of matching their stamp. That is Architect's work; until it
-  lands, §2.4 stands.
+1. **Who serves an extension its namespace:** the session host, the same
+   everywhere. The rules are `session::service` (feature `service`): one
+   `handle(doc, caller, grants, request)` every host answers with. The
+   host names the caller and passes its grants. The extension reads and
+   writes its own namespace only, and edits only the lanes and items it
+   owns (it may put its items on another's lane). Everyone reads every
+   lane and item's kind and time, while another extension's payload reads
+   as null. The song's structure (tempo, markers, regions) is written only
+   with `Grants::structure`. The host serves it as `fts.session` over
+   `#[architect::rpc]`, inside `crdt::History::transact` for a named undo
+   step. That wrapper can now live in `session` too (§2.4); it is not
+   written yet (§9).
+2. **The `crdt` split: yes**, with the light core the goal. Looking first
+   found the core already light: the UI stack came only from the
+   workspace-hack's feature union, which Cargo resolves for any consumer.
+   The smaller correct change is how an outside consumer depends on it (a
+   `[patch]` with an empty hack crate), not a new crate. Done that way;
+   §2.4 says why.
+3. **Ramps in the engine:** the engine evaluates the session's tempo model
+   (`TempoMapEngine`, precomputed for the audio thread) rather than its
+   stepped `DynamicTempoMap`. A change in the `daw` repo, later.
+4. **Markers and regions** stay in the core, as built. Name, time,
+   colour and ruler are core; REAPER's marker numbers and ruler flags are
+   the DAW's.
+5. **A shared clock:** Architect serves the session host's clock beside
+   presence. Not built yet: the end-to-end proof runs both peers in one
+   process, so it needed none. The smallest version:
+   - **On the host:** one more method beside presence on the session's
+     document lane, `now() -> f64`, the host's `session::sync::clock`
+     in microseconds. That is Studio's `SessionClock`
+     (`studio:features/session/src/sync/clock.rs`), moved where every
+     host has it.
+   - **On each peer:** `PresenceDriver` pings it ten times a second and
+     feeds a `ClockEstimator`, and exposes `shared_now_ms()` and the
+     offset.
+   - **In `PlayState`:** `Here::play` stamps `at_ms` in the shared clock;
+     `PlayState::at_ms` then means what its doc says. A follower passes
+     the estimator's offset to `Tracker::position`.
+   - **Size:** a fifth field in no wire type, one RPC, one estimator per
+     peer. The host's own clock is offset zero.
 
-Still open:
+Recommendation, not yet acted on: Studio's crate named `session` becomes
+`session-app` (§6.1), when Studio adopts the primitive.
 
-1. **Ramps in the engine.** The engine's `DynamicTempoMap` steps; the
-   session's map ramps (§3.4). *Recommendation:* the engine evaluates the
-   session's `TempoMapEngine`, precomputed for the audio thread
-   (cumulative quarter notes per segment), and `DynamicTempoMap` goes.
-2. **Markers and regions: core or an extension?** The decision lists them
-   as the session's; REAPER's numbered markers and ruler flags are not.
-   *Recommendation:* as built. Name, time, colour and ruler are core; the
-   numbers and flags are `daw`'s.
-3. **A shared clock in Architect.** Presence promises one and has none
-   (§2.5). *Recommendation:* Architect serves the session host's clock
-   beside presence, using `session::sync::ClockEstimator`, and
-   `PlayState::at_ms` is stamped in it.
+## 8. Two peers, end to end
 
-## 8. Not sure of
+`session:crates/session/tests/sync_e2e.rs`: two peers, each holding the
+session as an Architect document, kept in step through Architect's sync.
+
+- On A, Ignition (through `session::service`) sets a rig key, makes a cue
+  lane and puts a cue at 4 s, as one `History` step. On B at the same
+  time, Keyflow types its chart. Each sees the other's, B's own
+  extension's data is untouched, and both replicas read the same session.
+- A adds a second cue as another step while B types a chorus. Undo on A
+  takes back the second cue only: B sees it go, B's chorus and A's first
+  step stand.
+- A publishes play, a seek to 42 s and a stop with Architect's presence
+  (`Here::play`, a `PlayState`). B reads it from its own presence,
+  `session::doc::transport_of` turns it into a `Transport`, and `Tracker`
+  draws B's playhead within 1 ms of A's for twenty frames after each.
+
+**Real:**
+- Architect's document sync (`SyncedDoc` against a `DocSyncHost` in a
+  `DocRegistry`), its presence (`PresencePeer`, `PresenceHost`), its
+  undo (`History`) and its kind (`DocKind`).
+- The vox services and codecs between them, over Architect's in-process
+  transport (`architect::LocalServer`).
+- The session's own document shape, service rules, tracker and transport
+  encoding.
+
+**Simulated:**
+- The network: both peers are in one process.
+- The clock: one process has one clock, so the offset is zero. Following
+  across two clocks over a jittery network is
+  `session:crates/session/tests/session/follow.rs`, by simulation, until
+  Architect serves the shared clock (§7.5).
+
+## 9. Before Studio, Keyflow or Ignition can share a session
+
+In order:
+
+1. **The `fts.session` service wrapper** in `session` (feature
+   `service`): `#[architect::rpc]` over `service::handle`, with the
+   caller taken from the call's principal. Then a runtime extension can
+   ask a host. Unblocked by §2.4.
+2. **A host that holds the document**, for the first consumer, which
+   should be Keyflow, the smallest: a chart with a tempo map and no
+   engine. Its app opens a `.session` as a `DocFile` of `kind()`, syncs it
+   with `OrgSyncs` (or a share link), and serves `fts.session` to its
+   chart view. Keyflow's chart moves into `keyflow`'s `chart` text,
+   bound with `TextBinding`.
+3. **The shared clock** (§7.5), so a follower on another machine follows
+   for real. Until then playheads across machines are as good as the
+   process clocks' agreement (unrelated).
+4. **Ignition** on the same session: its cue lists as lanes and items,
+   following the transport with `Tracker`, through the service.
+5. **Studio**: rename its `session` crate to `session-app`, then the
+   migration of §5.3, which is the long pole (the DAW's data as extension
+   data, the live document's 4 → 5 migration, the file).
+
+## 10. Not sure of
 
 - Payload containers rest on ids being unique per creator. An importer
   that derives ids on two machines at once (the same `.rpp` imported on
