@@ -91,6 +91,7 @@ impl Leader {
     /// session, at `rate`. Stamped in this host's clock, which is the
     /// shared clock. `false`, and nothing sent, while there is no clock
     /// estimate (never once [`Self::serve`] has returned).
+    #[must_use]
     pub fn publish(&self, playing: bool, position_seconds: f64, rate: f64) -> bool {
         self.here.play_now(playing, position_seconds, rate)
     }
