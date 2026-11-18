@@ -15,6 +15,7 @@ rust-version = "1.99"
 # holds both resolves each to one source.
 [workspace.dependencies]
 facet = { version = "0.50.0-rc.5" }
+facet-json = { version = "0.50.0-rc.7" }
 # `std::time::Instant` panics in a browser; `web-time`'s is the same API
 # over `performance.now()`.
 web-time = "1"

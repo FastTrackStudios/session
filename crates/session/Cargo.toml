@@ -25,10 +25,14 @@ service = ["architect"]
 # call's principal, what it may do from the permission engine. Named `vox`
 # because `#[architect::rpc]` emits `cfg(feature = "vox")` into the crate
 # that uses it.
+# `fts.session` as an Architect extension service: the provider's actions
+# hand `session::extension::answer` their JSON and the caller's id.
+extension = ["service", "dep:facet-json"]
 vox = ["service", "dep:architect", "architect/vox", "dep:architect-permissions", "dep:thiserror", "dep:vox"]
 
 [dependencies]
 facet = { workspace = true }
+facet-json = { workspace = true, optional = true }
 loro = { workspace = true, optional = true }
 crdt = { workspace = true, optional = true }
 architect = { workspace = true, optional = true }

@@ -31,7 +31,8 @@
 //! `crdt::History::transact` to make it one named undo step, made as the
 //! extension.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use crate::doc::{DocError, SessionDoc};
 use crate::ext::ExtensionData;
@@ -163,6 +164,85 @@ impl From<DocError> for ServiceError {
 impl From<loro::LoroError> for ServiceError {
     fn from(e: loro::LoroError) -> Self {
         Self::Failed(DocError(e))
+    }
+}
+
+/// The action a request needs on the session.
+///
+/// [`READ`] for the two reads, [`STRUCTURE`] for the tempo map, markers and
+/// regions, [`WRITE`] for every other edit. A host asks its permission
+/// engine for it (the vox face, `crate::host`), or answers it with a
+/// method of that name whose effect Architect checks (the extension face,
+/// `crate::extension`).
+#[must_use]
+pub const fn action_for(request: &Request) -> &'static str {
+    match request {
+        Request::ReadData | Request::ReadTimeline => READ,
+        Request::SetTempo { .. }
+        | Request::PutMarker { .. }
+        | Request::PutRegion { .. }
+        | Request::RemoveMark { .. } => STRUCTURE,
+        Request::Set { .. }
+        | Request::MapSet { .. }
+        | Request::MapRemove { .. }
+        | Request::TextSplice { .. }
+        | Request::Remove { .. }
+        | Request::PutLane { .. }
+        | Request::RemoveLane { .. }
+        | Request::PutItem { .. }
+        | Request::RemoveItem { .. } => WRITE,
+    }
+}
+
+/// Reads.
+pub const READ: &str = "read";
+/// Edits to the caller's namespace, lanes and items.
+pub const WRITE: &str = "write";
+/// Edits to the song's structure (tempo, markers, regions).
+pub const STRUCTURE: &str = "structure";
+
+/// The sessions a host has open, by document id. Cloning shares them.
+#[derive(Clone, Default)]
+pub struct Sessions(Arc<RwLock<HashMap<String, SessionDoc>>>);
+
+impl std::fmt::Debug for Sessions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ids: Vec<String> = self
+            .0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect();
+        f.debug_tuple("Sessions").field(&ids).finish()
+    }
+}
+
+impl Sessions {
+    /// Serves `session` under its document id.
+    pub fn open(&self, doc: impl Into<String>, session: SessionDoc) {
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(doc.into(), session);
+    }
+
+    /// Stops serving `doc`.
+    pub fn close(&self, doc: &str) {
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(doc);
+    }
+
+    /// Session `doc`, if open.
+    #[must_use]
+    pub fn get(&self, doc: &str) -> Option<SessionDoc> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(doc)
+            .cloned()
     }
 }
 

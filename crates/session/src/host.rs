@@ -21,14 +21,13 @@
 //! - The gate checks `read` on `doc/{doc}` before the handler runs
 //!   ([`PERMITS`]); the handler checks the exact action.
 
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use architect_permissions::{Action, Decision, PermissionEngine, Principal, Resource};
 
 use crate::doc::SessionDoc;
 use crate::id::ExtensionId;
-use crate::service::{Grants, Request, Response, ServiceError, handle};
+use crate::service::{Grants, Request, Response, ServiceError, Sessions, handle};
 
 /// Why a call was not answered.
 #[architect::error]
@@ -69,29 +68,7 @@ pub const PERMITS: architect_permissions::ServicePermits = architect_permissions
     )],
 };
 
-/// The action a request needs on the document.
-#[must_use]
-pub const fn action_for(request: &Request) -> &'static str {
-    match request {
-        Request::ReadData | Request::ReadTimeline => Action::READ,
-        Request::SetTempo { .. }
-        | Request::PutMarker { .. }
-        | Request::PutRegion { .. }
-        | Request::RemoveMark { .. } => STRUCTURE,
-        Request::Set { .. }
-        | Request::MapSet { .. }
-        | Request::MapRemove { .. }
-        | Request::TextSplice { .. }
-        | Request::Remove { .. }
-        | Request::PutLane { .. }
-        | Request::RemoveLane { .. }
-        | Request::PutItem { .. }
-        | Request::RemoveItem { .. } => Action::WRITE,
-    }
-}
-
-/// The action that writes the song's structure (tempo, markers, regions).
-pub const STRUCTURE: &str = "structure";
+pub use crate::service::{STRUCTURE, action_for};
 
 /// The namespace a principal's call writes: the extension's id.
 ///
@@ -108,10 +85,10 @@ pub fn extension_of(who: &Principal) -> Result<ExtensionId, SessionError> {
     }
 }
 
-/// The sessions a host serves, by document id.
+/// The sessions a host serves, by document id, and the engine it asks.
 #[derive(Clone)]
 pub struct SessionHost {
-    sessions: Arc<RwLock<HashMap<String, SessionDoc>>>,
+    sessions: Sessions,
     engine: Arc<dyn PermissionEngine>,
 }
 
@@ -126,19 +103,26 @@ impl SessionHost {
     #[must_use]
     pub fn new(engine: Arc<dyn PermissionEngine>) -> Self {
         Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            sessions: Sessions::default(),
             engine,
         }
     }
 
     /// Serves `session` under its document id.
     pub fn open(&self, doc: impl Into<String>, session: SessionDoc) {
-        architect::write(&self.sessions).insert(doc.into(), session);
+        self.sessions.open(doc, session);
     }
 
     /// Stops serving `doc`.
     pub fn close(&self, doc: &str) {
-        architect::write(&self.sessions).remove(doc);
+        self.sessions.close(doc);
+    }
+
+    /// The sessions it serves, shared (an extension's provider can answer
+    /// from the same ones: [`crate::extension`]).
+    #[must_use]
+    pub const fn sessions(&self) -> &Sessions {
+        &self.sessions
     }
 
     /// [`SessionService::ask`] for `who`: what the handler does once it
@@ -165,9 +149,9 @@ impl SessionHost {
                 who.describe()
             )));
         }
-        let session = architect::read(&self.sessions)
+        let session = self
+            .sessions
             .get(doc)
-            .cloned()
             .ok_or_else(|| SessionError::NotFound(doc.to_owned()))?;
         // The structure action was checked above for the requests that
         // need it; the grant only says so to `handle`.
