@@ -36,11 +36,11 @@ pub mod clock;
 pub mod doc;
 #[cfg(feature = "extension")]
 pub mod extension;
-#[cfg(feature = "architect")]
+#[cfg(all(feature = "architect", not(target_arch = "wasm32")))]
 pub mod file;
 #[cfg(feature = "vox")]
 pub mod host;
-#[cfg(feature = "clock")]
+#[cfg(all(feature = "lead", not(target_arch = "wasm32")))]
 pub mod lead;
 #[cfg(feature = "service")]
 pub mod service;

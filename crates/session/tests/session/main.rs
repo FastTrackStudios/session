@@ -29,7 +29,7 @@ mod file;
 mod follow;
 #[cfg(feature = "vox")]
 mod host;
-#[cfg(feature = "clock")]
+#[cfg(feature = "lead")]
 mod lead;
 #[cfg(feature = "service")]
 mod service;

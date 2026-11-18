@@ -30,7 +30,10 @@ service = ["architect"]
 extension = ["service", "dep:facet-json"]
 # The session host's clock and a peer's estimate of it (`session::clock`):
 # what a follower on another machine needs to follow a playhead.
-clock = ["vox", "sync", "architect/platform", "architect/host", "architect/connect", "crdt/vox", "dep:tokio"]
+clock = ["vox", "sync", "architect/platform"]
+# The session host's transport, published (`session::lead`, native only):
+# its presence and clock served, `lead/play` published.
+lead = ["clock", "crdt/vox", "dep:tokio"]
 vox = ["service", "dep:architect", "architect/vox", "dep:architect-permissions", "dep:thiserror", "dep:vox"]
 
 [dependencies]
@@ -39,13 +42,18 @@ facet-json = { workspace = true, optional = true }
 loro = { workspace = true, optional = true }
 crdt = { workspace = true, optional = true }
 architect = { workspace = true, optional = true }
-# A session file's document id (`session::file`).
-uuid = { workspace = true, optional = true }
-# The leader's presence host and its join (`session::lead`).
-tokio = { workspace = true, optional = true, features = ["rt", "time"] }
+# A session file's document id (`session::file`): named, never made here,
+# so no `v4` (and no getrandom in a wasm build).
+uuid = { version = "1", optional = true }
 architect-permissions = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 vox = { workspace = true, optional = true }
+
+# The leader's presence host, its join and its tasks (`session::lead`):
+# a server, so native only; `--all-features` on wasm enables nothing here.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+architect = { workspace = true, optional = true, features = ["host", "connect"] }
+tokio = { workspace = true, optional = true, features = ["rt", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = { workspace = true, optional = true }
