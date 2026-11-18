@@ -11,6 +11,8 @@
 //!   document.
 //! - [`service`] (feature `service`): what a runtime extension may do to
 //!   the session, answered the same way by every host.
+//! - [`host`] (feature `vox`): that, served as `fts.session` over vox, the
+//!   caller taken from the call's principal.
 //!
 //! See `docs/design/session.md`.
 
@@ -24,6 +26,8 @@ pub mod value;
 
 #[cfg(feature = "architect")]
 pub mod doc;
+#[cfg(feature = "vox")]
+pub mod host;
 #[cfg(feature = "service")]
 pub mod service;
 #[cfg(feature = "sync")]

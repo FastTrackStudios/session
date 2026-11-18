@@ -19,6 +19,8 @@ mod time;
 mod doc;
 #[cfg(feature = "sync")]
 mod follow;
+#[cfg(feature = "vox")]
+mod host;
 #[cfg(feature = "service")]
 mod service;
 
