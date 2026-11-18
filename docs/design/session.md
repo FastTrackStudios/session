@@ -686,34 +686,60 @@ session as an Architect document, kept in step through Architect's sync.
 
 ## 9. Before Studio, Keyflow or Ignition can share a session
 
-In order:
+Built (2026-11-18), in order:
 
-1. **The `fts.session` service wrapper**, built: `session::host` (feature
-   `vox`), `SessionService::ask(doc, request)` over `service::handle`.
-   - The caller is the call's principal. An extension's call
-     (`Principal::Extension`) names its namespace; any other principal is
-     refused.
-   - The action is the permission engine's answer on `doc/<id>`: `read`,
-     `write`, or `structure` for tempo, markers and regions.
-   - The gate checks `read` before decoding (`doc/**`); the handler
-     checks the exact document.
-   - The host and its gate ask the same engine, the org's one, which
-     answers a share link's guest by what the link grants. A read-only
-     link reads and every edit is refused, with no guest code path.
-2. **A host that holds the document**, for the first consumer, which
-   should be Keyflow, the smallest: a chart with a tempo map and no
-   engine. Its app opens a `.session` as a `DocFile` of `kind()`, syncs it
-   with `OrgSyncs` (or a share link), and serves `fts.session` to its
-   chart view. Keyflow's chart moves into `keyflow`'s `chart` text,
-   bound with `TextBinding`.
-3. **The shared clock** (§7.5), so a follower on another machine follows
-   for real. Until then playheads across machines are as good as the
-   process clocks' agreement (unrelated).
-4. **Ignition** on the same session: its cue lists as lanes and items,
-   following the transport with `Tracker`, through the service.
-5. **Studio**: rename its `session` crate to `session-app`, then the
-   migration of §5.3, which is the long pole (the DAW's data as extension
-   data, the live document's 4 → 5 migration, the file).
+1. **`fts.session` over vox** (`session::host`, session#181). The caller
+   is the call's principal; what it may do is the permission engine's
+   answer on `doc/<id>` (`read`, `write`, `structure`). The host and its
+   gate ask the org's one engine, so a read-only share link's guest reads
+   and is refused writes, with no guest code path.
+2. **`fts.session` as an Architect extension service**
+   (`session::extension`, session#182). The provider's actions answer for
+   `cx.caller` (Architect's newer code: the `runtime-compositor-keyflow`
+   pin), one method per action, so Architect's effect check holds a guest
+   to `read`. Ids are transparent on the wire, so a timeline crosses JSON.
+3. **Keyflow as the first host** (keyflow#85: `keyflow-session`):
+   - a chart is Keyflow's `chart` text entry in a `.session` `DocFile`,
+     synced through Architect's sync and bound to an editor with
+     `TextBinding`;
+   - `Provider` serves `fts.session`;
+   - `ChartSource` is the chart pane's state, a document (the chart
+     alone) or a session.
+
+   Found: Architect's `SyncedDoc` does not persist what it receives
+   (`apply_remote`, not `apply_remote_durable`); `ChartSession::save`
+   writes it.
+4. **The shared clock** (`session::clock`, session#183): the host
+   serves `now()`, a peer's `SharedClock` estimates it, `play_state`
+   stamps `PlayState::at_ms` in it.
+   - **Two processes on one machine:** playhead error max 168 µs
+     (exact truth).
+   - **Two machines on a LAN:** the estimate is within ±0.92 ms (half
+     the round trip); wall clocks cannot judge it tighter.
+5. **Reading the structure** (`ReadStructure`, ramps included,
+   session#184), and **Ignition on the session** (ignition#16:
+   `ignition-session`):
+   - cue lists as lanes and timed items at their bars, untimed cues and
+     list settings as Ignition's data;
+   - read back in GO order for `CuePlayer`;
+   - followed from the transport by `CueFollower`.
+
+Still missing, in the order to do them:
+
+1. **The chart view on the session**: `feat/runtime-chart` reads its chart
+   through `ChartSource` (four lines, keyflow#85 lists them) and the app
+   hosting Keyflow registers the provider's actions. Needs that branch's
+   Architect pin.
+2. **Architect**:
+   - `SyncedDoc` applying remote updates durably;
+   - the shared clock moved into the presence driver;
+   - a tag the fleet can pin with `cx.caller`.
+3. **Network sync** in a real host: the org driver (`OrgSyncs`) or a share
+   link's iroh dial, which the tests stand in for with the in-process
+   transport.
+4. **Ignition's extension** asking through its host, and DMX output taken
+   from `CueFollower`.
+5. **Studio**: rename its `session` crate to `session-app`, then §5.3.
 
 ## 10. Not sure of
 
