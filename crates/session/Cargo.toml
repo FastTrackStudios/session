@@ -28,6 +28,9 @@ service = ["architect"]
 # `fts.session` as an Architect extension service: the provider's actions
 # hand `session::extension::answer` their JSON and the caller's id.
 extension = ["service", "dep:facet-json"]
+# The session host's clock and a peer's estimate of it (`session::clock`):
+# what a follower on another machine needs to follow a playhead.
+clock = ["vox", "sync", "architect/platform"]
 vox = ["service", "dep:architect", "architect/vox", "dep:architect-permissions", "dep:thiserror", "dep:vox"]
 
 [dependencies]
@@ -56,7 +59,7 @@ loro = { workspace = true }
 # tests/sync_e2e.rs: two peers through Architect's real sync path, in
 # process (DocSyncHost and PresenceHost over `LocalServer`).
 crdt = { workspace = true, features = ["vox"] }
-architect = { workspace = true, features = ["vox", "local"] }
+architect = { workspace = true, features = ["vox", "local", "host", "connect"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 uuid = { workspace = true }
 # tests/session/host.rs: the gate and a vox memory link.
@@ -66,3 +69,8 @@ architect-permissions = { workspace = true }
 [[test]]
 name = "sync_e2e"
 required-features = ["architect", "sync", "service"]
+
+# Following a playhead across two processes or machines (the shared clock).
+[[example]]
+name = "follow"
+required-features = ["clock"]
