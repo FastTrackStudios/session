@@ -16,7 +16,7 @@ sync = ["dep:web-time"]
 # `docs/design/session.md` gives, of crdt's `DocKind` `fts.session`.
 # crdt without its sync transport and without Architect's workspace-hack
 # (patched out at the root: vendor/no-workspace-hack).
-architect = ["dep:loro", "dep:crdt"]
+architect = ["dep:loro", "dep:crdt", "dep:uuid"]
 # What a runtime extension may ask of the session its host holds: plain
 # requests, one `handle` every host answers with (no transport: the host
 # serves it as `fts.session`).
@@ -31,6 +31,9 @@ extension = ["service", "dep:facet-json"]
 # The session host's clock and a peer's estimate of it (`session::clock`):
 # what a follower on another machine needs to follow a playhead.
 clock = ["vox", "sync", "architect/platform"]
+# The session host's transport, published (`session::lead`, native only):
+# its presence and clock served, `lead/play` published.
+lead = ["clock", "crdt/vox", "dep:tokio"]
 vox = ["service", "dep:architect", "architect/vox", "dep:architect-permissions", "dep:thiserror", "dep:vox"]
 
 [dependencies]
@@ -39,9 +42,18 @@ facet-json = { workspace = true, optional = true }
 loro = { workspace = true, optional = true }
 crdt = { workspace = true, optional = true }
 architect = { workspace = true, optional = true }
+# A session file's document id (`session::file`): named, never made here,
+# so no `v4` (and no getrandom in a wasm build).
+uuid = { version = "1", optional = true }
 architect-permissions = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 vox = { workspace = true, optional = true }
+
+# The leader's presence host, its join and its tasks (`session::lead`):
+# a server, so native only; `--all-features` on wasm enables nothing here.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+architect = { workspace = true, optional = true, features = ["host", "connect"] }
+tokio = { workspace = true, optional = true, features = ["rt", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = { workspace = true, optional = true }
@@ -54,6 +66,8 @@ name = "sync_sim"
 required-features = ["sync"]
 
 [dev-dependencies]
+# tests/session/file.rs: session files on disk.
+tempfile = "3"
 # The document tests drive Loro directly: two replicas, an undo manager.
 loro = { workspace = true }
 # tests/sync_e2e.rs: two peers through Architect's real sync path, in
