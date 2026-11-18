@@ -36,8 +36,12 @@ pub mod clock;
 pub mod doc;
 #[cfg(feature = "extension")]
 pub mod extension;
+#[cfg(feature = "architect")]
+pub mod file;
 #[cfg(feature = "vox")]
 pub mod host;
+#[cfg(feature = "clock")]
+pub mod lead;
 #[cfg(feature = "service")]
 pub mod service;
 #[cfg(feature = "sync")]

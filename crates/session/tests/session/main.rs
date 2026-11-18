@@ -23,10 +23,14 @@ mod clock;
 mod doc;
 #[cfg(feature = "extension")]
 mod extension;
+#[cfg(feature = "architect")]
+mod file;
 #[cfg(feature = "sync")]
 mod follow;
 #[cfg(feature = "vox")]
 mod host;
+#[cfg(feature = "clock")]
+mod lead;
 #[cfg(feature = "service")]
 mod service;
 
