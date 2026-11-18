@@ -688,10 +688,18 @@ session as an Architect document, kept in step through Architect's sync.
 
 In order:
 
-1. **The `fts.session` service wrapper** in `session` (feature
-   `service`): `#[architect::rpc]` over `service::handle`, with the
-   caller taken from the call's principal. Then a runtime extension can
-   ask a host. Unblocked by §2.4.
+1. **The `fts.session` service wrapper**, built: `session::host` (feature
+   `vox`), `SessionService::ask(doc, request)` over `service::handle`.
+   - The caller is the call's principal. An extension's call
+     (`Principal::Extension`) names its namespace; any other principal is
+     refused.
+   - The action is the permission engine's answer on `doc/<id>`: `read`,
+     `write`, or `structure` for tempo, markers and regions.
+   - The gate checks `read` before decoding (`doc/**`); the handler
+     checks the exact document.
+   - The host and its gate ask the same engine, the org's one, which
+     answers a share link's guest by what the link grants. A read-only
+     link reads and every edit is refused, with no guest code path.
 2. **A host that holds the document**, for the first consumer, which
    should be Keyflow, the smallest: a chart with a tempo map and no
    engine. Its app opens a `.session` as a `DocFile` of `kind()`, syncs it

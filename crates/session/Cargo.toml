@@ -21,11 +21,20 @@ architect = ["dep:loro", "dep:crdt"]
 # requests, one `handle` every host answers with (no transport: the host
 # serves it as `fts.session`).
 service = ["architect"]
+# The `fts.session` service over vox (`session::host`): the caller from the
+# call's principal, what it may do from the permission engine. Named `vox`
+# because `#[architect::rpc]` emits `cfg(feature = "vox")` into the crate
+# that uses it.
+vox = ["service", "dep:architect", "architect/vox", "dep:architect-permissions", "dep:thiserror", "dep:vox"]
 
 [dependencies]
 facet = { workspace = true }
 loro = { workspace = true, optional = true }
 crdt = { workspace = true, optional = true }
+architect = { workspace = true, optional = true }
+architect-permissions = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+vox = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = { workspace = true, optional = true }
@@ -46,6 +55,9 @@ crdt = { workspace = true, features = ["vox"] }
 architect = { workspace = true, features = ["vox", "local"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 uuid = { workspace = true }
+# tests/session/host.rs: the gate and a vox memory link.
+vox = { workspace = true }
+architect-permissions = { workspace = true }
 
 [[test]]
 name = "sync_e2e"

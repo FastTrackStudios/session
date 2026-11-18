@@ -25,6 +25,10 @@ loro = { version = "1.12", default-features = false }
 # `vox`, tests) the sync transport. The tag Studio pins; bump them together.
 crdt = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.12.6", default-features = false }
 architect = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.12.6", default-features = false }
+architect-permissions = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.12.6" }
+thiserror = "2"
+# Architect's pin (its root Cargo.toml).
+vox = { version = "0.10.0-rc.7", default-features = false, features = ["runtime"] }
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", default-features = false }
 
@@ -46,6 +50,9 @@ architect-workspace-hack = { path = "vendor/no-workspace-hack" }
 dead_code = "warn"
 unused = "warn"
 unused_unsafe = "warn"
+# architect's attribute macros emit `cfg_attr(feature = "fake", ...)` into
+# the calling crate; declare the name (as Studio's workspace does).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("fake"))'] }
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "allow"
