@@ -74,6 +74,11 @@ const REGIONS: &str = "regions";
 const LANES: &str = "lanes";
 const ITEMS: &str = "items";
 const EXTENSIONS: &str = "extensions";
+/// Where the session's presence (its transport, and the clock its peers
+/// share) is hosted: `host`, the node serving it (session#192). The same
+/// root and key as Architect's `crdt::presence::presence_host`, which a
+/// node's relay reads to route an extension's presence there.
+const TRANSPORT: &str = "presence";
 
 /// Writing the document failed.
 #[derive(Debug)]
@@ -367,6 +372,36 @@ impl SessionDoc {
     /// Loro refused the write.
     pub fn set_bar_one(&self, at: Option<Time>) -> DocResult<()> {
         write_bar_one(&self.doc.get_map(TEMPO), at)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// The node that hosts the session's transport: its presence and the
+    /// clock every peer of the session shares (session#192), as the
+    /// leader wrote it (an Architect node's iroh endpoint id). A follower
+    /// reads it from the synced document and follows that node, through
+    /// the org, with no address given. `None`: no leader has said.
+    #[must_use]
+    pub fn transport_host(&self) -> Option<String> {
+        value_of(&self.doc.get_map(TRANSPORT), "host")
+            .and_then(|v| v.into_string().ok())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Says which node hosts the session's transport (`None`: none now).
+    /// The leader writes it when it starts leading; last writer wins.
+    ///
+    /// # Errors
+    ///
+    /// Loro refused the write.
+    pub fn set_transport_host(&self, host: Option<&str>) -> DocResult<()> {
+        let map = self.doc.get_map(TRANSPORT);
+        match host {
+            Some(host) => map.insert("host", host)?,
+            None if map.get("host").is_some() => map.delete("host")?,
+            None => return Ok(()),
+        }
         self.doc.commit();
         Ok(())
     }

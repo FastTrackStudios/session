@@ -283,3 +283,22 @@ fn a_transport_rides_presence_as_a_play_state() {
     let back = doc::transport_of(&doc::play_state(&t)).unwrap();
     assert_eq!(back, t);
 }
+
+/// The node hosting the session's transport travels with the document
+/// (session#192): what the leader writes, a follower's replica reads, and
+/// clearing it is seen too.
+#[test]
+fn the_transport_host_travels_with_the_document() {
+    let (a, b) = pair();
+    assert_eq!(b.transport_host(), None);
+    a.set_transport_host(Some("4f1e…endpoint")).unwrap();
+    exchange(&a, &b);
+    assert_eq!(b.transport_host().as_deref(), Some("4f1e…endpoint"));
+    a.set_transport_host(None).unwrap();
+    exchange(&a, &b);
+    assert_eq!(b.transport_host(), None);
+    // Clearing what is not there writes nothing.
+    let before = a.doc().oplog_vv();
+    a.set_transport_host(None).unwrap();
+    assert_eq!(a.doc().oplog_vv(), before);
+}
