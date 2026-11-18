@@ -15,6 +15,8 @@
 mod extensions;
 mod time;
 
+#[cfg(feature = "service")]
+mod changes;
 #[cfg(feature = "clock")]
 mod clock;
 #[cfg(feature = "architect")]

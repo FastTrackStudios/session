@@ -97,6 +97,9 @@ pub enum Request {
     PutRegion { id: MarkId, region: Region },
     /// Removes a marker or region (needs [`Grants::structure`]).
     RemoveMark { id: MarkId },
+    /// What changed since version `since` (a `Response::Changes` version
+    /// handed out earlier; none: everything), and the version now.
+    ReadChanges { since: Option<String> },
 }
 
 /// A tempo map as plain data, for the wire.
@@ -182,6 +185,15 @@ pub enum Response {
         markers: BTreeMap<MarkId, Marker>,
         regions: BTreeMap<MarkId, Region>,
     },
+    /// What changed since the version asked about: `whole` when that
+    /// version is unknown (read everything again), else `changes`. The
+    /// caller hears of its own extension's data only; lanes, items and
+    /// the structure are everyone's.
+    Changes {
+        version: String,
+        whole: bool,
+        changes: Vec<crate::changes::Change>,
+    },
 }
 
 /// Why a request was not done.
@@ -226,7 +238,10 @@ impl From<loro::LoroError> for ServiceError {
 #[must_use]
 pub const fn action_for(request: &Request) -> &'static str {
     match request {
-        Request::ReadData | Request::ReadTimeline | Request::ReadStructure => READ,
+        Request::ReadData
+        | Request::ReadTimeline
+        | Request::ReadStructure
+        | Request::ReadChanges { .. } => READ,
         Request::SetTempo { .. }
         | Request::PutMarker { .. }
         | Request::PutRegion { .. }
@@ -314,6 +329,7 @@ pub fn handle(
     request: Request,
 ) -> Result<Response, ServiceError> {
     match request {
+        Request::ReadChanges { since } => Ok(changes(doc, caller, since.as_deref())),
         // Everyone reads the structure; no grant needed.
         Request::ReadStructure => Ok(Response::Structure {
             tempo: TempoMapData::of(&doc.tempo()),
@@ -338,6 +354,27 @@ pub fn handle(
         | Request::MapRemove { .. }
         | Request::TextSplice { .. }
         | Request::Remove { .. } => namespace(doc, caller, request),
+    }
+}
+
+/// What changed since `since`, for `caller`: another extension's data is
+/// not the caller's to hear about.
+fn changes(doc: &SessionDoc, caller: &ExtensionId, since: Option<&str>) -> Response {
+    let (version, changed) = crate::changes::changes_since(doc, since);
+    match changed {
+        None => Response::Changes {
+            version,
+            whole: true,
+            changes: Vec::new(),
+        },
+        Some(changed) => Response::Changes {
+            version,
+            whole: false,
+            changes: changed
+                .into_iter()
+                .filter(|c| !matches!(c, crate::changes::Change::Extension(id) if id != caller))
+                .collect(),
+        },
     }
 }
 

@@ -28,6 +28,8 @@ pub mod timeline;
 pub mod transport;
 pub mod value;
 
+#[cfg(feature = "architect")]
+pub mod changes;
 #[cfg(feature = "clock")]
 pub mod clock;
 #[cfg(feature = "architect")]
