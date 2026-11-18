@@ -37,7 +37,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use crate::doc::{DocError, SessionDoc};
 use crate::ext::ExtensionData;
 use crate::id::{ExtensionId, ItemId, LaneId, MarkId};
-use crate::timeline::{Item, Lane, Marker, Region, TempoMap};
+use crate::timeline::{Item, Lane, Marker, Region, TempoMap, Time};
 use crate::value::Value;
 
 /// What the host granted the caller beyond its own namespace.
@@ -91,6 +91,9 @@ pub enum Request {
     RemoveItem { id: ItemId },
     /// Sets the tempo map (needs [`Grants::structure`]).
     SetTempo { tempo: TempoMapData },
+    /// Sets where the song's bar 1 is (`None`: the session's start; needs
+    /// [`Grants::structure`]).
+    SetBarOne { at: Option<Time> },
     /// Puts a marker (needs [`Grants::structure`]).
     PutMarker { id: MarkId, marker: Marker },
     /// Puts a region (needs [`Grants::structure`]).
@@ -184,6 +187,10 @@ pub enum Response {
         tempo: TempoMapData,
         markers: BTreeMap<MarkId, Marker>,
         regions: BTreeMap<MarkId, Region>,
+        /// Where the song's bar 1 is (`crate::Session::bar_one`); `None`:
+        /// the session's start. Absent from an older host's answer.
+        #[facet(default)]
+        bar_one: Option<Time>,
     },
     /// What changed since the version asked about: `whole` when that
     /// version is unknown (read everything again), else `changes`. The
@@ -243,6 +250,7 @@ pub const fn action_for(request: &Request) -> &'static str {
         | Request::ReadStructure
         | Request::ReadChanges { .. } => READ,
         Request::SetTempo { .. }
+        | Request::SetBarOne { .. }
         | Request::PutMarker { .. }
         | Request::PutRegion { .. }
         | Request::RemoveMark { .. } => STRUCTURE,
@@ -335,6 +343,7 @@ pub fn handle(
             tempo: TempoMapData::of(&doc.tempo()),
             markers: doc.markers(),
             regions: doc.regions(),
+            bar_one: doc.bar_one(),
         }),
         Request::ReadTimeline
         | Request::PutLane { .. }
@@ -342,6 +351,7 @@ pub fn handle(
         | Request::PutItem { .. }
         | Request::RemoveItem { .. } => timeline(doc, caller, request),
         Request::SetTempo { .. }
+        | Request::SetBarOne { .. }
         | Request::PutMarker { .. }
         | Request::PutRegion { .. }
         | Request::RemoveMark { .. } => {
@@ -520,6 +530,10 @@ fn song_structure(doc: &SessionDoc, request: Request) -> Result<Response, Servic
     match request {
         Request::SetTempo { tempo } => {
             doc.set_tempo(&tempo_map(&tempo)?)?;
+            Ok(Response::Done)
+        }
+        Request::SetBarOne { at } => {
+            doc.set_bar_one(at)?;
             Ok(Response::Done)
         }
         Request::PutMarker { id, marker } => {

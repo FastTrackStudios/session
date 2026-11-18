@@ -151,6 +151,7 @@ impl SessionDoc {
         self.doc
             .get_map(TEMPO)
             .insert("map", tempo_to_loro(&session.tempo))?;
+        write_bar_one(&self.doc.get_map(TEMPO), session.bar_one)?;
         let rulers = self.doc.get_map(RULERS);
         let wanted: BTreeMap<String, &String> = session
             .rulers
@@ -198,6 +199,7 @@ impl SessionDoc {
         {
             session.tempo = tempo;
         }
+        session.bar_one = self.bar_one();
         self.doc.get_map(RULERS).for_each(|k, v| {
             if let (Ok(i), ValueOrContainer::Value(LoroValue::String(name))) = (k.parse::<u32>(), v)
             {
@@ -346,6 +348,25 @@ impl SessionDoc {
         self.doc
             .get_map(TEMPO)
             .insert("map", tempo_to_loro(tempo))?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Where the song's bar 1 is ([`Session::bar_one`]); `None`: the
+    /// session's start.
+    #[must_use]
+    pub fn bar_one(&self) -> Option<Time> {
+        value_of(&self.doc.get_map(TEMPO), "bar_one").and_then(|v| time_from_loro(&v))
+    }
+
+    /// Sets where the song's bar 1 is (`None`: the session's start). One
+    /// value, last writer wins, with the tempo map it belongs to.
+    ///
+    /// # Errors
+    ///
+    /// Loro refused the write.
+    pub fn set_bar_one(&self, at: Option<Time>) -> DocResult<()> {
+        write_bar_one(&self.doc.get_map(TEMPO), at)?;
         self.doc.commit();
         Ok(())
     }
@@ -695,6 +716,15 @@ pub fn value_from_loro(v: &LoroValue) -> Value {
                 .collect(),
         ),
     }
+}
+
+fn write_bar_one(tempo: &LoroMap, at: Option<Time>) -> DocResult<()> {
+    match at {
+        Some(at) => tempo.insert("bar_one", time_to_loro(at))?,
+        None if tempo.get("bar_one").is_some() => tempo.delete("bar_one")?,
+        None => {}
+    }
+    Ok(())
 }
 
 fn time_to_loro(t: Time) -> LoroValue {

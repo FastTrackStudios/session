@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::ext::ExtensionData;
 use crate::id::{ExtensionId, ItemId, LaneId, MarkId};
-use crate::timeline::{Item, Lane, Marker, Region, TempoMap};
+use crate::timeline::{Item, Lane, Marker, Region, TempoMap, Time};
 
 /// One session, as plain data.
 ///
@@ -18,6 +18,12 @@ pub struct Session {
     pub name: String,
     /// Tempo and meter.
     pub tempo: TempoMap,
+    /// Where the song's bar 1 is: what a chart, a cue sheet or a band
+    /// calls bar 1, when the session starts earlier (a count-in, a click
+    /// intro before the verse). `None`: the session's own start. A view
+    /// that numbers bars as the music does reads its bars from here
+    /// (the session's bar at this point is the song's bar 1).
+    pub bar_one: Option<Time>,
     /// The rulers markers and regions sit on, by index: their names ("Song",
     /// "Sections"). Index `0` is the default ruler.
     pub rulers: BTreeMap<u32, String>,

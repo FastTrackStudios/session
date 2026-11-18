@@ -326,6 +326,7 @@ fn everyone_reads_the_structure_with_its_ramps() {
         tempo: read,
         markers,
         regions,
+        ..
     } = ask(&doc, "ignition", Request::ReadStructure).unwrap()
     else {
         panic!("not the structure")
@@ -338,4 +339,59 @@ fn everyone_reads_the_structure_with_its_ramps() {
     let qn = Time::Seconds(7.25).quarter_notes(&map);
     assert!((qn - Time::Seconds(7.25).quarter_notes(&doc.tempo())).abs() < 1e-12);
     assert!((map.bpm_at(11.0) - 120.0).abs() < 1e-12);
+}
+
+/// The song's bar 1 (a count-in before it) is structure: set with the
+/// structure grant only, read back by everyone, kept with the session.
+#[test]
+fn the_songs_bar_one_is_structure_every_view_reads() {
+    let doc = SessionDoc::new();
+    // Four bars of 4/4 at 160 BPM: the verse starts 6 s in.
+    let verse = Time::Seconds(6.0);
+    assert!(refused(ask(
+        &doc,
+        "keyflow",
+        Request::SetBarOne { at: Some(verse) }
+    )));
+    let granted = Grants { structure: true };
+    let version = match handle(
+        &doc,
+        &ext("daw"),
+        Grants::default(),
+        Request::ReadChanges { since: None },
+    )
+    .unwrap()
+    {
+        Response::Changes { version, .. } => version,
+        other => panic!("{other:?}"),
+    };
+    handle(
+        &doc,
+        &ext("daw"),
+        granted,
+        Request::SetBarOne { at: Some(verse) },
+    )
+    .unwrap();
+    let Response::Structure { bar_one, .. } =
+        ask(&doc, "ignition", Request::ReadStructure).unwrap()
+    else {
+        panic!("not the structure");
+    };
+    assert_eq!(bar_one, Some(verse));
+    assert_eq!(doc.read().bar_one, Some(verse));
+    // A view following changes hears it as the tempo map's.
+    let Response::Changes { changes, .. } = ask(
+        &doc,
+        "keyflow",
+        Request::ReadChanges {
+            since: Some(version),
+        },
+    )
+    .unwrap() else {
+        panic!("not changes");
+    };
+    assert_eq!(changes, [session::changes::Change::Tempo]);
+    // Cleared: the session's start again.
+    handle(&doc, &ext("daw"), granted, Request::SetBarOne { at: None }).unwrap();
+    assert_eq!(doc.bar_one(), None);
 }
