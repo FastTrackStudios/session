@@ -1,51 +1,25 @@
 # session
 
-Post-production and live-performance coordination: setlists, songs,
-charts, the keyflow chart language, notation, and the guide (click,
-count-in, spoken section cues).
+The primitive FastTrackStudio's music software agrees on: the **song
+structure** (tempo map, meters, bars and beats, markers and regions), a
+**generic timeline** (lanes and timed items whose payload the session does
+not interpret), **per-extension data**, **transport as data**, and the
+**playback sync** primitives (`sync` feature).
 
-Split out of the FastTrackStudio monorepo in August 2026.
+A session assumes no audio tracks. The DAW's tracks, takes and FX chains
+are extension data in a session, like Keyflow's chart, Ignition's cue lists
+and Signal's patch changes. A session is an Architect document (feature
+`architect`), so everything built on it syncs live between people and
+devices.
 
-## Where this sits
+Read [`docs/design/session.md`](docs/design/session.md).
 
-Session is the **coordinator at runtime** — the Session app opens and
-syncs Signal and Ignition over WebSocket, and depends on neither.
+## History
 
-In *cargo* terms the arrow is the other way round: this repo publishes
-the musical vocabulary (`keyflow`, `song`, `session-proto`,
-`session-ui`, `engraver`) that Signal's rigs consume, so it sits
-**below** `signal` in the dependency graph. Runtime role and layer
-order are deliberately opposite; the graph stays acyclic because the
-coordination is over the wire, not over cargo.
-
-```
-daw  ->  session  ->  signal
-             ^
-             └── the Session app lives here too, and talks to
-                 Signal / Ignition over ws:// rather than linking them
-```
-
-## Layout
-
-```
-crates/session/      the session domain — setlists, transport, proto, ui
-crates/keyflow/      the keyflow chart language — syntax, chordpro,
-                     musicxml, midi, live, sync, lsp, tree-sitter, ui
-features/song/       song sections and arrangement
-features/engraver/   MusicXML -> scores and parts
-features/guide/      click / count-in / spoken section cues
-features/chord-tool/ chord entry and analysis
-features/dynamic-template/  dynamic session templates
-apps/desktop/                the Session app
-```
-
-## Build
-
-```bash
-nix develop
-cargo check --workspace
-```
-
-## Licence
+This repository held the Session app until 2026-10-12, when it was folded
+into the Studio monorepo (FastTrackStudios/studio, `imported.txt`). The app
+lives on in Studio. Since 2026-11-17 this repository is the `session`
+primitive Studio is being split down to (FastTrackStudios/studio#510,
+#509); the old tree is in this repository's history before that.
 
 GPL-3.0-or-later.

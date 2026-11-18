@@ -1,0 +1,58 @@
+# CI: fmt, clippy, tests and the wasm check, in the fleet's dev shell
+# (devenv.yaml: devenv-fleet's `rust` module), on GitHub's hosted runners.
+# devenv itself is the one devenv-fleet's pins.json names (`devenv.nixpkgs`),
+# as its README's "CI" section says; `fleet-doctor` fails the job when rustc
+# is not the fleet's pinned store path.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # devenv-fleet pins.json `devenv.nixpkgs`: the devenv 2.4.0 CI bootstraps.
+  DEVENV_NIXPKGS: e62746b0b472753ef019baceab6f1e2e52014980
+  # devenv.nix: cargo-rail (change files) is built from source and this
+  # repo keeps no change files; off in CI only. rustc is unaffected.
+  FLEET_CI: "1"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: devenv shell -- bash -euo pipefail {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: devenv
+        shell: bash
+        run: |
+          out=$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/${DEVENV_NIXPKGS}#devenv")
+          echo "$out/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@v2
+      - name: the fleet toolchain
+        run: fleet-doctor
+      - name: fmt
+        run: timeout 5m cargo fmt --all --check
+      - name: clippy
+        run: |
+          timeout 30m cargo clippy --workspace --all-features --all-targets -- -D warnings
+          for f in sync architect service; do
+            timeout 15m cargo clippy -p session --no-default-features --features "$f" --all-targets -- -D warnings
+          done
+          timeout 15m cargo clippy -p session --no-default-features --all-targets -- -D warnings
+      - name: tests
+        run: timeout 30m cargo test --workspace --all-features
+      - name: wasm
+        run: timeout 15m cargo check -p session --target wasm32-unknown-unknown --all-features
