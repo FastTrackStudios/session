@@ -47,4 +47,5 @@ cargo clippy --workspace --all-features --all-targets
 ## Process
 
 Branch from `origin/main`, open a PR into `main` with a conventional
-title. GPL-3.0-or-later; a new crate inherits `license.workspace = true`.
+title. CI runs on ready PRs only (skipped on a draft): to get checks, mark
+the PR ready (`gh pr ready`); it runs then and on every push after. GPL-3.0-or-later; a new crate inherits `license.workspace = true`.
