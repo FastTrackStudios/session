@@ -11,7 +11,10 @@ use std::fmt;
 macro_rules! id {
     ($(#[$doc:meta])* $name:ident) => {
         $(#[$doc])*
+        // Transparent: on every wire (JSON, vox) an id is the string it
+        // wraps, so it works as a map key too.
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, facet::Facet)]
+        #[facet(transparent)]
         pub struct $name(pub String);
 
         impl $name {
