@@ -1,7 +1,8 @@
 # How the DAW engine attaches to a session
 
-Status: proposal, 2026-11-18. For the thread building Studio's arrangement
-view and mixer as runtime extensions, and for whoever makes the engine
+Status: proposal, 2026-11-18, aligned with the arrangement and mixer plan
+(FastTrackStudios/studio#519). For the thread building Studio's
+arrangement view and mixer as runtime extensions, and for whoever makes the engine
 (FastTrackStudios/daw, `daw:crates/daw/standalone`) play a session. Paths
 are `repo:path`, symbols named, no line numbers. The session's own design
 is `docs/design/session.md`; this note does not change it, it says how
@@ -13,6 +14,14 @@ The engine is one more extension: id `daw`. It owns its lanes, items and
 entries like any other (`docs/design/session.md` §4.1), and the session
 knows nothing about audio. What makes it special is only that it makes
 sound, so when it is present its transport is the one everything follows.
+
+In a running Architect the engine is an extension of its own, `daw`
+(studio#519): it holds the open session, plays it, draws nothing, and
+provides two services: `fts.session` (this primitive's, unchanged) and
+`fts.daw` (the DAW's own: tracks, items, peaks, transport, mixer edits).
+The arrangement and mixer `[uses]` both, so with no engine the
+arrangement still draws a session's lanes and items through
+`fts.session` alone.
 
 Two ways it sits beside the session, the same rules for both:
 
@@ -33,6 +42,7 @@ host's clock (`session::clock`).
 |---|---|---|
 | an engine | the engine: its audio thread writes an `AudioSnapshot` per buffer to its `SnapshotCell` (`daw:crates/daw/standalone/src/transport_engine/engine.rs` `TransportShared` already owns one); a publisher thread passes each through `sync::PublishGate` and publishes it as a `Transport` in the shared clock (`SharedClock::play_state`) | every view (chart, lights, arrangement playhead) follows with `sync::Tracker`; nothing in them steers the engine |
 | several engines (two machines, both with audio) | the one whose transport was last pressed (the shared-transport rule: newest `(seq, by)` wins) | the others are `sync::TransportBackend`s driven by `sync::Follower`: rate nudged, locates landed on the sample (`TransportShared::begin_block` already lands a scheduled locate) |
+| an engine, and views in the same app | the engine, as above; in the app it is also the playhead deck's active source (`architect.playhead`), so a view's playhead is a host animation on `Clock::Playhead` and a frame of playback costs the view nothing (studio#519, Architect's compositor) | views draw the deck's clock, not presence |
 | no engine (a chart alone, lights alone, a browser) | a software clock: the peer that pressed play publishes a `Transport` from `sync::clock`, or Architect's playhead deck (`architect.playhead`) in one app | the same `Tracker` |
 
 Rules:
@@ -104,8 +114,12 @@ document holds the hash.
 
 A view that is not the engine (the arrangement, the mixer) is a different
 extension, so by the session's rules it sees `daw`'s items' kinds and
-times but null payloads, and none of its entries. It needs them (a clip's
-name and waveform, a fader's value): §5.4.
+times but null payloads, and none of its entries. It gets the DAW's data
+from the DAW: `fts.daw` (`tracks`, `items`, `peaks`, `state`), and edits
+through it (`set`, `transport`), the engine writing the document as
+`daw` (studio#519). Values that move every frame (meters, a dragged
+fader) never cross as calls: they are slots of the engine's shared value
+table, read by the host at compose.
 
 ## 5. What `session` must add
 
@@ -125,12 +139,10 @@ name and waveform, a fader's value): §5.4.
 3. **Batches.** `Request::Batch(Vec<Request>)`: one transaction and one
    undo step for an import (an `.rpp` makes thousands of items) or a
    gesture that moves forty clips.
-4. **Reading another extension's data, by grant.** `Grants::reads:
-   Vec<ExtensionId>`: the host grants a view (the arrangement, the mixer)
-   read access to `daw`'s payloads and entries, as its manifest asks and
-   a person allows. Writing stays the owner's: a fader moved in the mixer
-   is a call on the engine's service, or an edit made as `daw` by the
-   host on the view's behalf.
+4. **Optional: reading another extension's data, by grant.**
+   `Grants::reads: Vec<ExtensionId>`, for a third-party view that reads
+   another extension's payloads directly. The DAW's own views do not need
+   it: they read `fts.daw`.
 5. **Blob references the session can find without knowing payloads.** A
    session kind's `DocKind::blobs` must list every blob a session holds
    (to fetch on open, to keep from collection), but it cannot read
@@ -151,7 +163,7 @@ engine's transport service. Those are `daw`'s.
 2. `daw`: an adapter crate (`daw-session`) that compiles a plan from a
    `SessionDoc` and publishes the transport (§2, §3), behind a feature
    of the engine; `DynamicTempoMap` replaced by the tempo plan.
-3. `session`: read grants (5.4) and blob values (5.5), for the
-   arrangement and mixer thread.
+3. `session`: blob values (5.5); read grants (5.4) only when a view
+   outside the DAW needs another's data.
 4. `session`: batches (5.3) and leadership (5.6), with the `.rpp` import
    path (`docs/design/session.md` §5.3 step 4).
