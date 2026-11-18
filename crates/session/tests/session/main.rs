@@ -17,6 +17,8 @@ mod time;
 
 #[cfg(feature = "architect")]
 mod doc;
+#[cfg(feature = "extension")]
+mod extension;
 #[cfg(feature = "sync")]
 mod follow;
 #[cfg(feature = "vox")]
