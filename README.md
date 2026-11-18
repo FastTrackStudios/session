@@ -6,13 +6,62 @@ Architect instances on two machines:
 - **A**: voyager, macOS. It hosts the session.
 - **B**: THEBATTLESHIP, Linux. It joins over the LAN.
 
-Both run `architect-desktop` at `runtime-compositor` `51e50333`, with
-development copies of Keyflow (and of Ignition's Lighting extension on B).
+Both run `architect-desktop` (`runtime-compositor` `51e50333`; for the
+one-window picture, A runs `c2ac7fe`, the same line with macOS process views)
+with development copies of Keyflow and of Ignition's Lighting extension.
 Nothing here is mocked. Input and transport were driven through the same
 actions the keys and buttons run, over each app's control socket, and every
 step's result was read back from both machines (the logs).
 
 No branch of code lives here; this is media only.
+
+## `one-window-chart-room-cues/`: the picture
+
+**One Architect window per machine.** Each holds:
+- **Keyflow's chart** of "Drive To LA" (JT's recital);
+- **Ignition's 3D room**, a process view drawn by Ignition's renderer;
+- **Ignition's cue list** for the song.
+
+All of it follows **one session**, playing. A (voyager, macOS) hosts the
+session, and its window draws the room over IOSurface. B (THEBATTLESHIP,
+Linux) has joined over the LAN, and its window draws the room from shared
+memory.
+
+The song is in the session through `fts.session`, as `ignition`:
+- its 22 cues, resolved against the recital's Ableton Live set as the show
+  resolves them;
+- the set's tempo (160 bpm) as the session's tempo map.
+
+The chart is Keyflow's data in the same session.
+
+A's transport (A's `KEYFLOW_SESSION_PLAY`, the session host's clock, which B
+estimates) does this:
+1. plays from 0:48 into the first chorus;
+2. seeks to 2:30;
+3. stops.
+
+On both machines the cue list lights the cue the playhead is in and the
+room's lights follow:
+- cue 5 "Chorus" at 0:54;
+- cue 6 "· Chorus lift" at 1:00;
+- after the seek, cue 15 "Bridge" (cue 16 is at 2:36).
+
+| file | what it shows |
+|---|---|
+| `voyager-A.mp4` | A's window, 34 s, macOS `screencapture -v` (30 fps) |
+| `thebattleship-B.mp4` | B's window, the same 34 s, KWin's `spectacle -a` (about 5 fps) |
+| `A-voyager-playing-chorus.png`, `B-thebattleship-playing-chorus.png` | each window in the chorus, cue 5 lit |
+| `A-moments.png`, `B-moments.png` | stopped, in the chorus, at the lift, after the seek |
+| `transport.log` | A's transport commands and their times |
+
+**Not in this window: Studio's arrangement view and mixer**
+(`feat/arrangement-mixer-runtime-extensions`, studio#519). They run on
+another Architect revision (`runtime-compositor-arrangement`), with their
+own `daw` engine providing `fts.session` for its own session (the song
+imported from the recital's REAPER project). In this window they would
+follow their own engine, not this session. One app has one provider of
+`fts.session`, and their engine does not yet publish its playhead to
+presence. So they were not opened here.
 
 ## `typing-on-two-machines/`: one chart, typed into from both sides
 

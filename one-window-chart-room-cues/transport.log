@@ -1,0 +1,8 @@
+23:07:07.495 stopped at 0:00
+23:07:09.514 A: play from 0:48
+{"at_ms":275083.926333,"playing":true,"position":48.0}
+23:07:27.556 A: seek to 2:30, playing
+{"at_ms":293172.553208,"playing":true,"position":150.0}
+23:07:36.635 A: stop
+{"at_ms":302249.3185,"playing":false,"position":159.0}
+23:07:39.713 end
