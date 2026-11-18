@@ -125,3 +125,61 @@ fn payloads_cross_json_whole() {
     assert_eq!(meta.get("capo"), Some(&Value::Int(2)));
     assert_eq!(meta.get("swing"), Some(&Value::Float(0.6)));
 }
+
+/// Every response crosses JSON: the timeline's maps are keyed by ids.
+#[test]
+fn the_timeline_crosses_json_keyed_by_ids() {
+    use session::{ExtensionId, Item, ItemId, Lane, LaneId};
+    let s = sessions();
+    let lane = LaneId::from("cues");
+    let put = call_json(
+        "song-1",
+        Request::PutLane {
+            id: lane.clone(),
+            lane: Lane {
+                owner: ExtensionId::from("ignition"),
+                kind: "ignition.cues".into(),
+                name: "Main".into(),
+                order: 0.0,
+                parent: None,
+            },
+        },
+    )
+    .unwrap();
+    answer(&s, WRITE, &put, Some("ignition")).unwrap();
+    let item = call_json(
+        "song-1",
+        Request::PutItem {
+            id: ItemId::from("cues/1"),
+            item: Item {
+                owner: ExtensionId::from("ignition"),
+                lane: lane.clone(),
+                kind: "ignition.cue".into(),
+                at: Time::QuarterNotes(4.0),
+                end: None,
+                payload: Value::map([("look", Value::from("Warm"))]),
+            },
+        },
+    )
+    .unwrap();
+    answer(&s, WRITE, &item, Some("ignition")).unwrap();
+    let read = call_json("song-1", Request::ReadTimeline).unwrap();
+    let Response::Timeline { lanes, items } =
+        response_of(&answer(&s, READ, &read, Some("ignition")).unwrap()).unwrap()
+    else {
+        panic!("not the timeline")
+    };
+    assert_eq!(lanes[&lane].name, "Main");
+    assert_eq!(items[&ItemId::from("cues/1")].at, Time::QuarterNotes(4.0));
+    // An id is the string it wraps on the wire.
+    assert!(
+        call_json(
+            "cues",
+            Request::RemoveItem {
+                id: ItemId::from("cues/1")
+            }
+        )
+        .unwrap()
+        .contains("\"cues/1\"")
+    );
+}
