@@ -15,6 +15,8 @@
 mod extensions;
 mod time;
 
+#[cfg(feature = "clock")]
+mod clock;
 #[cfg(feature = "architect")]
 mod doc;
 #[cfg(feature = "extension")]

@@ -48,7 +48,7 @@ jobs:
       - name: clippy
         run: |
           timeout 30m cargo clippy --workspace --all-features --all-targets -- -D warnings
-          for f in sync architect service extension vox; do
+          for f in sync architect service extension vox clock; do
             timeout 15m cargo clippy -p session --no-default-features --features "$f" --all-targets -- -D warnings
           done
           timeout 15m cargo clippy -p session --no-default-features --all-targets -- -D warnings
