@@ -14,6 +14,21 @@ devices.
 
 Read [`docs/design/session.md`](docs/design/session.md).
 
+## Build
+
+Builds go through the fleet's devenv shell (`devenv.yaml`, `devenv.nix`):
+Rust 1.99.1 at the same nix store path as every FastTrackStudios repo, so
+kache shares builds across them. Enter it with `devenv shell`, let direnv do
+it (`direnv allow`; `.envrc` loads it), or run one command with
+`devenv shell -- <command>`. `devenv shell -- fleet-doctor` prints the rustc
+path, the compiler wrapper (kache) and the linker, and fails if rustc is off
+the fleet pin.
+
+```bash
+devenv shell -- cargo test --workspace --all-features
+devenv shell -- cargo check -p session --target wasm32-unknown-unknown --all-features
+```
+
 ## History
 
 This repository held the Session app until 2026-10-12, when it was folded
