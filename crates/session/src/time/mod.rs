@@ -30,6 +30,9 @@ mod primitives;
     clippy::panic
 )]
 mod tempo_map;
+// New code: under the crate's lints.
+mod tempo_plan;
 
 pub use primitives::*;
 pub use tempo_map::*;
+pub use tempo_plan::{TempoPlan, TempoSpan};
