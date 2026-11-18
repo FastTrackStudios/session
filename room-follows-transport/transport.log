@@ -1,0 +1,10 @@
+22:19:27.009 stopped at 0 (the room as it stands)
+22:19:32.024 A: play from 0
+{"at_ms":1094400.91525,"playing":true,"position":0.0}
+22:19:57.065 A: seek to 60 s, playing
+{"at_ms":1119439.145792,"playing":true,"position":60.0}
+22:20:12.109 A: stop at 75 s
+{"at_ms":1134483.3095,"playing":false,"position":75.0}
+22:20:20.150 A: seek to 30 s, stopped
+{"at_ms":1142563.24925,"playing":false,"position":30.0}
+22:20:28.241 end

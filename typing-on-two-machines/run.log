@@ -1,0 +1,45 @@
+22:02:34.166 1. A: chords typed in syntax mode into bars 2-3
+Input via syntax
+None
+22:02:37.305    B's copy, bars 1-4:
+| C / / / | Em7 / / / | Dm7 / G7 / | F / / / |
+22:02:37.507 2. A: notes entered by note name into bar 6 (C E G C)
+Input by note name
+Input by note name · notes · voice 1 · Quarte
+C C3
+E E3
+G G3
+C C4
+22:02:44.028    B's copy, bars 5-8:
+| C / / / | << G / / / ; m{ C:34 E:34 G:34 C:44 } >> | F / / / | F / / / |
+22:02:44.221 3. both type at once: A into bar 8, B into bar 12
+22:02:45.672    go
+A wrote None
+B wrote None
+22:02:49.317    CONVERGED: A and B identical
+| C / / / | Em7 / / / | Dm7 / G7 / | F / / / |
+| C / / / | << G / / / ; m{ C:34 E:34 G:34 C:44 } >> | F / / / | Bb / C / |
+
+ch 8
+| F / / / | G / / / | C / / / | Am / Am/G / |
+| F / / / | G / / / | C / / / | C / / / |
+22:02:49.322 4. A: undo (only A's bar 8)
+A undo refused: None
+22:02:52.595    CONVERGED after A's undo
+| C / / / | Em7 / / / | Dm7 / G7 / | F / / / |
+| C / / / | << G / / / ; m{ C:34 E:34 G:34 C:44 } >> | F / / / | F / / / |
+
+ch 8
+| F / / / | G / / / | C / / / | Am / Am/G / |
+| F / / / | G / / / | C / / / | C / / / |
+22:02:52.601 5. B: undo (only B's bar 12)
+B undo refused: None
+22:02:56.147    CONVERGED after B's undo
+| C / / / | Em7 / / / | Dm7 / G7 / | F / / / |
+| C / / / | << G / / / ; m{ C:34 E:34 G:34 C:44 } >> | F / / / | F / / / |
+
+ch 8
+| F / / / | G / / / | C / / / | Am / / / |
+| F / / / | G / / / | C / / / | C / / / |
+22:02:56.368 B alive
+22:02:56.414 A alive
