@@ -36,11 +36,12 @@ Two ways it sits beside the session, the same rules for both:
 
 The transport is never in the document (§1.4 of the session design). It is
 a `session::Transport` published as presence, stamped in the session
-host's clock (`session::clock`).
+host's clock (Architect's presence clock, architect#845: `DocPresence::now`,
+`PresencePeer::clock`, stamped with `Here::play_now`).
 
 | present | leader | followers |
 |---|---|---|
-| an engine | the engine: its audio thread writes an `AudioSnapshot` per buffer to its `SnapshotCell` (`daw:crates/daw/standalone/src/transport_engine/engine.rs` `TransportShared` already owns one); a publisher thread passes each through `sync::PublishGate` and publishes it as a `Transport` in the shared clock (`SharedClock::play_state`) | every view (chart, lights, arrangement playhead) follows with `sync::Tracker`; nothing in them steers the engine |
+| an engine | the engine: its audio thread writes an `AudioSnapshot` per buffer to its `SnapshotCell` (`daw:crates/daw/standalone/src/transport_engine/engine.rs` `TransportShared` already owns one); a publisher thread passes each through `sync::PublishGate` and publishes it as a `Transport` in the shared clock (`Here::play_now`) | every view (chart, lights, arrangement playhead) follows with `sync::Tracker`; nothing in them steers the engine |
 | several engines (two machines, both with audio) | the one whose transport was last pressed (the shared-transport rule: newest `(seq, by)` wins) | the others are `sync::TransportBackend`s driven by `sync::Follower`: rate nudged, locates landed on the sample (`TransportShared::begin_block` already lands a scheduled locate) |
 | an engine, and views in the same app | the engine, as above; in the app it is also the playhead deck's active source (`architect.playhead`), so a view's playhead is a host animation on `Clock::Playhead` and a frame of playback costs the view nothing (studio#519, Architect's compositor) | views draw the deck's clock, not presence |
 | no engine (a chart alone, lights alone, a browser) | a software clock: the peer that pressed play publishes a `Transport` from `sync::clock`, or Architect's playhead deck (`architect.playhead`) in one app | the same `Tracker` |

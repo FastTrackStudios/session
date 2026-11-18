@@ -28,12 +28,10 @@ service = ["architect"]
 # `fts.session` as an Architect extension service: the provider's actions
 # hand `session::extension::answer` their JSON and the caller's id.
 extension = ["service", "dep:facet-json"]
-# The session host's clock and a peer's estimate of it (`session::clock`):
-# what a follower on another machine needs to follow a playhead.
-clock = ["vox", "sync", "architect/platform"]
 # The session host's transport, published (`session::lead`, native only):
-# its presence and clock served, `lead/play` published.
-lead = ["clock", "crdt/vox", "dep:tokio"]
+# its presence served (Architect's, which carries its clock), `lead/play`
+# published.
+lead = ["vox", "sync", "crdt/vox", "dep:tokio"]
 vox = ["service", "dep:architect", "architect/vox", "dep:architect-permissions", "dep:thiserror", "dep:vox"]
 
 [dependencies]
@@ -84,7 +82,8 @@ architect-permissions = { workspace = true }
 name = "sync_e2e"
 required-features = ["architect", "sync", "service"]
 
-# Following a playhead across two processes or machines (the shared clock).
+# Following a playhead across two processes or machines (the shared clock:
+# Architect's presence clock, architect#845).
 [[example]]
 name = "follow"
-required-features = ["clock"]
+required-features = ["vox", "sync"]

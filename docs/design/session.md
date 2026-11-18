@@ -709,7 +709,8 @@ Built (2026-11-18), in order:
    Found: Architect's `SyncedDoc` does not persist what it receives
    (`apply_remote`, not `apply_remote_durable`); `ChartSession::save`
    writes it.
-4. **The shared clock** (`session::clock`, session#183): the host
+4. **The shared clock** (`session::clock`, session#183; since moved into
+   Architect's presence, architect#845, and `session::clock` removed): the host
    serves `now()`, a peer's `SharedClock` estimates it, `play_state`
    stamps `PlayState::at_ms` in it.
    - **Two processes on one machine:** playhead error max 168 µs

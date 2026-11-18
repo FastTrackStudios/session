@@ -13,8 +13,6 @@
 //!   the session, answered the same way by every host.
 //! - [`extension`] (feature `extension`): that, as an Architect extension
 //!   service, for the provider's actions.
-//! - [`clock`] (feature `clock`): the session host's clock, served, and a
-//!   peer's estimate of it, so a playhead is stamped in one clock.
 //! - [`host`] (feature `vox`): that, served as `fts.session` over vox, the
 //!   caller taken from the call's principal.
 //!
@@ -30,8 +28,6 @@ pub mod value;
 
 #[cfg(feature = "architect")]
 pub mod changes;
-#[cfg(feature = "clock")]
-pub mod clock;
 #[cfg(feature = "architect")]
 pub mod doc;
 #[cfg(feature = "extension")]

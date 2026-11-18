@@ -6,15 +6,15 @@
 //! follow follow ws://HOST:4141/vox 30      # follows for 30 s, then reports
 //! ```
 //!
-//! The leader serves `session::clock::SessionClock` and Architect's
-//! presence (a `DocRegistry`'s) over vox on a WebSocket
+//! The leader serves Architect's presence (a `DocRegistry`'s, which also
+//! serves its clock: `DocPresence::now`) over vox on a WebSocket
 //! (`architect::host::EngineHost`), joins its own presence as peer
 //! `lead`, and plays a loop: play from 0 at 1 s, seek to 42 s at 5 s, stop
 //! at 8 s, every 10 s. It is the session host, so its clock is the shared
-//! clock and its `PlayState::at_ms` is stamped in it.
+//! clock, and `Here::play_now` stamps its `PlayState::at_ms` in it.
 //!
-//! The follower dials it, pings the clock ten times a second
-//! (`SharedClock::run`), reads `lead/play` from its presence, and draws
+//! The follower dials it (its presence driver pings the host's clock ten
+//! times a second into `PresencePeer::clock`), reads `lead/play`, and draws
 //! the playhead with `sync::Tracker` every 16 ms. It reports the clock
 //! estimate and how far its drawn playhead was from the leader's.
 //!
@@ -52,14 +52,15 @@ use crdt::sync::{
     DocPresenceClient, DocPresenceDispatcher, PresencePeer, doc_presence_service_descriptor,
 };
 use session::Transport;
-use session::clock::{
-    ClockHost, SessionClockClient, SharedClock, serve as serve_clock,
-    session_clock_rpc_service_descriptor,
-};
 use session::doc::transport_of;
 use session::sync::Tracker;
-use session::sync::clock::now_micros_f64;
 use uuid::Uuid;
+
+/// This process's clock, microseconds: the one the presence clock's
+/// offset is to (`crdt::presence::clock_ms`).
+fn now_micros_f64() -> f64 {
+    crdt::presence::clock_ms() * 1000.0
+}
 
 /// The one presence channel both join: a fixed document id.
 const DOC: Uuid = Uuid::from_u128(0x5e55_1011_0000_4000_8000_0000_0000_0001);
@@ -89,15 +90,10 @@ async fn join(url: &str, me: &str) -> PresencePeer {
 
 async fn lead(bind: &str) {
     let registry = DocRegistry::new(|_| Box::pin(async { Ok(CrdtDoc::ephemeral()) }));
-    let router = LayerRouter::new()
-        .with(
-            doc_presence_service_descriptor(),
-            DocPresenceDispatcher::new(registry),
-        )
-        .with(
-            session_clock_rpc_service_descriptor(),
-            serve_clock(ClockHost),
-        );
+    let router = LayerRouter::new().with(
+        doc_presence_service_descriptor(),
+        DocPresenceDispatcher::new(registry),
+    );
     let bind = bind.to_owned();
     tokio::spawn(async move {
         EngineHost::ungated(router, bind)
@@ -119,7 +115,11 @@ async fn lead(bind: &str) {
         "lead: serving on {url}; epoch {:.0} µs",
         epoch_wall_micros()
     );
-    // The host's clock is the shared clock: its stamps need no offset.
+    // Stamped in the host's clock by the peer's own estimate of it (the
+    // leader is the host here, so the estimate is its own clock).
+    while !here.play_now(false, 0.0, 1.0) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let mut cycle = 0_u32;
     loop {
         let start = now_micros_f64();
@@ -132,13 +132,7 @@ async fn lead(bind: &str) {
             if wait > 0.0 {
                 tokio::time::sleep(Duration::from_secs_f64(wait / 1e6)).await;
             }
-            let now = now_micros_f64();
-            here.play(&crdt::presence::PlayState {
-                playing,
-                position,
-                at_ms: now / 1000.0,
-                rate: 1.0,
-            });
+            here.play_now(playing, position, 1.0);
             println!("lead: cycle {cycle} {what} at {position} s");
         }
         let rest = start + 10e6 - now_micros_f64();
@@ -149,16 +143,8 @@ async fn lead(bind: &str) {
 
 #[allow(clippy::too_many_lines)]
 async fn follow(url: &str, seconds: f64) {
-    let clock = SharedClock::default();
-    let host: SessionClockClient = pool()
-        .client(&Endpoint::url(url))
-        .await
-        .expect("dial clock");
-    let pinger = clock.clone();
-    tokio::spawn(async move {
-        let _ = pinger.run(&host).await;
-    });
     let peer = join(url, "follow").await;
+    let clock = peer.clock().clone();
     let mut tracker = Tracker::default();
     let mut errors: Vec<f64> = Vec::new();
     let mut offset_errors: Vec<f64> = Vec::new();
@@ -170,7 +156,7 @@ async fn follow(url: &str, seconds: f64) {
         tokio::time::sleep(Duration::from_millis(16)).await;
         let states = peer.states();
         let (Some(offset), Some(leader), Some(lead_epoch)) = (
-            clock.offset_micros(),
+            clock.offset_ms().map(|ms| ms * 1000.0),
             states.get("lead/play").and_then(transport_of),
             states
                 .get("lead/epoch")
@@ -197,7 +183,7 @@ async fn follow(url: &str, seconds: f64) {
             offset_errors.push((offset - true_offset).abs());
         }
     }
-    let rtt = clock.round_trip_micros().unwrap_or(f64::NAN);
+    let rtt = clock.round_trip_ms().map_or(f64::NAN, |ms| ms * 1000.0);
     let stat = |v: &mut Vec<f64>| -> (f64, f64, f64) {
         v.sort_by(f64::total_cmp);
         if v.is_empty() {

@@ -17,8 +17,9 @@ mod time;
 
 #[cfg(feature = "service")]
 mod changes;
-#[cfg(feature = "clock")]
+#[cfg(all(feature = "vox", feature = "sync"))]
 mod clock;
+
 #[cfg(feature = "architect")]
 mod doc;
 #[cfg(feature = "extension")]
