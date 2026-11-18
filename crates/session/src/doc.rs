@@ -227,6 +227,18 @@ impl SessionDoc {
         read_records(&self.doc.get_map(LANES), read_lane)
     }
 
+    /// Every marker.
+    #[must_use]
+    pub fn markers(&self) -> BTreeMap<MarkId, Marker> {
+        read_records(&self.doc.get_map(MARKERS), read_marker)
+    }
+
+    /// Every region.
+    #[must_use]
+    pub fn regions(&self) -> BTreeMap<MarkId, Region> {
+        read_records(&self.doc.get_map(REGIONS), read_region)
+    }
+
     /// Every item.
     #[must_use]
     pub fn items(&self) -> BTreeMap<ItemId, Item> {

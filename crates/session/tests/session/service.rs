@@ -244,6 +244,8 @@ fn the_song_structure_needs_a_grant() {
                     numerator: 6,
                     denominator: 8,
                 }),
+                shape: None,
+                tension: None,
             }],
         },
     };
@@ -267,4 +269,73 @@ fn the_song_structure_needs_a_grant() {
         },
     };
     assert!(refused(handle(&doc, &ext("keyflow"), granted, bad)));
+}
+
+#[test]
+fn everyone_reads_the_structure_with_its_ramps() {
+    let doc = studio();
+    let granted = Grants { structure: true };
+    // A ramp from 60 to 120 BPM over 10 s (shape 0: linear), then held.
+    let tempo = TempoMapData {
+        default_bpm: 60.0,
+        numerator: 4,
+        denominator: 4,
+        points: vec![
+            TempoChange {
+                seconds: 0.0,
+                bpm: 60.0,
+                meter: None,
+                shape: Some(0),
+                tension: None,
+            },
+            TempoChange {
+                seconds: 10.0,
+                bpm: 120.0,
+                meter: None,
+                shape: None,
+                tension: None,
+            },
+        ],
+    };
+    handle(
+        &doc,
+        &ext("keyflow"),
+        granted,
+        Request::SetTempo {
+            tempo: tempo.clone(),
+        },
+    )
+    .unwrap();
+    handle(
+        &doc,
+        &ext("keyflow"),
+        granted,
+        Request::PutMarker {
+            id: MarkId::from("drop"),
+            marker: session::Marker {
+                at: Time::QuarterNotes(32.0),
+                name: "Drop".into(),
+                color: None,
+                ruler: None,
+            },
+        },
+    )
+    .unwrap();
+    // Ignition, granted nothing, reads it.
+    let Response::Structure {
+        tempo: read,
+        markers,
+        regions,
+    } = ask(&doc, "ignition", Request::ReadStructure).unwrap()
+    else {
+        panic!("not the structure")
+    };
+    assert_eq!(read, tempo);
+    assert_eq!(markers[&MarkId::from("drop")].name, "Drop");
+    assert!(regions.is_empty());
+    // The ramp is kept: seconds resolve as the session's own map does.
+    let map = read.to_tempo_map().unwrap();
+    let qn = Time::Seconds(7.25).quarter_notes(&map);
+    assert!((qn - Time::Seconds(7.25).quarter_notes(&doc.tempo())).abs() < 1e-12);
+    assert!((map.bpm_at(11.0) - 120.0).abs() < 1e-12);
 }

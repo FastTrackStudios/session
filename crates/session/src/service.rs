@@ -75,6 +75,9 @@ pub enum Request {
     Remove { name: String },
     /// Every lane, and every item with other extensions' payloads nulled.
     ReadTimeline,
+    /// The song's structure: the tempo map, markers and regions, which
+    /// every extension reads (a follower resolves musical time with it).
+    ReadStructure,
     /// Puts a lane it owns.
     PutLane { id: LaneId, lane: Lane },
     /// Removes a lane it owns, and the items on it it owns. Another
@@ -121,6 +124,47 @@ pub struct TempoChange {
     pub bpm: f64,
     /// The new meter, when it changes here.
     pub meter: Option<Meter>,
+    /// How the tempo moves from here to the next change: REAPER's shape
+    /// (`None` or 1 holds, 0 is linear, 5 bezier); see `time::TempoShape`.
+    pub shape: Option<i32>,
+    /// A bezier shape's tension.
+    pub tension: Option<f64>,
+}
+
+impl TempoMapData {
+    /// `tempo` as plain data, ramps included.
+    #[must_use]
+    pub fn of(tempo: &TempoMap) -> Self {
+        let meter = tempo.default_meter();
+        Self {
+            default_bpm: tempo.default_bpm(),
+            numerator: meter.numerator,
+            denominator: meter.denominator,
+            points: tempo
+                .points()
+                .iter()
+                .map(|p| TempoChange {
+                    seconds: p.position_seconds(),
+                    bpm: p.bpm,
+                    meter: p.time_signature.map(|t| Meter {
+                        numerator: t.numerator,
+                        denominator: t.denominator,
+                    }),
+                    shape: p.shape,
+                    tension: p.bezier_tension,
+                })
+                .collect(),
+        }
+    }
+
+    /// The tempo map this describes.
+    ///
+    /// # Errors
+    ///
+    /// A tempo that is not a positive number, or a meter with a zero.
+    pub fn to_tempo_map(&self) -> Result<TempoMap, ServiceError> {
+        tempo_map(self)
+    }
 }
 
 /// The answer.
@@ -132,6 +176,11 @@ pub enum Response {
     Timeline {
         lanes: BTreeMap<LaneId, Lane>,
         items: BTreeMap<ItemId, Item>,
+    },
+    Structure {
+        tempo: TempoMapData,
+        markers: BTreeMap<MarkId, Marker>,
+        regions: BTreeMap<MarkId, Region>,
     },
 }
 
@@ -177,7 +226,7 @@ impl From<loro::LoroError> for ServiceError {
 #[must_use]
 pub const fn action_for(request: &Request) -> &'static str {
     match request {
-        Request::ReadData | Request::ReadTimeline => READ,
+        Request::ReadData | Request::ReadTimeline | Request::ReadStructure => READ,
         Request::SetTempo { .. }
         | Request::PutMarker { .. }
         | Request::PutRegion { .. }
@@ -265,6 +314,12 @@ pub fn handle(
     request: Request,
 ) -> Result<Response, ServiceError> {
     match request {
+        // Everyone reads the structure; no grant needed.
+        Request::ReadStructure => Ok(Response::Structure {
+            tempo: TempoMapData::of(&doc.tempo()),
+            markers: doc.markers(),
+            regions: doc.regions(),
+        }),
         Request::ReadTimeline
         | Request::PutLane { .. }
         | Request::RemoveLane { .. }
@@ -483,7 +538,10 @@ fn tempo_map(data: &TempoMapData) -> Result<TempoMap, ServiceError> {
             Some(m) => Some(meter(m.numerator, m.denominator)?),
             None => None,
         };
-        points.push(TempoMap::point(change.seconds, change.bpm, meter));
+        let mut point = TempoMap::point(change.seconds, change.bpm, meter);
+        point.shape = change.shape;
+        point.bezier_tension = change.tension;
+        points.push(point);
     }
     Ok(TempoMap::new(
         data.default_bpm,
