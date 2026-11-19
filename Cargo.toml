@@ -1401,3 +1401,36 @@ dioxus-native-dom = { path = "libs/vendor/dioxus-native-dom" }
 # The renderer's pick, with the iOS simulator on vello-hybrid (see its
 # UPSTREAM.md).
 dioxus-native = { path = "libs/vendor/dioxus-native" }
+
+
+
+# LOCAL ONLY — do not commit: architect co-development (Action List / architect-mcp).
+[patch."https://github.com/FastTrackStudios/architect"]
+architect = { path = "../architect-action-list/crates/architect" }
+architect-action-derive = { path = "../architect-action-list/crates/architect-action-derive" }
+architect-atom = { path = "../architect-action-list/features/atom" }
+architect-auth = { path = "../architect-action-list/features/auth/architect-auth" }
+architect-derive = { path = "../architect-action-list/crates/architect-derive" }
+architect-form = { path = "../architect-action-list/features/form" }
+architect-launcher-core = { path = "../architect-action-list/features/launcher/architect-launcher-core" }
+architect-mcp = { path = "../architect-action-list/features/mcp" }
+architect-launcher-providers = { path = "../architect-action-list/features/launcher/architect-launcher-providers" }
+architect-launcher-ui = { path = "../architect-action-list/features/launcher/architect-launcher-ui" }
+architect-permissions = { path = "../architect-action-list/features/permissions" }
+architect-permissions-proto = { path = "../architect-action-list/features/permissions/proto" }
+architect-rpc-derive = { path = "../architect-action-list/crates/architect-rpc-derive" }
+architect-story-core = { path = "../architect-action-list/features/story/architect-story-core" }
+architect-story-macros = { path = "../architect-action-list/features/story/architect-story-macros" }
+architect-story-parity = { path = "../architect-action-list/features/story/architect-story-parity" }
+architect-story-runtime = { path = "../architect-action-list/features/story/architect-story-runtime" }
+architect-story-shell = { path = "../architect-action-list/features/story/architect-story-shell" }
+architect-story-snapshots = { path = "../architect-action-list/features/story/architect-story-snapshots" }
+architect-telemetry = { path = "../architect-action-list/features/telemetry" }
+architect-ui = { path = "../architect-action-list/features/ui/architect-ui" }
+auth = { path = "../architect-action-list/features/auth/auth" }
+auth-client = { path = "../architect-action-list/features/auth/auth-client" }
+auth-db = { path = "../architect-action-list/features/auth/auth-db" }
+auth-proto = { path = "../architect-action-list/features/auth/auth-proto" }
+crdt = { path = "../architect-action-list/features/crdt/crdt" }
+crdt-derive = { path = "../architect-action-list/features/crdt/crdt-derive" }
+crdt-seaorm = { path = "../architect-action-list/features/crdt/crdt-seaorm" }
