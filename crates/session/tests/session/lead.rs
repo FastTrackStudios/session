@@ -25,10 +25,20 @@ async fn until(what: &str, mut pred: impl FnMut() -> bool) {
     }
 }
 
+/// A TCP port nothing holds now, asked of the OS: a fixed one in the
+/// ephemeral range is another program's outgoing connection on a busy
+/// machine, and the host then fails to bind.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .unwrap()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_follower_draws_where_the_leader_plays() {
     let doc = Uuid::new_v4();
-    let port = 47_000 + (std::process::id() % 1000);
+    let port = free_port();
     let leader = Leader::serve(&format!("127.0.0.1:{port}"), doc)
         .await
         .unwrap();
@@ -79,7 +89,7 @@ async fn a_leader_on_its_nodes_presence_is_followed() {
     use crdt::sync::{DocPresenceDispatcher, PresenceHost, doc_presence_service_descriptor};
 
     let doc = Uuid::new_v4();
-    let port = 48_000 + (std::process::id() % 1000);
+    let port = free_port();
     let router = LayerRouter::new().with(
         doc_presence_service_descriptor(),
         DocPresenceDispatcher::new(PresenceHost::new(doc, 30_000)),
