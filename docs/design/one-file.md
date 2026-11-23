@@ -77,6 +77,15 @@ bytes can open it (`session_format::read::ProjectFile`, which is pure
 Rust and needs no Turso, so it also runs in a browser). The engine already
 checkpoints after each save.
 
+After the store is closed, Turso still leaves an empty `-wal` and its
+shared memory (`-tshm`) beside the file. They are not part of the song,
+and nothing needs them: copying, syncing or carrying the `.session` alone
+is enough.
+
+The song's id can be read from the file's first pages, because the meta
+table sits near the start (`session_format::read::song_id`). A scan of
+many folders therefore never reads whole songs.
+
 ## Which file is which: by header
 
 Until a folder is converted, readers must handle both layouts. They decide
