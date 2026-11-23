@@ -1,7 +1,7 @@
 [package]
 name = "session"
 description = "The primitive FastTrackStudio's music software agrees on: song structure, a generic timeline, per-extension data, transport as data and playback sync"
-version = "0.1.1" # stack-local: two path crates named `session` at one version cannot share a lockfile (Studio has features/session)
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
