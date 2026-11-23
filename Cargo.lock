@@ -72,13 +72,12 @@ dependencies = [
 [[package]]
 name = "architect"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
  "architect-action-derive",
  "architect-derive",
  "architect-permissions",
  "architect-rpc-derive",
- "architect-workspace-hack",
  "async-channel",
  "axum",
  "eyre",
@@ -112,7 +111,7 @@ dependencies = [
 [[package]]
 name = "architect-action-derive"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -122,7 +121,7 @@ dependencies = [
 [[package]]
 name = "architect-derive"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -133,12 +132,11 @@ dependencies = [
 [[package]]
 name = "architect-devices"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
  "architect",
  "architect-orgs",
  "architect-permissions",
- "architect-workspace-hack",
  "facet",
  "facet-json",
  "thiserror 2.0.21",
@@ -151,9 +149,8 @@ dependencies = [
 [[package]]
 name = "architect-orgs"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
- "architect-workspace-hack",
  "facet",
  "facet-json",
  "futures-util",
@@ -163,9 +160,8 @@ dependencies = [
 [[package]]
 name = "architect-permissions"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
- "architect-workspace-hack",
  "serde",
  "serde_json",
  "tracing",
@@ -174,16 +170,12 @@ dependencies = [
 [[package]]
 name = "architect-rpc-derive"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
 ]
-
-[[package]]
-name = "architect-workspace-hack"
-version = "0.1.0"
 
 [[package]]
 name = "arrayvec"
@@ -469,13 +461,12 @@ dependencies = [
 [[package]]
 name = "crdt"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
  "architect",
  "architect-devices",
  "architect-orgs",
  "architect-permissions",
- "architect-workspace-hack",
  "async-trait",
  "chrono",
  "crc32fast",
@@ -495,7 +486,7 @@ dependencies = [
 [[package]]
 name = "crdt-derive"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/architect?tag=v0.15.0#a3d1bdc94cdbb805c41e049994d31b26e1840c2b"
+source = "git+https://github.com/FastTrackStudios/architect?rev=eaa969f150b4c558b4722c09e7cf619d9fa4bede#eaa969f150b4c558b4722c09e7cf619d9fa4bede"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3480,3 +3471,7 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[patch.unused]]
+name = "architect-workspace-hack"
+version = "0.1.0"
