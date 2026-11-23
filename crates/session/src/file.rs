@@ -11,8 +11,18 @@
 //! engine wrote) is brought into the format once, by [`SessionFile::import`]
 //! or [`SessionFile::open_or_import`]: same content, a document file from
 //! then on.
+//!
+//! A song's session lives inside the song's one file (`<Title>.session`,
+//! the DAW's project store, `docs/design/one-file.md`): there it is not a
+//! document file of its own but a part of that store, and is opened over
+//! the store's persistence with [`SessionFile::over_persistence`]. The
+//! session itself, its id and every edit are the same either way.
+//!
+//! Which a file is, is said by its first bytes ([`sniff`]), never by its
+//! name.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crdt::CrdtDoc;
 use crdt::file::{DiskStorage, DocFile, FileError, MAIN};
@@ -48,11 +58,43 @@ fn file_error(e: FileError) -> SessionFileError {
     SessionFileError::File(e.to_string())
 }
 
+/// What a song's file starts with, as [`sniff`] reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sniffed {
+    /// An Architect document file: a session file of its own
+    /// (`<Title>.fts-session`, before the song's one file).
+    DocFile,
+    /// A SQLite (Turso) store: the song's one file, whose session is a
+    /// part of it ([`SessionFile::over_persistence`]).
+    Store,
+    /// Neither.
+    Other,
+}
+
+/// What the file starting with `head` (16 bytes are enough) is.
+#[must_use]
+pub fn sniff(head: &[u8]) -> Sniffed {
+    if head.starts_with(b"ARCHDOC\0") {
+        Sniffed::DocFile
+    } else if head.starts_with(b"SQLite format 3\0") {
+        Sniffed::Store
+    } else {
+        Sniffed::Other
+    }
+}
+
+/// Where a session's edits go: its own document file, or the persistence
+/// of the file it is a part of.
+enum Backing {
+    File(DocFile),
+    Part(Arc<dyn crdt::persistence::Persistence>),
+}
+
 /// A session held open in its file. Edits to [`Self::session`] are steps
 /// of the file as they are committed; [`Self::save`] folds them.
 pub struct SessionFile {
     id: Uuid,
-    file: DocFile,
+    backing: Backing,
     doc: CrdtDoc,
     session: SessionDoc,
 }
@@ -149,7 +191,31 @@ impl SessionFile {
         let session = SessionDoc::from_doc(doc.loro().clone());
         Ok(Self {
             id,
-            file,
+            backing: Backing::File(file),
+            doc,
+            session,
+        })
+    }
+
+    /// The session `id` kept in `persistence`: a part of another file (the
+    /// song's one file, whose store answers for its parts by id). What it
+    /// holds is loaded; every commit is appended there, and [`Self::save`]
+    /// folds it there.
+    ///
+    /// # Errors
+    ///
+    /// What the persistence holds would not load.
+    pub async fn over_persistence(
+        id: Uuid,
+        persistence: Arc<dyn crdt::persistence::Persistence>,
+    ) -> Result<Self> {
+        let doc = CrdtDoc::open_shared(id, persistence.clone())
+            .await
+            .map_err(|e| SessionFileError::Doc(e.to_string()))?;
+        let session = SessionDoc::from_doc(doc.loro().clone());
+        Ok(Self {
+            id,
+            backing: Backing::Part(persistence),
             doc,
             session,
         })
@@ -188,11 +254,19 @@ impl SessionFile {
             .loro()
             .export(loro::ExportMode::Snapshot)
             .map_err(|e| SessionFileError::Doc(e.to_string()))?;
-        self.file
-            .persistence(MAIN)
-            .write_snapshot(self.id, &state)
-            .await
-            .map_err(|e| SessionFileError::File(e.to_string()))?;
+        match &self.backing {
+            Backing::File(file) => file
+                .persistence(MAIN)
+                .write_snapshot(self.id, &state)
+                .await
+                .map_err(|e| SessionFileError::File(e.to_string()))?,
+            // A part folds what its file holds with what it is handed: a
+            // commit not appended yet is in `state`.
+            Backing::Part(persistence) => persistence
+                .compact(self.id, &state)
+                .await
+                .map_err(|e| SessionFileError::File(e.to_string()))?,
+        }
         self.doc
             .compact(self.id)
             .await

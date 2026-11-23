@@ -63,3 +63,44 @@ async fn an_engines_bare_snapshot_opens_as_a_session_file() {
         Some("38 tracks")
     );
 }
+
+/// A session kept as a part of another file (the song's one file) is the
+/// same session: opened over that file's persistence, edited, saved, and
+/// opened again with everything it held.
+#[tokio::test(flavor = "current_thread")]
+async fn a_session_kept_in_another_files_persistence() {
+    use std::sync::Arc;
+    let persistence: Arc<dyn crdt::persistence::Persistence> =
+        Arc::new(crdt::in_memory::InMemoryPersistence::new());
+    let id = uuid::Uuid::new_v4();
+    {
+        let file = SessionFile::over_persistence(id, persistence.clone())
+            .await
+            .unwrap();
+        file.session()
+            .set_bar_one(Some(Time::Seconds(4.0)))
+            .unwrap();
+        file.session()
+            .ext(&ExtensionId::from("ignition"))
+            .unwrap()
+            .set_text("notes", "Lights down at the bridge")
+            .unwrap();
+        file.session().doc().commit();
+        file.save().await.unwrap();
+    }
+    let file = SessionFile::over_persistence(id, persistence)
+        .await
+        .unwrap();
+    assert_eq!(file.id(), id);
+    assert_eq!(file.session().bar_one(), Some(Time::Seconds(4.0)));
+    let ignition = file.session().read_ext(&ExtensionId::from("ignition"));
+    assert_eq!(ignition.text("notes"), Some("Lights down at the bridge"));
+}
+
+#[test]
+fn a_files_header_says_what_it_is() {
+    use session::file::{Sniffed, sniff};
+    assert_eq!(sniff(b"ARCHDOC\0\x01\0\0\0"), Sniffed::DocFile);
+    assert_eq!(sniff(b"SQLite format 3\0"), Sniffed::Store);
+    assert_eq!(sniff(b"Drive To LA"), Sniffed::Other);
+}
