@@ -26,9 +26,9 @@ loro = { version = "1.12", default-features = false }
 # `vox`, tests) the sync transport, and the shared clock presence is
 # stamped in (architect#845), by the release tag that carries it; Studio
 # pins the same tag.
-crdt = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.15.0", default-features = false }
-architect = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.15.0", default-features = false }
-architect-permissions = { git = "https://github.com/FastTrackStudios/architect", tag = "v0.15.0" }
+crdt = { git = "https://github.com/FastTrackStudios/architect", rev = "eaa969f150b4c558b4722c09e7cf619d9fa4bede", default-features = false }
+architect = { git = "https://github.com/FastTrackStudios/architect", rev = "eaa969f150b4c558b4722c09e7cf619d9fa4bede", default-features = false }
+architect-permissions = { git = "https://github.com/FastTrackStudios/architect", rev = "eaa969f150b4c558b4722c09e7cf619d9fa4bede" }
 thiserror = "2"
 # Architect's pin (its root Cargo.toml).
 vox = { version = "0.10.0-rc.7", default-features = false, features = ["runtime"] }
