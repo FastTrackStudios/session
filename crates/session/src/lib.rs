@@ -20,6 +20,8 @@
 
 pub mod ext;
 pub mod id;
+pub mod presence;
+pub mod section_kinds;
 mod session;
 pub mod time;
 pub mod timeline;
