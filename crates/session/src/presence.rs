@@ -122,6 +122,10 @@ impl PlayState {
     }
 }
 
+/// Presence held for the process (feature `store`).
+#[cfg(feature = "store")]
+pub mod store;
+
 #[cfg(feature = "architect")]
 mod codec;
 #[cfg(feature = "architect")]

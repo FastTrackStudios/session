@@ -12,6 +12,9 @@ default = []
 # Playback sync with realtime guarantees: the lock-free snapshot, clock
 # offset estimation, drift correction (from daw-transport-sync).
 sync = ["dep:web-time"]
+# Presence held for the process (`presence::store`): what a collaboration
+# driver publishes and a view paints.
+store = ["dep:web-time"]
 # The session as an Architect document: a Loro doc in the shape
 # `docs/design/session.md` gives, of crdt's `DocKind` `fts.session`.
 # crdt without its sync transport and without Architect's workspace-hack
@@ -46,15 +49,14 @@ uuid = { version = "1", optional = true }
 architect-permissions = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 vox = { workspace = true, optional = true }
+# Clocks that also run in a page (`sync`, `presence::store`).
+web-time = { workspace = true, optional = true }
 
 # The leader's presence host, its join and its tasks (`session::lead`):
 # a server, so native only; `--all-features` on wasm enables nothing here.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 architect = { workspace = true, optional = true, features = ["host", "connect"] }
 tokio = { workspace = true, optional = true, features = ["rt", "time"] }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-web-time = { workspace = true, optional = true }
 
 [lints]
 workspace = true
