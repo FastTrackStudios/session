@@ -2343,7 +2343,7 @@ dependencies = [
 
 [[package]]
 name = "session"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "architect",
  "architect-permissions",
